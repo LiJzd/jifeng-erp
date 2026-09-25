@@ -1,0 +1,6 @@
+app_name = "jifeng_erp"
+app_title = "集沣 ERP 扩展"
+app_publisher = "Jifeng"
+app_description = "订单、委外回货与成本试算"
+app_email = "erp@example.invalid"
+app_license = "GPL-3.0-or-later"

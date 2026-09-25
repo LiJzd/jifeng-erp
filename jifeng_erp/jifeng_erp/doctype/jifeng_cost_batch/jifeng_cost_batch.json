@@ -1,0 +1,20 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Cost Batch",
+ "module": "Jifeng ERP",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": ["receipt_type", "reference_no", "received_qty", "good_qty", "rework_qty", "lost_qty", "pending_qty", "extra_processing_amount", "estimated_cost"],
+ "fields": [
+  {"fieldname": "receipt_type", "fieldtype": "Select", "label": "回货类型", "options": "首次回货\n返工回货", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "reference_no", "fieldtype": "Data", "label": "回货单号", "in_list_view": 1},
+  {"fieldname": "received_qty", "fieldtype": "Float", "label": "回货数量", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "good_qty", "fieldtype": "Float", "label": "合格数量", "in_list_view": 1},
+  {"fieldname": "rework_qty", "fieldtype": "Float", "label": "返工数量"},
+  {"fieldname": "lost_qty", "fieldtype": "Float", "label": "损耗数量"},
+  {"fieldname": "pending_qty", "fieldtype": "Float", "label": "待检数量"},
+  {"fieldname": "extra_processing_amount", "fieldtype": "Currency", "label": "追加加工费"},
+  {"fieldname": "estimated_cost", "fieldtype": "Currency", "label": "本批合格品试算金额", "read_only": 1}
+ ],
+ "permissions": []
+}
