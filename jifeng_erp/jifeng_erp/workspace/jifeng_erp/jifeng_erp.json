@@ -1,0 +1,67 @@
+{
+ "doctype": "Workspace",
+ "name": "Jifeng ERP",
+ "label": "集沣生产协作",
+ "title": "集沣生产协作",
+ "module": "Jifeng ERP",
+ "app": "jifeng_erp",
+ "public": 1,
+ "is_hidden": 0,
+ "content": "[{\"id\":\"jf0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭设置\",\"col\":4}},{\"id\":\"jf1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"同步记录\",\"col\":4}},{\"id\":\"jf2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭订单\",\"col\":4}},{\"id\":\"jf3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品映射\",\"col\":4}},{\"id\":\"jf4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品工艺档案\",\"col\":4}},{\"id\":\"jf5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"生产流程单\",\"col\":4}},{\"id\":\"jf6\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"成本试算\",\"col\":4}}]",
+ "shortcuts": [
+  {
+   "label": "聚水潭设置",
+   "link_to": "Jushuitan Settings",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "同步记录",
+   "link_to": "Jifeng Sync Run",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "聚水潭订单",
+   "link_to": "Jifeng External Order",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "商品映射",
+   "link_to": "Jifeng SKU Mapping",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "商品工艺档案",
+   "link_to": "Jifeng Product Profile",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "生产流程单",
+   "link_to": "Jifeng Flow Order",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "成本试算",
+   "link_to": "Jifeng Cost Preview",
+   "type": "DocType",
+   "doc_view": "List"
+  }
+ ],
+ "links": [],
+ "roles": [
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Manufacturing Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ]
+}

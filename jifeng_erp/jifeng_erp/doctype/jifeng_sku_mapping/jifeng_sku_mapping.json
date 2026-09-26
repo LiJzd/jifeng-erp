@@ -1,0 +1,116 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng SKU Mapping",
+ "module": "Jifeng ERP",
+ "track_changes": 1,
+ "editable_grid": 1,
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 0,
+   "delete": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Stock Manager",
+   "read": 1,
+   "write": 1,
+   "create": 0,
+   "report": 1,
+   "print": 1
+  },
+  {
+   "role": "Manufacturing Manager",
+   "read": 1,
+   "write": 1,
+   "create": 0,
+   "report": 1,
+   "print": 1
+  }
+ ],
+ "autoname": "field:sync_key",
+ "fields": [
+  {
+   "fieldname": "sync_key",
+   "fieldtype": "Data",
+   "label": "同步标识",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "scope",
+   "fieldtype": "Data",
+   "label": "商家环境标识",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sku_id",
+   "fieldtype": "Data",
+   "label": "聚水潭商品编码",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "ERPNext商品",
+   "options": "Item",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "managed_item",
+   "fieldtype": "Check",
+   "label": "由同步创建的商品",
+   "read_only": 1
+  },
+  {
+   "fieldname": "supplier_sku_id",
+   "fieldtype": "Data",
+   "label": "供应商货号",
+   "read_only": 1
+  },
+  {
+   "fieldname": "supplier_name",
+   "fieldtype": "Data",
+   "label": "源供应商名称",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_modified",
+   "fieldtype": "Datetime",
+   "label": "源修改时间",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_image",
+   "fieldtype": "Data",
+   "label": "源图片地址",
+   "read_only": 1
+  },
+  {
+   "fieldname": "archived_image",
+   "fieldtype": "Attach Image",
+   "label": "已归档图片",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "sync_key",
+  "scope",
+  "sku_id",
+  "item_code",
+  "managed_item",
+  "supplier_sku_id",
+  "supplier_name",
+  "source_modified",
+  "source_image",
+  "archived_image"
+ ]
+}

@@ -1,9 +1,9 @@
 [project]
 name = "jifeng_erp"
-version = "0.1.0"
+version = "0.2.0"
 description = "集沣 ERPNext 业务扩展"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["requests>=2.32,<3"]
 
 [build-system]
 requires = ["flit_core>=3.4,<4"]

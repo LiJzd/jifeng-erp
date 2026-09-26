@@ -55,6 +55,24 @@ class TestCosting(unittest.TestCase):
         self.assertEqual(result["allocated_good_cost"], "0.99")
         self.assertEqual(result["unallocated_cost"], "0")
 
+    def test_pending_inspection_can_be_resolved_without_editing_history(self):
+        result = calculate(100, 100, 0, 0, [
+            {"receipt_type": "首次回货", "received_qty": 100, "pending_qty": 100},
+            {"receipt_type": "待检处理", "received_qty": 100, "good_qty": 90, "rework_qty": 10},
+            {"receipt_type": "返工回货", "received_qty": 10, "good_qty": 9, "lost_qty": 1},
+        ])
+        self.assertEqual(result["good_qty"], "99")
+        self.assertEqual(result["pending_qty"], "0")
+        self.assertEqual(result["unallocated_cost"], "0")
+        self.assertTrue(result["is_complete"])
+
+    def test_all_lost_cost_remains_unallocated(self):
+        result = calculate(100, 100, 0, 0, [
+            {"receipt_type": "首次回货", "received_qty": 100, "lost_qty": 100},
+        ])
+        self.assertEqual(result["estimated_unit_cost"], "0")
+        self.assertEqual(result["unallocated_cost"], "100")
+
 
 if __name__ == "__main__":
     unittest.main()

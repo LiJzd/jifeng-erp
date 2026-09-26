@@ -1,0 +1,44 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Operation Line",
+ "module": "Jifeng ERP",
+ "track_changes": 0,
+ "editable_grid": 1,
+ "permissions": [],
+ "istable": 1,
+ "fields": [
+  {
+   "fieldname": "operation",
+   "fieldtype": "Link",
+   "label": "工序",
+   "options": "Operation",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "加工商",
+   "options": "Supplier",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "unit_price",
+   "fieldtype": "Currency",
+   "label": "每件加工费",
+   "in_list_view": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "工艺要求"
+  }
+ ],
+ "field_order": [
+  "operation",
+  "supplier",
+  "unit_price",
+  "note"
+ ]
+}

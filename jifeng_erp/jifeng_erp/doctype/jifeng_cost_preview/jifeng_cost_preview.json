@@ -5,35 +5,226 @@
  "autoname": "format:JF-COST-{YYYY}-{#####}",
  "title_field": "flow_order_no",
  "search_fields": "flow_order_no,external_order_no,item_code",
- "field_order": ["company", "flow_order_no", "external_order_no", "sales_order", "subcontracting_order", "item_code", "planned_qty", "costs_section", "material_amount", "processing_amount", "other_amount", "batches_section", "batches", "result_section", "good_qty", "rework_open_qty", "lost_qty", "unreceived_qty", "total_cost", "estimated_unit_cost", "unallocated_cost", "is_complete", "note"],
+ "field_order": [
+  "company",
+  "flow_order_no",
+  "external_order_no",
+  "sales_order",
+  "subcontracting_order",
+  "item_code",
+  "planned_qty",
+  "costs_section",
+  "material_amount",
+  "processing_amount",
+  "other_amount",
+  "batches_section",
+  "batches",
+  "result_section",
+  "good_qty",
+  "rework_open_qty",
+  "lost_qty",
+  "unreceived_qty",
+  "total_cost",
+  "estimated_unit_cost",
+  "unallocated_cost",
+  "is_complete",
+  "note",
+  "flow_order",
+  "pending_qty"
+ ],
  "fields": [
-  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1},
-  {"fieldname": "flow_order_no", "fieldtype": "Data", "label": "流程单号", "reqd": 1, "in_list_view": 1},
-  {"fieldname": "external_order_no", "fieldtype": "Data", "label": "外部采购/订单号", "in_list_view": 1},
-  {"fieldname": "sales_order", "fieldtype": "Link", "label": "销售订单", "options": "Sales Order"},
-  {"fieldname": "subcontracting_order", "fieldtype": "Link", "label": "委外订单", "options": "Subcontracting Order"},
-  {"fieldname": "item_code", "fieldtype": "Link", "label": "商品编码", "options": "Item", "reqd": 1, "in_list_view": 1},
-  {"fieldname": "planned_qty", "fieldtype": "Float", "label": "订单数量", "reqd": 1},
-  {"fieldname": "costs_section", "fieldtype": "Section Break", "label": "费用"},
-  {"fieldname": "material_amount", "fieldtype": "Currency", "label": "材料费"},
-  {"fieldname": "processing_amount", "fieldtype": "Currency", "label": "基础加工费"},
-  {"fieldname": "other_amount", "fieldtype": "Currency", "label": "其他费用"},
-  {"fieldname": "batches_section", "fieldtype": "Section Break", "label": "分批回货与返工"},
-  {"fieldname": "batches", "fieldtype": "Table", "label": "回货记录", "options": "Jifeng Cost Batch"},
-  {"fieldname": "result_section", "fieldtype": "Section Break", "label": "试算结果"},
-  {"fieldname": "good_qty", "fieldtype": "Float", "label": "已确认合格", "read_only": 1},
-  {"fieldname": "rework_open_qty", "fieldtype": "Float", "label": "待返工", "read_only": 1},
-  {"fieldname": "lost_qty", "fieldtype": "Float", "label": "已确认损耗", "read_only": 1},
-  {"fieldname": "unreceived_qty", "fieldtype": "Float", "label": "未首次回货", "read_only": 1},
-  {"fieldname": "total_cost", "fieldtype": "Currency", "label": "归集费用", "read_only": 1},
-  {"fieldname": "estimated_unit_cost", "fieldtype": "Float", "label": "预计合格品单位成本", "precision": "4", "read_only": 1},
-  {"fieldname": "unallocated_cost", "fieldtype": "Currency", "label": "尚未分摊金额", "read_only": 1},
-  {"fieldname": "is_complete", "fieldtype": "Check", "label": "数量已结清", "read_only": 1},
-  {"fieldname": "note", "fieldtype": "Small Text", "label": "说明", "read_only": 1, "default": "仅作费用试算，不创建库存、会计或委外收货凭证。未结清前单位成本会随新回货和费用变化。"}
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "公司",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "flow_order_no",
+   "fieldtype": "Data",
+   "label": "流程单号",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "external_order_no",
+   "fieldtype": "Data",
+   "label": "外部采购/订单号",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "label": "销售订单",
+   "options": "Sales Order"
+  },
+  {
+   "fieldname": "subcontracting_order",
+   "fieldtype": "Link",
+   "label": "委外订单",
+   "options": "Subcontracting Order"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "商品编码",
+   "options": "Item",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "planned_qty",
+   "fieldtype": "Float",
+   "label": "订单数量",
+   "reqd": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "costs_section",
+   "fieldtype": "Section Break",
+   "label": "费用"
+  },
+  {
+   "fieldname": "material_amount",
+   "fieldtype": "Currency",
+   "label": "材料费",
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "processing_amount",
+   "fieldtype": "Currency",
+   "label": "基础加工费",
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "other_amount",
+   "fieldtype": "Currency",
+   "label": "其他费用",
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "batches_section",
+   "fieldtype": "Section Break",
+   "label": "分批回货与返工"
+  },
+  {
+   "fieldname": "batches",
+   "fieldtype": "Table",
+   "label": "回货记录",
+   "options": "Jifeng Cost Batch"
+  },
+  {
+   "fieldname": "result_section",
+   "fieldtype": "Section Break",
+   "label": "试算结果"
+  },
+  {
+   "fieldname": "good_qty",
+   "fieldtype": "Float",
+   "label": "已确认合格",
+   "read_only": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "rework_open_qty",
+   "fieldtype": "Float",
+   "label": "待返工",
+   "read_only": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "lost_qty",
+   "fieldtype": "Float",
+   "label": "已确认损耗",
+   "read_only": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "unreceived_qty",
+   "fieldtype": "Float",
+   "label": "未首次回货",
+   "read_only": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "total_cost",
+   "fieldtype": "Currency",
+   "label": "归集费用",
+   "read_only": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "estimated_unit_cost",
+   "fieldtype": "Float",
+   "label": "预计合格品单位成本",
+   "precision": "4",
+   "read_only": 1
+  },
+  {
+   "fieldname": "unallocated_cost",
+   "fieldtype": "Currency",
+   "label": "尚未分摊金额",
+   "read_only": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "is_complete",
+   "fieldtype": "Check",
+   "label": "数量已结清",
+   "read_only": 1
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "说明",
+   "read_only": 1,
+   "default": "仅作费用试算，不创建库存、会计或委外收货凭证。未结清前单位成本会随新回货和费用变化。"
+  },
+  {
+   "fieldname": "flow_order",
+   "fieldtype": "Link",
+   "label": "关联流程单",
+   "options": "Jifeng Flow Order"
+  },
+  {
+   "fieldname": "pending_qty",
+   "fieldtype": "Float",
+   "label": "待检数量",
+   "read_only": 1,
+   "precision": "6"
+  }
  ],
  "permissions": [
-  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "print": 1, "email": 1, "export": 1, "report": 1},
-  {"role": "Stock Manager", "read": 1, "write": 1, "create": 1, "print": 1, "export": 1, "report": 1},
-  {"role": "Manufacturing Manager", "read": 1, "write": 1, "create": 1, "print": 1, "export": 1, "report": 1}
- ]
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "report": 1
+  },
+  {
+   "role": "Stock Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "print": 1,
+   "export": 1,
+   "report": 1
+  },
+  {
+   "role": "Manufacturing Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "print": 1,
+   "export": 1,
+   "report": 1
+  }
+ ],
+ "track_changes": 1
 }

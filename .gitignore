@@ -4,3 +4,8 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 dist/
+.env
+.env.*
+site_config.json
+*.pem
+*.key

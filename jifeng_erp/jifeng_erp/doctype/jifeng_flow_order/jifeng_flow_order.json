@@ -1,0 +1,224 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Flow Order",
+ "module": "Jifeng ERP",
+ "track_changes": 1,
+ "editable_grid": 1,
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Stock Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "report": 1,
+   "print": 1
+  },
+  {
+   "role": "Manufacturing Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "report": 1,
+   "print": 1
+  }
+ ],
+ "autoname": "format:JF-FLOW-{YYYY}-{#####}",
+ "fields": [
+  {
+   "fieldname": "source_key",
+   "fieldtype": "Data",
+   "label": "来源唯一标识",
+   "unique": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "external_order",
+   "fieldtype": "Link",
+   "label": "来源订单",
+   "options": "Jifeng External Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "external_line_id",
+   "fieldtype": "Data",
+   "label": "来源明细号",
+   "read_only": 1
+  },
+  {
+   "fieldname": "online_order_id",
+   "fieldtype": "Data",
+   "label": "外部订单号",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "公司",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "商品编码",
+   "options": "Item",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "image",
+   "fieldtype": "Attach Image",
+   "label": "商品图片",
+   "fetch_from": "item_code.image",
+   "read_only": 1
+  },
+  {
+   "fieldname": "profile",
+   "fieldtype": "Link",
+   "label": "商品工艺档案",
+   "options": "Jifeng Product Profile"
+  },
+  {
+   "fieldname": "planned_qty",
+   "fieldtype": "Float",
+   "label": "计划数量",
+   "reqd": 1,
+   "in_list_view": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "source_qty",
+   "fieldtype": "Float",
+   "label": "源订单数量",
+   "read_only": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "source_status",
+   "fieldtype": "Data",
+   "label": "源订单状态",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_changed",
+   "fieldtype": "Check",
+   "label": "源单变更待确认",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_change_note",
+   "fieldtype": "Small Text",
+   "label": "源单变更说明",
+   "read_only": 1
+  },
+  {
+   "fieldname": "requirements",
+   "fieldtype": "Text",
+   "label": "本单定制要求"
+  },
+  {
+   "fieldname": "packaging",
+   "fieldtype": "Text",
+   "label": "本单包装要求"
+  },
+  {
+   "fieldname": "requirements_attachment",
+   "fieldtype": "Attach",
+   "label": "要求附件"
+  },
+  {
+   "fieldname": "materials",
+   "fieldtype": "Table",
+   "label": "本单物料分析",
+   "options": "Jifeng Material Line"
+  },
+  {
+   "fieldname": "operations",
+   "fieldtype": "Table",
+   "label": "本单工序及费用",
+   "options": "Jifeng Operation Line"
+  },
+  {
+   "fieldname": "material_amount",
+   "fieldtype": "Currency",
+   "label": "预计材料费",
+   "read_only": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "processing_amount",
+   "fieldtype": "Currency",
+   "label": "预计加工费",
+   "read_only": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "material_request",
+   "fieldtype": "Link",
+   "label": "采购申请",
+   "options": "Material Request",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cost_preview",
+   "fieldtype": "Link",
+   "label": "成本试算单",
+   "options": "Jifeng Cost Preview",
+   "read_only": 1
+  },
+  {
+   "fieldname": "supplier_product_code",
+   "fieldtype": "Data",
+   "label": "供应商商品编码"
+  },
+  {
+   "fieldname": "specification",
+   "fieldtype": "Small Text",
+   "label": "规格"
+  },
+  {
+   "fieldname": "target_warehouse",
+   "fieldtype": "Link",
+   "label": "采购入库仓库",
+   "options": "Warehouse"
+  }
+ ],
+ "field_order": [
+  "source_key",
+  "external_order",
+  "external_line_id",
+  "online_order_id",
+  "company",
+  "item_code",
+  "image",
+  "profile",
+  "planned_qty",
+  "source_qty",
+  "source_status",
+  "source_changed",
+  "source_change_note",
+  "requirements",
+  "packaging",
+  "requirements_attachment",
+  "materials",
+  "operations",
+  "material_amount",
+  "processing_amount",
+  "target_warehouse",
+  "material_request",
+  "cost_preview",
+  "supplier_product_code",
+  "specification"
+ ]
+}

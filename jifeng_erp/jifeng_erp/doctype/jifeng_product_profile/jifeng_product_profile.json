@@ -1,0 +1,145 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Product Profile",
+ "module": "Jifeng ERP",
+ "track_changes": 1,
+ "editable_grid": 1,
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Stock Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "report": 1,
+   "print": 1
+  },
+  {
+   "role": "Manufacturing Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "report": 1,
+   "print": 1
+  }
+ ],
+ "autoname": "field:item_code",
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "商品编码",
+   "options": "Item",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "image",
+   "fieldtype": "Attach Image",
+   "label": "商品图片",
+   "fetch_from": "item_code.image",
+   "read_only": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "公司",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "label": "标准物料清单",
+   "options": "BOM"
+  },
+  {
+   "fieldname": "supplier_product_code",
+   "fieldtype": "Data",
+   "label": "供应商商品编码",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "供应商",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "material",
+   "fieldtype": "Data",
+   "label": "材质"
+  },
+  {
+   "fieldname": "specification",
+   "fieldtype": "Small Text",
+   "label": "规格"
+  },
+  {
+   "fieldname": "requirements",
+   "fieldtype": "Text",
+   "label": "默认定制/工艺要求"
+  },
+  {
+   "fieldname": "packaging",
+   "fieldtype": "Text",
+   "label": "默认包装要求"
+  },
+  {
+   "fieldname": "materials",
+   "fieldtype": "Table",
+   "label": "物料分析",
+   "options": "Jifeng Material Line"
+  },
+  {
+   "fieldname": "operations",
+   "fieldtype": "Table",
+   "label": "工序顺序与加工费",
+   "options": "Jifeng Operation Line"
+  },
+  {
+   "fieldname": "material_unit_cost",
+   "fieldtype": "Currency",
+   "label": "单件材料费",
+   "read_only": 1,
+   "options": "Company:company:default_currency",
+   "precision": "6"
+  },
+  {
+   "fieldname": "processing_unit_cost",
+   "fieldtype": "Currency",
+   "label": "单件加工费",
+   "read_only": 1,
+   "options": "Company:company:default_currency",
+   "precision": "6"
+  }
+ ],
+ "field_order": [
+  "item_code",
+  "image",
+  "company",
+  "bom",
+  "supplier_product_code",
+  "supplier",
+  "material",
+  "specification",
+  "requirements",
+  "packaging",
+  "materials",
+  "operations",
+  "material_unit_cost",
+  "processing_unit_cost"
+ ],
+ "search_fields": "item_code,supplier_product_code,specification",
+ "allow_import": 1
+}

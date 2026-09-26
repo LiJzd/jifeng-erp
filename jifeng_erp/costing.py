@@ -47,7 +47,7 @@ def calculate(planned_qty, material_amount, processing_amount, other_amount, bat
 
     for index, raw in enumerate(batches, 1):
         kind = raw.get("receipt_type")
-        if kind not in ("首次回货", "返工回货"):
+        if kind not in ("首次回货", "返工回货", "待检处理"):
             raise CostingError(f"第 {index} 行回货类型无效")
         qty = number(raw.get("received_qty"), f"第 {index} 行回货数量")
         good = number(raw.get("good_qty"), f"第 {index} 行合格数量")
@@ -64,10 +64,14 @@ def calculate(planned_qty, material_amount, processing_amount, other_amount, bat
             initial_total += qty
             if initial_total > planned:
                 raise CostingError("首次回货累计数量不能超过订单数量")
-        else:
+        elif kind == "返工回货":
             if qty > rework_open:
                 raise CostingError(f"第 {index} 行返工回货超过待返工数量")
             rework_open -= qty
+        else:
+            if qty > pending_total:
+                raise CostingError(f"第 {index} 行待检处理超过待检数量")
+            pending_total -= qty
 
         rework_open += rework
         good_total += good

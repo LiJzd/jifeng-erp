@@ -1,0 +1,200 @@
+{
+ "doctype": "DocType",
+ "name": "Jushuitan Settings",
+ "module": "Jifeng ERP",
+ "track_changes": 1,
+ "editable_grid": 1,
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  }
+ ],
+ "issingle": 1,
+ "fields": [
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "启用"
+  },
+  {
+   "fieldname": "automatic_sync",
+   "fieldtype": "Check",
+   "label": "每15分钟自动同步"
+  },
+  {
+   "fieldname": "environment",
+   "fieldtype": "Select",
+   "label": "接口环境",
+   "options": "测试\n正式",
+   "default": "测试",
+   "reqd": 1
+  },
+  {
+   "fieldname": "app_key",
+   "fieldtype": "Data",
+   "label": "App Key"
+  },
+  {
+   "fieldname": "app_secret",
+   "fieldtype": "Password",
+   "label": "App Secret"
+  },
+  {
+   "fieldname": "access_token",
+   "fieldtype": "Password",
+   "label": "Access Token"
+  },
+  {
+   "fieldname": "refresh_token",
+   "fieldtype": "Password",
+   "label": "Refresh Token"
+  },
+  {
+   "fieldname": "token_expires_at",
+   "fieldtype": "Datetime",
+   "label": "授权到期时间"
+  },
+  {
+   "fieldname": "merchant_id",
+   "fieldtype": "Data",
+   "label": "聚水潭商家编号 co_id"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "公司",
+   "options": "Company"
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "label": "新商品默认分类",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "label": "新商品默认库存单位",
+   "options": "UOM"
+  },
+  {
+   "fieldname": "auto_create_flows",
+   "fieldtype": "Check",
+   "label": "自动生成流程单"
+  },
+  {
+   "fieldname": "flow_statuses",
+   "fieldtype": "Small Text",
+   "label": "允许生成流程单的订单状态",
+   "default": "WaitConfirm\nWaitFConfirm\nDelivering",
+   "description": "每行一个聚水潭状态；取消、合并和拆分的源单不生成新流程单。"
+  },
+  {
+   "fieldname": "image_hosts",
+   "fieldtype": "Small Text",
+   "label": "图片归档允许域名",
+   "description": "每行一个精确域名。仅从这些域名下载图片；未设置时保留图片链接。"
+  },
+  {
+   "fieldname": "sku_begin",
+   "fieldtype": "Datetime",
+   "label": "商品首次同步起点",
+   "description": "用于全量商品初始化，可填历史起始时间；每轮分段推进。"
+  },
+  {
+   "fieldname": "sync_scope",
+   "fieldtype": "Data",
+   "label": "当前同步范围",
+   "read_only": 1
+  },
+  {
+   "fieldname": "order_cursor",
+   "fieldtype": "Data",
+   "label": "订单变更游标",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sku_watermark",
+   "fieldtype": "Datetime",
+   "label": "商品同步进度",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_pages",
+   "fieldtype": "Int",
+   "label": "每轮最多请求页数",
+   "default": "20"
+  },
+  {
+   "fieldname": "last_result",
+   "fieldtype": "Small Text",
+   "label": "最近同步结果",
+   "read_only": 1
+  },
+  {
+   "fieldname": "app_type",
+   "fieldtype": "Select",
+   "label": "应用类型",
+   "options": "\n自有商城\n服务商"
+  },
+  {
+   "fieldname": "sku_page",
+   "fieldtype": "Int",
+   "label": "商品待同步页",
+   "read_only": 1,
+   "default": "1"
+  },
+  {
+   "fieldname": "sku_window_end",
+   "fieldtype": "Datetime",
+   "label": "当前商品窗口结束时间",
+   "read_only": 1
+  },
+  {
+   "fieldname": "channel_note",
+   "fieldtype": "HTML",
+   "options": "普通订单接口不覆盖淘系、拼多多的完整订单通道。请按已授权平台验证覆盖范围。商品时间窗口使用北京时间。"
+  },
+  {
+   "fieldname": "sku_window_begin",
+   "fieldtype": "Datetime",
+   "label": "当前商品窗口开始时间",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "enabled",
+  "automatic_sync",
+  "environment",
+  "app_key",
+  "app_secret",
+  "access_token",
+  "refresh_token",
+  "token_expires_at",
+  "merchant_id",
+  "company",
+  "item_group",
+  "stock_uom",
+  "auto_create_flows",
+  "flow_statuses",
+  "image_hosts",
+  "sku_begin",
+  "sync_scope",
+  "order_cursor",
+  "sku_watermark",
+  "max_pages",
+  "last_result",
+  "app_type",
+  "sku_page",
+  "sku_window_end",
+  "channel_note",
+  "sku_window_begin"
+ ]
+}

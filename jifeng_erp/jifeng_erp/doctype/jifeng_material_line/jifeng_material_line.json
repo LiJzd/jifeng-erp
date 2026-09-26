@@ -1,0 +1,67 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Material Line",
+ "module": "Jifeng ERP",
+ "track_changes": 0,
+ "editable_grid": 1,
+ "permissions": [],
+ "istable": 1,
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "物料编码",
+   "options": "Item",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "名称",
+   "fetch_from": "item_code.item_name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "单位",
+   "options": "UOM"
+  },
+  {
+   "fieldname": "qty_per_unit",
+   "fieldtype": "Float",
+   "label": "单件用量",
+   "reqd": 1,
+   "in_list_view": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "unit_price",
+   "fieldtype": "Currency",
+   "label": "物料单价",
+   "in_list_view": 1,
+   "precision": "6"
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "供应商",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "说明"
+  }
+ ],
+ "field_order": [
+  "item_code",
+  "item_name",
+  "uom",
+  "qty_per_unit",
+  "unit_price",
+  "supplier",
+  "note"
+ ]
+}
