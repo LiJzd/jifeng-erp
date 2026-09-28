@@ -141,6 +141,10 @@ class JifengLegacyWorkspace {
 		this.dateTo = "";
 		this.onlyDate = false;
 		this.approvalFilter = "未审";
+		this.planStatus = "生产中";
+		this.deliveryFilter = false;
+		this.moldView = "列表模式";
+		this.moldPreview = true;
 		this.pageNo = 1;
 		this.pageSize = 15;
 		this.editing = null;
@@ -177,9 +181,11 @@ class JifengLegacyWorkspace {
 		this.pageNo = 1;
 		if (["操作日志", "销售单查询", "收款凭证", "付款凭证", "费用登记"].includes(name)) {
 			const today = this.today();
-			this.dateFrom = today;
-			this.dateTo = today;
+			this.dateFrom = name === "操作日志" ? today + "T00:00" : today;
+			this.dateTo = name === "操作日志" ? today + "T23:59" : today;
 		}
+		if (name === "计划图片") { this.planStatus = "生产中"; this.deliveryFilter = false; }
+		if (name === "模具录入") { this.moldView = "列表模式"; this.moldPreview = true; }
 		this.addTab({
 			key: "page:" + moduleName + ":" + name,
 			title: name,
@@ -335,43 +341,65 @@ class JifengLegacyWorkspace {
 	}
 
 	renderList(moduleName, pageName) {
-		const rows = this.getRows(pageName);
+		const rows = this.getRows(pageName, moduleName);
 		const keyword = this.search.trim().toLowerCase();
 		const isVoucher = ["收款凭证", "付款凭证", "费用登记"].includes(pageName);
+		const isLog = pageName === "操作日志";
+		const isPlanImage = pageName === "计划图片";
+		const isMold = pageName === "模具录入";
 		const filtered = rows.filter((row) => {
 			const textMatch = !keyword || Object.values(row).join(" ").toLowerCase().includes(keyword);
-			const date = String(row.date || "");
+			let date = String(row.timestamp || row.date || row.time || "").replace(" ", "T");
+			if (isLog && date.length === 10) date += "T12:00";
 			const rangeMatch = (!this.dateFrom || !date || date >= this.dateFrom) && (!this.dateTo || !date || date <= this.dateTo);
 			const exactMatch = !this.onlyDate || !this.dateFrom || date === this.dateFrom;
 			const status = ["草稿", "未审核", "未审"].includes(row._status) ? "未审" : row._status === "已审核" || row._status === "已审" ? "已审" : row._status;
 			const statusMatch = !isVoucher || this.approvalFilter === "全部" || !status || status === this.approvalFilter;
-			return textMatch && rangeMatch && exactMatch && statusMatch;
+			const planState = row.plan_status || row.production_status || row.status || "";
+			const planStatus = !isPlanImage || this.planStatus === "全部" || !planState || planState === this.planStatus;
+			const deliveryMatch = !isPlanImage || !this.deliveryFilter || Boolean(row.delivery_date || row.delivery || row.deadline);
+			return textMatch && rangeMatch && exactMatch && statusMatch && planStatus && deliveryMatch;
 		});
 		const start = (this.pageNo - 1) * this.pageSize;
 		const pageRows = filtered.slice(start, start + this.pageSize);
 		const columns = this.columnsFor(moduleName, pageName);
 		if (pageName.includes("反审") && !columns.includes("审核选择框")) columns.unshift("审核选择框");
 		const toolbar = this.toolbarFor(moduleName, pageName);
-		const filters = '<div class="jfe-filter-row"><label>开始日期<input type="date" data-filter="from" value="' + this.esc(this.dateFrom) + '"></label><label>结束日期<input type="date" data-filter="to" value="' + this.esc(this.dateTo) + '"></label>' +
-			'<label class="jfe-keyword">关键词<input type="search" data-search value="' + this.esc(this.search) + '" placeholder="单号、名称、客户、备注"></label>' +
-			'<label class="jfe-check"><input type="checkbox" data-only-date ' + (this.onlyDate ? "checked" : "") + '> 指定日期</label><button class="jfe-button primary" data-action="query">查询</button>' +
-			'<button class="jfe-button" data-action="format">格式1</button><button class="jfe-button" data-action="print-preview">打印</button>' +
-			'<button class="jfe-icon-btn small" data-action="more" title="更多">⚙</button></div>';
+		const dateType = isLog ? "datetime-local" : "date";
+		let filters = '<div class="jfe-filter-row">';
+		if (!isMold) filters += '<label>' + (isLog ? "开始时间" : "开始日期") + '<input type="' + dateType + '" data-filter="from" value="' + this.esc(this.dateFrom) + '"></label><label>' + (isLog ? "结束时间" : "结束日期") + '<input type="' + dateType + '" data-filter="to" value="' + this.esc(this.dateTo) + '"></label>';
+		filters += '<label class="jfe-keyword">关键词<input type="search" data-search value="' + this.esc(this.search) + '" placeholder="单号、名称、客户、备注"></label>';
+		if (isPlanImage) filters += '<label class="jfe-check"><input type="checkbox" data-delivery-filter ' + (this.deliveryFilter ? "checked" : "") + '> 交期</label>';
+		else if (!isLog && !isMold) filters += '<label class="jfe-check"><input type="checkbox" data-only-date ' + (this.onlyDate ? "checked" : "") + '> 指定日期</label>';
+		filters += '<button class="jfe-button primary" data-action="query">查询</button>';
+		if (!isLog && !isPlanImage && !isMold) filters += '<button class="jfe-button" data-action="format">格式1</button><button class="jfe-button" data-action="print-preview">打印</button><button class="jfe-icon-btn small" data-action="more" title="更多">⚙</button>';
+		filters += '</div>';
 		const statusFilters = isVoucher ? '<div class="jfe-status-filter"><label><input type="radio" name="approval-filter" data-approval-filter value="全部" ' + (this.approvalFilter === "全部" ? "checked" : "") + '> 全部</label><label><input type="radio" name="approval-filter" data-approval-filter value="已审" ' + (this.approvalFilter === "已审" ? "checked" : "") + '> 已审</label><label><input type="radio" name="approval-filter" data-approval-filter value="未审" ' + (this.approvalFilter === "未审" ? "checked" : "") + '> 未审</label></div>' : "";
-		const extra = pageName === "操作日志" ? '<div class="jfe-log-tip">日志时间范围默认为当天；旧系统日志数据未复制，本地预览未连接生产日志服务。</div>' : "";
+		const planStatusFilters = isPlanImage ? '<div class="jfe-status-filter jfe-plan-status">' + ["未投产", "生产中", "已完成"].map((item) => '<label><input type="radio" name="plan-status" data-plan-status value="' + item + '" ' + (this.planStatus === item ? "checked" : "") + '> ' + item + '</label>').join("") + '<label><input type="radio" name="plan-status" data-plan-status value="全部" ' + (this.planStatus === "全部" ? "checked" : "") + '> 所有</label></div>' : "";
+		const moldModes = isMold ? '<div class="jfe-mold-tabs">' + ["列表模式", "图片模式", "列表图文"].map((item) => '<button type="button" class="jfe-button ' + (this.moldView === item ? "primary" : "") + '" data-action="mold-view" data-view="' + item + '">' + item + '</button>').join("") + '<label><input type="checkbox" data-mold-preview ' + (this.moldPreview ? "checked" : "") + '> 预览</label></div>' : "";
+		const extra = isLog ? '<div class="jfe-log-tip">可按操作时间、操作人、模块或操作内容筛选；旧系统日志数据未复制，本地预览未连接生产日志服务。</div>' : "";
+		const moldGallery = isMold && (this.moldView !== "列表模式" || this.moldPreview) ? this.renderMoldGallery(pageRows) : "";
+		const showMoldTable = !isMold || this.moldView !== "图片模式";
+		const tableHtml = '<div class="jfe-table-wrap"><table class="jfe-table"><thead><tr>' + columns.map((column) => "<th>" + this.esc(column) + "</th>").join("") +
+			'</tr></thead><tbody>' + (pageRows.length ? pageRows.map((row) => this.renderRow(row, columns, pageName)).join("") : '<tr><td colspan="' + columns.length + '" class="jfe-empty">暂无数据</td></tr>') + '</tbody></table></div>';
+		const pagerHtml = '<div class="jfe-list-bottom"><span>共 ' + filtered.length + ' 条</span><div class="jfe-pager"><button data-action="prev-page" ' + (this.pageNo <= 1 ? "disabled" : "") + '>‹</button><span>' + this.pageNo + '</span><button data-action="next-page" ' + (start + this.pageSize >= filtered.length ? "disabled" : "") + '>›</button><select><option value="15" ' + (this.pageSize === 15 ? "selected" : "") + '>15</option><option value="30" ' + (this.pageSize === 30 ? "selected" : "") + '>30</option><option value="50" ' + (this.pageSize === 50 ? "selected" : "") + '>50</option></select></div></div>';
 		return '<section class="jfe-list"><div class="jfe-list-heading"><div><p>' + this.esc(moduleName) + " / 业务页面</p><h1>" + this.esc(pageName) + '</h1></div>' +
 			'<span class="jfe-local-badge">本地交互预览</span></div><div class="jfe-toolbar">' + toolbar + "</div>" +
-			filters + statusFilters + extra +
-			'<div class="jfe-table-wrap"><table class="jfe-table"><thead><tr>' + columns.map((column) => "<th>" + this.esc(column) + "</th>").join("") +
-			"</tr></thead><tbody>" + (pageRows.length ? pageRows.map((row) => this.renderRow(row, columns, pageName)).join("") :
-				'<tr><td colspan="' + columns.length + '" class="jfe-empty">暂无数据</td></tr>') + "</tbody></table></div>" +
-			'<div class="jfe-list-bottom"><span>共 ' + filtered.length + " 条</span><div class=\"jfe-pager\"><button data-action=\"prev-page\" " + (this.pageNo <= 1 ? "disabled" : "") + ">‹</button><span>" + this.pageNo + "</span><button data-action=\"next-page\" " + (start + this.pageSize >= filtered.length ? "disabled" : "") + ">›</button><select><option value=\"15\" " + (this.pageSize === 15 ? "selected" : "") + ">15</option><option value=\"30\" " + (this.pageSize === 30 ? "selected" : "") + ">30</option><option value=\"50\" " + (this.pageSize === 50 ? "selected" : "") + ">50</option></select></div></div>' +
+			filters + statusFilters + planStatusFilters + moldModes + extra + moldGallery +
+			(showMoldTable ? tableHtml + pagerHtml : moldGallery ? '<div class="jfe-list-bottom">共 ' + filtered.length + ' 条</div>' : "") +
 			(this.isSalesReport(pageName) ? this.renderSalesTotals() : "") +
 			'<div class="jfe-list-footnote">页面交互在当前浏览器本地保存，不会创建或修改 ERPNext 业务凭证。</div></section>';
 	}
 
+	renderMoldGallery(rows) {
+		return '<div class="jfe-mold-gallery">' + (rows.length ? rows.map((row) => '<article class="jfe-mold-card"><div class="jfe-mold-thumb">' + (this.moldPreview && row.image ? '<span>' + this.esc(row.image) + '</span>' : '<span>图片预览</span>') + '</div><b>' + this.esc(row.mold_number || row.number || row.code || "未填写模具号") + '</b><span>产品号：' + this.esc(row.product_number || row.product || "") + '</span><span>库位：' + this.esc(row.location || "") + '</span><button type="button" class="jfe-button small" data-action="edit-row" data-id="' + this.esc(row._id) + '">查看 / 修改</button></article>').join("") : '<div class="jfe-empty">暂无模具图片</div>') + '</div>';
+	}
+
 	toolbarFor(moduleName, pageName) {
-		if (pageName === "操作日志") return '<button class="jfe-button" data-action="query">查询</button><button class="jfe-button" data-action="refresh">更新日志</button><button class="jfe-button" data-action="export">导出</button>';
+		if (pageName === "操作日志") return '<button class="jfe-button" data-action="refresh">更新日志</button><button class="jfe-button" data-action="export">导出</button>';
+		if (pageName === "计划图片") return '<button class="jfe-button" data-action="all-plans">所有</button><button class="jfe-button" data-action="format">格式1</button><button class="jfe-button" data-action="print-preview">打总单</button><button class="jfe-button" data-action="print-preview">打流程</button><button class="jfe-button" data-action="print-preview">打明细</button><button class="jfe-button" data-action="export">导出</button>';
+		if (pageName === "模具录入") return '<button class="jfe-button primary" data-action="new">新增</button><button class="jfe-button" data-action="export">导出</button><button class="jfe-button" data-action="import">导入</button><button class="jfe-button" data-action="format">格式1</button><button class="jfe-button" data-action="print-preview">打印</button>';
+		if (pageName === "报价单") return '<button class="jfe-button primary" data-action="new">新增</button><button class="jfe-button" data-action="export">导出</button>';
 		if (pageName === "物料类别") return '<button class="jfe-button" data-action="export">导出</button><button class="jfe-button" data-action="import">导入</button><button class="jfe-button primary" data-action="save-grid">保存</button><button class="jfe-button" data-action="pinyin">更新简拼</button>';
 		if (["收款凭证", "付款凭证", "费用登记"].includes(pageName)) return '<button class="jfe-button primary" data-action="new">新增</button><button class="jfe-button" data-action="review">审核</button><button class="jfe-button" data-action="export">导出</button>';
 		if (pageName === "生产指令单" || pageName === "前台开单") return '<button class="jfe-button primary" data-action="new">新增</button><button class="jfe-button" data-action="export">导出</button>';
@@ -420,21 +448,28 @@ class JifengLegacyWorkspace {
 		const pageName = active.page;
 		const fields = this.fieldsFor(active.module, pageName);
 		const detailCols = this.detailColumns(pageName);
+		const detailHasDeleteColumn = detailCols.includes("删除");
 		const detailRows = record && record._details && record._details.length ? record._details : [this.emptyDetail()];
 		const fieldsHtml = fields.map((field) => this.renderField(field, record)).join("");
 		const detailHtml = detailCols.length ? '<section class="jfe-detail"><header><b>明细</b><button type="button" class="jfe-button small" data-action="add-detail">新增明细</button></header><div class="jfe-table-wrap"><table class="jfe-table jfe-detail-table"><thead><tr>' +
-			detailCols.map((col) => "<th>" + this.esc(col) + "</th>").join("") + "<th>操作</th></tr></thead><tbody>" +
-			detailRows.map((detail) => '<tr>' + detailCols.map((col, index) => '<td><input data-detail="' + this.esc(col) + '" value="' + this.esc(detail[col] || "") + '" placeholder="' + this.esc(col) + '"></td>').join("") +
-				'<td><button type="button" data-action="remove-detail">删除</button></td></tr>').join("") + "</tbody></table></div></section>" : "";
+			detailCols.map((col) => "<th>" + this.esc(col) + "</th>").join("") + (detailHasDeleteColumn ? "" : "<th>操作</th>") + "</tr></thead><tbody>" +
+			detailRows.map((detail) => '<tr>' + detailCols.map((col) => col === "删除" ? '<td><button type="button" data-action="remove-detail">删除</button></td>' : '<td><input data-detail="' + this.esc(col) + '" value="' + this.esc(detail[col] || "") + '" placeholder="' + this.esc(col) + '"></td>').join("") +
+				(detailHasDeleteColumn ? "" : '<td><button type="button" data-action="remove-detail">删除</button></td>') + "</tr>").join("") + "</tbody></table></div></section>" : "";
 		const salesActions = pageName === "前台开单" ?
 			'<section class="jfe-sales-entry"><div class="jfe-scan-row"><label>扫码录入<input name="scan_code" placeholder="条码 / 数量"></label><button type="button" class="jfe-button primary" data-action="sales-add">新增</button><button type="button" class="jfe-button" data-action="sales-return">退货</button><button type="button" class="jfe-button" data-action="discount">折扣</button><button type="button" class="jfe-button" data-action="collect">收款</button></div><div class="jfe-sales-options"><label><input type="checkbox"> 默认</label><label><input type="checkbox"> 累加</label><label><input type="checkbox"> 退货</label><label><input type="checkbox"> 零售</label><label><input type="checkbox"> 跟踪价</label><label><input type="checkbox"> 按单</label><label><input type="checkbox"> 预览</label><button type="button" class="jfe-button" data-action="hold">暂存</button><button type="button" class="jfe-button" data-action="restore">恢复</button><button type="button" class="jfe-button" data-action="format">格式1</button><button type="button" class="jfe-button" data-action="print-preview">打印</button><button type="button" class="jfe-button primary" data-action="review-form">审核</button></div></section>' : "";
 		const editorExtra = this.editorExtra(active.module, pageName);
-		const editorExtraTop = pageName === "前台开单" ? editorExtra : "";
-		const editorExtraBottom = pageName === "前台开单" ? "" : editorExtra;
+		const extraAboveDetails = pageName === "前台开单" || (active.module === "销售" && pageName === "销售入库") || (active.module === "外发" && pageName === "外发加工");
+		const editorExtraTop = extraAboveDetails ? editorExtra : "";
+		const editorExtraBottom = extraAboveDetails ? "" : editorExtra;
 		const editorActions = pageName === "前台开单" ?
 			'<button type="button" class="jfe-button" data-action="customer">客户档案</button><button type="button" class="jfe-button danger" data-action="delete-current">删除单据</button><button type="button" class="jfe-button" data-action="change-customer">修改客户</button><button type="button" class="jfe-button" data-action="stock-in">调入库</button><button type="button" class="jfe-button" data-action="load-transfer">调调拨</button><button type="button" class="jfe-button" data-action="load-history">调历史</button><button type="button" class="jfe-button" data-action="more">⚙</button>' :
+			active.module === "模具" && pageName === "模具录入" ? '<button type="button" class="jfe-button" data-action="new">新增</button><button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="close-modal">关闭</button>' :
+			active.module === "产品" && pageName === "报价单" ? '<button type="button" class="jfe-button" data-action="new">新增</button><button type="button" class="jfe-button danger" data-action="delete-current">删除</button><button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="review-form">审核</button><button type="button" class="jfe-button" data-action="format">格式1</button><button type="button" class="jfe-button" data-action="print-preview">打印</button>' :
 			pageName === "订单录入" ? '<button type="button" class="jfe-button" data-action="new">新增</button><button type="button" class="jfe-button danger" data-action="delete-current">删除</button><button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="load-history">调历史</button><button type="button" class="jfe-button" data-action="format">格式1</button><button type="button" class="jfe-button" data-action="print-preview">打总单</button><button type="button" class="jfe-button" data-action="print-preview">打流程单</button><button type="button" class="jfe-button" data-action="review-form">审核</button><button type="button" class="jfe-button" data-action="more">⚙</button><button type="button" class="jfe-button" disabled>行高</button>' :
 			["物料", "材料"].includes(active.module) && pageName === "入库" ? '<button type="button" class="jfe-button" data-action="new">新增</button><button type="button" class="jfe-button danger" data-action="delete-current">删除</button><button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="review-form">审核</button><button type="button" class="jfe-button" data-action="calculate">调算料</button><button type="button" class="jfe-button" data-action="purchase">调申购</button><button type="button" class="jfe-button" data-action="format">格式1</button><button type="button" class="jfe-button" data-action="print-preview">打印</button><button type="button" class="jfe-button" data-action="more">⚙</button>' :
+			["物料", "材料"].includes(active.module) && pageName === "申购" ? '<button type="button" class="jfe-button" data-action="new">新增</button><button type="button" class="jfe-button danger" data-action="delete-current">删除</button><button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="review-form">审核</button><button type="button" class="jfe-button" data-action="format">格式1</button><button type="button" class="jfe-button" data-action="print-preview">打印</button>' :
+			active.module === "销售" && pageName === "销售入库" ? '<button type="button" class="jfe-button" data-action="new">新增</button><button type="button" class="jfe-button danger" data-action="delete-current">删除</button><button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="stockin-add">条码 / 输入</button><button type="button" class="jfe-button" data-action="review-form">审核</button><button type="button" class="jfe-button" data-action="format">格式1</button><button type="button" class="jfe-button" data-action="print-preview">打印</button><button type="button" class="jfe-button" data-action="load-pos">调前台</button><button type="button" class="jfe-button" data-action="load-transfer">调调拨</button><button type="button" class="jfe-button" data-action="more">⚙</button>' :
+			active.module === "外发" && pageName === "外发加工" ? '<button type="button" class="jfe-button" data-action="new">新增</button><button type="button" class="jfe-button danger" data-action="delete-current">删除</button><button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="load-order">调订单</button><button type="button" class="jfe-button" data-action="format">格式1</button><button type="button" class="jfe-button" data-action="print-preview">打印</button><button type="button" class="jfe-button" data-action="review-form">审核</button>' :
 			["收款凭证", "付款凭证", "费用登记"].includes(pageName) ? '<button type="button" class="jfe-button" data-action="new">新增</button><button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="close-modal">关闭</button>' :
 			'<button type="button" class="jfe-button primary" data-action="save-form">保存</button><button type="button" class="jfe-button" data-action="schedule">调计划</button><button type="button" class="jfe-button" data-action="review-form">审核</button><button type="button" class="jfe-button" data-action="format">格式1</button><button type="button" class="jfe-button" data-action="print-preview">打印</button>';
 		return '<div class="jfe-modal-backdrop" data-action="backdrop"><section class="jfe-editor" role="dialog" aria-modal="true"><header class="jfe-editor-head"><div><p>' + this.esc(active.module) + "</p><h2>" +
@@ -445,6 +480,40 @@ class JifengLegacyWorkspace {
 	}
 
 	fieldsFor(moduleName, pageName) {
+		if (moduleName === "模具" && pageName === "模具录入") return [
+			{ name: "mold_number", label: "模具号" }, { name: "product_number", label: "产品号" },
+			{ name: "quantity", label: "数量", type: "number", default: "1" },
+			{ name: "molder", label: "压模", type: "select", options: ["", "本人", "其他"] },
+			{ name: "date", label: "日期", type: "date", default: this.today() }, { name: "amount", label: "金额", type: "number" },
+			{ name: "remark", label: "说明", type: "textarea", full: true }, { name: "location", label: "库位" },
+			{ name: "scrapped", label: "报废", type: "checkbox" }, { name: "copy", label: "复制", type: "checkbox" },
+			{ name: "image", label: "图片", type: "file" },
+		];
+		if (moduleName === "产品" && pageName === "报价单") return [
+			{ name: "number", label: "单号" }, { name: "customer", label: "客户", lookup: "客户查找" },
+			{ name: "remark", label: "备注", type: "textarea", full: true },
+			{ name: "method", label: "方式", type: "select", options: ["", "现金", "银行转账", "其他"] },
+			{ name: "discount_rate", label: "折扣", type: "number" }, { name: "quantity", label: "数量", type: "number" },
+			{ name: "weight", label: "重量", type: "number" }, { name: "amount", label: "金额", type: "number" },
+			{ name: "payment", label: "付款", type: "number" }, { name: "discount", label: "优惠", type: "number" },
+			{ name: "arrears", label: "欠款", type: "number" },
+		];
+		if (["物料", "材料"].includes(moduleName) && pageName === "申购") return [
+			{ name: "number", label: "单号" }, { name: "warehouse", label: "仓库", lookup: "仓库词典" },
+			{ name: "brand", label: "品牌" }, { name: "company", label: "公司" }, { name: "contact", label: "联系" },
+			{ name: "buyer", label: "采购" }, { name: "phone", label: "手机" }, { name: "address", label: "地址" },
+			{ name: "quantity", label: "数量", type: "number" }, { name: "weight", label: "重量", type: "number" },
+			{ name: "amount", label: "金额", type: "number" }, { name: "remark", label: "备注", type: "textarea", full: true },
+		];
+		if (moduleName === "销售" && pageName === "销售入库") return [
+			{ name: "number", label: "单号" }, { name: "department", label: "部门" },
+			{ name: "type", label: "类型" }, { name: "customer", label: "客户" },
+			{ name: "status", label: "状态" }, { name: "remark", label: "说明", type: "textarea", full: true },
+			{ name: "method", label: "方式" }, { name: "quantity", label: "数量", type: "number" },
+			{ name: "styles", label: "款数", type: "number" }, { name: "amount", label: "金额", type: "number" },
+			{ name: "payment", label: "付款", type: "number" }, { name: "discount", label: "优惠", type: "number" },
+			{ name: "arrears", label: "欠款", type: "number" },
+		];
 		if (["物料", "材料"].includes(moduleName) && pageName === "入库") return [
 			{ name: "number", label: "单号" }, { name: "warehouse", label: "仓库", lookup: "仓库词典", placeholder: "请点新增" },
 			{ name: "brand", label: "品牌" }, { name: "buyer", label: "采购" }, { name: "delivery_note", label: "货单" },
@@ -505,6 +574,12 @@ class JifengLegacyWorkspace {
 			{ name: "weight", label: "重量", type: "number" }, { name: "amount", label: "金额", type: "number" },
 			{ name: "remark", label: "备注", type: "textarea", full: true },
 		];
+		if (moduleName === "外发" && pageName === "外发加工") return [
+			{ name: "number", label: "单号" }, { name: "name", label: "名称" }, { name: "delivery_date", label: "交期", type: "date" },
+			{ name: "phone", label: "手机" }, { name: "receiver", label: "接货" }, { name: "telephone", label: "电话" },
+			{ name: "phone2", label: "手机" }, { name: "quantity", label: "数量", type: "number" },
+			{ name: "styles", label: "款数", type: "number" }, { name: "amount", label: "金额", type: "number" },
+		];
 		if (pageName === "前台开单") return [
 			{ name: "number", label: "单号" }, { name: "date", label: "日期", type: "date" },
 			{ name: "customer", label: "客户", placeholder: "请点新增后选择客户" }, { name: "department", label: "部门" },
@@ -541,6 +616,11 @@ class JifengLegacyWorkspace {
 		if (pageName === "前台开单") {
 			return '<div class="jfe-pos-summary"><span>数量<b data-pos-total="quantity">0</b></span><span>款数<b data-pos-total="styles">0</b></span><span>折前<b data-pos-total="gross">0.00</b></span><span>金额<b data-pos-total="amount">0.00</b></span><label>运费<input name="freight" type="number" step="0.01" value="0"></label><label>欠款<input name="arrears" type="number" step="0.01" value="0"></label></div>';
 		}
+		if (moduleName === "销售" && pageName === "销售入库") {
+			return '<div class="jfe-inbound-tools"><label>条码 / 输入<input name="barcode_input" placeholder="扫描条码或输入编号"></label><label>数量<input name="quantity_input" type="number" placeholder="数量"></label><label class="jfe-check"><input type="checkbox" name="by_order" value="是"> 按单</label><button type="button" class="jfe-button" data-action="stockin-add">输入</button><span class="jfe-no-image">图片预览</span></div><div class="jfe-stockin-summary"><span>数量<b data-stockin-total="quantity">0</b></span><span>款数<b data-stockin-total="styles">0</b></span><span>金额<b data-stockin-total="amount">0.00</b></span><span>付款<b data-stockin-total="payment">0.00</b></span><span>优惠<b data-stockin-total="discount">0.00</b></span><span>欠款<b data-stockin-total="arrears">0.00</b></span></div>';
+		}
+		if (moduleName === "外发" && pageName === "外发加工") return '<div class="jfe-inbound-tools jfe-outsource-tools"><label>流程单输入<input name="flow_input" placeholder="流程单"></label><label>数量输入<input name="quantity_input" type="number" placeholder="数量"></label><label>工序<select name="operation_input"><option value="">选择工序</option><option>加工</option><option>镶石</option><option>抛光</option></select></label><button type="button" class="jfe-button" data-action="external-add">新增工序</button><span class="jfe-no-image">图片区域</span></div><div class="jfe-stockin-summary"><span>数量<b data-external-total="quantity">0</b></span><span>款数<b data-external-total="styles">0</b></span><span>金额<b data-external-total="amount">0.00</b></span></div>';
+		if (moduleName === "产品" && pageName === "报价单") return '<div class="jfe-stockin-summary"><span>数量<b data-quote-total="quantity">0</b></span><span>重量<b data-quote-total="weight">0</b></span><span>金额<b data-quote-total="amount">0.00</b></span><span>付款<b data-quote-total="payment">0.00</b></span><span>优惠<b data-quote-total="discount">0.00</b></span><span>欠款<b data-quote-total="arrears">0.00</b></span></div>';
 		if (["物料", "材料"].includes(moduleName) && pageName === "入库") {
 			return '<div class="jfe-inbound-tools"><label>明细输入<input name="detail_input" placeholder="请输入"></label><label>数量<input name="quantity_input" type="number" placeholder="数量"></label><button type="button" class="jfe-button" data-action="inbound-add">扫码 / 增加明细</button><span class="jfe-no-image">暂无图片</span></div>';
 		}
@@ -635,6 +715,9 @@ class JifengLegacyWorkspace {
 		delete values.scan_code;
 		delete values.detail_input;
 		delete values.quantity_input;
+		delete values.barcode_input;
+		delete values.flow_input;
+		delete values.operation_input;
 		return values;
 	}
 
@@ -714,12 +797,16 @@ class JifengLegacyWorkspace {
 	}
 
 	detailColumns(pageName) {
-		if (pageName === "前台开单") return ["条码", "编号", "小类", "方式", "单位", "数量", "单价", "金额", "折扣", "折后", "折后价", "前次价", "库存", "原价", "新旧", "备注"];
-		if (pageName === "生产指令单") return ["流程单", "客户", "编号", "工序", "日期", "交期", "离交期", "订单", "完成", "次数", "合计", "差数", "天数", "停审"];
-		if (pageName === "订单录入") return ["编号", "图片", "客编号", "单位", "数量1", "单价1", "镀色1", "数量2", "单价2", "镀色2", "数量3", "单价3", "镀色3", "数量4", "单价4", "镀色4", "要求", "包装"];
-		if (pageName === "入库" && ["物料", "材料"].includes(this.activeTab().module)) return ["编号", "名称", "规格", "小类", "流程单", "单位", "数量", "单价", "金额", "重量", "总重量", "备注", "库存", "换算值", "扫码"];
+		if (pageName === "前台开单") return ["条码", "编号", "小类", "方式", "单位", "数量", "单价", "金额", "折扣", "折后", "折后价", "前次价", "库存", "原价", "新旧", "备注", "删除"];
+		if (pageName === "生产指令单") return ["流程单", "客户", "编号", "工序", "日期", "交期", "离交期", "订单", "完成", "次数", "合计", "差数", "天数", "停审", "删除"];
+		if (pageName === "订单录入") return ["编号", "图片", "客编号", "单位", "数量1", "单价1", "镀色1", "数量2", "单价2", "镀色2", "数量3", "单价3", "镀色3", "数量4", "单价4", "镀色4", "要求", "包装", "删除"];
+		if (["物料", "材料"].includes(this.activeTab().module) && pageName === "申购") return ["编号", "名称", "规格", "单位", "数量", "单价", "金额", "备注", "删除"];
+		if (pageName === "入库" && ["物料", "材料"].includes(this.activeTab().module)) return ["编号", "名称", "规格", "小类", "流程单", "单位", "数量", "单价", "金额", "重量", "总重量", "备注", "库存", "换算值", "扫码", "删除"];
+		if (pageName === "销售入库" && this.activeTab().module === "销售") return ["条码", "流程单", "编号", "订单数", "已入", "小类", "单位", "数量", "标价", "金额", "折扣", "折后", "库存", "库位", "备注", "删除"];
+		if (pageName === "外发加工" && this.activeTab().module === "外发") return ["流程单", "编号", "名称GX", "类别", "订单数", "单位", "数量", "工价", "钻数", "金额", "说明", "完成", "超数", "删除"];
+		if (pageName === "报价单" && this.activeTab().module === "产品") return ["编号", "名称", "单位", "数量", "重量", "单价", "折前", "折扣", "金额", "备注", "删除"];
 		if (["订单录入", "入库", "出库", "申购", "销售入库", "外发加工", "收回", "电镀单", "工资录入"].includes(pageName)) {
-			return ["编号", "名称", "规格", "单位", "数量", "单价", "金额", "备注"];
+			return ["编号", "名称", "规格", "单位", "数量", "单价", "金额", "备注", "删除"];
 		}
 		return [];
 	}
@@ -729,6 +816,14 @@ class JifengLegacyWorkspace {
 	}
 
 	columnsFor(moduleName, pageName) {
+		if (moduleName === "模具" && pageName === "模具录入") return ["模具", "产品", "压模", "数量", "日期", "金额", "说明", "库位", "报废", "操作", "日期", "修改人", "修改日期", "修改", "删除"];
+		if (moduleName === "产品" && pageName === "报价单") return ["审核", "单号", "客户", "日期", "数量", "折前", "金额", "实收", "优惠", "欠款", "备注", "时间", "修改人", "修改日期", "操作", "修改", "删除"];
+		if (moduleName === "销售" && pageName === "销售入库") return ["审核", "单号", "部门", "类型", "客户", "状态", "说明", "方式", "数量", "款数", "金额", "付款", "优惠", "欠款", "操作", "修改", "删除"];
+		if (moduleName === "外发" && pageName === "外发加工") return ["审核", "单号", "名称", "交期", "手机", "接货", "电话", "数量", "款数", "金额", "操作", "修改", "删除"];
+		if (moduleName === "物料" || moduleName === "材料") {
+			if (pageName === "申购") return ["审核", "单号", "仓库", "品牌", "公司", "联系", "采购", "手机", "地址", "数量", "重量", "金额", "操作", "修改", "删除"];
+		}
+		if (pageName === "计划图片") return ["流程单", "客户", "编号", "名称", "工序", "数量", "完成", "交期", "状态", "操作"];
 		if (pageName === "生产指令单") return ["审核", "单号", "日期", "数量", "金额", "指令日期", "款数", "备注", "时间", "修改人", "修改日期", "操作", "修改", "删除"];
 		if (pageName === "前台开单") return ["日期", "单号", "客户", "部门", "导购", "数量", "金额", "实收", "欠款", "状态", "操作"];
 		if (pageName === "销售单查询") return ["审核", "日期", "客户", "部门", "单号", "导购", "数量", "折前", "金额", "方式", "实收", "优惠", "欠款", "备注", "操作", "时间", "修改时间", "分享", "表格", "带图片", "下载", "修改"];
@@ -756,18 +851,18 @@ class JifengLegacyWorkspace {
 		return pageName === "销售单查询";
 	}
 
-	getRows(pageName) {
+	getRows(pageName, moduleName) {
 		try {
-			const parsed = JSON.parse(localStorage.getItem(this.storageKey(pageName)) || "[]");
+			const parsed = JSON.parse(localStorage.getItem(this.storageKey(pageName, moduleName)) || "[]");
 			return Array.isArray(parsed) ? parsed : [];
 		} catch (error) {
 			return [];
 		}
 	}
 
-	saveRows(pageName, rows) {
+	saveRows(pageName, rows, moduleName) {
 		try {
-			localStorage.setItem(this.storageKey(pageName), JSON.stringify(rows));
+			localStorage.setItem(this.storageKey(pageName, moduleName), JSON.stringify(rows));
 			return true;
 		} catch (error) {
 			this.toast("浏览器本地存储不可用。");
@@ -775,8 +870,8 @@ class JifengLegacyWorkspace {
 		}
 	}
 
-	storageKey(pageName) {
-		return "jifeng-legacy:" + (this.activeTab().module || "") + ":" + pageName;
+	storageKey(pageName, moduleName) {
+		return "jifeng-legacy:" + (moduleName || this.activeTab().module || "") + ":" + pageName;
 	}
 
 	rowKeyMap(row) {
@@ -805,6 +900,31 @@ class JifengLegacyWorkspace {
 			"联系电话": row.phone || "",
 			"操作人": row.operator || "",
 			"操作内容": row.action || "",
+			"模具": row.mold_number || row.number || row.code || "",
+			"产品": row.product_number || row.product || "",
+			"压模": row.molder || "",
+			"说明": row.remark || "",
+			"公司": row.company || "",
+			"联系": row.contact || "",
+			"采购": row.buyer || "",
+			"地址": row.address || "",
+			"手机": row.phone || "",
+			"接货": row.receiver || "",
+			"交期": row.delivery_date || "",
+			"款数": row.styles || "",
+			"折前": row.gross || "",
+			"实收": row.payment || "",
+			"优惠": row.discount || "",
+			"欠款": row.arrears || "",
+			"重量": row.weight || "",
+			"流程单": row.flow || "",
+			"订单数": row.order_quantity || "",
+			"工序": row.operation || row.process || "",
+			"工价": row.unit_price || "",
+			"创建日期": row.date || "",
+			"修改日期": row.modified || "",
+			"修改人": row.modified_by || row.owner || "",
+			"报废": row.scrapped || "",
 		};
 	}
 
@@ -863,12 +983,15 @@ class JifengLegacyWorkspace {
 			else if (action === "close-modal" || action === "backdrop") this.closeModal(event);
 			else if (action === "add-detail") this.addDetailRow();
 			else if (action === "inbound-add") this.addInboundDetail();
+			else if (action === "stockin-add") this.addSalesInboundDetail();
+			else if (action === "external-add") this.addExternalDetail();
 			else if (action === "remove-detail") { button.closest("tr").remove(); this.updateSalesTotals(); }
 			else if (action === "query") {
-				this.search = this.host.querySelector("[data-search]").value || "";
-				this.dateFrom = this.host.querySelector('[data-filter="from"]').value || "";
-				this.dateTo = this.host.querySelector('[data-filter="to"]').value || "";
-				this.onlyDate = this.host.querySelector("[data-only-date]").checked;
+				this.search = this.host.querySelector("[data-search]")?.value || "";
+				this.dateFrom = this.host.querySelector('[data-filter="from"]')?.value || "";
+				this.dateTo = this.host.querySelector('[data-filter="to"]')?.value || "";
+				this.onlyDate = this.host.querySelector("[data-only-date]")?.checked || false;
+				this.deliveryFilter = this.host.querySelector("[data-delivery-filter]")?.checked || false;
 				const status = this.host.querySelector("[data-approval-filter]:checked");
 				if (status) this.approvalFilter = status.value;
 				this.pageNo = 1;
@@ -883,9 +1006,11 @@ class JifengLegacyWorkspace {
 			else if (action === "refresh") this.toast("日志已更新。");
 			else if (action === "format") this.toast("已切换至格式1。");
 			else if (action === "print-preview") this.printPreview();
+			else if (action === "mold-view") { this.moldView = button.dataset.view; this.pageNo = 1; this.render(); }
+			else if (action === "all-plans") { this.planStatus = "全部"; this.pageNo = 1; this.render(); }
 			else if (action === "review" || action === "unreview") this.changeSelectedStatus(action === "review" ? "已审核" : "未审核");
 			else if (action === "track") this.toast("跟踪记录将在有本地草稿时显示。");
-			else if (action === "change-customer" || action === "load-transfer" || action === "load-history") this.toolbarAction(action);
+			else if (action === "change-customer" || action === "load-transfer" || action === "load-history" || action === "load-pos" || action === "load-order") this.toolbarAction(action);
 			else if (action === "sales-add") this.addSalesDetail();
 			else if (action === "sales-return" || action === "discount" || action === "collect" || action === "hold" || action === "restore") {
 				if (action === "hold") this.saveForm("暂存");
@@ -903,11 +1028,13 @@ class JifengLegacyWorkspace {
 				event.preventDefault();
 				this.addSalesDetail();
 			}
+			if (event.key === "Enter" && event.target.matches('[name="barcode_input"]')) { event.preventDefault(); this.addSalesInboundDetail(); }
+			if (event.key === "Enter" && event.target.matches('[name="flow_input"]')) { event.preventDefault(); this.addExternalDetail(); }
 		};
 		this.host.oninput = (event) => {
 			if (event.target.matches("[data-search]")) this.search = event.target.value;
 			if (event.target.matches("[data-wage-column]")) this.updatePayrollTotals();
-			if (event.target.matches("[data-detail], [name=freight], [name=arrears]")) this.updateSalesTotals();
+			if (event.target.matches("[data-detail], [name=freight], [name=arrears], [name=quantity], [name=amount], [name=payment], [name=discount]")) this.updateSalesTotals();
 		};
 		this.host.onchange = (event) => {
 			if (event.target.matches('input[type="file"][name]')) {
@@ -919,6 +1046,8 @@ class JifengLegacyWorkspace {
 				this.approvalFilter = event.target.value;
 				this.render();
 			}
+			if (event.target.matches("[data-plan-status]")) { this.planStatus = event.target.value; this.pageNo = 1; this.render(); }
+			if (event.target.matches("[data-mold-preview]")) { this.moldPreview = event.target.checked; this.render(); }
 			if (event.target.matches(".jfe-pager select")) {
 				this.pageSize = Number(event.target.value) || 15;
 				this.pageNo = 1;
@@ -1017,6 +1146,7 @@ class JifengLegacyWorkspace {
 		root.innerHTML = "";
 		this.pickerRows = null;
 		this.pickerContext = null;
+		this.pickerSource = null;
 		if (this.infoFormContext) {
 			const context = this.infoFormContext;
 			this.infoFormContext = null;
@@ -1029,9 +1159,10 @@ class JifengLegacyWorkspace {
 		if (!body) return;
 		const pageName = this.activeTab().page;
 		const columns = this.detailColumns(pageName);
-		body.insertAdjacentHTML("beforeend", "<tr>" + columns.map((col) =>
+		const hasDelete = columns.includes("删除");
+		body.insertAdjacentHTML("beforeend", "<tr>" + columns.map((col) => col === "删除" ? '<td><button type="button" data-action="remove-detail">删除</button></td>' :
 			'<td><input data-detail="' + this.esc(col) + '" placeholder="' + this.esc(col) + '"></td>'
-		).join("") + '<td><button data-action="remove-detail">删除</button></td></tr>');
+		).join("") + (hasDelete ? "" : '<td><button type="button" data-action="remove-detail">删除</button></td>') + "</tr>");
 		this.updateSalesTotals();
 	}
 
@@ -1065,17 +1196,67 @@ class JifengLegacyWorkspace {
 		if (quantityInput) quantityInput.value = "";
 	}
 
+	addSalesInboundDetail() {
+		const codeInput = this.host.querySelector('[name="barcode_input"]');
+		const quantityInput = this.host.querySelector('[name="quantity_input"]');
+		const code = codeInput ? codeInput.value.trim() : "";
+		const quantity = quantityInput ? quantityInput.value : "";
+		this.addDetailRow();
+		const row = this.host.querySelector(".jfe-detail-table tbody tr:last-child");
+		if (row && code) {
+			const barcode = row.querySelector('[data-detail="条码"]');
+			const number = row.querySelector('[data-detail="编号"]');
+			if (barcode) barcode.value = code;
+			if (number) number.value = code;
+		}
+		if (row && quantity) {
+			const amount = row.querySelector('[data-detail="数量"]');
+			if (amount) amount.value = quantity;
+		}
+		if (codeInput) codeInput.value = "";
+		if (quantityInput) quantityInput.value = "";
+		this.updateSalesTotals();
+	}
+
+	addExternalDetail() {
+		const flow = this.host.querySelector('[name="flow_input"]');
+		const quantity = this.host.querySelector('[name="quantity_input"]');
+		const operation = this.host.querySelector('[name="operation_input"]');
+		const flowValue = flow ? flow.value.trim() : "";
+		const quantityValue = quantity ? quantity.value : "";
+		const operationValue = operation ? operation.value : "";
+		this.addDetailRow();
+		const row = this.host.querySelector(".jfe-detail-table tbody tr:last-child");
+		const setValue = (column, value) => { const input = row && row.querySelector('[data-detail="' + column + '"]'); if (input) input.value = value; };
+		setValue("流程单", flowValue);
+		setValue("数量", quantityValue);
+		setValue("名称GX", operationValue);
+		if (flow) flow.value = "";
+		if (quantity) quantity.value = "";
+		this.updateSalesTotals();
+	}
+
 	updateSalesTotals() {
-		const totals = this.host.querySelectorAll("[data-pos-total]");
-		if (!totals.length) return;
 		const rows = Array.from(this.host.querySelectorAll(".jfe-detail-table tbody tr"));
 		const number = (row, column) => Number(row.querySelector('[data-detail="' + column + '"]')?.value) || 0;
-		const quantity = rows.reduce((sum, row) => sum + number(row, "数量"), 0);
-		const gross = rows.reduce((sum, row) => sum + number(row, "数量") * number(row, "单价"), 0);
-		const amount = rows.reduce((sum, row) => sum + (number(row, "折后") || number(row, "金额")), 0);
-		const styles = rows.filter((row) => row.querySelector('[data-detail="编号"]')?.value || row.querySelector('[data-detail="条码"]')?.value).length;
+		const hasDetails = rows.some((row) => Array.from(row.querySelectorAll("[data-detail]")).some((input) => input.value));
+		const total = (column) => rows.reduce((sum, row) => sum + number(row, column), 0);
+		const quantity = hasDetails ? total("数量") : Number(this.host.querySelector('[name="quantity"]')?.value) || 0;
+		const gross = hasDetails ? rows.reduce((sum, row) => sum + number(row, "数量") * number(row, "单价"), 0) : Number(this.host.querySelector('[name="gross"]')?.value) || Number(this.host.querySelector('[name="amount"]')?.value) || 0;
+		const amount = hasDetails ? rows.reduce((sum, row) => sum + (number(row, "折后") || number(row, "金额")), 0) : Number(this.host.querySelector('[name="amount"]')?.value) || 0;
+		const styles = hasDetails ? rows.filter((row) => row.querySelector('[data-detail="编号"]')?.value || row.querySelector('[data-detail="条码"]')?.value).length : Number(this.host.querySelector('[name="styles"]')?.value) || 0;
 		const values = { quantity: quantity, styles: styles, gross: gross.toFixed(2), amount: amount.toFixed(2) };
-		totals.forEach((node) => node.textContent = values[node.dataset.posTotal]);
+		this.host.querySelectorAll("[data-pos-total]").forEach((node) => node.textContent = values[node.dataset.posTotal]);
+		const weight = hasDetails ? total("重量") : Number(this.host.querySelector('[name="weight"]')?.value) || 0;
+		const quoteTotals = { quantity: quantity, weight: weight, amount: amount, payment: Number(this.host.querySelector('[name="payment"]')?.value) || 0, discount: Number(this.host.querySelector('[name="discount"]')?.value) || 0, arrears: Number(this.host.querySelector('[name="arrears"]')?.value) || 0 };
+		this.host.querySelectorAll("[data-quote-total]").forEach((node) => node.textContent = Number(quoteTotals[node.dataset.quoteTotal]).toFixed(2));
+		const payment = Number(this.host.querySelector('[name="payment"]')?.value) || 0;
+		const discount = Number(this.host.querySelector('[name="discount"]')?.value) || 0;
+		const arrears = Number(this.host.querySelector('[name="arrears"]')?.value) || 0;
+		const stockTotals = { quantity: quantity, styles: styles, amount: amount, payment: payment, discount: discount, arrears: arrears };
+		this.host.querySelectorAll("[data-stockin-total]").forEach((node) => node.textContent = ["quantity", "styles"].includes(node.dataset.stockinTotal) ? stockTotals[node.dataset.stockinTotal] : stockTotals[node.dataset.stockinTotal].toFixed(2));
+		const externalTotals = { quantity: quantity, styles: styles, amount: amount.toFixed(2) };
+		this.host.querySelectorAll("[data-external-total]").forEach((node) => node.textContent = externalTotals[node.dataset.externalTotal]);
 	}
 
 	saveForm(status) {
@@ -1159,6 +1340,8 @@ class JifengLegacyWorkspace {
 		}
 		if (action === "schedule") return this.showDraftPicker("选择计划", "计划");
 		if (action === "load-transfer") return this.showDraftPicker("选择调拨单", "销售调拨");
+		if (action === "load-pos") return this.showDraftPicker("选择前台单据", "前台开单", "销售");
+		if (action === "load-order") return this.showDraftPicker("选择订单", "订单录入", "订单");
 		if (action === "select" || action === "load-history") return this.showDraftPicker("选择历史单据", this.activeTab().page);
 		const messages = {
 			"stock-in": "已打开入库操作预览。",
@@ -1178,8 +1361,8 @@ class JifengLegacyWorkspace {
 		this.showInfo("操作", messages[action] || "操作已打开。");
 	}
 
-	showDraftPicker(title, sourcePage) {
-		const rows = this.getRows(sourcePage);
+	showDraftPicker(title, sourcePage, sourceModule) {
+		const rows = this.getRows(sourcePage, sourceModule);
 		if (!rows.length) {
 			this.showInfo(title, "当前浏览器中没有可选的本地草稿。");
 			return;
@@ -1187,6 +1370,7 @@ class JifengLegacyWorkspace {
 		const form = this.host.querySelector(".jfe-editor-form");
 		this.pickerContext = form ? this.editorSnapshot(form) : null;
 		this.infoFormContext = this.pickerContext;
+		this.pickerSource = { page: sourcePage, module: sourceModule || this.activeTab().module };
 		this.pickerRows = rows;
 		const columns = ["单号", "日期", "客户", "名称", "数量", "金额"];
 		this.host.querySelector("[data-modal-root]").innerHTML = '<div class="jfe-modal-backdrop" data-action="backdrop"><section class="jfe-lookup" role="dialog" aria-modal="true"><header><h2>' + this.esc(title) + '</h2><button type="button" class="jfe-icon-btn" data-action="cancel-draft-picker">×</button></header><div class="jfe-table-wrap"><table class="jfe-table"><thead><tr>' + columns.map((column) => "<th>" + this.esc(column) + "</th>").join("") + '<th>操作</th></tr></thead><tbody>' + rows.map((row) => {
@@ -1199,17 +1383,29 @@ class JifengLegacyWorkspace {
 		const selected = (this.pickerRows || []).find((row) => row._id === id);
 		if (!selected) return;
 		const current = this.pickerContext;
+		const source = this.pickerSource || {};
 		this.pickerRows = null;
 		this.pickerContext = null;
+		this.pickerSource = null;
 		this.infoFormContext = null;
 		if (!current) {
 			this.openEditor(selected);
 			return;
 		}
-		const record = Object.assign({}, current, selected, {
+		const samePage = source.page === this.activeTab().page && source.module === this.activeTab().module;
+		const importedDetails = (selected._details || []).map((detail) => source.page === "订单录入" && this.activeTab().page === "外发加工" ? {
+			"流程单": selected.number || detail["流程单"] || "", "编号": detail["编号"] || "", "名称GX": detail["名称GX"] || detail["名称"] || "",
+			"类别": detail["类别"] || "", "订单数": detail["数量1"] || detail["数量"] || "", "单位": detail["单位"] || "",
+			"数量": detail["数量1"] || detail["数量"] || "", "工价": detail["单价1"] || "", "钻数": detail["钻数"] || "",
+			"金额": detail["金额"] || "", "说明": detail["要求"] || "", "完成": "", "超数": "",
+		} : Object.assign({}, detail));
+		const record = samePage ? Object.assign({}, current, selected, {
 			_id: current._id || "",
 			_details: selected._details || [],
 			_employee_records: selected._employee_records || current._employee_records || {},
+		}) : Object.assign({}, current, {
+			_id: current._id || "",
+			_details: importedDetails,
 		});
 		this.openEditor(record);
 	}
@@ -1301,6 +1497,10 @@ class JifengLegacyWorkspace {
 			"姓名": "name", "岗位": "position", "联系电话": "phone", "类别": "category",
 			"类别名称": "name", "状态": "status", "交期": "delivery_date", "工序": "operation",
 			"审核": "_status", "摘要": "summary", "店面": "store", "方式": "method",
+			"模具": "mold_number", "产品": "product_number", "压模": "molder", "说明": "remark",
+			"公司": "company", "联系": "contact", "采购": "buyer", "地址": "address", "手机": "phone",
+			"接货": "receiver", "款数": "styles", "折前": "gross", "实收": "payment", "优惠": "discount",
+			"欠款": "arrears", "重量": "weight", "修改人": "modified_by", "修改日期": "modified",
 		};
 		if (column === "审核选择框" || ["操作", "修改", "删除", "分享", "表格", "带图片", "下载"].includes(column)) return "";
 		if (column === "编号") return ["物料", "材料", "产品"].includes(this.activeTab().module) ? "code" : "number";
