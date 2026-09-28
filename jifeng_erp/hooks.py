@@ -5,6 +5,7 @@ app_description = "订单、委外回货与成本试算"
 app_email = "erp@example.invalid"
 app_license = "GPL-3.0-or-later"
 required_apps = ["erpnext"]
+app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css"]
 
 after_install = "jifeng_erp.setup.install"
 after_migrate = "jifeng_erp.setup.install"

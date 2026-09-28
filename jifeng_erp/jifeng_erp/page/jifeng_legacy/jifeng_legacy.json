@@ -1,0 +1,13 @@
+{
+  "doctype": "Page",
+  "name": "jifeng-legacy",
+  "page_name": "jifeng-legacy",
+  "title": "经典业务工作台",
+  "module": "Jifeng ERP",
+  "standard": "Yes",
+  "roles": [
+    { "role": "Stock Manager" },
+    { "role": "Manufacturing Manager" },
+    { "role": "System Manager" }
+  ]
+}

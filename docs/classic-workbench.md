@@ -1,0 +1,25 @@
+# 经典工作台复刻记录
+
+## 入口与覆盖范围
+
+Frappe Desk 的“集沣生产协作”工作区新增“经典业务工作台”快捷入口，路由为 `jifeng-legacy`。页面复刻参考旧系统的顶部品牌栏、模块侧栏、可关闭标签页、主页快捷入口和分组功能卡片，覆盖物料、材料、产品、订单、生产、人事、工资、模具、版种、发镀、外发、销售、财务、总经理、权限、日志、全屏、插件、工具和关于等导航。
+
+常见表格和业务表单包括物料入库、订单录入、生产指令单、前台开单、财务凭证、产品档案、人事档案及工资录入。列表提供日期和关键词筛选、指定日期、分页、行编辑、删除、审核状态、CSV 导入导出；表单提供明细行、词典查找、员工经历子表、图片选择与清空、打印预览和本地保存。
+
+## 本地预览边界
+
+- 页面新增、编辑、审核、删除和导入的数据保存在当前浏览器的 `localStorage`，不会调用 ERPNext 业务接口，也不会改动生产凭证。
+- 旧系统中的客户、仓库、员工、商品、库存和单据数据没有复制。词典弹窗展示空表，输入关键词后可将其作为本地预览值带回表单。
+- 图片选择只保留文件名供预览；没有上传服务，也不把图片文件写入 ERPNext。
+- CSV 文件在浏览器本地解析；导出内容来自本工作台的本地预览记录。
+- 插件和远程协助入口保留说明，没有启动下载或安装外部程序。
+- 页面角色沿用现有生产协作工作区的 Stock Manager、Manufacturing Manager 和 System Manager 范围。
+
+## 实现位置
+
+- Page 定义：`jifeng_erp/page/jifeng_legacy/jifeng_legacy.json`
+- 页面交互：`jifeng_erp/page/jifeng_legacy/jifeng_legacy.js`
+- Desk 样式：`jifeng_erp/public/css/jifeng_legacy.css`
+- 工作区入口：`jifeng_erp/workspace/jifeng_erp/jifeng_erp.json`
+
+部署后执行站点 migrate 和 `bench build --app jifeng_erp`，再刷新 Desk 查看页面资源。
