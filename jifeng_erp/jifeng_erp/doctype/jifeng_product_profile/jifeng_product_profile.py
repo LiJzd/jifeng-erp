@@ -1,6 +1,7 @@
 import frappe
 from frappe.model.document import Document
 
+from jifeng_erp.costing import CostingError, number
 from jifeng_erp.workflow import recipe_totals
 
 
@@ -8,6 +9,14 @@ class JifengProductProfile(Document):
     def validate(self):
         self.material_unit_cost, self.processing_unit_cost = recipe_totals(self)
         self.image = frappe.db.get_value("Item", self.item_code, "image")
+        try:
+            for field, label in (
+                ("list_price", "参考单价"), ("blank_price", "毛胚价"),
+                ("weight", "重量"), ("silver_weight", "银重"), ("stone_weight", "石重"),
+            ):
+                number(self.get(field), label)
+        except CostingError as exc:
+            frappe.throw(str(exc))
 
     @frappe.whitelist()
     def load_bom(self):
