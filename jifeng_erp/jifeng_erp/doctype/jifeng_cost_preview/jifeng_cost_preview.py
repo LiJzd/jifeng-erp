@@ -74,3 +74,28 @@ class JifengCostPreview(Document):
         self.receipt_cost_loaded_at = now()
         self.save()
         return result
+
+    @frappe.whitelist()
+    def load_posted_costs(self):
+        """Explicitly refresh trial costs from posted material issues and receipts."""
+        self.check_permission("write")
+        frappe.db.get_value(self.doctype, self.name, "name", for_update=True)
+        self.reload()
+        if not self.flow_order:
+            frappe.throw("请先关联流程单")
+
+        from jifeng_erp.workflow import posted_flow_costs
+
+        result = posted_flow_costs(self.flow_order)
+        if not result["issues"] and not result["receipts"]:
+            frappe.throw("没有已提交且关联本流程单的物料出库或委外收货，费用未更改")
+        self.material_amount = result["totals"]["material"]
+        self.processing_amount = result["totals"]["processing"]
+        self.other_amount = result["totals"]["other"]
+        sources = {row["issue"] for row in result["issues"]} | {
+            row["receipt"] for row in result["receipts"]
+        }
+        self.receipt_cost_sources = "\n".join(sorted(sources))
+        self.receipt_cost_loaded_at = now()
+        self.save()
+        return result

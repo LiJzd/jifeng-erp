@@ -19,21 +19,21 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                 await frm.call("load_flow_costs");
                 await frm.reload_doc();
             });
-            frm.add_custom_button("带入已收回的实际费用", async () => {
+            frm.add_custom_button("带入已过账实际费用", async () => {
                 if (frm.is_dirty()) await frm.save();
                 const response = await frappe.call({
-                    method: "jifeng_erp.workflow.receipt_costs",
+                    method: "jifeng_erp.workflow.posted_flow_costs",
                     args: { flow_order: frm.doc.flow_order },
                 });
-                const result = response.message || { rows: [], totals: {} };
-                if (!result.rows.length) {
-                    frappe.msgprint("没有已提交且关联本流程单的委外收货明细，费用未更改。");
+                const result = response.message || { issues: [], receipts: [], totals: {} };
+                if (!result.issues.length && !result.receipts.length) {
+                    frappe.msgprint("没有已提交且关联本流程单的物料出库或委外收货，费用未更改。");
                     return;
                 }
                 const amount = (value) => format_currency(value || 0, result.currency);
-                const message = `将 ${result.rows.length} 条已提交委外收货明细的费用带入试算：材料费 ${amount(result.totals.material)}、加工费 ${amount(result.totals.processing)}、其他费 ${amount(result.totals.other)}。已有回货批次将重新试算；未收回的后续费用尚未包含。若批次追加加工费已计入收货明细，请先清零该笔追加费，避免重复计算。执行时会重新汇总当前已提交凭证。确认继续？`;
+                const message = `将已过账凭证的费用带入试算：物料出库 ${result.issues.length} 条，材料费 ${amount(result.totals.issue_material)}；委外收货 ${result.receipts.length} 条，材料费 ${amount(result.totals.receipt_material)}、加工费 ${amount(result.totals.processing)}、其他费 ${amount(result.totals.other)}。材料费合计 ${amount(result.totals.material)}。尚未过账的后续费用不包含在内；已有回货批次将重新试算。若批次追加加工费已计入委外收货，请先清零该笔追加费，避免重复计算。执行时会重新汇总当前已提交凭证。确认继续？`;
                 frappe.confirm(message, async () => {
-                    await frm.call("load_receipt_costs");
+                    await frm.call("load_posted_costs");
                     await frm.reload_doc();
                 });
             });

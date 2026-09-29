@@ -179,7 +179,7 @@
   {
    "fieldname": "receipt_cost_sources",
    "fieldtype": "Small Text",
-   "label": "最近一次带入的委外收货单",
+   "label": "最近一次带入的正式凭证",
    "read_only": 1
   },
   {

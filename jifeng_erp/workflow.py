@@ -204,6 +204,60 @@ def receipt_costs(flow_order):
 
 
 @frappe.whitelist()
+def material_issue_costs(flow_order):
+    """Read posted Material Issue value from its stock ledger rows, not recipe prices."""
+    flow = frappe.get_doc("Jifeng Flow Order", flow_order)
+    flow.check_permission("read")
+    if not frappe.has_permission("Stock Entry", "read"):
+        frappe.throw("没有物料出库单读取权限", frappe.PermissionError)
+    parents = frappe.get_list("Stock Entry", filters=[
+        ["Stock Entry", "docstatus", "=", 1],
+        ["Stock Entry", "company", "=", flow.company],
+        ["Stock Entry", "stock_entry_type", "=", "Material Issue"],
+        ["Stock Entry Detail", "jf_flow_order", "=", flow.name],
+    ], pluck="name", distinct=True, limit_page_length=0)
+    details = frappe.get_all("Stock Entry Detail", filters={
+        "parent": ["in", parents], "parenttype": "Stock Entry", "jf_flow_order": flow.name,
+    }, fields=["name", "parent", "item_code"]) if parents else []
+    by_name = {row.name: row for row in details}
+    ledger = (frappe.get_all("Stock Ledger Entry", filters={
+        "voucher_type": "Stock Entry", "voucher_no": ["in", parents],
+        "voucher_detail_no": ["in", list(by_name)], "is_cancelled": 0,
+    }, fields=["voucher_no", "voucher_detail_no", "item_code", "actual_qty", "stock_value_difference"])
+        if by_name else [])
+    rows = []
+    for entry in ledger:
+        detail = by_name.get(entry.voucher_detail_no)
+        if not detail or detail.parent != entry.voucher_no or detail.item_code != entry.item_code:
+            continue
+        rows.append({
+            "issue": entry.voucher_no, "item_code": entry.item_code,
+            "qty": -Decimal(str(entry.actual_qty or 0)),
+            "material": -Decimal(str(entry.stock_value_difference or 0)),
+        })
+    return {"rows": rows, "totals": {"material": sum((row["material"] for row in rows), Decimal(0))},
+            "currency": frappe.db.get_value("Company", flow.company, "default_currency")}
+
+
+@frappe.whitelist()
+def posted_flow_costs(flow_order):
+    """Keep direct issues and subcontracting receipt material costs as separate sources."""
+    issues = material_issue_costs(flow_order)
+    receipts = receipt_costs(flow_order)
+    return {
+        "issues": issues["rows"], "receipts": receipts["rows"],
+        "totals": {
+            "issue_material": issues["totals"]["material"],
+            "receipt_material": receipts["totals"]["material"],
+            "material": issues["totals"]["material"] + receipts["totals"]["material"],
+            "processing": receipts["totals"]["processing"],
+            "other": receipts["totals"]["other"],
+        },
+        "currency": issues["currency"],
+    }
+
+
+@frappe.whitelist()
 def stock_availability(flow_order):
     flow = frappe.get_doc("Jifeng Flow Order", flow_order)
     flow.check_permission("read")
