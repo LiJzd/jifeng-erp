@@ -137,8 +137,8 @@ const JIFENG_LEGACY_MODULES = [
 			{ name: "经营总览", items: ["物料", "材料", "产品", "订单", "生产", "人事", "工资", "模具", "版种", "发镀", "外发", "销售", "财务"] },
 		],
 	},
-		{ name: "权限", groups: [{ name: "正式业务", items: ["用户管理", "角色管理"] }, { name: "旧版页面", items: ["权限管理"] }] },
-		{ name: "日志", groups: [{ name: "正式业务", items: ["服务器操作日志"] }, { name: "旧版页面", items: ["操作日志"] }] },
+		{ name: "权限", groups: [{ name: "正式业务", items: ["用户管理", "角色管理", "权限管理"] }] },
+		{ name: "日志", groups: [{ name: "正式业务", items: ["服务器操作日志", "操作日志"] }] },
 	{ name: "插件", groups: [{ name: "安装说明", items: ["打印插件"] }] },
 	{ name: "工具", groups: [{ name: "桌面工具", items: ["远程协助工具"] }] },
 	{ name: "关于", groups: [{ name: "系统信息", items: ["关于本系统", "用户须知", "续费信息"] }] },
@@ -159,7 +159,11 @@ const JIFENG_LIVE_ROUTES = {
 	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 费用登记单: "Jifeng Expense Voucher", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry", 费用登记查询: "Jifeng Expense Voucher" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
-	日志: { 服务器操作日志: "Activity Log" },
+	日志: { 服务器操作日志: "Activity Log", 操作日志: "Activity Log" },
+};
+
+const JIFENG_LIVE_PAGES = {
+	权限: { 权限管理: "permission-manager" },
 };
 
 const JIFENG_LIVE_CREATE = {
@@ -267,6 +271,11 @@ class JifengLegacyWorkspace {
 	}
 
 	openPage(name, moduleName) {
+		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
+		if (livePage) {
+			frappe.set_route(livePage);
+			return;
+		}
 		const report = JIFENG_LIVE_REPORTS[moduleName]?.[name];
 		if (report) {
 			frappe.set_route("query-report", report);
@@ -448,9 +457,9 @@ class JifengLegacyWorkspace {
 		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>“正式业务”进入服务器单据；其余页面为本地交互预览</p></div></div>' +
 			module.groups.map((group) =>
 				'<section class="jfe-group"><header><b>' + this.esc(group.name) + '</b><span>' + group.items.length + " 项</span></header><div class=\"jfe-function-grid\">" +
-				group.items.map((name) => '<button class="jfe-function-card' + (JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? ' is-live' : '') + '" data-action="open-page" data-module="' + this.esc(moduleName) + '" data-page="' + this.esc(name) + '">' +
+				group.items.map((name) => '<button class="jfe-function-card' + (JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_PAGES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? ' is-live' : '') + '" data-action="open-page" data-module="' + this.esc(moduleName) + '" data-page="' + this.esc(name) + '">' +
 					'<span class="jfe-function-mark">' + this.esc(name.slice(0, 1)) + "</span><span>" + this.esc(name) + "</span>" +
-					(JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? '<em class="jfe-live-tag">正式</em>' : "") + '<i>›</i></button>').join("") +
+					(JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_PAGES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? '<em class="jfe-live-tag">正式</em>' : "") + '<i>›</i></button>').join("") +
 				"</div></section>"
 			).join("") + "</section>";
 	}
