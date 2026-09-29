@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：新增收付款站点冒烟，在保存点内提交一张合成客户收款 Payment Entry（100 元）和一张合成供应商付款 Payment Entry（80 元），两张凭证各产生 2 条借贷平衡的 GL Entry，3 项通过后回滚。此检查只覆盖未核销发票的收付款，实际应收应付核销、银行对账、角色权限和历史报表仍需验收。
+
 2026-09-30：工资站点冒烟增加可选 `salary_structure` 参数。合成员工已有已提交工资结构分配和公司假日表分配时，18 元计薪记录生成并提交 Additional Salary；同月 Salary Slip 把 1000 元基础工资和 18 元附加项分别列示，工资条总额 1018 元，可提交，明细保留 Additional Salary 来源。完整链路 8 项、原有草稿模式 7 项通过，保存点回滚后无工资条/附加项/计薪单残留。未验证 Payroll Entry 发放、工资总账过账和多人报工分摊。
 
 2026-09-30：新增可重复的库存台账冒烟；隔离站点保存点内创建合成商品和流程单，提交关联流程单的 Material Receipt（5 件）与 Material Issue（2 件），核对 2 条 Stock Ledger Entry 和 Bin 结存 3 件，4 项通过后回滚。工单自动生成的发料/完工入库、采购收货、退货和盘点尚未验证。
@@ -75,6 +77,7 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.check
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_test --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_sales_order_flows --kwargs '{"company":"测试公司","customer":"测试客户","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_stock_flow --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
+bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_payments --kwargs '{"company":"测试公司","customer":"测试客户"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_expense_voucher --kwargs '{"company":"测试公司"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_work_order --kwargs '{"flow_order":"尚未生成工单且已关联有效BOM的测试流程单"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_employee_supplement --kwargs '{"employee":"尚未有补充档案的测试员工编号"}'
@@ -82,7 +85,7 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs 
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs '{"employee":"已分配工资结构的在职测试员工编号","salary_component":"已启用的收入类工资项目","salary_structure":"员工当前已提交的工资结构"}'
 ```
 
-冒烟测试实际创建测试商品、档案、来源订单、流程单、采购草稿和分批试算，检查重复操作复用原单、同步变化及台账数量不变；退出时回滚这些测试数据。费用冒烟会临时提交并取消财务凭证，再回滚。测试公司须有启用的明细仓库、当前会计年度、同币种销售价格表、本币费用与现金明细科目以及明细成本中心；计薪测试员工须有已提交的工资结构分配。工资条模式还需当前月份适用的公司或员工假日表分配。请只在测试站点运行，不能把冒烟测试通过等同于生产验收。
+冒烟测试实际创建测试商品、档案、来源订单、流程单、采购草稿和分批试算，检查重复操作复用原单、同步变化及台账数量不变；退出时回滚这些测试数据。费用冒烟会临时提交并取消财务凭证，再回滚。测试公司须有启用的明细仓库、当前会计年度、同币种销售价格表、本币费用与现金明细科目以及明细成本中心；收付款冒烟还需客户、应收/应付明细科目和明细供应商分组。计薪测试员工须有已提交的工资结构分配；工资条模式还需当前月份适用的公司或员工假日表分配。请只在测试站点运行，不能把冒烟测试通过等同于生产验收。
 
 ## 实连验收
 

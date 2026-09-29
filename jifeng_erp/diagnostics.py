@@ -292,6 +292,64 @@ def smoke_stock_flow(company, item_group, stock_uom):
         _end_rollback_only(point)
 
 
+def smoke_payments(company, customer):
+    """Submit one receipt and one supplier payment, then roll back both ledgers."""
+    frappe.only_for("System Manager")
+    from frappe.utils import today
+
+    receivable = frappe.db.get_value(
+        "Account", {"company": company, "account_type": "Receivable",
+                    "is_group": 0, "disabled": 0}, "name"
+    )
+    payable = frappe.db.get_value(
+        "Account", {"company": company, "account_type": "Payable",
+                    "root_type": "Liability", "is_group": 0, "disabled": 0}, "name"
+    )
+    cash = frappe.db.get_value(
+        "Account", {"company": company, "account_type": "Cash",
+                    "is_group": 0, "disabled": 0}, "name"
+    )
+    supplier_group = frappe.db.get_value("Supplier Group", {"is_group": 0}, "name")
+    if not all((receivable, payable, cash, supplier_group)):
+        frappe.throw("测试公司需要客户/供应商往来及现金明细科目，并准备明细供应商分组")
+
+    point = "jf_payment_smoke"
+    _begin_rollback_only(point)
+    try:
+        supplier = frappe.get_doc({
+            "doctype": "Supplier",
+            "supplier_name": "JF-PAY-SUP-" + frappe.generate_hash(length=10),
+            "supplier_type": "Company", "supplier_group": supplier_group,
+        }).insert()
+        cases = (
+            ("Receive", "Customer", customer, receivable, cash, 100),
+            ("Pay", "Supplier", supplier.name, cash, payable, 80),
+        )
+        for payment_type, party_type, party, paid_from, paid_to, amount in cases:
+            payment = frappe.get_doc({
+                "doctype": "Payment Entry", "payment_type": payment_type,
+                "company": company, "posting_date": today(),
+                "party_type": party_type, "party": party,
+                "paid_from": paid_from, "paid_to": paid_to,
+                "paid_amount": amount, "received_amount": amount,
+            }).insert()
+            payment.submit()
+            entries = frappe.db.get_all(
+                "GL Entry",
+                filters={"voucher_type": "Payment Entry", "voucher_no": payment.name,
+                         "is_cancelled": 0},
+                fields=["debit", "credit"],
+            )
+            assert payment.docstatus == 1 and len(entries) == 2
+            assert round(sum(float(row.debit) for row in entries), 2) == amount
+            assert round(sum(float(row.credit) for row in entries), 2) == amount
+        return {"passed": True,
+                "checks": ["customer_receipt", "supplier_payment", "balanced_gl"],
+                "business_data": "rolled_back"}
+    finally:
+        _end_rollback_only(point)
+
+
 def smoke_expense_voucher(company):
     """Post and cancel a cash expense in a savepoint, then discard all rows."""
     frappe.only_for("System Manager")
