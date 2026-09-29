@@ -7,7 +7,7 @@
  "app": "jifeng_erp",
  "public": 1,
  "is_hidden": 0,
- "content": "[{\"id\":\"jf0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"经典业务工作台\",\"col\":4}},{\"id\":\"jf1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭设置\",\"col\":4}},{\"id\":\"jf2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"同步记录\",\"col\":4}},{\"id\":\"jf3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭订单\",\"col\":4}},{\"id\":\"jf4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品映射\",\"col\":4}},{\"id\":\"jf5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品工艺档案\",\"col\":4}},{\"id\":\"jf6\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"生产流程单\",\"col\":4}},{\"id\":\"jf7\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"成本试算\",\"col\":4}},{\"id\":\"jf8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"模具档案\",\"col\":4}},{\"id\":\"jf9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"员工补充档案\",\"col\":4}},{\"id\":\"jf10\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"计薪记录\",\"col\":4}},{\"id\":\"jf11\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"版种档案\",\"col\":4}}]",
+ "content": "[{\"id\":\"jf0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"经典业务工作台\",\"col\":4}},{\"id\":\"jf1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭设置\",\"col\":4}},{\"id\":\"jf2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"同步记录\",\"col\":4}},{\"id\":\"jf3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭订单\",\"col\":4}},{\"id\":\"jf4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品映射\",\"col\":4}},{\"id\":\"jf5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品工艺档案\",\"col\":4}},{\"id\":\"jf6\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"生产流程单\",\"col\":4}},{\"id\":\"jf7\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"成本试算\",\"col\":4}},{\"id\":\"jf8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"模具档案\",\"col\":4}},{\"id\":\"jf9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"员工补充档案\",\"col\":4}},{\"id\":\"jf10\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"计薪记录\",\"col\":4}},{\"id\":\"jf11\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"版种档案\",\"col\":4}},{\"id\":\"jf12\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"费用登记单\",\"col\":4}}]",
  "shortcuts": [
   {
    "label": "经典业务工作台",
@@ -79,6 +79,12 @@
    "link_to": "Jifeng Plate",
    "type": "DocType",
    "doc_view": "List"
+  },
+  {
+   "label": "费用登记单",
+   "link_to": "Jifeng Expense Voucher",
+   "type": "DocType",
+   "doc_view": "List"
   }
  ],
  "links": [],
@@ -97,6 +103,12 @@
   },
   {
    "role": "HR User"
+  },
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "Accounts User"
   }
  ]
 }

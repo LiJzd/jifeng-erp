@@ -125,7 +125,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "财务",
 		groups: [
-			{ name: "正式业务", items: ["收付款单", "总账凭证"] },
+			{ name: "正式业务", items: ["收付款单", "总账凭证", "费用登记单"] },
 			{ name: "基础资料", items: ["收款银行", "付款银行", "费用科目"] },
 			{ name: "凭证录入", items: ["收款凭证", "付款凭证", "费用登记"] },
 			{ name: "报表查询", items: ["收款凭证查询", "付款凭证查询", "费用登记查询", "物料账", "材料账", "委外账", "电镀账", "销售账", "费用账", "付款报表", "收款报表", "总报表"] },
@@ -157,7 +157,7 @@ const JIFENG_LIVE_ROUTES = {
 	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
 	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
 	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
-	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry" },
+	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 费用登记单: "Jifeng Expense Voucher", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry", 费用登记查询: "Jifeng Expense Voucher" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
 	日志: { 服务器操作日志: "Activity Log" },
 };
@@ -190,6 +190,7 @@ const JIFENG_LIVE_CREATE = {
 	财务: {
 		收款凭证: { doctype: "Payment Entry", values: { payment_type: "Receive" } },
 		付款凭证: { doctype: "Payment Entry", values: { payment_type: "Pay" } },
+		费用登记: { doctype: "Jifeng Expense Voucher", values: {} },
 	},
 };
 

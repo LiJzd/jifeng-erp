@@ -21,6 +21,11 @@ def install():
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
         "options": "Jifeng Flow Order", "insert_after": "sales_order", "in_list_view": 1,
     }]
+    fields["Journal Entry"] = [{
+        "fieldname": "jf_expense_voucher", "fieldtype": "Link", "label": "集沣费用登记",
+        "options": "Jifeng Expense Voucher", "insert_after": "user_remark",
+        "read_only": 1, "no_copy": 1, "unique": 1,
+    }]
     create_custom_fields(fields, update=True)
 
 

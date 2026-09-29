@@ -1,0 +1,35 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Expense Voucher",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-EXP-{YYYY}-{#####}",
+ "title_field": "summary",
+ "search_fields": "company,store_name,legacy_number,counterparty_name,journal_entry",
+ "track_changes": 1,
+ "is_submittable": 1,
+ "allow_import": 1,
+ "field_order": [
+  "company", "posting_date", "store_name", "cost_center", "legacy_number",
+  "counterparty_name", "payment_method", "expense_account", "payment_account",
+  "amount", "arrears_reference", "summary", "journal_entry"
+ ],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "posting_date", "fieldtype": "Date", "label": "费用日期", "reqd": 1, "default": "Today", "in_list_view": 1},
+  {"fieldname": "store_name", "fieldtype": "Data", "label": "店面（原系统名称）", "in_list_view": 1, "description": "保留旧系统店面名称；正式费用归属由成本中心决定。"},
+  {"fieldname": "cost_center", "fieldtype": "Link", "label": "成本中心", "options": "Cost Center", "reqd": 1, "fetch_from": "company.cost_center", "fetch_if_empty": 1},
+  {"fieldname": "legacy_number", "fieldtype": "Data", "label": "原系统编号"},
+  {"fieldname": "counterparty_name", "fieldtype": "Data", "label": "名称"},
+  {"fieldname": "payment_method", "fieldtype": "Select", "label": "方式", "options": "现金\n银行转账\n其他", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "expense_account", "fieldtype": "Link", "label": "费用科目", "options": "Account", "reqd": 1},
+  {"fieldname": "payment_account", "fieldtype": "Link", "label": "付款科目", "options": "Account", "reqd": 1},
+  {"fieldname": "amount", "fieldtype": "Currency", "label": "金额", "options": "Company:company:default_currency", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "arrears_reference", "fieldtype": "Currency", "label": "原系统欠款参考", "options": "Company:company:default_currency", "description": "仅保存旧页面显示的欠款值；不直接产生会计分录。"},
+  {"fieldname": "summary", "fieldtype": "Small Text", "label": "摘要", "reqd": 1},
+  {"fieldname": "journal_entry", "fieldtype": "Link", "label": "总账凭证", "options": "Journal Entry", "read_only": 1, "no_copy": 1, "in_list_view": 1}
+ ],
+ "permissions": [
+  {"role": "Accounts User", "read": 1, "write": 1, "create": 1, "report": 1, "print": 1},
+  {"role": "Accounts Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1}
+ ]
+}
