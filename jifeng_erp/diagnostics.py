@@ -39,6 +39,8 @@ def check():
                                                            "jf_requirements_attachment")),
         "work_order_link_installed": frappe.get_meta("Work Order").has_field("jf_flow_order"),
         "employee_supplement_installed": bool(frappe.db.exists("DocType", "Jifeng Employee Supplement")),
+        "hrms_installed": "hrms" in frappe.get_installed_apps(),
+        "wage_entry_installed": bool(frappe.db.exists("DocType", "Jifeng Wage Entry")),
     }
 
 
@@ -260,5 +262,38 @@ def smoke_employee_supplement(employee):
         assert supplement.wage_method == "计件" and supplement.term_type == "长期"
         return {"passed": True, "checks": ["employee_link", "native_profile_snapshot",
                 "legacy_hr_fields"], "business_data": "rolled_back"}
+    finally:
+        _end_rollback_only(point)
+
+
+def smoke_wage_entry(employee, salary_component):
+    """Check approved wage → one draft Additional Salary; roll all changes back."""
+    frappe.only_for("System Manager")
+    from decimal import Decimal
+
+    from frappe.utils import today
+
+    staff = frappe.get_doc("Employee", employee)
+    point = "jf_wage_smoke"
+    _begin_rollback_only(point)
+    try:
+        ledger_counts = {dt: frappe.db.count(dt) for dt in ("GL Entry", "Stock Ledger Entry", "Salary Slip")}
+        wage = frappe.get_doc({
+            "doctype": "Jifeng Wage Entry", "employee": employee, "company": staff.company,
+            "operation": "冒烟测试工序", "work_date": today(), "payroll_date": today(),
+            "salary_component": salary_component, "quantity": 3, "piece_rate": 2.5,
+            "hours": 1, "hourly_rate": 10, "extra_amount": 0.5,
+        }).insert()
+        assert Decimal(str(wage.total_amount)) == Decimal("18.00")
+        wage.submit()
+        salary_name = wage.make_additional_salary()
+        assert wage.make_additional_salary() == salary_name
+        salary = frappe.get_doc("Additional Salary", salary_name)
+        assert salary.docstatus == 0 and salary.ref_docname == wage.name
+        assert float(salary.amount) == 18.0
+        assert all(frappe.db.count(dt) == count for dt, count in ledger_counts.items())
+        return {"passed": True, "checks": ["wage_calculation", "approval", "draft_earning",
+                "source_reference", "idempotency", "no_ledger_or_salary_slip"],
+                "business_data": "rolled_back"}
     finally:
         _end_rollback_only(point)

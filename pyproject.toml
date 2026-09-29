@@ -12,3 +12,4 @@ build-backend = "flit_core.buildapi"
 [tool.bench.frappe-dependencies]
 frappe = ">=16.21.0,<17.0.0"
 erpnext = ">=16.0.0,<17.0.0"
+hrms = ">=16.20.0,<17.0.0"

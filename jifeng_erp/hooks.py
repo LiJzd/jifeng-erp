@@ -4,7 +4,7 @@ app_publisher = "Jifeng"
 app_description = "订单、委外回货与成本试算"
 app_email = "erp@example.invalid"
 app_license = "GPL-3.0-or-later"
-required_apps = ["erpnext"]
+required_apps = ["erpnext", "hrms"]
 app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css"]
 doctype_js = {"Sales Order": "public/js/jifeng_sales_order.js"}
 
@@ -12,6 +12,7 @@ after_install = "jifeng_erp.setup.install"
 after_migrate = "jifeng_erp.setup.install"
 scheduler_events = {"cron": {"*/15 * * * *": ["jifeng_erp.sync.scheduled_sync"]}}
 doc_events = {
+    "Additional Salary": {"validate": "jifeng_erp.payroll.validate_wage_additional_salary"},
     "Employee": {"on_update": "jifeng_erp.jifeng_erp.doctype.jifeng_employee_supplement.jifeng_employee_supplement.refresh_employee_supplement"},
     "Sales Order": {
         "on_update_after_submit": "jifeng_erp.workflow.refresh_sales_order_flows",

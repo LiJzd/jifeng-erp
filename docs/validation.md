@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：新增一人一道工序的正式计薪记录，可计算计件、计时与附加费并由 HR Manager 审核。已审核记录可幂等生成 HRMS Additional Salary 草稿；后者直接编辑时校验来源、金额、公司、员工、日期、收入项目和唯一性，提交后才可能进入工资单。38 项纯 Python 测试、Ruff、编译、相关 JS 语法、DocType JSON 和工作区入口检查通过。HRMS 已加入应用依赖，安装或迁移前须先在同站点安装 HRMS v16；当前无运行中的测试站点，尚未执行工资结构分配、附加项提交、工资单计算及权限验收。多人操作分摊规则仍待业务确认；当前每条仅表示一人一道工序，工资币种暂要求与公司默认币种一致。
+
 2026-09-30：员工补充档案一对一关联 ERPNext Employee，仅 HR Manager/System Manager 有单据权限；身份证图片只能引用当前档案的私有 File。34 项纯 Python 测试通过，新增用例覆盖私有图片、公开地址、跨档案引用和原生员工信息变更；Ruff、Python 编译、JS 语法、16 个 JSON 解析及工作区快捷入口检查通过。0.2.0 wheel 已确认包含新增 DocType。站点冒烟脚本已准备；当前没有运行中的 Frappe 站点，尚未验证 DocType migrate、上传权限和真实角色查询；身份证号码在数据库中按受限字段保存，未实现字段级加密或脱敏展示。
 
 2026-09-30：流程单增加生产 BOM 与 Work Order 关联，可从有效 BOM 生成正式工单草稿；所生成工单反向记录流程单，并校验公司、商品、BOM 与销售来源一致。单元测试覆盖重复生成复用和跨公司 BOM 拒绝；测试站点冒烟命令已增加，但因本机没有运行中的 Frappe 站点，BOM/仓库设置、原生工单提交与实际报工尚未验收。
@@ -36,6 +38,7 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_test --kwargs '{"com
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_sales_order_flows --kwargs '{"company":"测试公司","customer":"测试客户","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_work_order --kwargs '{"flow_order":"尚未生成工单且已关联有效BOM的测试流程单"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_employee_supplement --kwargs '{"employee":"尚未有补充档案的测试员工编号"}'
+bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs '{"employee":"已分配工资结构的在职测试员工编号","salary_component":"已启用的收入类工资项目"}'
 ```
 
 冒烟测试实际创建测试商品、档案、来源订单、流程单、采购草稿和分批试算，检查重复操作复用原单、同步变化及台账数量不变；退出时回滚这些测试数据，不提交库存/财务凭证。测试公司须有启用的明细仓库和当前会计年度。请在测试站点运行，不能把单元测试通过等同于生产验收。
