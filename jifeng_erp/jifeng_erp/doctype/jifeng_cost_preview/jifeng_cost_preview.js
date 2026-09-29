@@ -27,7 +27,14 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                 });
                 const result = response.message || { issues: [], receipts: [], totals: {} };
                 if (!result.issues.length && !result.receipts.length) {
-                    frappe.msgprint("没有已提交且关联本流程单的物料出库或委外收货，费用未更改。");
+                    if (!frm.doc.receipt_cost_loaded_at) {
+                        frappe.msgprint("没有已提交且关联本流程单的物料出库或委外收货，费用未更改。");
+                        return;
+                    }
+                    frappe.confirm("此前带入的已过账费用已无有效来源。重新汇总后，材料费、加工费和其他费将清零。确认继续？", async () => {
+                        await frm.call("load_posted_costs");
+                        await frm.reload_doc();
+                    });
                     return;
                 }
                 const amount = (value) => format_currency(value || 0, result.currency);

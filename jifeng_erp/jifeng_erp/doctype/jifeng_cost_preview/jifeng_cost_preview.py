@@ -87,7 +87,7 @@ class JifengCostPreview(Document):
         from jifeng_erp.workflow import posted_flow_costs
 
         result = posted_flow_costs(self.flow_order)
-        if not result["issues"] and not result["receipts"]:
+        if not result["issues"] and not result["receipts"] and not self.receipt_cost_loaded_at:
             frappe.throw("没有已提交且关联本流程单的物料出库或委外收货，费用未更改")
         self.material_amount = result["totals"]["material"]
         self.processing_amount = result["totals"]["processing"]
@@ -95,7 +95,7 @@ class JifengCostPreview(Document):
         sources = {row["issue"] for row in result["issues"]} | {
             row["receipt"] for row in result["receipts"]
         }
-        self.receipt_cost_sources = "\n".join(sorted(sources))
+        self.receipt_cost_sources = "\n".join(sorted(sources)) or None
         self.receipt_cost_loaded_at = now()
         self.save()
         return result
