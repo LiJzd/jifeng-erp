@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：新增可重复的库存台账冒烟；隔离站点保存点内创建合成商品和流程单，提交关联流程单的 Material Receipt（5 件）与 Material Issue（2 件），核对 2 条 Stock Ledger Entry 和 Bin 结存 3 件，4 项通过后回滚。工单自动生成的发料/完工入库、采购收货、退货和盘点尚未验证。
+
 2026-09-30：浏览器完成隔离站点首次向导，语言中文、国家中国、币种 CNY、时区 Asia/Shanghai，使用合成公司与管理员资料、未启用演示数据。经典工作台、费用登记列表及 HRMS 费用、Payroll、HR Setup、员工列表均可打开；发现原集沣工作区英文记录名与中文路由不一致，改为中文记录名后迁移并从桌面菜单再次点击，可进入经典工作台且侧栏费用入口可用。直接打开中文工作区可见经典工作台、计薪和费用快捷卡片；补齐翻译并重新构建后，费用登记列表标题显示中文。完整 `bench build` 通过；单独 `bench build --app jifeng_erp` 因该应用没有独立前端打包入口而失败，安装文档已更正。浏览器仍见 Socket.IO 与部分资源 404，当前只运行了开发 Web 服务，未启动实时服务；需在完整服务栈复查。未创建业务凭证。
 
 2026-09-30：在保存点内创建合成原料、成品、已提交 BOM 和流程单；生成 ERPNext Work Order 草稿，核对流程单/BOM 关联及重复操作复用，均通过，所有测试数据已回滚。工单提交、报工与生产库存过账仍未验证。
@@ -70,6 +72,7 @@ WSL Ubuntu独立测试环境已安装：Python3.14、Node24、MariaDB11.8（端�
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.check
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_test --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_sales_order_flows --kwargs '{"company":"测试公司","customer":"测试客户","item_group":"Products","stock_uom":"Nos"}'
+bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_stock_flow --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_expense_voucher --kwargs '{"company":"测试公司"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_work_order --kwargs '{"flow_order":"尚未生成工单且已关联有效BOM的测试流程单"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_employee_supplement --kwargs '{"employee":"尚未有补充档案的测试员工编号"}'

@@ -229,6 +229,69 @@ def smoke_sales_order_flows(company, customer, item_group, stock_uom):
         _end_rollback_only(point)
 
 
+def smoke_stock_flow(company, item_group, stock_uom):
+    """Post receipt and issue for one flow material, then roll back the ledger."""
+    frappe.only_for("System Manager")
+    warehouse = frappe.db.get_value(
+        "Warehouse", {"company": company, "is_group": 0, "disabled": 0}, "name"
+    )
+    if not warehouse:
+        frappe.throw("测试公司需要启用的明细仓库")
+
+    point = "jf_stock_smoke"
+    _begin_rollback_only(point)
+    try:
+        suffix = frappe.generate_hash(length=10)
+        raw = frappe.get_doc({
+            "doctype": "Item", "item_code": "JF-STOCK-RAW-" + suffix,
+            "item_group": item_group, "stock_uom": stock_uom,
+        }).insert()
+        finished = frappe.get_doc({
+            "doctype": "Item", "item_code": "JF-STOCK-FG-" + suffix,
+            "item_group": item_group, "stock_uom": stock_uom,
+        }).insert()
+        flow = frappe.get_doc({
+            "doctype": "Jifeng Flow Order", "company": company,
+            "item_code": finished.name, "planned_qty": 5,
+            "materials": [{"item_code": raw.name, "uom": stock_uom,
+                           "qty_per_unit": 1, "unit_price": 10}],
+        }).insert()
+        receipt = frappe.get_doc({
+            "doctype": "Stock Entry", "company": company,
+            "stock_entry_type": "Material Receipt", "purpose": "Material Receipt",
+            "items": [{"item_code": raw.name, "qty": 5, "basic_rate": 10,
+                       "t_warehouse": warehouse, "jf_flow_order": flow.name}],
+        }).insert()
+        receipt.submit()
+        issue = frappe.get_doc({
+            "doctype": "Stock Entry", "company": company,
+            "stock_entry_type": "Material Issue", "purpose": "Material Issue",
+            "items": [{"item_code": raw.name, "qty": 2,
+                       "s_warehouse": warehouse, "jf_flow_order": flow.name}],
+        }).insert()
+        issue.submit()
+        entries = frappe.db.get_all(
+            "Stock Ledger Entry",
+            filters={"item_code": raw.name, "warehouse": warehouse,
+                     "is_cancelled": 0},
+            fields=["actual_qty"],
+        )
+        assert len(entries) == 2
+        assert round(sum(float(row.actual_qty) for row in entries), 2) == 3
+        balance = frappe.db.get_value(
+            "Bin", {"item_code": raw.name, "warehouse": warehouse}, "actual_qty"
+        )
+        assert round(float(balance), 2) == 3
+        assert receipt.items[0].jf_flow_order == flow.name
+        assert issue.items[0].jf_flow_order == flow.name
+        return {"passed": True,
+                "checks": ["stock_receipt", "stock_issue", "stock_ledger_balance",
+                           "flow_link"],
+                "business_data": "rolled_back"}
+    finally:
+        _end_rollback_only(point)
+
+
 def smoke_expense_voucher(company):
     """Post and cancel a cash expense in a savepoint, then discard all rows."""
     frappe.only_for("System Manager")
