@@ -208,6 +208,8 @@ const JIFENG_LIVE_CREATE = {
 };
 
 const JIFENG_LIVE_LIST_FILTERS = {
+	物料: { 采购订单: { is_subcontracted: 0 } },
+	材料: { 采购订单: { is_subcontracted: 0 } },
 	发镀: { 委外采购单: { is_subcontracted: 1 } },
 	外发: { 委外采购单: { is_subcontracted: 1 } },
 	财务: { 收款凭证查询: { payment_type: "Receive" }, 付款凭证查询: { payment_type: "Pay" } },
@@ -278,7 +280,7 @@ class JifengLegacyWorkspace {
 		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
 		if (liveDoctype) {
 			const filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
-			// An empty object also tells a reused Frappe List view to clear its prior filters.
+			// Frappe List views can restore saved user filters when no route filter is supplied.
 			frappe.route_options = filters || {};
 			frappe.set_route("List", liveDoctype);
 			return;
