@@ -40,15 +40,18 @@ class TestMaterialIssue(unittest.TestCase):
         frappe.db = types.SimpleNamespace(get_value=self.db_value)
         erpnext = types.ModuleType("erpnext")
         stock = types.ModuleType("erpnext.stock")
-        details = types.ModuleType("erpnext.stock.get_item_details")
-        details.get_conversion_factor = lambda item_code, uom: {
-            "conversion_factor": 1000 if uom == "Kg" else 1,
-        }
+        stock_doctype = types.ModuleType("erpnext.stock.doctype")
+        item_package = types.ModuleType("erpnext.stock.doctype.item")
+        item_module = types.ModuleType("erpnext.stock.doctype.item.item")
+        item_module.get_uom_conv_factor = lambda uom, stock_uom: None
         workflow = types.ModuleType("jifeng_erp.workflow")
         workflow.validate_flow_source = lambda flow: None
         modules = {
             "frappe": frappe, "erpnext": erpnext, "erpnext.stock": stock,
-            "erpnext.stock.get_item_details": details, "jifeng_erp.workflow": workflow,
+            "erpnext.stock.doctype": stock_doctype,
+            "erpnext.stock.doctype.item": item_package,
+            "erpnext.stock.doctype.item.item": item_module,
+            "jifeng_erp.workflow": workflow,
         }
         with patch.dict(sys.modules, modules):
             path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "material_issue.py"
@@ -58,7 +61,9 @@ class TestMaterialIssue(unittest.TestCase):
 
     def db_value(self, doctype, name, fields, as_dict=False, for_update=False):
         if doctype == "Item":
-            return "Gram"
+            return Record(stock_uom="Gram", variant_of=None)
+        if doctype == "UOM Conversion Detail":
+            return 1000 if name["uom"] == "Kg" else None
         if doctype == "Jifeng Flow Order":
             return "FLOW-1"
         if doctype == "Stock Entry":
@@ -77,6 +82,11 @@ class TestMaterialIssue(unittest.TestCase):
         required, units = self.issue._required_stock(self.flow)
         self.assertEqual(required["SILVER"], 1000)
         self.assertEqual(units["SILVER"], "Gram")
+
+    def test_missing_unit_conversion_is_rejected(self):
+        self.flow.materials[0].uom = "Furnace"
+        with self.assertRaisesRegex(ValueError, "缺少 Furnace 到库存单位 Gram 的换算关系"):
+            self.issue._required_stock(self.flow)
 
     def test_partial_issues_leave_balance(self):
         self.history = [Record(parent="SE-OLD", item_code="SILVER", transfer_qty=400)]

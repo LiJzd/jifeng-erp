@@ -4,7 +4,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 import frappe
-from erpnext.stock.get_item_details import get_conversion_factor
+from erpnext.stock.doctype.item.item import get_uom_conv_factor
 
 from jifeng_erp.costing import CostingError, number
 from jifeng_erp.workflow import validate_flow_source
@@ -14,14 +14,27 @@ TOLERANCE = Decimal("0.000001")
 
 
 def _stock_quantity(item_code, uom, qty):
-    stock_uom = frappe.db.get_value("Item", item_code, "stock_uom")
-    if not stock_uom:
+    item = frappe.db.get_value("Item", item_code, ["stock_uom", "variant_of"], as_dict=True)
+    if not item or not item.stock_uom:
         frappe.throw(f"物料 {item_code} 缺少库存单位")
-    unit = uom or stock_uom
-    factor = Decimal(str(get_conversion_factor(item_code, unit)["conversion_factor"] or 0))
+    unit = uom or item.stock_uom
+    factor = 1 if unit == item.stock_uom else None
+    if factor is None:
+        for parent in (item_code, item.variant_of):
+            if parent:
+                factor = frappe.db.get_value(
+                    "UOM Conversion Detail", {"parent": parent, "uom": unit}, "conversion_factor",
+                )
+                if factor is not None:
+                    break
+    if factor is None:
+        factor = get_uom_conv_factor(unit, item.stock_uom)
+    if factor is None:
+        frappe.throw(f"物料 {item_code} 缺少 {unit} 到库存单位 {item.stock_uom} 的换算关系")
+    factor = Decimal(str(factor))
     if not factor.is_finite() or factor <= 0:
         frappe.throw(f"物料 {item_code} 的单位换算系数无效")
-    return number(qty, "物料数量") * factor, stock_uom
+    return number(qty, "物料数量") * factor, item.stock_uom
 
 
 def _required_stock(flow):
