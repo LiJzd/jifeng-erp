@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：旧订单录入/查询入口接 ERPNext Sales Order；前台开单入口接 POS Invoice。路由静态检查和 Node VM 调用检查通过。手工 Sales Order 的选中明细 → 流程单逻辑已有纯 Python 测试，但当前站点不可用，尚未验证 Desk 新建、销售订单提交、POS Profile 设置、POS 库存和收款过账。
+
 2026-09-30：旧财务“收款凭证/付款凭证”入口改为新建 ERPNext Payment Entry，并分别预设 Receive/Pay；查询入口按对应类型筛选原生 Payment Entry 列表。已对照 ERPNext Payment Entry 的正式 Select 选项、Frappe `new_doc` 传参及 List View 的 `route_options` 筛选实现做源码核对。此改动仅验证静态路由与 JS 语法；未在站点用会计角色提交凭证、核对 GL Entry 或实际点击查询过滤。店面、欠款、费用登记和旧财务报表仍未完成。
 
 2026-09-30：计薪记录现可关联 ERPNext Job Card，核对公司、工序、生产工单和流程单；审核时要求 Job Card 已提交且员工在报工时间行。选择报工单时可带出公司、工序和来源单；工资角色在站点上需有对应 Job Card/Work Order 的读取权限。已审核计薪记录会阻止源 Job Card 被取消。42 项纯 Python 测试、Ruff、编译和字段顺序检查通过；相关站点冒烟函数可选传入已有已提交 Job Card。当前仍未在真实 Frappe/HRMS 站点验证 Job Card 权限、提交/取消钩子及工资单联动。多人计件数量如何分摊尚待业务口径确认，因此数量仍由每位员工的计薪单显式填入。

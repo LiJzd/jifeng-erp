@@ -148,7 +148,7 @@ const JIFENG_LIVE_ROUTES = {
 	物料: { 物料档案: "Item", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
 	材料: { 材料档案: "Item", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
 	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
-	订单: { 客户: "Customer", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
+	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
 	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation" },
 	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry" },
@@ -163,6 +163,8 @@ const JIFENG_LIVE_ROUTES = {
 };
 
 const JIFENG_LIVE_CREATE = {
+	订单: { 订单录入: { doctype: "Sales Order", values: {} } },
+	销售: { 前台开单: { doctype: "POS Invoice", values: {} } },
 	财务: {
 		收款凭证: { doctype: "Payment Entry", values: { payment_type: "Receive" } },
 		付款凭证: { doctype: "Payment Entry", values: { payment_type: "Pay" } },
