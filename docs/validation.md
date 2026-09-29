@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：检查 ERP 工作目录及其上级“集沣”项目目录的文件清单，未发现旧系统爬取页面的 HTML、HAR、MHTML 或快照包；当前页面证据仍以先前浏览器勘察和经典工作台记录为准。若要逐字段完成所有旧模块等价验收，需要原始抓取包或可访问的旧系统测试环境。
+
 2026-09-30：隔离站点 `bench migrate` 后 `diagnostics.check` 确认 Material Request、Purchase Order、Purchase Receipt、Purchase Invoice 四级明细均有流程单字段。首次站点测试发现 Frappe 的 `no_copy` 规则使映射出的新单草稿字段为空，随后改为保存时从来源明细补齐并拒绝来源冲突。保存点内提交合成流程单采购申请、采购订单、采购收货和采购发票后，四级明细均为同一流程单；收货原料 5 件，Stock Ledger Entry 增加 5 件、库存价值 50 元。测试业务行已回滚，采购订单/收货/发票记录数复查均为零。新映射草稿在首次保存前不会显示自动追溯字段，需在界面提示；采购退货、发票冲红与真实供应商对账仍待验收。
 
 2026-09-30：按 ERPNext/HRMS v16 仓库中的 Report JSON 核对正式名称和来源单据，且隔离站点均存在这些 Report 记录；将旧工作台的生产计划分析/生产汇总、工资分析、销售报表/销售分析/明细成本、财务销售账/总报表接到 Production Plan Summary、Work Order Summary、Salary Register、Sales Register、Sales Analytics、Gross Profit、Accounts Receivable、General Ledger。仅为可确认的报表入口映射；旧系统筛选维度和统计口径尚未逐项对比。

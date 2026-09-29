@@ -32,4 +32,4 @@ Frappe Desk 的“集沣生产协作”工作区新增“经典业务工作台�
 - Desk 样式：`jifeng_erp/public/css/jifeng_legacy.css`
 - 工作区入口：`jifeng_erp/workspace/jifeng_erp/jifeng_erp.json`
 
-部署后执行站点 migrate 和 `bench build --app jifeng_erp`，再刷新 Desk 查看页面资源。
+部署后执行站点 migrate 和完整 `bench build`，再刷新 Desk 查看页面资源。此应用没有独立的前端打包入口，不能用 `bench build --app jifeng_erp` 代替完整构建。
