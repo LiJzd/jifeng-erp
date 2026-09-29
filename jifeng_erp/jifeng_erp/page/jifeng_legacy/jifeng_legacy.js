@@ -191,7 +191,13 @@ const JIFENG_LIVE_CREATE = {
 		外发加工: { doctype: "Subcontracting Order", values: {} },
 		收回: { doctype: "Subcontracting Receipt", values: {} },
 	},
-	销售: { 前台开单: { doctype: "POS Invoice", values: {} } },
+	销售: {
+		销售入库: { doctype: "Stock Entry", values: { stock_entry_type: "Material Receipt" } },
+		成品出库: { doctype: "Stock Entry", values: { stock_entry_type: "Material Issue" } },
+		销售调拨: { doctype: "Stock Entry", values: { stock_entry_type: "Material Transfer" } },
+		销售盘点: { doctype: "Stock Reconciliation", values: {} },
+		前台开单: { doctype: "POS Invoice", values: {} },
+	},
 	财务: {
 		收款凭证: { doctype: "Payment Entry", values: { payment_type: "Receive" } },
 		付款凭证: { doctype: "Payment Entry", values: { payment_type: "Pay" } },
@@ -206,6 +212,7 @@ const JIFENG_LIVE_LIST_FILTERS = {
 const JIFENG_LIVE_REPORTS = {
 	物料: { 库存: "Stock Balance", 库存明细: "Stock Ledger" },
 	材料: { 库存: "Stock Balance", 库存明细: "Stock Ledger" },
+	销售: { 库存: "Stock Balance", 库存明细: "Stock Ledger", 进销存: "Stock Balance" },
 };
 
 class JifengLegacyWorkspace {
