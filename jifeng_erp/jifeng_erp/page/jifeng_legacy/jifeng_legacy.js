@@ -212,7 +212,13 @@ const JIFENG_LIVE_LIST_FILTERS = {
 const JIFENG_LIVE_REPORTS = {
 	物料: { 库存: "Stock Balance", 库存明细: "Stock Ledger" },
 	材料: { 库存: "Stock Balance", 库存明细: "Stock Ledger" },
-	销售: { 库存: "Stock Balance", 库存明细: "Stock Ledger", 进销存: "Stock Balance" },
+	生产: { 计划分析: "Production Plan Summary", 生产汇总: "Work Order Summary" },
+	工资: { 工资分析: "Salary Register" },
+	销售: {
+		库存: "Stock Balance", 库存明细: "Stock Ledger", 进销存: "Stock Balance",
+		销售报表: "Sales Register", 销售分析: "Sales Analytics", 明细成本: "Gross Profit",
+	},
+	财务: { 销售账: "Accounts Receivable", 总报表: "General Ledger" },
 };
 
 class JifengLegacyWorkspace {
