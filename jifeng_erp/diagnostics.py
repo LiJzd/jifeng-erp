@@ -24,6 +24,15 @@ def _end_rollback_only(point):
 def check():
     frappe.only_for("System Manager")
     settings = frappe.get_single("Jushuitan Settings")
+    flow_hook = "jifeng_erp.setup.validate_flow_links"
+    doc_events = frappe.get_hooks("doc_events")
+    flow_hooks_active = {
+        doctype: flow_hook in doc_events.get(doctype, {}).get("validate", [])
+        for doctype in (
+            "Material Request", "Purchase Order", "Purchase Receipt", "Purchase Invoice",
+            "Subcontracting Order", "Subcontracting Receipt", "Stock Entry", "Work Order",
+        )
+    }
     return {
         "installed_apps": frappe.get_installed_apps(),
         "enabled": bool(settings.enabled),
@@ -40,6 +49,7 @@ def check():
             for doctype in ("Material Request Item", "Purchase Order Item", "Purchase Receipt Item",
                             "Purchase Invoice Item")
         ),
+        "flow_hooks_active": flow_hooks_active,
         "sales_order_fields_installed": all(frappe.get_meta("Sales Order Item").has_field(field)
                                              for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
                                                            "jf_requirements_attachment")),
