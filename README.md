@@ -25,7 +25,7 @@
 bench get-app /path/to/jifeng_erp
 bench --site YOUR_SITE install-app jifeng_erp
 bench --site YOUR_SITE migrate
-bench build --app jifeng_erp
+bench build
 ```
 
 已有安装升级时更新应用代码后执行 migrate；部署方式对应的进程管理器还需重启 worker/web。生产升级前按现有站点流程备份数据库和文件。
