@@ -151,7 +151,7 @@ const JIFENG_LIVE_ROUTES = {
 	订单: { 客户: "Customer", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
 	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation" },
-	工资: { 计薪记录: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资发放: "Payroll Entry" },
+	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
 	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection" },
