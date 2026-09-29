@@ -12,6 +12,17 @@ frappe.ui.form.on("Jifeng Flow Order", {
         };
         if (frm.doc.profile) frm.add_custom_button("更新档案物料与工序", () => call("load_profile"));
         frm.add_custom_button("生成采购申请草稿", () => call("make_request", "Material Request"));
+        frm.add_custom_button("生成按单配料出库草稿", () => {
+            frappe.prompt([{
+                fieldname: "warehouse", label: "领料来源仓库", fieldtype: "Link",
+                options: "Warehouse", reqd: 1,
+                get_query: () => ({ filters: { company: frm.doc.company, is_group: 0, disabled: 0 } }),
+            }], async (values) => {
+                if (frm.is_dirty()) await frm.save();
+                const result = await frm.call("make_material_issue", { warehouse: values.warehouse });
+                if (result.message) frappe.set_route("Form", "Stock Entry", result.message);
+            }, "选择领料仓库", "生成草稿");
+        });
         frm.add_custom_button("生成生产工单草稿", () => call("make_work_order", "Work Order"));
         frm.add_custom_button("打开成本试算", () => call("make_preview", "Jifeng Cost Preview"));
         if (frm.doc.source_changed) {

@@ -72,6 +72,12 @@ class JifengFlowOrder(Document):
         return make_material_request(self)
 
     @frappe.whitelist()
+    def make_material_issue(self, warehouse):
+        from jifeng_erp.material_issue import make_material_issue
+
+        return make_material_issue(self, warehouse)
+
+    @frappe.whitelist()
     def make_work_order(self):
         return make_work_order(self)
 

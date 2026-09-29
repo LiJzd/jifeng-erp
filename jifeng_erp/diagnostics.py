@@ -54,6 +54,7 @@ def check():
                                              for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
                                                            "jf_requirements_attachment")),
         "work_order_link_installed": frappe.get_meta("Work Order").has_field("jf_flow_order"),
+        "material_issue_link_installed": frappe.get_meta("Stock Entry").has_field("jf_material_issue_flow"),
         "employee_supplement_installed": bool(frappe.db.exists("DocType", "Jifeng Employee Supplement")),
         "hrms_installed": "hrms" in frappe.get_installed_apps(),
         "wage_entry_installed": bool(frappe.db.exists("DocType", "Jifeng Wage Entry")),
