@@ -44,21 +44,36 @@ _PROCUREMENT_SOURCES = {
     ),
 }
 
+_RETURN_SOURCES = {
+    "Purchase Receipt": ("purchase_receipt_item", "Purchase Receipt Item"),
+    "Purchase Invoice": ("purchase_invoice_item", "Purchase Invoice Item"),
+    "Subcontracting Receipt": ("subcontracting_receipt_item", "Subcontracting Receipt Item"),
+}
+
 
 def _propagate_procurement_flow(doc):
+    sources = _PROCUREMENT_SOURCES.get(doc.doctype, ())
+    if doc.get("is_return") and doc.doctype in _RETURN_SOURCES:
+        source_field, source_doctype = _RETURN_SOURCES[doc.doctype]
+        sources += ((source_field, source_doctype, "return_against"),)
     for row in doc.get("items") or []:
         source_flows = set()
-        for source_field, source_doctype, parent_field in _PROCUREMENT_SOURCES.get(doc.doctype, ()):
+        for source_field, source_doctype, parent_field in sources:
             source_name = row.get(source_field)
             if not source_name:
                 continue
             source = frappe.db.get_value(
-                source_doctype, source_name, ["parent", "jf_flow_order"], as_dict=True,
+                source_doctype, source_name, ["parent", "item_code", "jf_flow_order"], as_dict=True,
             )
             if not source:
                 frappe.throw("采购来源明细不存在，请重新生成单据")
-            if row.get(parent_field) and source.parent != row.get(parent_field):
+            parent_name = row.get(parent_field) or doc.get(parent_field)
+            if parent_field == "return_against" and not parent_name:
+                frappe.throw("退回来源单据不存在")
+            if parent_name and source.parent != parent_name:
                 frappe.throw("采购来源单据与来源明细不一致")
+            if source.item_code != row.item_code:
+                frappe.throw("采购明细商品与来源明细不一致")
             if source.jf_flow_order:
                 source_flows.add(source.jf_flow_order)
         if len(source_flows) > 1:

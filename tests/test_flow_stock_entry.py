@@ -39,11 +39,18 @@ class TestFlowStockEntry(unittest.TestCase):
             ("Jifeng Flow Order", "FLOW-1"): self.flow,
         }[(doctype, name)]
         sources = {
-            ("Material Request Item", "MR-ROW"): Record(parent="MR-1", jf_flow_order="FLOW-1"),
-            ("Purchase Order Item", "PO-ROW"): Record(parent="PO-1", jf_flow_order="FLOW-1"),
-            ("Purchase Receipt Item", "PR-ROW"): Record(parent="PR-1", jf_flow_order="FLOW-1"),
+            ("Material Request Item", "MR-ROW"): Record(
+                parent="MR-1", item_code="SILVER", jf_flow_order="FLOW-1"),
+            ("Purchase Order Item", "PO-ROW"): Record(
+                parent="PO-1", item_code="SILVER", jf_flow_order="FLOW-1"),
+            ("Purchase Receipt Item", "PR-ROW"): Record(
+                parent="PR-1", item_code="SILVER", jf_flow_order="FLOW-1"),
+            ("Purchase Invoice Item", "PI-ROW"): Record(
+                parent="PI-1", item_code="SILVER", jf_flow_order="FLOW-1"),
             ("Subcontracting Order Item", "SCO-ROW"): Record(
                 parent="SCO-1", item_code="RING", jf_flow_order="FLOW-1"),
+            ("Subcontracting Receipt Item", "SCR-ROW"): Record(
+                parent="SCR-1", item_code="RING", jf_flow_order="FLOW-1"),
             ("Subcontracting Order Supplied Item", "SCO-RM-ROW"): Record(
                 parent="SCO-1", reference_name="SCO-ROW", main_item_code="RING",
                 rm_item_code="SILVER"),
@@ -129,6 +136,27 @@ class TestFlowStockEntry(unittest.TestCase):
                 self.setup.validate_flow_links(doc)
                 doc["items"][0].item_code = "SILVER"
                 with self.assertRaisesRegex(ValueError, "商品与流程单商品不一致"):
+                    self.setup.validate_flow_links(doc)
+
+    def test_return_inherits_flow_from_original_item_and_checks_source(self):
+        cases = (
+            ("Purchase Receipt", "purchase_receipt_item", "PR-ROW", "PR-1", "SILVER"),
+            ("Purchase Invoice", "purchase_invoice_item", "PI-ROW", "PI-1", "SILVER"),
+            ("Subcontracting Receipt", "subcontracting_receipt_item", "SCR-ROW", "SCR-1", "RING"),
+        )
+        for doctype, source_field, source_row, parent, item_code in cases:
+            with self.subTest(doctype=doctype):
+                row = Record(item_code=item_code, jf_flow_order=None, **{source_field: source_row})
+                doc = Record(doctype=doctype, company="JF", is_return=1,
+                             return_against=parent, items=[row])
+                self.setup.validate_flow_links(doc)
+                self.assertEqual(row.jf_flow_order, "FLOW-1")
+                doc.return_against = "OTHER"
+                with self.assertRaisesRegex(ValueError, "来源单据与来源明细不一致"):
+                    self.setup.validate_flow_links(doc)
+                doc.return_against = parent
+                row.item_code = "SCRAP"
+                with self.assertRaisesRegex(ValueError, "商品与来源明细不一致"):
                     self.setup.validate_flow_links(doc)
 
     def test_subcontracting_transfer_inherits_source_flow(self):
