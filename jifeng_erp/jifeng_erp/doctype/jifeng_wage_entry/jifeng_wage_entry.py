@@ -14,12 +14,26 @@ class JifengWageEntry(Document):
             flow = frappe.get_doc("Jifeng Flow Order", self.flow_order)
             if flow.company != self.company:
                 frappe.throw("流程单公司与计薪公司不一致")
+        if self.job_card:
+            card = frappe.get_doc("Job Card", self.job_card)
+            if card.company != self.company:
+                frappe.throw("报工单公司与计薪公司不一致")
+            if self.work_order and self.work_order != card.work_order:
+                frappe.throw("报工单与计薪生产工单不一致")
+            if self.flow_order and not card.work_order:
+                frappe.throw("关联流程单的计薪记录需要有生产工单的报工单")
+            self.work_order = card.work_order
+            if self.operation and self.operation != card.operation:
+                frappe.throw("计薪工序与报工单工序不一致")
+            self.operation = card.operation
         if self.work_order:
             work = frappe.get_doc("Work Order", self.work_order)
             if work.company != self.company:
                 frappe.throw("生产工单公司与计薪公司不一致")
             if self.flow_order and work.jf_flow_order != self.flow_order:
                 frappe.throw("生产工单与流程单不一致")
+            if self.job_card and work.jf_flow_order and not self.flow_order:
+                self.flow_order = work.jf_flow_order
         if self.salary_component:
             component = frappe.get_doc("Salary Component", self.salary_component)
             if component.type != "Earning" or component.disabled:
@@ -33,6 +47,15 @@ class JifengWageEntry(Document):
             frappe.throw("计薪日期不能早于工作日期")
         self.piece_amount, self.time_amount, self.total_amount = piece, timed, total
         self.employee_name = employee.employee_name
+
+    def before_submit(self):
+        if not self.job_card:
+            return
+        card = frappe.get_doc("Job Card", self.job_card)
+        if card.docstatus != 1:
+            frappe.throw("只有已提交的报工单可以作为审核计薪依据")
+        if not any(row.employee == self.employee for row in card.time_logs):
+            frappe.throw("报工单中没有这位员工的报工时间记录")
 
     def on_cancel(self):
         if active_additional_salary(self.name):

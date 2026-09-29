@@ -266,7 +266,7 @@ def smoke_employee_supplement(employee):
         _end_rollback_only(point)
 
 
-def smoke_wage_entry(employee, salary_component):
+def smoke_wage_entry(employee, salary_component, job_card=None):
     """Check approved wage → one draft Additional Salary; roll all changes back."""
     frappe.only_for("System Manager")
     from decimal import Decimal
@@ -274,18 +274,22 @@ def smoke_wage_entry(employee, salary_component):
     from frappe.utils import today
 
     staff = frappe.get_doc("Employee", employee)
+    card = frappe.get_doc("Job Card", job_card) if job_card else None
     point = "jf_wage_smoke"
     _begin_rollback_only(point)
     try:
         ledger_counts = {dt: frappe.db.count(dt) for dt in ("GL Entry", "Stock Ledger Entry", "Salary Slip")}
         wage = frappe.get_doc({
             "doctype": "Jifeng Wage Entry", "employee": employee, "company": staff.company,
-            "operation": "冒烟测试工序", "work_date": today(), "payroll_date": today(),
+            "operation": card.operation if card else "冒烟测试工序",
+            "job_card": job_card, "work_date": today(), "payroll_date": today(),
             "salary_component": salary_component, "quantity": 3, "piece_rate": 2.5,
             "hours": 1, "hourly_rate": 10, "extra_amount": 0.5,
         }).insert()
         assert Decimal(str(wage.total_amount)) == Decimal("18.00")
         wage.submit()
+        if card:
+            assert wage.work_order == card.work_order
         salary_name = wage.make_additional_salary()
         assert wage.make_additional_salary() == salary_name
         salary = frappe.get_doc("Additional Salary", salary_name)

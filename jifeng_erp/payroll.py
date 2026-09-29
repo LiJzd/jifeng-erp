@@ -56,3 +56,8 @@ def validate_wage_additional_salary(doc, method=None):
               str(doc.payroll_date), Decimal(str(doc.amount or 0)))
     if actual != expected or doc.is_recurring or doc.overwrite_salary_structure_amount:
         frappe.throw("工资附加项必须与已审核计薪记录的员工、公司、日期、科目和金额一致")
+
+
+def validate_job_card_cancel(doc, method=None):
+    if frappe.db.exists("Jifeng Wage Entry", {"job_card": doc.name, "docstatus": 1}):
+        frappe.throw("报工单已有审核计薪记录；请先取消关联工资附加项及计薪记录")

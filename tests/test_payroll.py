@@ -1,6 +1,7 @@
 """Payroll calculation and source-link checks without a Frappe site."""
 
 import importlib.util
+import datetime
 import pathlib
 import sys
 import types
@@ -56,6 +57,75 @@ class TestPayroll(unittest.TestCase):
                                        ref_docname="W-1")
         with self.assertRaisesRegex(ValueError, "重复计薪"):
             self.module.validate_wage_additional_salary(salary)
+
+    def test_submitted_wage_prevents_canceling_job_card(self):
+        self.frappe.db.exists = Mock(return_value="JF-WAGE-1")
+        with self.assertRaisesRegex(ValueError, "审核计薪记录"):
+            self.module.validate_job_card_cancel(types.SimpleNamespace(name="JC-1"))
+        self.frappe.db.exists.assert_called_once_with(
+            "Jifeng Wage Entry", {"job_card": "JC-1", "docstatus": 1},
+        )
+
+
+class TestWageJobCardLink(unittest.TestCase):
+    def setUp(self):
+        frappe = types.ModuleType("frappe")
+        frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
+        frappe.whitelist = lambda: (lambda fn: fn)
+        self.employee = types.SimpleNamespace(company="C-1", status="Active", employee_name="员工甲")
+        self.card = types.SimpleNamespace(company="C-1", work_order="WO-1", operation="抛光",
+                                          docstatus=1, time_logs=[types.SimpleNamespace(employee="E-1")])
+        self.work = types.SimpleNamespace(name="WO-1", company="C-1", jf_flow_order="FLOW-1")
+        self.flow = types.SimpleNamespace(company="C-1")
+        component = types.SimpleNamespace(type="Earning", disabled=0)
+        docs = {"Employee": self.employee, "Job Card": self.card, "Work Order": self.work,
+                "Jifeng Flow Order": self.flow, "Salary Component": component}
+        frappe.get_doc = lambda doctype, name: docs[doctype]
+        model = types.ModuleType("frappe.model")
+        document = types.ModuleType("frappe.model.document")
+        document.Document = type("Document", (), {})
+        utils = types.ModuleType("frappe.utils")
+        utils.getdate = lambda value: datetime.date.fromisoformat(str(value))
+        payroll = types.ModuleType("jifeng_erp.payroll")
+        payroll.active_additional_salary = Mock(return_value=None)
+        payroll.wage_amounts = lambda *args: (Decimal("10"), Decimal("0"), Decimal("10"))
+        path = (pathlib.Path(__file__).parents[1] / "jifeng_erp" / "jifeng_erp" /
+                "doctype" / "jifeng_wage_entry" / "jifeng_wage_entry.py")
+        with patch.dict(sys.modules, {"frappe": frappe, "frappe.model": model,
+                                      "frappe.model.document": document, "frappe.utils": utils,
+                                      "jifeng_erp.payroll": payroll}):
+            spec = importlib.util.spec_from_file_location("wage_entry_under_test", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        self.wage = module.JifengWageEntry()
+        self.wage.employee, self.wage.company = "E-1", "C-1"
+        self.wage.operation, self.wage.flow_order, self.wage.work_order = "抛光", None, None
+        self.wage.job_card, self.wage.salary_component = "JC-1", "Piece"
+        self.wage.quantity, self.wage.piece_rate = 5, 2
+        self.wage.hours, self.wage.hourly_rate, self.wage.extra_amount = 0, 0, 0
+        self.wage.work_date, self.wage.payroll_date = "2026-09-29", "2026-09-30"
+
+    def test_job_card_links_work_order_and_flow_before_approval(self):
+        self.wage.validate()
+        self.wage.before_submit()
+        self.assertEqual(self.wage.work_order, "WO-1")
+        self.assertEqual(self.wage.flow_order, "FLOW-1")
+        self.assertEqual(self.wage.total_amount, Decimal("10"))
+
+    def test_unsubmitted_or_unrelated_job_card_cannot_support_pay(self):
+        self.wage.validate()
+        self.card.docstatus = 0
+        with self.assertRaisesRegex(ValueError, "已提交的报工单"):
+            self.wage.before_submit()
+        self.card.docstatus = 1
+        self.card.time_logs = [types.SimpleNamespace(employee="E-2")]
+        with self.assertRaisesRegex(ValueError, "没有这位员工"):
+            self.wage.before_submit()
+
+    def test_mismatched_job_card_operation_is_rejected(self):
+        self.wage.operation = "电镀"
+        with self.assertRaisesRegex(ValueError, "工序"):
+            self.wage.validate()
 
 
 if __name__ == "__main__":
