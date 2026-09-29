@@ -24,6 +24,7 @@ doc_events = {
         "on_cancel": "jifeng_erp.workflow.refresh_sales_order_flows",
     },
     "Work Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
+    "Subcontracting Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Subcontracting Receipt": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Material Request": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Purchase Order": {"validate": "jifeng_erp.setup.validate_flow_links"},

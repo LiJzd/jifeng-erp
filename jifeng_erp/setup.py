@@ -7,7 +7,7 @@ def install():
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
         "options": "Jifeng Flow Order", "insert_after": "item_code", "no_copy": 1,
     }] for doctype in (
-        "Subcontracting Receipt Item", "Material Request Item", "Purchase Order Item",
+        "Subcontracting Order Item", "Subcontracting Receipt Item", "Material Request Item", "Purchase Order Item",
         "Purchase Receipt Item", "Purchase Invoice Item", "Stock Entry Detail",
     )}
     fields["Sales Order Item"] = [
@@ -38,6 +38,9 @@ _PROCUREMENT_SOURCES = {
     "Purchase Invoice": (
         ("pr_detail", "Purchase Receipt Item", "purchase_receipt"),
         ("po_detail", "Purchase Order Item", "purchase_order"),
+    ),
+    "Subcontracting Receipt": (
+        ("subcontracting_order_item", "Subcontracting Order Item", "subcontracting_order"),
     ),
 }
 
@@ -105,8 +108,8 @@ def validate_flow_links(doc, method=None):
         flow.check_permission("read")
         if flow.company != doc.company:
             frappe.throw("流程单与业务凭证公司不一致")
-        if doc.doctype == "Subcontracting Receipt" and flow.item_code != row.item_code:
-            frappe.throw("委外收货商品与流程单商品不一致")
+        if doc.doctype in ("Subcontracting Order", "Subcontracting Receipt") and flow.item_code != row.item_code:
+            frappe.throw("委外单据商品与流程单商品不一致")
         if doc.doctype in (
             "Stock Entry", "Material Request", "Purchase Order", "Purchase Receipt", "Purchase Invoice",
         ):
