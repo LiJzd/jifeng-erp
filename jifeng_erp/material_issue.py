@@ -48,7 +48,7 @@ def _submitted_stock(flow_name, exclude=None):
     rows = frappe.get_all(
         "Stock Entry Detail",
         filters={"jf_flow_order": flow_name, "parenttype": "Stock Entry"},
-        fields=["parent", "item_code", "stock_qty"],
+        fields=["parent", "item_code", "transfer_qty"],
     )
     issued = defaultdict(Decimal)
     parent_status = {}
@@ -61,7 +61,7 @@ def _submitted_stock(flow_name, exclude=None):
             )
         parent = parent_status[row.parent]
         if parent and parent.docstatus == 1 and parent.stock_entry_type == "Material Issue":
-            issued[row.item_code] += Decimal(str(row.stock_qty or 0))
+            issued[row.item_code] += Decimal(str(row.transfer_qty or 0))
     return issued
 
 

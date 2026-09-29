@@ -79,11 +79,11 @@ class TestMaterialIssue(unittest.TestCase):
         self.assertEqual(units["SILVER"], "Gram")
 
     def test_partial_issues_leave_balance(self):
-        self.history = [Record(parent="SE-OLD", item_code="SILVER", stock_qty=400)]
+        self.history = [Record(parent="SE-OLD", item_code="SILVER", transfer_qty=400)]
         self.issue.validate_material_issue(self.entry(600))
 
     def test_overissue_is_rejected(self):
-        self.history = [Record(parent="SE-OLD", item_code="SILVER", stock_qty=400)]
+        self.history = [Record(parent="SE-OLD", item_code="SILVER", transfer_qty=400)]
         with self.assertRaisesRegex(ValueError, "累计领料数量超过"):
             self.issue.validate_material_issue(self.entry(601))
 
