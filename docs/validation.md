@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：物料/材料旧菜单中申购、入库、出库、调拨、盘点现分别进入 Material Request、Purchase Receipt、Stock Entry（预设 Material Issue/Material Transfer）、Stock Reconciliation；库存及库存明细进入 ERPNext Stock Balance/Stock Ledger 报表。源码已核对单据选项和原生报表路由，Node VM 路由调用与 JS 语法通过。尚未在测试站点核对单据提交、库存台账、退回和流程单发料。
+
 2026-09-30：旧订单录入/查询入口接 ERPNext Sales Order；前台开单入口接 POS Invoice。路由静态检查和 Node VM 调用检查通过。手工 Sales Order 的选中明细 → 流程单逻辑已有纯 Python 测试，但当前站点不可用，尚未验证 Desk 新建、销售订单提交、POS Profile 设置、POS 库存和收款过账。
 
 2026-09-30：旧财务“收款凭证/付款凭证”入口改为新建 ERPNext Payment Entry，并分别预设 Receive/Pay；查询入口按对应类型筛选原生 Payment Entry 列表。已对照 ERPNext Payment Entry 的正式 Select 选项、Frappe `new_doc` 传参及 List View 的 `route_options` 筛选实现做源码核对。此改动仅验证静态路由与 JS 语法；未在站点用会计角色提交凭证、核对 GL Entry 或实际点击查询过滤。店面、欠款、费用登记和旧财务报表仍未完成。
