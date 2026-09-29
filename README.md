@@ -15,6 +15,8 @@
 
 商品编码和供应商货号分别保存；聚水潭订单及 Sales Order 来源变化会提示核对既有流程单。再次同步或编辑销售订单不会覆盖人工定制/包装要求或历史工艺快照。销售订单取消会标记关联流程单待核对，不自动撤销已有采购或委外凭证。
 
+人事使用 ERPNext 原生 Employee 保存员工编号、部门、岗位、入职、银行和离职等信息；“员工补充档案”一对一保存旧系统仍需的身份证、民族、专长、宿舍、工资方式等字段，仅 HR Manager 和 System Manager 可访问。身份证图片必须先保存档案再作为私有附件上传；工资方式只是档案分类，不会自动计薪。
+
 ## 安装与升级
 
 运行条件：Linux/WSL，Frappe v16.21+ / ERPNext v16，Python 3.14，Node.js 24+，MariaDB、Redis、Bench scheduler 和 long queue worker。

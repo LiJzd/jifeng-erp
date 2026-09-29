@@ -61,7 +61,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "人事",
 		groups: [
-			{ name: "正式业务", items: ["员工档案", "部门档案", "职位档案"] },
+			{ name: "正式业务", items: ["员工档案", "员工补充档案", "部门档案", "职位档案"] },
 			{ name: "基础资料", items: ["部门", "专长", "文化", "民族"] },
 			{ name: "人员管理", items: ["人事档案", "人员浏览"] },
 			{ name: "报表查询", items: ["人事报表"] },
@@ -148,7 +148,7 @@ const JIFENG_LIVE_ROUTES = {
 	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
 	订单: { 客户: "Customer", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
-	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 部门档案: "Department", 职位档案: "Designation" },
+	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection" },
 	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt" },

@@ -1,0 +1,40 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Employee Supplement",
+ "module": "Jifeng ERP",
+ "autoname": "field:employee",
+ "title_field": "employee_name",
+ "track_changes": 1,
+ "allow_import": 1,
+ "make_attachments_public": 0,
+ "search_fields": "employee,employee_name,department",
+ "field_order": [
+  "employee", "employee_name", "company", "department",
+  "identity_section", "identity_number", "identity_image", "ethnicity", "province",
+  "work_section", "specialty", "dormitory", "wage_method", "term_type",
+  "education_level", "bank_account_name", "notes"
+ ],
+ "fields": [
+  {"fieldname": "employee", "fieldtype": "Link", "label": "员工", "options": "Employee", "reqd": 1, "unique": 1, "in_list_view": 1},
+  {"fieldname": "employee_name", "fieldtype": "Data", "label": "姓名", "fetch_from": "employee.employee_name", "read_only": 1, "in_list_view": 1},
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "fetch_from": "employee.company", "read_only": 1, "in_list_view": 1},
+  {"fieldname": "department", "fieldtype": "Link", "label": "部门", "options": "Department", "fetch_from": "employee.department", "read_only": 1},
+  {"fieldname": "identity_section", "fieldtype": "Section Break", "label": "身份资料"},
+  {"fieldname": "identity_number", "fieldtype": "Data", "label": "身份证号码", "no_copy": 1, "description": "仅限获授权的人事管理人员查看。"},
+  {"fieldname": "identity_image", "fieldtype": "Attach Image", "label": "身份证图片", "make_attachment_public": 0, "no_copy": 1, "depends_on": "eval:!doc.__islocal", "description": "先保存档案，再上传私有文件。"},
+  {"fieldname": "ethnicity", "fieldtype": "Data", "label": "民族"},
+  {"fieldname": "province", "fieldtype": "Data", "label": "省份"},
+  {"fieldname": "work_section", "fieldtype": "Section Break", "label": "工作与其他资料"},
+  {"fieldname": "specialty", "fieldtype": "Data", "label": "专长"},
+  {"fieldname": "dormitory", "fieldtype": "Data", "label": "宿舍"},
+  {"fieldname": "wage_method", "fieldtype": "Select", "label": "工资方式", "options": "\n计时\n计件", "description": "档案分类；实际计算以正式工资单和计件记录为准。"},
+  {"fieldname": "term_type", "fieldtype": "Select", "label": "旧系统人员类型", "options": "\n长期\n临时"},
+  {"fieldname": "education_level", "fieldtype": "Data", "label": "文化程度"},
+  {"fieldname": "bank_account_name", "fieldtype": "Data", "label": "银行户名", "no_copy": 1},
+  {"fieldname": "notes", "fieldtype": "Small Text", "label": "补充说明"}
+ ],
+ "permissions": [
+  {"role": "HR Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "print": 1}
+ ]
+}

@@ -8,6 +8,7 @@
   "roles": [
     { "role": "Stock Manager" },
     { "role": "Manufacturing Manager" },
-    { "role": "System Manager" }
+    { "role": "System Manager" },
+    { "role": "HR Manager" }
   ]
 }

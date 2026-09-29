@@ -38,6 +38,7 @@ def check():
                                              for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
                                                            "jf_requirements_attachment")),
         "work_order_link_installed": frappe.get_meta("Work Order").has_field("jf_flow_order"),
+        "employee_supplement_installed": bool(frappe.db.exists("DocType", "Jifeng Employee Supplement")),
     }
 
 
@@ -233,5 +234,31 @@ def smoke_work_order(flow_order):
         assert all(frappe.db.count(dt) == count for dt, count in ledger_counts.items())
         return {"passed": True, "checks": ["work_order_draft", "flow_link", "bom_match",
                 "work_order_idempotency", "no_ledger_posting"], "business_data": "rolled_back"}
+    finally:
+        _end_rollback_only(point)
+
+
+def smoke_employee_supplement(employee):
+    """On a test site, save one synthetic HR extension record and roll it back."""
+    frappe.only_for("System Manager")
+    if frappe.db.exists("Jifeng Employee Supplement", {"employee": employee}):
+        frappe.throw("请选择尚无集沣补充档案的测试员工")
+    point = "jf_hr_smoke"
+    _begin_rollback_only(point)
+    try:
+        staff = frappe.get_doc("Employee", employee)
+        staff.check_permission("read")
+        supplement = frappe.get_doc({
+            "doctype": "Jifeng Employee Supplement", "employee": employee,
+            "identity_number": "TEST-" + frappe.generate_hash(length=10),
+            "wage_method": "计件", "term_type": "长期", "specialty": "测试工序",
+        }).insert()
+        supplement.reload()
+        assert supplement.name == employee
+        assert supplement.employee_name == staff.employee_name
+        assert supplement.company == staff.company and supplement.department == staff.department
+        assert supplement.wage_method == "计件" and supplement.term_type == "长期"
+        return {"passed": True, "checks": ["employee_link", "native_profile_snapshot",
+                "legacy_hr_fields"], "business_data": "rolled_back"}
     finally:
         _end_rollback_only(point)

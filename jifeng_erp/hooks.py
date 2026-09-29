@@ -12,6 +12,7 @@ after_install = "jifeng_erp.setup.install"
 after_migrate = "jifeng_erp.setup.install"
 scheduler_events = {"cron": {"*/15 * * * *": ["jifeng_erp.sync.scheduled_sync"]}}
 doc_events = {
+    "Employee": {"on_update": "jifeng_erp.jifeng_erp.doctype.jifeng_employee_supplement.jifeng_employee_supplement.refresh_employee_supplement"},
     "Sales Order": {
         "on_update_after_submit": "jifeng_erp.workflow.refresh_sales_order_flows",
         "on_cancel": "jifeng_erp.workflow.refresh_sales_order_flows",
