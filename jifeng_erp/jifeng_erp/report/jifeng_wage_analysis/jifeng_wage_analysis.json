@@ -1,0 +1,20 @@
+{
+ "add_total_row": 1,
+ "columns": [],
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [],
+ "is_standard": "Yes",
+ "module": "Jifeng ERP",
+ "name": "Jifeng Wage Analysis",
+ "prepared_report": 0,
+ "ref_doctype": "Jifeng Wage Entry",
+ "report_name": "Jifeng Wage Analysis",
+ "report_type": "Script Report",
+ "roles": [
+  {"role": "HR User"},
+  {"role": "HR Manager"},
+  {"role": "System Manager"}
+ ]
+}
