@@ -147,7 +147,7 @@ const JIFENG_LEGACY_MODULES = [
 const JIFENG_LIVE_ROUTES = {
 	物料: { 物料档案: "Item", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
 	材料: { 材料档案: "Item", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
-	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
+	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation" },
 	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
 	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
@@ -174,13 +174,14 @@ const JIFENG_LIVE_CREATE = {
 		调拨: { doctype: "Stock Entry", values: { stock_entry_type: "Material Transfer" } },
 		盘点: { doctype: "Stock Reconciliation", values: {} },
 	},
-	材料: {
-		申购: { doctype: "Material Request", values: { material_request_type: "Purchase" } },
+		材料: {
+			申购: { doctype: "Material Request", values: { material_request_type: "Purchase" } },
 		入库: { doctype: "Purchase Receipt", values: {} },
 		出库: { doctype: "Stock Entry", values: { stock_entry_type: "Material Issue" } },
 		调拨: { doctype: "Stock Entry", values: { stock_entry_type: "Material Transfer" } },
-		盘点: { doctype: "Stock Reconciliation", values: {} },
-	},
+			盘点: { doctype: "Stock Reconciliation", values: {} },
+		},
+	产品: { 报价单: { doctype: "Quotation", values: { quotation_to: "Customer" } } },
 	订单: { 订单录入: { doctype: "Sales Order", values: {} } },
 	人事: {
 		晋升办理: { doctype: "Employee Promotion", values: {} },
