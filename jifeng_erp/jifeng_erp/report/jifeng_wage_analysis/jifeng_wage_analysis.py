@@ -10,14 +10,18 @@ def execute(filters=None):
         frappe.throw("没有计薪记录读取权限", frappe.PermissionError)
     if not filters.company or not filters.from_date or not filters.to_date:
         frappe.throw("请选择公司、开始日期和结束日期")
-    company = frappe.get_doc("Company", filters.company)
-    company.check_permission("read")
+    visible_companies = frappe.get_list(
+        "Company", filters={"name": filters.company}, pluck="name", limit_page_length=1,
+    )
+    if not visible_companies:
+        frappe.throw("没有查看该公司的权限", frappe.PermissionError)
+    company = visible_companies[0]
     start, end = getdate(filters.from_date), getdate(filters.to_date)
     if start > end:
         frappe.throw("开始日期不能晚于结束日期")
 
     query = {
-        "company": company.name, "docstatus": 1,
+        "company": company, "docstatus": 1,
         "work_date": ["between", [str(start), str(end)]],
     }
     for field in ("employee", "operation", "salary_component"):
@@ -40,7 +44,7 @@ def execute(filters=None):
         order_by="employee asc, operation asc, salary_component asc",
         limit_page_length=0,
     )
-    currency = company.default_currency
+    currency = frappe.db.get_value("Company", company, "default_currency")
     columns = [
         {"fieldname": "employee", "label": "员工编号", "fieldtype": "Link", "options": "Employee", "width": 130},
         {"fieldname": "employee_name", "label": "姓名", "fieldtype": "Data", "width": 130},
