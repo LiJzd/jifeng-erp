@@ -42,7 +42,11 @@ class TestFlowStockEntry(unittest.TestCase):
             ("Material Request Item", "MR-ROW"): Record(parent="MR-1", jf_flow_order="FLOW-1"),
             ("Purchase Order Item", "PO-ROW"): Record(parent="PO-1", jf_flow_order="FLOW-1"),
             ("Purchase Receipt Item", "PR-ROW"): Record(parent="PR-1", jf_flow_order="FLOW-1"),
-            ("Subcontracting Order Item", "SCO-ROW"): Record(parent="SCO-1", jf_flow_order="FLOW-1"),
+            ("Subcontracting Order Item", "SCO-ROW"): Record(
+                parent="SCO-1", item_code="RING", jf_flow_order="FLOW-1"),
+            ("Subcontracting Order Supplied Item", "SCO-RM-ROW"): Record(
+                parent="SCO-1", reference_name="SCO-ROW", main_item_code="RING",
+                rm_item_code="SILVER"),
         }
         frappe.db = types.SimpleNamespace(get_value=lambda doctype, name, fields, as_dict=False:
                                           sources.get((doctype, name)))
@@ -126,6 +130,22 @@ class TestFlowStockEntry(unittest.TestCase):
                 doc["items"][0].item_code = "SILVER"
                 with self.assertRaisesRegex(ValueError, "商品与流程单商品不一致"):
                     self.setup.validate_flow_links(doc)
+
+    def test_subcontracting_transfer_inherits_source_flow(self):
+        row = Record(item_code="SILVER", subcontracted_item="RING",
+                     sco_rm_detail="SCO-RM-ROW", jf_flow_order=None)
+        entry = Record(doctype="Stock Entry", company="JF", subcontracting_order="SCO-1", items=[row])
+        self.setup.validate_flow_links(entry)
+        self.assertEqual(row.jf_flow_order, "FLOW-1")
+
+        row.jf_flow_order = "FLOW-OTHER"
+        with self.assertRaisesRegex(ValueError, "与来源单据不一致"):
+            self.setup.validate_flow_links(entry)
+
+        row.jf_flow_order = None
+        entry.subcontracting_order = "SCO-OTHER"
+        with self.assertRaisesRegex(ValueError, "来源明细与委外订单不一致"):
+            self.setup.validate_flow_links(entry)
 
 
 if __name__ == "__main__":

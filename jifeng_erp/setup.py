@@ -70,9 +70,41 @@ def _propagate_procurement_flow(doc):
             row.jf_flow_order = flow_name
 
 
+def _propagate_subcontracting_stock_flow(doc):
+    if not doc.get("subcontracting_order"):
+        return
+    for row in doc.get("items") or []:
+        if not row.get("sco_rm_detail"):
+            continue
+        supplied = frappe.db.get_value(
+            "Subcontracting Order Supplied Item", row.sco_rm_detail,
+            ["parent", "reference_name", "main_item_code", "rm_item_code"], as_dict=True,
+        )
+        if not supplied or supplied.parent != doc.subcontracting_order:
+            frappe.throw("委外发料来源明细与委外订单不一致")
+        if supplied.rm_item_code != row.item_code or (
+            row.get("subcontracted_item") and supplied.main_item_code != row.subcontracted_item
+        ):
+            frappe.throw("委外发料物料与来源明细不一致")
+        if not supplied.reference_name:
+            continue
+        source = frappe.db.get_value(
+            "Subcontracting Order Item", supplied.reference_name,
+            ["parent", "item_code", "jf_flow_order"], as_dict=True,
+        )
+        if not source or source.parent != doc.subcontracting_order or source.item_code != supplied.main_item_code:
+            frappe.throw("委外发料成品与委外订单明细不一致")
+        if source.jf_flow_order:
+            if row.get("jf_flow_order") and row.jf_flow_order != source.jf_flow_order:
+                frappe.throw("委外发料流程单与来源单据不一致")
+            row.jf_flow_order = source.jf_flow_order
+
+
 def validate_flow_links(doc, method=None):
     if doc.doctype in _PROCUREMENT_SOURCES:
         _propagate_procurement_flow(doc)
+    if doc.doctype == "Stock Entry":
+        _propagate_subcontracting_stock_flow(doc)
     if doc.doctype == "Work Order":
         if not doc.get("jf_flow_order"):
             return
