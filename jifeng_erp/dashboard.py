@@ -28,6 +28,22 @@ def _count(doctype, filters):
     return int(rows[0].value or 0) if rows else 0
 
 
+def _stock_value(company):
+    """Current bin valuation and source warehouses visible to this user."""
+    if not frappe.has_permission("Warehouse", "read") or not frappe.has_permission("Bin", "read"):
+        return None, []
+    warehouses = frappe.get_list(
+        "Warehouse", filters={"company": company, "is_group": 0},
+        pluck="name", limit_page_length=0,
+    )
+    if not warehouses:
+        return None, []
+    value = _aggregate("Bin", "stock_value", {
+        "company": company, "warehouse": ["in", warehouses],
+    })
+    return value, warehouses
+
+
 @frappe.whitelist()
 def overview(company=None, from_date=None, to_date=None):
     """Return only figures from documents this user may read."""
@@ -55,12 +71,14 @@ def overview(company=None, from_date=None, to_date=None):
 
     dates = [str(start), str(end)]
     posted = {"company": company, "docstatus": 1}
+    stock_value, stock_warehouses = _stock_value(company)
     return {
         "companies": [dict(row) for row in companies],
         "company": company,
         "currency": accessible[company],
         "from_date": str(start),
         "to_date": str(end),
+        "stock_warehouses": stock_warehouses,
         "metrics": {
             "sales": _aggregate("Sales Invoice", "base_net_total", {
                 **posted, "posting_date": ["between", dates],
@@ -74,5 +92,6 @@ def overview(company=None, from_date=None, to_date=None):
             "open_work_orders": _count("Work Order", {
                 **posted, "status": ["not in", ["Completed", "Stopped", "Closed"]],
             }),
+            "stock_value": stock_value,
         },
     }

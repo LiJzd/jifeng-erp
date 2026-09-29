@@ -485,13 +485,14 @@ class JifengLegacyWorkspace {
 				["purchases", "采购净额", "已提交采购发票的本币未税净额，含退货冲减", "Purchase Invoice", true],
 				["expenses", "费用支出", "已提交集沣费用登记单金额", "Jifeng Expense Voucher", true],
 				["open_work_orders", "未完工工单", "当前已提交且未完成、停止或关闭的工单", "Work Order", false],
+				["stock_value", "当前库存价值", "当前有权限查看的本公司仓库结存价值；不受日期筛选影响", "Bin", true],
 			];
 			body = '<div class="jfe-dashboard-grid">' + items.map(([key, label, hint, doctype, isMoney]) => {
 				const value = state.metrics[key];
 				if (value === null || value === undefined) return '';
 				const display = isMoney ? format_currency(value, state.currency) : String(value);
 				return '<button class="jfe-dashboard-card" data-action="dashboard-list" data-doctype="' + doctype + '" data-metric="' + key + '"><span>' + label + '</span><strong>' + this.esc(display) + '</strong><small>' + hint + '</small></button>';
-			}).join("") + '</div><p class="jfe-dashboard-note">金额按所选日期统计；未完工工单是当前状态。点击指标查看正式单据。</p>';
+			}).join("") + '</div><p class="jfe-dashboard-note">销售、采购和费用按所选日期统计；库存与未完工工单为当前状态。点击指标查看正式单据。</p>';
 		}
 		return '<section class="jfe-dashboard"><div class="jfe-module-title"><span class="jfe-module-icon">总</span><div><h1>经营总览</h1><p>来自正式单据，按当前账号权限显示</p></div></div>' + controls + body + '</section>';
 	}
@@ -1127,6 +1128,12 @@ class JifengLegacyWorkspace {
 			}
 			else if (action === "dashboard-list") {
 				const state = this.dashboard;
+				if (button.dataset.metric === "stock_value") {
+					frappe.route_options = { company: state.company,
+						warehouse: ["in", state.stock_warehouses || []] };
+					frappe.set_route("List", "Bin");
+					return;
+				}
 				const filters = { company: state.company, docstatus: 1 };
 				if (button.dataset.metric === "open_work_orders") {
 					filters.status = ["not in", ["Completed", "Stopped", "Closed"]];
