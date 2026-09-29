@@ -404,8 +404,8 @@ def smoke_employee_supplement(employee):
         _end_rollback_only(point)
 
 
-def smoke_wage_entry(employee, salary_component, job_card=None):
-    """Check approved wage → one draft Additional Salary; roll all changes back."""
+def smoke_wage_entry(employee, salary_component, job_card=None, salary_structure=None):
+    """Check approved wage → Additional Salary and optional Salary Slip, then roll back."""
     frappe.only_for("System Manager")
     from decimal import Decimal
 
@@ -433,9 +433,28 @@ def smoke_wage_entry(employee, salary_component, job_card=None):
         salary = frappe.get_doc("Additional Salary", salary_name)
         assert salary.docstatus == 0 and salary.ref_docname == wage.name
         assert float(salary.amount) == 18.0
-        assert all(frappe.db.count(dt) == count for dt, count in ledger_counts.items())
-        return {"passed": True, "checks": ["wage_calculation", "approval", "draft_earning",
-                "source_reference", "idempotency", "no_ledger_or_salary_slip"],
+        checks = ["wage_calculation", "approval", "draft_earning",
+                  "source_reference", "idempotency"]
+        if salary_structure:
+            from hrms.payroll.doctype.salary_structure.salary_structure import make_salary_slip
+
+            salary.submit()
+            slip = make_salary_slip(salary_structure, employee=employee, posting_date=today())
+            slip.insert()
+            slip.submit()
+            assert slip.docstatus == 1
+            assert any(row.additional_salary == salary.name
+                       and Decimal(str(row.amount)) == Decimal(str(wage.total_amount))
+                       for row in slip.earnings)
+            assert frappe.db.count("Salary Slip") == ledger_counts["Salary Slip"] + 1
+            checks.extend(["submitted_earning", "salary_slip_wage_amount"])
+        else:
+            assert frappe.db.count("Salary Slip") == ledger_counts["Salary Slip"]
+            checks.append("no_salary_slip")
+        assert all(frappe.db.count(dt) == ledger_counts[dt]
+                   for dt in ("GL Entry", "Stock Ledger Entry"))
+        checks.append("no_ledger_posting")
+        return {"passed": True, "checks": checks,
                 "business_data": "rolled_back"}
     finally:
         _end_rollback_only(point)
