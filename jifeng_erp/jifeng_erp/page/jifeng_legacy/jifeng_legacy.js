@@ -61,7 +61,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "人事",
 		groups: [
-			{ name: "正式业务", items: ["员工档案", "员工补充档案", "部门档案", "职位档案"] },
+			{ name: "正式业务", items: ["员工档案", "员工补充档案", "部门档案", "职位档案", "晋升记录", "晋升办理", "调岗记录", "调岗办理", "离职流程"] },
 			{ name: "基础资料", items: ["部门", "专长", "文化", "民族"] },
 			{ name: "人员管理", items: ["人事档案", "人员浏览"] },
 			{ name: "报表查询", items: ["人事报表"] },
@@ -70,7 +70,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "工资",
 		groups: [
-			{ name: "正式业务", items: ["计薪记录", "工资附加项", "工资单", "工资发放"] },
+			{ name: "正式业务", items: ["计薪记录", "工资附加项", "工资单", "工资发放", "调薪记录", "调薪录入"] },
 			{ name: "基础资料", items: ["工序", "计件人员", "工价调用", "工序查询", "人员查询", "临工档案"] },
 			{ name: "工资操作", items: ["工资录入", "临工", "工资汇总", "审核", "计算", "临工打印"] },
 			{ name: "报表分析", items: ["工资明细", "临工明细", "工资分析", "临工分析", "临工浏览", "历史", "当月分析", "历史分析"] },
@@ -150,8 +150,8 @@ const JIFENG_LIVE_ROUTES = {
 	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
 	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
-	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation" },
-	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry" },
+	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
+	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
 	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
@@ -178,6 +178,11 @@ const JIFENG_LIVE_CREATE = {
 		盘点: { doctype: "Stock Reconciliation", values: {} },
 	},
 	订单: { 订单录入: { doctype: "Sales Order", values: {} } },
+	人事: {
+		晋升办理: { doctype: "Employee Promotion", values: {} },
+		调岗办理: { doctype: "Employee Transfer", values: {} },
+	},
+	工资: { 调薪录入: { doctype: "Salary Structure Assignment", values: {} } },
 	发镀: {
 		电镀单: { doctype: "Subcontracting Order", values: {} },
 		电镀品检: { doctype: "Quality Inspection", values: { inspection_type: "Incoming", reference_type: "Subcontracting Receipt" } },
