@@ -52,6 +52,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "生产",
 		groups: [
+			{ name: "正式业务", items: ["生产计划单", "生产工单", "工序报工单"] },
 			{ name: "基础资料", items: ["刷卡工序", "工序查询"] },
 			{ name: "生产操作", items: ["刷单", "生产指令单", "计划", "完成", "反审", "在线订单金额", "计划图片", "入库单", "部门订单", "置顶", "订单逾期", "部门逾期", "工序逾期"] },
 			{ name: "报表分析", items: ["刷卡明细", "刷卡报表", "未投产分析", "计划分析", "完成分析", "前后分析", "生产汇总", "工序损耗", "损耗汇总"] },
@@ -60,6 +61,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "人事",
 		groups: [
+			{ name: "正式业务", items: ["员工档案", "部门档案", "职位档案"] },
 			{ name: "基础资料", items: ["部门", "专长", "文化", "民族"] },
 			{ name: "人员管理", items: ["人事档案", "人员浏览"] },
 			{ name: "报表查询", items: ["人事报表"] },
@@ -92,6 +94,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "发镀",
 		groups: [
+			{ name: "正式业务", items: ["电镀委外单", "电镀收货单", "品检单"] },
 			{ name: "基础资料", items: ["电镀厂", "电镀类型"] },
 			{ name: "业务操作", items: ["电镀单", "电镀品检", "电镀对账", "电镀反审", "电镀跟踪", "品检反审"] },
 			{ name: "报表查询", items: ["电镀明细", "电镀单查询", "电镀报表"] },
@@ -101,7 +104,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "外发",
 		groups: [
 			{ name: "基础资料", items: ["外发工厂", "外发工序"] },
-			{ name: "正式业务", items: ["委外收货"] },
+			{ name: "正式业务", items: ["委外订单", "委外收货"] },
 			{ name: "业务操作", items: ["外发加工", "收回", "对账", "反审", "未收", "收回反审"] },
 			{ name: "报表查询", items: ["外发明细", "收回明细", "外发查询", "收回查询", "外发报表", "收回报表"] },
 		],
@@ -110,7 +113,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "销售",
 		groups: [
 			{ name: "基础资料", items: ["客户类型", "客户等级", "客户分类", "客户档案", "入库部门", "入库类型", "商品信息", "条码打印", "销售员", "条码标题", "收款方式", "快递公司", "销售页脚", "零售倍率", "库位模式"] },
-			{ name: "正式业务", items: ["分批回货成本试算"] },
+			{ name: "正式业务", items: ["销售订单", "发货单", "销售发票", "分批回货成本试算"] },
 			{ name: "销售操作", items: ["销售入库", "前台开单", "销售调拨", "库位下架", "销售反审", "销售跟踪", "成品出库", "客户返修"] },
 			{ name: "仓库管理", items: ["销售盘点", "差异处理", "库存", "盘点明细", "PDA数据", "库存明细", "库位库存", "库位修改", "库存排行", "历史库存", "库存预警"] },
 			{ name: "报表分析", items: ["销售单查询", "日报表", "销售报表", "销售分析", "销售排行", "入库排行", "进销存", "入库明细", "明细查询", "调拨明细", "下架明细", "销售比", "新款分析", "明细成本", "同比", "部门同比", "导购同比", "客户同比", "品牌同比", "类别同比"] },
@@ -119,6 +122,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "财务",
 		groups: [
+			{ name: "正式业务", items: ["收付款单", "总账凭证"] },
 			{ name: "基础资料", items: ["收款银行", "付款银行", "费用科目"] },
 			{ name: "凭证录入", items: ["收款凭证", "付款凭证", "费用登记"] },
 			{ name: "报表查询", items: ["收款凭证查询", "付款凭证查询", "费用登记查询", "物料账", "材料账", "委外账", "电镀账", "销售账", "费用账", "付款报表", "收款报表", "总报表"] },
@@ -142,8 +146,12 @@ const JIFENG_LIVE_ROUTES = {
 	材料: { 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
 	产品: { 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile" },
 	订单: { 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
-	外发: { 委外收货: "Subcontracting Receipt" },
-	销售: { 分批回货成本试算: "Jifeng Cost Preview" },
+	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
+	人事: { 员工档案: "Employee", 部门档案: "Department", 职位档案: "Designation" },
+	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection" },
+	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt" },
+	销售: { 销售订单: "Sales Order", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
+	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry" },
 };
 
 class JifengLegacyWorkspace {

@@ -44,6 +44,7 @@ bench build --app jifeng_erp
 
 - [API规则、凭据配置和同步操作](docs/jushuitan-api.md)
 - [录音需求对应实现、业务口径与验收条件](docs/requirements.md)
+- [第一版全模块交付范围与当前差距](docs/first-release-scope.md)
 - [验证记录与站点冒烟测试](docs/validation.md)
 
 普通聚水潭订单接口有平台覆盖限制，不能代替淘系/拼多多专用通道。实连需要服务器主机、站点/配置路径及已授权应用；密钥不放进仓库或聊天正文。
