@@ -35,7 +35,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "产品",
 		groups: [
 			{ name: "基础资料", items: ["类别", "风格", "来源", "品牌", "流程", "镀色", "报价参数", "设计员", "打版员", "建模员", "材料类别", "产品档案", "资料录入"] },
-			{ name: "正式业务", items: ["商品映射", "商品工艺档案"] },
+			{ name: "正式业务", items: ["商品映射", "商品工艺档案", "产品报价单"] },
 			{ name: "产品功能", items: ["产品浏览", "共用材料", "新款", "打印", "产品明细", "样品制作单", "样品单反审", "报价单"] },
 			{ name: "报表查询", items: ["品牌分析", "类别分析", "材质分析", "来源分析", "设计分析", "打版分析", "建模分析", "风格分析", "产品材料明细", "报价查询", "新款价"] },
 		],
@@ -114,7 +114,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "销售",
 		groups: [
 			{ name: "基础资料", items: ["客户类型", "客户等级", "客户分类", "客户档案", "入库部门", "入库类型", "商品信息", "条码打印", "销售员", "条码标题", "收款方式", "快递公司", "销售页脚", "零售倍率", "库位模式"] },
-			{ name: "正式业务", items: ["销售订单", "发货单", "销售发票", "分批回货成本试算"] },
+			{ name: "正式业务", items: ["销售订单", "零售开单", "发货单", "销售发票", "分批回货成本试算"] },
 			{ name: "销售操作", items: ["销售入库", "前台开单", "销售调拨", "库位下架", "销售反审", "销售跟踪", "成品出库", "客户返修"] },
 			{ name: "仓库管理", items: ["销售盘点", "差异处理", "库存", "盘点明细", "PDA数据", "库存明细", "库位库存", "库位修改", "库存排行", "历史库存", "库存预警"] },
 			{ name: "报表分析", items: ["销售单查询", "日报表", "销售报表", "销售分析", "销售排行", "入库排行", "进销存", "入库明细", "明细查询", "调拨明细", "下架明细", "销售比", "新款分析", "明细成本", "同比", "部门同比", "导购同比", "客户同比", "品牌同比", "类别同比"] },
@@ -135,8 +135,8 @@ const JIFENG_LEGACY_MODULES = [
 			{ name: "经营总览", items: ["物料", "材料", "产品", "订单", "生产", "人事", "工资", "模具", "版种", "发镀", "外发", "销售", "财务"] },
 		],
 	},
-	{ name: "权限", groups: [{ name: "系统管理", items: ["权限管理"] }] },
-	{ name: "日志", groups: [{ name: "系统日志", items: ["操作日志"] }] },
+		{ name: "权限", groups: [{ name: "正式业务", items: ["用户管理", "角色管理"] }, { name: "旧版页面", items: ["权限管理"] }] },
+		{ name: "日志", groups: [{ name: "正式业务", items: ["服务器操作日志"] }, { name: "旧版页面", items: ["操作日志"] }] },
 	{ name: "插件", groups: [{ name: "安装说明", items: ["打印插件"] }] },
 	{ name: "工具", groups: [{ name: "桌面工具", items: ["远程协助工具"] }] },
 	{ name: "关于", groups: [{ name: "系统信息", items: ["关于本系统", "用户须知", "续费信息"] }] },
@@ -145,15 +145,17 @@ const JIFENG_LEGACY_MODULES = [
 const JIFENG_LIVE_ROUTES = {
 	物料: { 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
 	材料: { 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
-	产品: { 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile" },
+	产品: { 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
 	订单: { 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
 	人事: { 员工档案: "Employee", 部门档案: "Department", 职位档案: "Designation" },
 	模具: { 模具档案: "Jifeng Mold" },
 	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection" },
 	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt" },
-	销售: { 销售订单: "Sales Order", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
+	销售: { 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry" },
+	权限: { 用户管理: "User", 角色管理: "Role" },
+	日志: { 服务器操作日志: "Activity Log" },
 };
 
 class JifengLegacyWorkspace {
@@ -346,9 +348,6 @@ class JifengLegacyWorkspace {
 	}
 
 	renderModule(moduleName) {
-		if (moduleName === "权限") {
-			return '<section class="jfe-notice"><div class="jfe-notice-icon">!</div><h2>只有管理员才有权限</h2><p>请联系系统管理员开通访问权限。</p></section>';
-		}
 		if (moduleName === "插件" || moduleName === "工具") {
 			const label = moduleName === "插件" ? "打印插件" : "远程协助工具";
 			return '<section class="jfe-notice"><div class="jfe-notice-icon">↗</div><h2>' + label + '</h2><p>原系统会跳转到外部安装包。此工作台仅保留入口说明。</p>' +
@@ -358,7 +357,6 @@ class JifengLegacyWorkspace {
 			return '<section class="jfe-about"><h1>集沣贸易企业 ERP 管理系统</h1><p>集沣 ERP · 经典业务工作台</p><div class="jfe-about-actions">' +
 				'<button data-action="notice">用户须知</button><button data-action="renewal">续费信息</button></div><small>工作台交互预览 · 页面操作保存在当前浏览器</small></section>';
 		}
-		if (moduleName === "日志") return this.renderList("日志", "操作日志");
 		const module = this.module(moduleName);
 		if (!module) return this.renderHome();
 		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>“正式业务”进入服务器单据；其余页面为本地交互预览</p></div></div>' +
