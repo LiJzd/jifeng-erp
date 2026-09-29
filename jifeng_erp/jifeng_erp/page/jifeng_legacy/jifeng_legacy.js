@@ -467,7 +467,7 @@ class JifengLegacyWorkspace {
 				const value = state.metrics[key];
 				if (value === null || value === undefined) return '';
 				const display = isMoney ? format_currency(value, state.currency) : String(value);
-				return '<button class="jfe-dashboard-card" data-action="dashboard-list" data-doctype="' + doctype + '"><span>' + label + '</span><strong>' + this.esc(display) + '</strong><small>' + hint + '</small></button>';
+				return '<button class="jfe-dashboard-card" data-action="dashboard-list" data-doctype="' + doctype + '" data-metric="' + key + '"><span>' + label + '</span><strong>' + this.esc(display) + '</strong><small>' + hint + '</small></button>';
 			}).join("") + '</div><p class="jfe-dashboard-note">金额按所选日期统计；未完工工单是当前状态。点击指标查看正式单据。</p>';
 		}
 		return '<section class="jfe-dashboard"><div class="jfe-module-title"><span class="jfe-module-icon">总</span><div><h1>经营总览</h1><p>来自正式单据，按当前账号权限显示</p></div></div>' + controls + body + '</section>';
@@ -1102,7 +1102,17 @@ class JifengLegacyWorkspace {
 					to_date: this.host.querySelector("[data-dashboard-to]")?.value,
 				});
 			}
-			else if (action === "dashboard-list") frappe.set_route("List", button.dataset.doctype);
+			else if (action === "dashboard-list") {
+				const state = this.dashboard;
+				const filters = { company: state.company, docstatus: 1 };
+				if (button.dataset.metric === "open_work_orders") {
+					filters.status = ["not in", ["Completed", "Stopped", "Closed"]];
+				} else {
+					filters.posting_date = ["between", [state.from_date, state.to_date]];
+				}
+				frappe.route_options = filters;
+				frappe.set_route("List", button.dataset.doctype);
+			}
 			else if (action === "tab") { this.activeKey = button.dataset.key; this.render(); }
 			else if (action === "close-tab") { event.stopPropagation(); this.closeTab(button.dataset.key); }
 			else if (action === "fullscreen") this.fullscreen();
