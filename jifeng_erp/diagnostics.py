@@ -37,6 +37,7 @@ def check():
         "sales_order_fields_installed": all(frappe.get_meta("Sales Order Item").has_field(field)
                                              for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
                                                            "jf_requirements_attachment")),
+        "work_order_link_installed": frappe.get_meta("Work Order").has_field("jf_flow_order"),
     }
 
 
@@ -207,5 +208,30 @@ def smoke_sales_order_flows(company, customer, item_group, stock_uom):
         return {"passed": True, "checks": ["sales_flow_idempotency", "source_line_trace", "source_identity_guard",
                 "requirements_snapshot", "print_source", "preview_source", "change_review",
                 "change_blocks_procurement", "cancel_review", "no_ledger_posting"], "business_data": "rolled_back"}
+    finally:
+        _end_rollback_only(point)
+
+
+def smoke_work_order(flow_order):
+    """On a test site, create a draft Work Order from a real flow and roll it back."""
+    frappe.only_for("System Manager")
+    flow = frappe.get_doc("Jifeng Flow Order", flow_order)
+    if not flow.bom:
+        frappe.throw("测试流程单需要已提交且启用的生产 BOM")
+    if frappe.db.exists("Work Order", {"jf_flow_order": flow.name, "docstatus": ["<", 2]}):
+        frappe.throw("请选择尚未生成生产工单的测试流程单")
+    point = "jf_work_smoke"
+    _begin_rollback_only(point)
+    try:
+        ledger_counts = {dt: frappe.db.count(dt) for dt in ("GL Entry", "Stock Ledger Entry")}
+        work_order_name = flow.make_work_order()
+        assert flow.make_work_order() == work_order_name
+        work_order = frappe.get_doc("Work Order", work_order_name)
+        assert work_order.docstatus == 0
+        assert work_order.jf_flow_order == flow.name and work_order.production_item == flow.item_code
+        assert work_order.bom_no == flow.bom and work_order.company == flow.company
+        assert all(frappe.db.count(dt) == count for dt, count in ledger_counts.items())
+        return {"passed": True, "checks": ["work_order_draft", "flow_link", "bom_match",
+                "work_order_idempotency", "no_ledger_posting"], "business_data": "rolled_back"}
     finally:
         _end_rollback_only(point)

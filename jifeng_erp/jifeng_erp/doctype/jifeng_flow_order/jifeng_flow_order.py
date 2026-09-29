@@ -2,7 +2,7 @@ import frappe
 from frappe.model.document import Document
 
 from jifeng_erp.costing import number
-from jifeng_erp.workflow import copy_recipe, make_material_request, recipe_totals
+from jifeng_erp.workflow import copy_recipe, make_material_request, make_work_order, recipe_totals
 
 
 class JifengFlowOrder(Document):
@@ -12,6 +12,10 @@ class JifengFlowOrder(Document):
         if not self.external_order and not self.sales_order:
             self.source_key = None
         previous = self.get_doc_before_save()
+        if previous and self.bom != previous.bom and previous.work_order:
+            work_status = frappe.db.get_value("Work Order", previous.work_order, "docstatus")
+            if work_status is not None and int(work_status) < 2:
+                frappe.throw("已有有效生产工单，变更生产 BOM 前请先处理工单")
         sourced = self.external_order or self.sales_order or (previous and (previous.external_order or previous.sales_order))
         if sourced and not (self.flags.from_sync or self.flags.from_sales_order):
             if not previous:
@@ -47,6 +51,7 @@ class JifengFlowOrder(Document):
         if profile.item_code != self.item_code or profile.company != self.company:
             frappe.throw("商品档案与流程单的商品、公司必须一致")
         copy_recipe(self, profile)
+        self.bom = profile.bom
         self.supplier_product_code = profile.supplier_product_code
         self.specification = profile.specification
         self.requirements = self.requirements or profile.requirements
@@ -65,6 +70,10 @@ class JifengFlowOrder(Document):
     @frappe.whitelist()
     def make_request(self):
         return make_material_request(self)
+
+    @frappe.whitelist()
+    def make_work_order(self):
+        return make_work_order(self)
 
     @frappe.whitelist()
     def make_preview(self):

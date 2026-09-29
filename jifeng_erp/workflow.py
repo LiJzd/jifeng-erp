@@ -58,6 +58,7 @@ def create_flows(order):
             if template.company != order.company:
                 frappe.throw("商品档案公司与订单公司不一致")
             copy_recipe(flow, template)
+            flow.bom = template.bom
             flow.supplier_product_code = template.supplier_product_code
             flow.specification = template.specification
             flow.requirements = order.requirements or template.requirements
@@ -131,6 +132,7 @@ def create_sales_order_flows(sales_order):
             if template.company != order.company:
                 frappe.throw("商品档案公司与销售订单公司不一致")
             copy_recipe(flow, template)
+            flow.bom = template.bom
             flow.supplier_product_code = template.supplier_product_code
             flow.specification = template.specification
             flow.requirements = flow.requirements or template.requirements
@@ -214,10 +216,7 @@ def stock_availability(flow_order):
     return [{**row, "stock_uom": frappe.db.get_value("Item", row.item_code, "stock_uom")} for row in bins]
 
 
-def make_material_request(flow):
-    flow.check_permission("write")
-    existing = frappe.db.get_value(flow.doctype, flow.name, "material_request", for_update=True)
-    flow.reload()
+def validate_flow_source(flow):
     if flow.source_changed or flow.source_status in BLOCKED_STATUSES or (flow.sales_order and flow.source_status == "Closed"):
         frappe.throw("请先核对源订单变更或取消状态")
     if flow.sales_order:
@@ -228,6 +227,53 @@ def make_material_request(flow):
         source_line = next((row for row in sales_order.items if row.name == flow.sales_order_item), None)
         if not source_line or not _sales_row_selected(source_line) or _sales_line_differs(flow, source_line):
             frappe.throw("销售订单明细已变化，请先核对流程单来源")
+
+
+def make_work_order(flow):
+    flow.check_permission("write")
+    frappe.db.get_value(flow.doctype, flow.name, "name", for_update=True)
+    flow.reload()
+    validate_flow_source(flow)
+    if not flow.bom:
+        frappe.throw("请先选择已提交且启用的生产 BOM")
+    bom = frappe.get_doc("BOM", flow.bom)
+    bom.check_permission("read")
+    if bom.item != flow.item_code or bom.company != flow.company or bom.docstatus != 1 or not bom.is_active:
+        frappe.throw("生产 BOM 必须属于本公司、本商品且已提交并启用")
+
+    names = frappe.get_all("Work Order", filters={"jf_flow_order": flow.name, "docstatus": ["<", 2]},
+                           pluck="name", limit=2)
+    if len(names) > 1:
+        frappe.throw("同一流程单已有多张有效生产工单，请先核对")
+    if names:
+        work_order = frappe.get_doc("Work Order", names[0])
+        work_order.check_permission("read")
+        if (work_order.company != flow.company or work_order.production_item != flow.item_code
+                or work_order.bom_no != flow.bom or work_order.sales_order != flow.sales_order
+                or work_order.sales_order_item != flow.sales_order_item):
+            frappe.throw("已有生产工单与流程单来源或 BOM 不一致，请先核对")
+        if flow.work_order != work_order.name:
+            flow.work_order = work_order.name
+            flow.save()
+        return work_order.name
+
+    work_order = frappe.get_doc({
+        "doctype": "Work Order", "company": flow.company,
+        "production_item": flow.item_code, "bom_no": flow.bom,
+        "qty": flow.planned_qty, "sales_order": flow.sales_order,
+        "sales_order_item": flow.sales_order_item, "jf_flow_order": flow.name,
+    })
+    work_order.insert()
+    flow.work_order = work_order.name
+    flow.save()
+    return work_order.name
+
+
+def make_material_request(flow):
+    flow.check_permission("write")
+    existing = frappe.db.get_value(flow.doctype, flow.name, "material_request", for_update=True)
+    flow.reload()
+    validate_flow_source(flow)
     if existing and frappe.db.exists("Material Request", existing):
         return existing
     if not flow.materials:

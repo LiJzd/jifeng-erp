@@ -17,10 +17,24 @@ def install():
         {"fieldname": "jf_requirements_attachment", "fieldtype": "Attach", "label": "集沣要求附件",
          "insert_after": "jf_packaging", "allow_on_submit": 1},
     ]
+    fields["Work Order"] = [{
+        "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
+        "options": "Jifeng Flow Order", "insert_after": "sales_order", "in_list_view": 1,
+    }]
     create_custom_fields(fields, update=True)
 
 
 def validate_flow_links(doc, method=None):
+    if doc.doctype == "Work Order":
+        if not doc.get("jf_flow_order"):
+            return
+        flow = frappe.get_doc("Jifeng Flow Order", doc.jf_flow_order)
+        flow.check_permission("read")
+        if (flow.company != doc.company or flow.item_code != doc.production_item
+                or flow.bom != doc.bom_no or flow.sales_order != doc.sales_order
+                or flow.sales_order_item != doc.sales_order_item):
+            frappe.throw("生产工单与集沣流程单的公司、商品、BOM 或销售来源不一致")
+        return
     for row in doc.get("items") or []:
         if not row.get("jf_flow_order"):
             continue

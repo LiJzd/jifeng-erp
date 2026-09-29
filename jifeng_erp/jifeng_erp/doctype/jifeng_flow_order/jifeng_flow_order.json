@@ -91,6 +91,7 @@
    "label": "商品工艺档案",
    "options": "Jifeng Product Profile"
   },
+  {"fieldname": "bom", "fieldtype": "Link", "label": "生产 BOM", "options": "BOM"},
   {
    "fieldname": "planned_qty",
    "fieldtype": "Float",
@@ -182,6 +183,7 @@
    "options": "Material Request",
    "read_only": 1
   },
+  {"fieldname": "work_order", "fieldtype": "Link", "label": "生产工单", "options": "Work Order", "read_only": 1},
   {
    "fieldname": "cost_preview",
    "fieldtype": "Link",
@@ -211,6 +213,7 @@
   "item_code",
   "image",
   "profile",
+  "bom",
   "planned_qty",
   "source_qty",
   "source_item_code",
@@ -229,6 +232,7 @@
   "processing_amount",
   "target_warehouse",
   "material_request",
+  "work_order",
   "cost_preview",
   "supplier_product_code",
   "specification"

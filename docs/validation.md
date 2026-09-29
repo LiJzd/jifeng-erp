@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：流程单增加生产 BOM 与 Work Order 关联，可从有效 BOM 生成正式工单草稿；所生成工单反向记录流程单，并校验公司、商品、BOM 与销售来源一致。单元测试覆盖重复生成复用和跨公司 BOM 拒绝；测试站点冒烟命令已增加，但因本机没有运行中的 Frappe 站点，BOM/仓库设置、原生工单提交与实际报工尚未验收。
+
 2026-09-30：新增已提交 Sales Order 明细生成集沣流程单、手工订单来源快照与取消/变更提示。27 项纯 Python 测试通过，覆盖重复生成、同商品不同明细分开、未提交拒绝、源数量/要求更新不覆盖计划、取消标记；Ruff、Python 编译、JS 语法、15 个 JSON 解析及 DocType 字段顺序检查通过。0.2.0 wheel 构建成功并确认包含销售订单按钮脚本、流程单结构和打印格式。查 Frappe 源码发现文档通知会调用数据库 commit；冒烟脚本现于测试期间禁止事务提交并在 finally 回滚保存点，避免测试数据意外留存。Frappe 站点冒烟脚本已准备，但当前本机没有运行中的站点，尚未执行 migrate、真实提交/取消及按钮/角色验收。
 
 2026-09-29：商品工艺档案补齐已从旧产品档案页面核对的分类、设计/打版/建模、专利、参考价、重量等字段；金额和重量拒绝负数及非有限数字。静态验证通过：DocType 41 个字段与顺序一致、Python 编译、Ruff、23 项既有测试及 `git diff --check`。这些新字段尚未在 Frappe 站点执行 migrate，也未验证导入、图片权限或实际业务录入；参考价只作档案信息。
@@ -30,6 +32,7 @@ WSL Ubuntu独立测试环境已安装：Python3.14、Node24、MariaDB11.8（端�
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.check
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_test --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_sales_order_flows --kwargs '{"company":"测试公司","customer":"测试客户","item_group":"Products","stock_uom":"Nos"}'
+bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_work_order --kwargs '{"flow_order":"尚未生成工单且已关联有效BOM的测试流程单"}'
 ```
 
 冒烟测试实际创建测试商品、档案、来源订单、流程单、采购草稿和分批试算，检查重复操作复用原单、同步变化及台账数量不变；退出时回滚这些测试数据，不提交库存/财务凭证。测试公司须有启用的明细仓库和当前会计年度。请在测试站点运行，不能把单元测试通过等同于生产验收。

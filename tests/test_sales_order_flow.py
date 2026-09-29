@@ -54,6 +54,8 @@ class FakeDatabase:
         if doctype == "Jifeng Product Profile":
             return None
         if doctype == "Jifeng Flow Order":
+            if isinstance(lookup, str):
+                return lookup
             return next((name for name, flow in self.flows.items()
                          if flow.source_key == lookup["source_key"]), None)
         raise AssertionError(doctype)
@@ -62,6 +64,8 @@ class FakeDatabase:
 class TestSalesOrderFlow(unittest.TestCase):
     def setUp(self):
         self.flows = {}
+        self.work_orders = {}
+        self.bom = Record(name="BOM-1", item="RING", company="JF", docstatus=1, is_active=1)
         self.order = Record(
             doctype="Sales Order", name="SO-0001", docstatus=1,
             status="To Deliver and Bill", company="JF",
@@ -73,17 +77,21 @@ class TestSalesOrderFlow(unittest.TestCase):
         frappe.whitelist = lambda: lambda function: function
         frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
         frappe.db = FakeDatabase(self.flows)
-        frappe.get_all = lambda doctype, **kwargs: list(self.flows)
+        frappe.get_all = lambda doctype, **kwargs: list(self.work_orders if doctype == "Work Order" else self.flows)
 
         def get_doc(doctype, name=None):
             if isinstance(doctype, dict):
                 flow = Record(**doctype)
-                flow.store = self.flows
+                flow.store = self.work_orders if doctype["doctype"] == "Work Order" else self.flows
                 return flow
             if doctype == "Sales Order":
                 return self.order
             if doctype == "Jifeng Flow Order":
                 return self.flows[name]
+            if doctype == "Work Order":
+                return self.work_orders[name]
+            if doctype == "BOM":
+                return self.bom
             raise AssertionError(doctype)
 
         frappe.get_doc = get_doc
@@ -135,6 +143,39 @@ class TestSalesOrderFlow(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "已提交"):
             self.workflow.create_sales_order_flows(self.order.name)
         self.assertFalse(self.flows)
+
+    def test_work_order_draft_is_reused_for_same_flow(self):
+        name = self.workflow.create_sales_order_flows(self.order.name)[0]
+        flow = self.flows[name]
+        flow.bom = "BOM-1"
+        flow.work_order = None
+        flow.source_changed = 0
+        work_order_name = self.workflow.make_work_order(flow)
+        self.assertEqual(self.workflow.make_work_order(flow), work_order_name)
+        self.assertEqual(len(self.work_orders), 1)
+        work_order = self.work_orders[work_order_name]
+        self.assertEqual((work_order.jf_flow_order, work_order.sales_order, work_order.sales_order_item),
+                         (name, "SO-0001", "ROW-1"))
+        self.assertEqual((work_order.bom_no, work_order.production_item, work_order.qty), ("BOM-1", "RING", 10))
+
+    def test_wrong_company_bom_cannot_create_work_order(self):
+        name = self.workflow.create_sales_order_flows(self.order.name)[0]
+        flow = self.flows[name]
+        flow.bom = "BOM-1"
+        flow.source_changed = 0
+        self.bom.company = "OTHER"
+        with self.assertRaisesRegex(ValueError, "生产 BOM"):
+            self.workflow.make_work_order(flow)
+        self.assertFalse(self.work_orders)
+
+    def test_changed_source_cannot_create_work_order(self):
+        name = self.workflow.create_sales_order_flows(self.order.name)[0]
+        flow = self.flows[name]
+        flow.bom = "BOM-1"
+        flow.source_changed = 1
+        with self.assertRaisesRegex(ValueError, "核对源订单"):
+            self.workflow.make_work_order(flow)
+        self.assertFalse(self.work_orders)
 
 
 if __name__ == "__main__":

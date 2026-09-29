@@ -12,6 +12,7 @@ frappe.ui.form.on("Jifeng Flow Order", {
         };
         if (frm.doc.profile) frm.add_custom_button("更新档案物料与工序", () => call("load_profile"));
         frm.add_custom_button("生成采购申请草稿", () => call("make_request", "Material Request"));
+        frm.add_custom_button("生成生产工单草稿", () => call("make_work_order", "Work Order"));
         frm.add_custom_button("打开成本试算", () => call("make_preview", "Jifeng Cost Preview"));
         if (frm.doc.source_changed) {
             frm.set_intro("源订单有变更，请核对计划数量、采购和加工单后标记已核对。", "orange");
