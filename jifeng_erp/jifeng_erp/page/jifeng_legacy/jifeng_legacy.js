@@ -222,6 +222,8 @@ class JifengLegacyWorkspace {
 		this.deliveryFilter = false;
 		this.moldView = "列表模式";
 		this.moldPreview = true;
+		this.dashboard = null;
+		this.dashboardRequest = 0;
 		this.pageNo = 1;
 		this.pageSize = 15;
 		this.editing = null;
@@ -326,6 +328,7 @@ class JifengLegacyWorkspace {
 			'<div class="jfe-toast" data-toast></div><div class="jfe-modal-root" data-modal-root></div></div>';
 		this.bindEvents();
 		this.updateClock();
+		if (active.kind === "module" && active.module === "总经理") this.loadDashboard();
 		clearInterval(this.clockTimer);
 		this.clockTimer = setInterval(() => this.updateClock(), 30000);
 	}
@@ -410,6 +413,7 @@ class JifengLegacyWorkspace {
 	}
 
 	renderModule(moduleName) {
+		if (moduleName === "总经理") return this.renderDashboard();
 		if (moduleName === "插件" || moduleName === "工具") {
 			const label = moduleName === "插件" ? "打印插件" : "远程协助工具";
 			return '<section class="jfe-notice"><div class="jfe-notice-icon">↗</div><h2>' + label + '</h2><p>原系统会跳转到外部安装包。此工作台仅保留入口说明。</p>' +
@@ -429,6 +433,53 @@ class JifengLegacyWorkspace {
 					(JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? '<em class="jfe-live-tag">正式</em>' : "") + '<i>›</i></button>').join("") +
 				"</div></section>"
 			).join("") + "</section>";
+	}
+
+	renderDashboard() {
+		const state = this.dashboard;
+		const companies = state?.companies || [];
+		const company = state?.company || "";
+		const from = state?.from_date || this.today().slice(0, 7) + "-01";
+		const to = state?.to_date || this.today();
+		const controls = '<div class="jfe-dashboard-filters"><label>公司<select data-dashboard-company>' +
+			companies.map((row) => '<option value="' + this.esc(row.name) + '"' + (row.name === company ? ' selected' : '') + '>' + this.esc(row.name) + '</option>').join("") +
+			'</select></label><label>开始日期<input type="date" data-dashboard-from value="' + this.esc(from) + '"></label>' +
+			'<label>结束日期<input type="date" data-dashboard-to value="' + this.esc(to) + '"></label>' +
+			'<button class="jfe-button primary" data-action="dashboard-refresh">查询</button></div>';
+		let body = '<p class="jfe-dashboard-status">正在读取正式单据…</p>';
+		if (state?.error) body = '<p class="jfe-dashboard-status">' + this.esc(state.error) + '</p>';
+		else if (state && !companies.length) body = '<p class="jfe-dashboard-status">当前账号没有可查看的公司。</p>';
+		else if (state) {
+			const items = [
+				["sales", "销售净额", "已提交销售发票的本币未税净额，含退货冲减", "Sales Invoice", true],
+				["purchases", "采购净额", "已提交采购发票的本币未税净额，含退货冲减", "Purchase Invoice", true],
+				["expenses", "费用支出", "已提交集沣费用登记单金额", "Jifeng Expense Voucher", true],
+				["open_work_orders", "未完工工单", "当前已提交且未完成、停止或关闭的工单", "Work Order", false],
+			];
+			body = '<div class="jfe-dashboard-grid">' + items.map(([key, label, hint, doctype, isMoney]) => {
+				const value = state.metrics[key];
+				if (value === null || value === undefined) return '';
+				const display = isMoney ? format_currency(value, state.currency) : String(value);
+				return '<button class="jfe-dashboard-card" data-action="dashboard-list" data-doctype="' + doctype + '"><span>' + label + '</span><strong>' + this.esc(display) + '</strong><small>' + hint + '</small></button>';
+			}).join("") + '</div><p class="jfe-dashboard-note">金额按所选日期统计；未完工工单是当前状态。点击指标查看正式单据。</p>';
+		}
+		return '<section class="jfe-dashboard"><div class="jfe-module-title"><span class="jfe-module-icon">总</span><div><h1>经营总览</h1><p>来自正式单据，按当前账号权限显示</p></div></div>' + controls + body + '</section>';
+	}
+
+	async loadDashboard(filters = {}) {
+		const request = ++this.dashboardRequest;
+		try {
+			const response = await frappe.call({ method: "jifeng_erp.dashboard.overview", args: filters });
+			if (request !== this.dashboardRequest) return;
+			this.dashboard = response.message || { companies: [], metrics: {} };
+		} catch (error) {
+			if (request !== this.dashboardRequest) return;
+			this.dashboard = { ...this.dashboard, error: error.message || "经营数据读取失败", metrics: {} };
+		}
+		if (this.activeTab().module === "总经理") {
+			const node = this.host.querySelector(".jfe-dashboard");
+			if (node) node.outerHTML = this.renderDashboard();
+		}
 	}
 
 	renderList(moduleName, pageName) {
@@ -1037,6 +1088,14 @@ class JifengLegacyWorkspace {
 					this.openModule(button.dataset.name);
 				}
 			} else if (action === "open-page") this.openPage(button.dataset.page, button.dataset.module);
+			else if (action === "dashboard-refresh") {
+				this.loadDashboard({
+					company: this.host.querySelector("[data-dashboard-company]")?.value,
+					from_date: this.host.querySelector("[data-dashboard-from]")?.value,
+					to_date: this.host.querySelector("[data-dashboard-to]")?.value,
+				});
+			}
+			else if (action === "dashboard-list") frappe.set_route("List", button.dataset.doctype);
 			else if (action === "tab") { this.activeKey = button.dataset.key; this.render(); }
 			else if (action === "close-tab") { event.stopPropagation(); this.closeTab(button.dataset.key); }
 			else if (action === "fullscreen") this.fullscreen();
