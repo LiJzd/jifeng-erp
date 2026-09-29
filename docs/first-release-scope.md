@@ -19,7 +19,7 @@
 | 人事 | ERPNext Employee、Department、Designation；集沣员工补充档案；Frappe HR 人事流程 | 原生 Employee 覆盖多数旧字段，补充档案已保存身份证、民族、专长、宿舍等缺口并限制 HR 管理角色；HRMS 尚未安装，经历/调薪/升职流程及真实权限验收仍未完成 | 员工档案、部门、经历/调薪/升职记录可保存并按权限查询 |
 | 工资 | Frappe HR Payroll Entry、Salary Slip、Additional Salary 加集沣计薪记录 | 已建立一人一道工序的计件/计时/附加费记录、审核及工资附加项草稿，支持关联已提交 Job Card 并在取消报工前检查工资；旧工资入口现指向服务器计薪单。HRMS 未安装到测试站点，多人分摊、工价规则、工资单实连和报表仍待完成 | 工序工价与产量计算可复核；审批后进入工资单且不重复计薪 |
 | 模具、版种 | 集沣专用档案、图片、制作/建模记录与费用；按需关联 Asset/Item | 模具档案已建立；版种新增可关联商品、制版/建模人、图片、参考费用和停用状态的服务器档案。旧版种页面原始字段尚未取得，制作/费用凭证和历史报表未映射 | 图片、制作人、规格、状态、费用和历史记录可查 |
-| 发镀、外发 | Subcontracting Order、Subcontracting Receipt、Quality Inspection、流程单关联 | 委外收货费用关联已有；电镀工序、品检、对账和返工未完整打通 | 外发、收回、品检、返工、损耗及对账数量金额一致 |
+| 发镀、外发 | Subcontracting Order、Subcontracting Receipt、Quality Inspection、流程单关联 | 委外收货费用关联已有；旧外发加工/收回及电镀单/品检入口已连接正式委外单据和品检单；电镀专属工序、品检、对账和返工未完整打通 | 外发、收回、品检、返工、损耗及对账数量金额一致 |
 | 销售 | Sales Order、成品收货/Stock Entry、POS Invoice、Delivery Note、Sales Invoice、成本试算 | 分批成本试算已有；旧前台开单入口已接正式 POS Invoice。正式成品入库、门店/导购字段及旧销售报表仍未连通 | 同单分批/返工成本可复核，正式库存与销售凭证一致 |
 | 财务 | Payment Entry、Journal Entry、Expense Claim、ERPNext 账簿报表 | 旧收款/付款凭证入口现可新建预设收付类型的 ERPNext Payment Entry，查询入口到原生单据列表；费用登记、店面/欠款字段、科目与审批及报表口径仍未映射 | 收付款、费用、对账、撤销及总账/明细账一致 |
 | 总经理 | 基于正式单据的经营看板和报表 | 当前是导航页，未连正式指标 | 销售、生产、库存、费用指标口径一致且受权限控制 |

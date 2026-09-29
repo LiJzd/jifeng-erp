@@ -154,8 +154,8 @@ const JIFENG_LIVE_ROUTES = {
 	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
-	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection" },
-	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt" },
+	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
+	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
 	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
@@ -178,6 +178,14 @@ const JIFENG_LIVE_CREATE = {
 		盘点: { doctype: "Stock Reconciliation", values: {} },
 	},
 	订单: { 订单录入: { doctype: "Sales Order", values: {} } },
+	发镀: {
+		电镀单: { doctype: "Subcontracting Order", values: {} },
+		电镀品检: { doctype: "Quality Inspection", values: { inspection_type: "Incoming", reference_type: "Subcontracting Receipt" } },
+	},
+	外发: {
+		外发加工: { doctype: "Subcontracting Order", values: {} },
+		收回: { doctype: "Subcontracting Receipt", values: {} },
+	},
 	销售: { 前台开单: { doctype: "POS Invoice", values: {} } },
 	财务: {
 		收款凭证: { doctype: "Payment Entry", values: { payment_type: "Receive" } },
