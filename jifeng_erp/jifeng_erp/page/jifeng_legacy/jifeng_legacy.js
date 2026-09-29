@@ -145,8 +145,8 @@ const JIFENG_LEGACY_MODULES = [
 ];
 
 const JIFENG_LIVE_ROUTES = {
-	物料: { 物料档案: "Item", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
-	材料: { 材料档案: "Item", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
+	物料: { 物料档案: "Item", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
+	材料: { 材料档案: "Item", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
 	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
 	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
@@ -208,8 +208,8 @@ const JIFENG_LIVE_CREATE = {
 };
 
 const JIFENG_LIVE_LIST_FILTERS = {
-	物料: { 采购订单: { is_subcontracted: 0 } },
-	材料: { 采购订单: { is_subcontracted: 0 } },
+	物料: { 采购订单: { is_subcontracted: 0 }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },
+	材料: { 采购订单: { is_subcontracted: 0 }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },
 	发镀: { 委外采购单: { is_subcontracted: 1 } },
 	外发: { 委外采购单: { is_subcontracted: 1 } },
 	财务: { 收款凭证查询: { payment_type: "Receive" }, 付款凭证查询: { payment_type: "Pay" } },
