@@ -7,6 +7,8 @@
  "field_order": [
   "receipt_type",
   "reference_no",
+  "source_receipt",
+  "source_receipt_item",
   "received_qty",
   "good_qty",
   "rework_qty",
@@ -29,6 +31,20 @@
    "fieldtype": "Data",
    "label": "回货单号",
    "in_list_view": 1
+  },
+  {
+   "fieldname": "source_receipt",
+   "fieldtype": "Link",
+   "label": "来源委外收货单",
+   "options": "Subcontracting Receipt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_receipt_item",
+   "fieldtype": "Data",
+   "label": "来源收货明细行",
+   "read_only": 1,
+   "hidden": 1
   },
   {
    "fieldname": "received_qty",

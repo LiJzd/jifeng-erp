@@ -14,6 +14,38 @@ frappe.ui.form.on("Jifeng Cost Preview", {
     refresh(frm) {
         frm.set_intro("按预计最终合格数量分摊的试算；后续损耗和追加费用会改变结果。保存不产生库存或财务凭证。", "blue");
         if (!frm.is_new() && frm.doc.flow_order) {
+            frm.add_custom_button("读取已提交委外回货批次", async () => {
+                const response = await frappe.call({
+                    method: "jifeng_erp.workflow.receipt_batch_candidates",
+                    args: { flow_order: frm.doc.flow_order },
+                });
+                const candidates = response.message || [];
+                const existing = new Set((frm.doc.batches || []).map((row) => row.source_receipt_item).filter(Boolean));
+                const manualReferences = new Set((frm.doc.batches || [])
+                    .filter((row) => !row.source_receipt_item && row.reference_no)
+                    .map((row) => row.reference_no));
+                let added = 0;
+                let manualConflicts = 0;
+                for (const candidate of candidates) {
+                    if (existing.has(candidate.receipt_item)) continue;
+                    if (manualReferences.has(candidate.receipt)) {
+                        manualConflicts++;
+                        continue;
+                    }
+                    frm.add_child("batches", {
+                        receipt_type: "首次回货",
+                        reference_no: candidate.receipt,
+                        source_receipt: candidate.receipt,
+                        source_receipt_item: candidate.receipt_item,
+                        received_qty: candidate.qty,
+                        pending_qty: candidate.qty,
+                    });
+                    existing.add(candidate.receipt_item);
+                    added++;
+                }
+                frm.refresh_field("batches");
+                frappe.msgprint(`新增 ${added} 条待检回货批次${manualConflicts ? `；${manualConflicts} 条与手工回货单号相同，已跳过` : ""}。请核对首次/返工类型及合格、返工、损耗、待检数量后保存；本操作不会自动保存或入账。`);
+            });
             frm.add_custom_button("读取流程单预计费用", async () => {
                 if (frm.is_dirty()) await frm.save();
                 await frm.call("load_flow_costs");

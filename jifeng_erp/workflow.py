@@ -204,6 +204,40 @@ def receipt_costs(flow_order):
 
 
 @frappe.whitelist()
+def receipt_batch_candidates(flow_order):
+    """Offer posted receipt quantities for manual classification in a cost preview."""
+    flow = frappe.get_doc("Jifeng Flow Order", flow_order)
+    flow.check_permission("read")
+    if not frappe.has_permission("Subcontracting Receipt", "read"):
+        frappe.throw("没有委外收货单读取权限", frappe.PermissionError)
+    parents = frappe.get_list("Subcontracting Receipt", filters=[
+        ["Subcontracting Receipt", "docstatus", "=", 1],
+        ["Subcontracting Receipt", "company", "=", flow.company],
+        ["Subcontracting Receipt Item", "jf_flow_order", "=", flow.name],
+    ], fields=["name", "posting_date", "is_return"], distinct=True,
+        order_by="posting_date asc, name asc", limit_page_length=0)
+    if any(parent.is_return for parent in parents):
+        frappe.throw("本流程单已有委外退货，请先人工核对回货数量，不能直接带入批次")
+    if not parents:
+        return []
+    details = frappe.get_all("Subcontracting Receipt Item", filters={
+        "parent": ["in", [parent.name for parent in parents]],
+        "parenttype": "Subcontracting Receipt", "jf_flow_order": flow.name,
+        "item_code": flow.item_code,
+    }, fields=["name", "parent", "idx", "qty"])
+    order = {parent.name: index for index, parent in enumerate(parents)}
+    rows = []
+    for detail in sorted(details, key=lambda row: (order[row.parent], row.idx)):
+        if Decimal(str(detail.qty or 0)) <= 0:
+            frappe.throw(f"委外收货 {detail.parent} 的回货数量无效，请先核对来源凭证")
+        rows.append({
+            "receipt": detail.parent, "receipt_item": detail.name,
+            "qty": detail.qty,
+        })
+    return rows
+
+
+@frappe.whitelist()
 def material_issue_costs(flow_order):
     """Read posted Material Issue value from its stock ledger rows, not recipe prices."""
     flow = frappe.get_doc("Jifeng Flow Order", flow_order)

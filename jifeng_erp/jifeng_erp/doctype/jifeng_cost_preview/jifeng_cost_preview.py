@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import frappe
 from frappe.model.document import Document
 from frappe.utils import now
@@ -26,6 +28,8 @@ class JifengCostPreview(Document):
         for row, allocation in zip(self.batches, result["allocations"], strict=True):
             row.estimated_cost = allocation["estimated_cost"]
 
+        self._validate_batch_sources()
+
         if self.flow_order:
             flow = frappe.get_doc("Jifeng Flow Order", self.flow_order)
             flow.check_permission("read")
@@ -36,6 +40,31 @@ class JifengCostPreview(Document):
                 if self.sales_order and self.sales_order != flow.sales_order:
                     frappe.throw("试算单销售订单与流程单来源不一致")
                 self.sales_order = flow.sales_order
+
+    def _validate_batch_sources(self):
+        seen = set()
+        for row in self.batches:
+            if not row.source_receipt and not row.source_receipt_item:
+                continue
+            if not self.flow_order or not row.source_receipt or not row.source_receipt_item:
+                frappe.throw("已关联的回货批次必须包含流程单、委外收货单和明细行")
+            if row.source_receipt_item in seen:
+                frappe.throw("同一委外收货明细不能重复带入试算")
+            seen.add(row.source_receipt_item)
+            receipt = frappe.get_doc("Subcontracting Receipt", row.source_receipt)
+            receipt.check_permission("read")
+            if receipt.docstatus != 1 or receipt.company != self.company or receipt.is_return:
+                frappe.throw("来源委外收货单未提交、已退货或公司不一致")
+            if frappe.db.exists("Subcontracting Receipt", {
+                "return_against": receipt.name, "docstatus": 1,
+            }):
+                frappe.throw("来源委外收货单已有退货，请人工核对并移除或调整来源批次")
+            detail = frappe.db.get_value("Subcontracting Receipt Item", row.source_receipt_item,
+                                         ["parent", "item_code", "jf_flow_order", "qty"], as_dict=True)
+            if not detail or (detail.parent, detail.item_code, detail.jf_flow_order) != (
+                receipt.name, self.item_code, self.flow_order,
+            ) or Decimal(str(detail.qty or 0)) != Decimal(str(row.received_qty or 0)):
+                frappe.throw("来源委外收货明细与试算批次的商品、流程单或数量不一致")
 
     @frappe.whitelist()
     def load_flow_costs(self):
