@@ -1,5 +1,11 @@
 # 验证记录
 
+2026-09-30：新建隔离的 WSL Ubuntu-24.04 测试站点 `jifeng.localhost`，使用 Python 3.14、Node 24、MariaDB 11.8、Redis 和 Frappe/ERPNext v16、HRMS v16.20.0。三应用同站点安装、`bench migrate`、`bench build` 通过；`diagnostics.check` 确认订单、工单、委外收货、员工补充档案及计薪扩展字段已同步。此站点只含合成基础资料，聚水潭凭据未配置。为了测试创建了公司、科目/仓库/成本中心、商品组、单位、会计年度、客户、销售价格表、员工、工资结构及分配；真实业务测试行均在保存点回滚。
+
+2026-09-30：同站点重跑流程单冒烟 13 项、销售订单→流程单冒烟 10 项、员工补充档案 3 项和计薪→补充薪资草稿 6 项，均通过。销售订单冒烟补齐了原生单据必需的仓库和同币种销售价格表，否则无法在全新站点保存；计薪冒烟要求测试员工已有已提交的工资结构分配。
+
+2026-09-30：新增可重复的费用登记站点冒烟，在保存点内提交现金费用单，核对 Journal Entry 的两条平衡 GL Entry、直接取消凭证被拦截、从费用单取消凭证，4 项通过且业务数据回滚。仍未验证真实财务角色、银行付款、收付款凭证、会计期间限制及历史对账。
+
 2026-09-30：人事模块增加 HRMS 晋升、调岗、离职正式入口，工资模块增加工资结构分配的调薪录入与查询；对照本地 HRMS v16.20.0 源码确认 DocType 名称和晋升/调岗提交行为。仅完成静态路由与 JS 语法检查，尚未在同站点安装 HRMS，也未验证真实角色、员工历史或工资基数生效。
 
 2026-09-30：新增正式费用登记单，保留旧页面可见的店面、编号、名称、方式、金额、欠款参考和摘要；审核时校验公司、本币、明细费用科目、现金/银行付款科目及成本中心，并在同一请求内生成提交一借一贷的 ERPNext Journal Entry。取消费用单会取消关联总账凭证；直接修改或取消该总账凭证被钩子拒绝。旧费用登记和查询入口已改为服务器单据。53 项纯 Python 测试、Ruff、相关 JS 语法、DocType JSON 字段顺序及 wheel 内新增文件检查通过，ERPNext v16 源码已核对字段及 Accounts Manager 权限。未在真实站点验证迁移、总账过账、会计期间、取消/修订和角色权限；当前只覆盖现金/银行本币直接费用，赊账及其他付款方式的科目映射仍需业务确认。
@@ -60,12 +66,13 @@ WSL Ubuntu独立测试环境已安装：Python3.14、Node24、MariaDB11.8（端�
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.check
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_test --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_sales_order_flows --kwargs '{"company":"测试公司","customer":"测试客户","item_group":"Products","stock_uom":"Nos"}'
+bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_expense_voucher --kwargs '{"company":"测试公司"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_work_order --kwargs '{"flow_order":"尚未生成工单且已关联有效BOM的测试流程单"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_employee_supplement --kwargs '{"employee":"尚未有补充档案的测试员工编号"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs '{"employee":"已分配工资结构的在职测试员工编号","salary_component":"已启用的收入类工资项目"}'
 ```
 
-冒烟测试实际创建测试商品、档案、来源订单、流程单、采购草稿和分批试算，检查重复操作复用原单、同步变化及台账数量不变；退出时回滚这些测试数据，不提交库存/财务凭证。测试公司须有启用的明细仓库和当前会计年度。请在测试站点运行，不能把单元测试通过等同于生产验收。
+冒烟测试实际创建测试商品、档案、来源订单、流程单、采购草稿和分批试算，检查重复操作复用原单、同步变化及台账数量不变；退出时回滚这些测试数据。费用冒烟会临时提交并取消财务凭证，再回滚。测试公司须有启用的明细仓库、当前会计年度、同币种销售价格表、本币费用与现金明细科目以及明细成本中心；计薪测试员工须有已提交的工资结构分配。请只在测试站点运行，不能把冒烟测试通过等同于生产验收。
 
 ## 实连验收
 

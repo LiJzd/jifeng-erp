@@ -167,11 +167,25 @@ def smoke_sales_order_flows(company, customer, item_group, stock_uom):
                                "item_group": item_group, "stock_uom": stock_uom}).insert()
         frappe.get_doc({"doctype": "Jifeng Product Profile", "item_code": item.name,
                         "company": company}).insert()
+        warehouse = frappe.db.get_value(
+            "Warehouse", {"company": company, "is_group": 0, "disabled": 0}, "name"
+        )
+        if not warehouse:
+            frappe.throw("测试公司需要启用的明细仓库")
+        currency = frappe.db.get_value("Company", company, "default_currency")
+        price_list = frappe.db.get_value(
+            "Price List", {"selling": 1, "enabled": 1, "currency": currency}, "name"
+        )
+        if not price_list:
+            frappe.throw("测试公司需要同币种的已启用销售价格表")
         order = frappe.get_doc({
             "doctype": "Sales Order", "company": company, "customer": customer,
             "delivery_date": add_days(today(), 7),
+            "selling_price_list": price_list, "price_list_currency": currency,
+            "plc_conversion_rate": 1, "currency": currency, "conversion_rate": 1,
             "items": [{"item_code": item.name, "qty": 2, "rate": 10,
                        "delivery_date": add_days(today(), 7),
+                       "warehouse": warehouse,
                        "jf_make_flow": 1, "jf_requirements": "测试刻字", "jf_packaging": "测试礼盒"}],
         }).insert()
         order.submit()
@@ -211,6 +225,67 @@ def smoke_sales_order_flows(company, customer, item_group, stock_uom):
         return {"passed": True, "checks": ["sales_flow_idempotency", "source_line_trace", "source_identity_guard",
                 "requirements_snapshot", "print_source", "preview_source", "change_review",
                 "change_blocks_procurement", "cancel_review", "no_ledger_posting"], "business_data": "rolled_back"}
+    finally:
+        _end_rollback_only(point)
+
+
+def smoke_expense_voucher(company):
+    """Post and cancel a cash expense in a savepoint, then discard all rows."""
+    frappe.only_for("System Manager")
+    from frappe.utils import today
+
+    currency = frappe.db.get_value("Company", company, "default_currency")
+    expense_account = frappe.db.get_value(
+        "Account", {"company": company, "root_type": "Expense", "is_group": 0,
+                    "disabled": 0, "account_currency": currency}, "name"
+    )
+    cash_account = frappe.db.get_value(
+        "Account", {"company": company, "root_type": "Asset", "account_type": "Cash",
+                    "is_group": 0, "disabled": 0, "account_currency": currency}, "name"
+    )
+    cost_center = frappe.db.get_value(
+        "Cost Center", {"company": company, "is_group": 0}, "name"
+    )
+    if not all((currency, expense_account, cash_account, cost_center)):
+        frappe.throw("测试公司需要本币费用/现金明细科目与明细成本中心")
+
+    point = "jf_expense_smoke"
+    _begin_rollback_only(point)
+    try:
+        voucher = frappe.get_doc({
+            "doctype": "Jifeng Expense Voucher", "company": company,
+            "posting_date": today(), "store_name": "隔离测试店面",
+            "legacy_number": "SMOKE-" + frappe.generate_hash(length=10),
+            "counterparty_name": "隔离测试收款方", "cost_center": cost_center,
+            "payment_method": "现金", "expense_account": expense_account,
+            "payment_account": cash_account, "amount": 123.45,
+            "summary": "费用过账与取消冒烟检查",
+        }).insert()
+        voucher.submit()
+        journal = frappe.get_doc("Journal Entry", voucher.journal_entry)
+        assert journal.docstatus == 1 and journal.jf_expense_voucher == voucher.name
+        rows = frappe.db.get_all(
+            "GL Entry",
+            filters={"voucher_type": "Journal Entry", "voucher_no": journal.name,
+                     "is_cancelled": 0},
+            fields=["debit", "credit"],
+        )
+        assert len(rows) == 2
+        assert round(sum(float(row.debit) for row in rows), 2) == 123.45
+        assert round(sum(float(row.credit) for row in rows), 2) == 123.45
+        try:
+            journal.cancel()
+        except frappe.ValidationError:
+            pass
+        else:
+            raise AssertionError("The linked Journal Entry must not be cancelled directly")
+        assert frappe.db.get_value("Journal Entry", journal.name, "docstatus") == 1
+        voucher.cancel()
+        assert frappe.db.get_value("Journal Entry", journal.name, "docstatus") == 2
+        return {"passed": True,
+                "checks": ["expense_submit", "balanced_gl", "direct_cancel_guard",
+                           "expense_cancel"],
+                "business_data": "rolled_back"}
     finally:
         _end_rollback_only(point)
 
