@@ -1,0 +1,19 @@
+{
+ "add_total_row": 1,
+ "columns": [],
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [],
+ "is_standard": "Yes",
+ "module": "Jifeng ERP",
+ "name": "Jifeng Expense Ledger",
+ "prepared_report": 0,
+ "ref_doctype": "Jifeng Expense Voucher",
+ "report_name": "Jifeng Expense Ledger",
+ "report_type": "Script Report",
+ "roles": [
+  {"role": "Accounts User"},
+  {"role": "Accounts Manager"}
+ ]
+}

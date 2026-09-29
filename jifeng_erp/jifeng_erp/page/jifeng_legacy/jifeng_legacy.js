@@ -230,7 +230,7 @@ const JIFENG_LIVE_REPORTS = {
 		销售报表: "Sales Register", 销售分析: "Sales Analytics", 明细成本: "Gross Profit",
 	},
 	财务: {
-		销售账: "Accounts Receivable", 总报表: "General Ledger",
+		销售账: "Accounts Receivable", 费用账: "Jifeng Expense Ledger", 总报表: "General Ledger",
 		收款报表: { name: "Jifeng Payment Analysis", filters: { payment_type: "Receive" } },
 		付款报表: { name: "Jifeng Payment Analysis", filters: { payment_type: "Pay" } },
 	},
