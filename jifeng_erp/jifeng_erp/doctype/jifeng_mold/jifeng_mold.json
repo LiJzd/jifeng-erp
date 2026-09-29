@@ -1,0 +1,36 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Mold",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-MOLD-{YYYY}-{#####}",
+ "title_field": "mold_no",
+ "search_fields": "mold_no,product_code,item_code,location",
+ "track_changes": 1,
+ "field_order": [
+  "company", "mold_no", "product_code", "item_code", "image",
+  "quantity", "maker", "mold_date", "amount", "location",
+  "scrapped", "scrap_date", "scrap_reason", "copy_from", "remark"
+ ],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "mold_no", "fieldtype": "Data", "label": "模具号", "reqd": 1, "unique": 1, "in_list_view": 1},
+  {"fieldname": "product_code", "fieldtype": "Data", "label": "产品号", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "item_code", "fieldtype": "Link", "label": "ERP 商品", "options": "Item"},
+  {"fieldname": "image", "fieldtype": "Attach Image", "label": "模具图片"},
+  {"fieldname": "quantity", "fieldtype": "Float", "label": "数量", "reqd": 1, "default": "1", "precision": "6"},
+  {"fieldname": "maker", "fieldtype": "Link", "label": "压模人", "options": "Employee"},
+  {"fieldname": "mold_date", "fieldtype": "Date", "label": "日期", "reqd": 1, "default": "Today", "in_list_view": 1},
+  {"fieldname": "amount", "fieldtype": "Currency", "label": "参考金额", "options": "Company:company:default_currency", "description": "档案参考值；不生成会计或库存凭证。"},
+  {"fieldname": "location", "fieldtype": "Data", "label": "库位", "in_list_view": 1},
+  {"fieldname": "scrapped", "fieldtype": "Check", "label": "已报废", "in_list_view": 1},
+  {"fieldname": "scrap_date", "fieldtype": "Date", "label": "报废日期", "depends_on": "eval:doc.scrapped==1", "mandatory_depends_on": "eval:doc.scrapped==1"},
+  {"fieldname": "scrap_reason", "fieldtype": "Small Text", "label": "报废原因", "depends_on": "eval:doc.scrapped==1"},
+  {"fieldname": "copy_from", "fieldtype": "Link", "label": "复制来源模具", "options": "Jifeng Mold"},
+  {"fieldname": "remark", "fieldtype": "Small Text", "label": "说明"}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "Manufacturing Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "Stock Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "print": 1}
+ ]
+}

@@ -78,6 +78,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "模具",
 		groups: [
+			{ name: "正式业务", items: ["模具档案"] },
 			{ name: "基础资料", items: ["压模人"] },
 			{ name: "模具管理", items: ["模具录入"] },
 			{ name: "报表查询", items: ["模具查询", "模具报表"] },
@@ -148,6 +149,7 @@ const JIFENG_LIVE_ROUTES = {
 	订单: { 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
 	人事: { 员工档案: "Employee", 部门档案: "Department", 职位档案: "Designation" },
+	模具: { 模具档案: "Jifeng Mold" },
 	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection" },
 	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt" },
 	销售: { 销售订单: "Sales Order", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },

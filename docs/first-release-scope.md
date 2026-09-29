@@ -18,7 +18,7 @@
 | 生产 | Production Plan、Work Order、Job Card、流程单 | 缺与旧生产指令、刷单、部门进度的一致映射 | 按单派工、完成、损耗、计划与进度查询闭环 |
 | 人事 | Frappe HR Employee、Department、Designation 等 | HRMS 尚未安装；旧档案附加字段需原始页面核对 | 员工档案、部门、经历/调薪/升职记录可保存并按权限查询 |
 | 工资 | Frappe HR Payroll Entry、Salary Slip、Additional Salary 加集沣计件记录 | 旧工资录入当前仅本地草稿；计件/计时/多人多工序规则待建模 | 工序工价与产量计算可复核；审批后进入工资单且不重复计薪 |
-| 模具、版种 | 集沣专用档案、图片、制作/建模记录与费用；按需关联 Asset/Item | 没有正式数据模型 | 图片、制作人、规格、状态、费用和历史记录可查 |
+| 模具、版种 | 集沣专用档案、图片、制作/建模记录与费用；按需关联 Asset/Item | 模具档案已建立，含图片、压模人、报废、库位、来源和审计；版种及相关制作/费用流程仍未建模 | 图片、制作人、规格、状态、费用和历史记录可查 |
 | 发镀、外发 | Subcontracting Order、Subcontracting Receipt、Quality Inspection、流程单关联 | 委外收货费用关联已有；电镀工序、品检、对账和返工未完整打通 | 外发、收回、品检、返工、损耗及对账数量金额一致 |
 | 销售 | Sales Order、成品收货/Stock Entry、Delivery Note、Sales Invoice、成本试算 | 分批成本试算已有；正式成品入库与旧前台开单尚未连接 | 同单分批/返工成本可复核，正式库存与销售凭证一致 |
 | 财务 | Payment Entry、Journal Entry、Expense Claim、ERPNext 账簿报表 | 旧凭证页面仍本地草稿；科目和审批映射未确认 | 收付款、费用、对账、撤销及总账/明细账一致 |
