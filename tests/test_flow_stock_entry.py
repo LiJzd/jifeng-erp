@@ -73,6 +73,21 @@ class TestFlowStockEntry(unittest.TestCase):
         self.setup.validate_flow_links(self.entry)
         self.assertIsNone(self.entry["items"][0].jf_flow_order)
 
+    def test_procurement_documents_accept_only_materials_from_matching_flow(self):
+        for doctype in ("Purchase Order", "Purchase Receipt", "Purchase Invoice"):
+            with self.subTest(doctype=doctype):
+                doc = Record(doctype=doctype, company="JF", items=[
+                    Record(item_code="SILVER", jf_flow_order="FLOW-1"),
+                ])
+                self.setup.validate_flow_links(doc)
+                doc["items"][0].item_code = "SCRAP"
+                with self.assertRaisesRegex(ValueError, "不在流程单物料分析"):
+                    self.setup.validate_flow_links(doc)
+                doc["items"][0].item_code = "SILVER"
+                doc.company = "OTHER"
+                with self.assertRaisesRegex(ValueError, "公司不一致"):
+                    self.setup.validate_flow_links(doc)
+
 
 if __name__ == "__main__":
     unittest.main()

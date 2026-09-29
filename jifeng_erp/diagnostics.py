@@ -34,6 +34,11 @@ def check():
         "company_configured": bool(settings.company),
         "merchant_configured": bool(settings.merchant_id),
         "receipt_link_installed": frappe.get_meta("Subcontracting Receipt Item").has_field("jf_flow_order"),
+        "procurement_links_installed": all(
+            frappe.get_meta(doctype).has_field("jf_flow_order")
+            for doctype in ("Material Request Item", "Purchase Order Item", "Purchase Receipt Item",
+                            "Purchase Invoice Item")
+        ),
         "sales_order_fields_installed": all(frappe.get_meta("Sales Order Item").has_field(field)
                                              for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
                                                            "jf_requirements_attachment")),

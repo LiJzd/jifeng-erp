@@ -26,5 +26,8 @@ doc_events = {
     "Work Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Subcontracting Receipt": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Material Request": {"validate": "jifeng_erp.setup.validate_flow_links"},
+    "Purchase Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
+    "Purchase Receipt": {"validate": "jifeng_erp.setup.validate_flow_links"},
+    "Purchase Invoice": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Stock Entry": {"validate": "jifeng_erp.setup.validate_flow_links"},
 }

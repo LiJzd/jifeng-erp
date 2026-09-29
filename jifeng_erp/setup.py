@@ -6,7 +6,10 @@ def install():
     fields = {doctype: [{
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
         "options": "Jifeng Flow Order", "insert_after": "item_code", "no_copy": 1,
-    }] for doctype in ("Subcontracting Receipt Item", "Material Request Item", "Stock Entry Detail")}
+    }] for doctype in (
+        "Subcontracting Receipt Item", "Material Request Item", "Purchase Order Item",
+        "Purchase Receipt Item", "Purchase Invoice Item", "Stock Entry Detail",
+    )}
     fields["Sales Order Item"] = [
         {"fieldname": "jf_make_flow", "fieldtype": "Check", "label": "生成集沣流程单",
          "insert_after": "description", "default": "1", "in_list_view": 1, "allow_on_submit": 1},
@@ -67,7 +70,9 @@ def validate_flow_links(doc, method=None):
             frappe.throw("流程单与业务凭证公司不一致")
         if doc.doctype == "Subcontracting Receipt" and flow.item_code != row.item_code:
             frappe.throw("委外收货商品与流程单商品不一致")
-        if doc.doctype in ("Stock Entry", "Material Request"):
+        if doc.doctype in (
+            "Stock Entry", "Material Request", "Purchase Order", "Purchase Receipt", "Purchase Invoice",
+        ):
             valid_items = {m.item_code for m in flow.materials} | {flow.item_code}
             if row.item_code not in valid_items:
                 frappe.throw("凭证物料不在流程单物料分析中，请先补齐分析")
