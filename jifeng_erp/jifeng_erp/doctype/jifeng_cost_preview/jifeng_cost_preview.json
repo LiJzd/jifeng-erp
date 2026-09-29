@@ -28,6 +28,8 @@
   "estimated_unit_cost",
   "unallocated_cost",
   "is_complete",
+  "receipt_cost_sources",
+  "receipt_cost_loaded_at",
   "note",
   "flow_order",
   "pending_qty"
@@ -172,6 +174,18 @@
    "fieldname": "is_complete",
    "fieldtype": "Check",
    "label": "数量已结清",
+   "read_only": 1
+  },
+  {
+   "fieldname": "receipt_cost_sources",
+   "fieldtype": "Small Text",
+   "label": "最近一次带入的委外收货单",
+   "read_only": 1
+  },
+  {
+   "fieldname": "receipt_cost_loaded_at",
+   "fieldtype": "Datetime",
+   "label": "实际费用带入时间",
    "read_only": 1
   },
   {

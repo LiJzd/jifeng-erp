@@ -15,6 +15,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "物料",
 		groups: [
 			{ name: "基础资料", items: ["物料类别", "物料档案", "仓库", "采购员", "出库方式", "领用人", "浏览"] },
+			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购收货", "发料凭证"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
 			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
@@ -24,6 +25,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "材料",
 		groups: [
 			{ name: "基础资料", items: ["材料类别", "形状", "颜色", "材料档案", "仓库", "供应商", "采购员", "出库方式", "领用人", "浏览"] },
+			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购收货", "发料凭证"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
 			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
@@ -33,6 +35,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "产品",
 		groups: [
 			{ name: "基础资料", items: ["类别", "风格", "来源", "品牌", "流程", "镀色", "报价参数", "设计员", "打版员", "建模员", "材料类别", "产品档案", "资料录入"] },
+			{ name: "正式业务", items: ["商品映射", "商品工艺档案"] },
 			{ name: "产品功能", items: ["产品浏览", "共用材料", "新款", "打印", "产品明细", "样品制作单", "样品单反审", "报价单"] },
 			{ name: "报表查询", items: ["品牌分析", "类别分析", "材质分析", "来源分析", "设计分析", "打版分析", "建模分析", "风格分析", "产品材料明细", "报价查询", "新款价"] },
 		],
@@ -41,6 +44,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "订单",
 		groups: [
 			{ name: "基础资料", items: ["客户分类", "客户级别", "客户", "类型", "要求", "部门", "镀色", "工序"] },
+			{ name: "正式业务", items: ["聚水潭订单", "生产流程单"] },
 			{ name: "订单操作", items: ["订单录入", "订单查询", "算料", "配料", "消单", "反审", "算料汇总", "按单开单", "补数", "按单反审"] },
 			{ name: "报表分析", items: ["订单分析", "订单排行", "新款分析", "补数分析", "补数查询"] },
 		],
@@ -97,6 +101,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "外发",
 		groups: [
 			{ name: "基础资料", items: ["外发工厂", "外发工序"] },
+			{ name: "正式业务", items: ["委外收货"] },
 			{ name: "业务操作", items: ["外发加工", "收回", "对账", "反审", "未收", "收回反审"] },
 			{ name: "报表查询", items: ["外发明细", "收回明细", "外发查询", "收回查询", "外发报表", "收回报表"] },
 		],
@@ -105,6 +110,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "销售",
 		groups: [
 			{ name: "基础资料", items: ["客户类型", "客户等级", "客户分类", "客户档案", "入库部门", "入库类型", "商品信息", "条码打印", "销售员", "条码标题", "收款方式", "快递公司", "销售页脚", "零售倍率", "库位模式"] },
+			{ name: "正式业务", items: ["分批回货成本试算"] },
 			{ name: "销售操作", items: ["销售入库", "前台开单", "销售调拨", "库位下架", "销售反审", "销售跟踪", "成品出库", "客户返修"] },
 			{ name: "仓库管理", items: ["销售盘点", "差异处理", "库存", "盘点明细", "PDA数据", "库存明细", "库位库存", "库位修改", "库存排行", "历史库存", "库存预警"] },
 			{ name: "报表分析", items: ["销售单查询", "日报表", "销售报表", "销售分析", "销售排行", "入库排行", "进销存", "入库明细", "明细查询", "调拨明细", "下架明细", "销售比", "新款分析", "明细成本", "同比", "部门同比", "导购同比", "客户同比", "品牌同比", "类别同比"] },
@@ -130,6 +136,15 @@ const JIFENG_LEGACY_MODULES = [
 	{ name: "工具", groups: [{ name: "桌面工具", items: ["远程协助工具"] }] },
 	{ name: "关于", groups: [{ name: "系统信息", items: ["关于本系统", "用户须知", "续费信息"] }] },
 ];
+
+const JIFENG_LIVE_ROUTES = {
+	物料: { 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
+	材料: { 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
+	产品: { 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile" },
+	订单: { 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
+	外发: { 委外收货: "Subcontracting Receipt" },
+	销售: { 分批回货成本试算: "Jifeng Cost Preview" },
+};
 
 class JifengLegacyWorkspace {
 	constructor(host) {
@@ -169,6 +184,11 @@ class JifengLegacyWorkspace {
 	}
 
 	openPage(name, moduleName) {
+		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
+		if (liveDoctype) {
+			frappe.set_route("List", liveDoctype);
+			return;
+		}
 		if (moduleName === "总经理" && this.module(name)) {
 			this.openModule(name);
 			return;
@@ -331,11 +351,12 @@ class JifengLegacyWorkspace {
 		if (moduleName === "日志") return this.renderList("日志", "操作日志");
 		const module = this.module(moduleName);
 		if (!module) return this.renderHome();
-		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>选择功能进入对应业务页面</p></div></div>' +
+		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>“正式业务”进入服务器单据；其余页面为本地交互预览</p></div></div>' +
 			module.groups.map((group) =>
 				'<section class="jfe-group"><header><b>' + this.esc(group.name) + '</b><span>' + group.items.length + " 项</span></header><div class=\"jfe-function-grid\">" +
-				group.items.map((name) => '<button class="jfe-function-card" data-action="open-page" data-module="' + this.esc(moduleName) + '" data-page="' + this.esc(name) + '">' +
-					'<span class="jfe-function-mark">' + this.esc(name.slice(0, 1)) + "</span><span>" + this.esc(name) + "</span><i>›</i></button>").join("") +
+				group.items.map((name) => '<button class="jfe-function-card' + (JIFENG_LIVE_ROUTES[moduleName]?.[name] ? ' is-live' : '') + '" data-action="open-page" data-module="' + this.esc(moduleName) + '" data-page="' + this.esc(name) + '">' +
+					'<span class="jfe-function-mark">' + this.esc(name.slice(0, 1)) + "</span><span>" + this.esc(name) + "</span>" +
+					(JIFENG_LIVE_ROUTES[moduleName]?.[name] ? '<em class="jfe-live-tag">正式</em>' : "") + '<i>›</i></button>').join("") +
 				"</div></section>"
 			).join("") + "</section>";
 	}

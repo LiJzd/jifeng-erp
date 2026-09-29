@@ -7,7 +7,8 @@ frappe.ui.form.on("Jifeng Cost Preview", {
         await frm.set_value({ company: flow.company, item_code: flow.item_code,
             flow_order_no: flow.name, external_order_no: flow.online_order_id,
             planned_qty: flow.planned_qty, material_amount: flow.material_amount,
-            processing_amount: flow.processing_amount });
+            processing_amount: flow.processing_amount, other_amount: 0,
+            receipt_cost_sources: null, receipt_cost_loaded_at: null });
     },
     refresh(frm) {
         frm.set_intro("按预计最终合格数量分摊的试算；后续损耗和追加费用会改变结果。保存不产生库存或财务凭证。", "blue");
@@ -16,6 +17,24 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                 if (frm.is_dirty()) await frm.save();
                 await frm.call("load_flow_costs");
                 await frm.reload_doc();
+            });
+            frm.add_custom_button("带入已收回的实际费用", async () => {
+                if (frm.is_dirty()) await frm.save();
+                const response = await frappe.call({
+                    method: "jifeng_erp.workflow.receipt_costs",
+                    args: { flow_order: frm.doc.flow_order },
+                });
+                const result = response.message || { rows: [], totals: {} };
+                if (!result.rows.length) {
+                    frappe.msgprint("没有已提交且关联本流程单的委外收货明细，费用未更改。");
+                    return;
+                }
+                const amount = (value) => format_currency(value || 0, result.currency);
+                const message = `将 ${result.rows.length} 条已提交委外收货明细的费用带入试算：材料费 ${amount(result.totals.material)}、加工费 ${amount(result.totals.processing)}、其他费 ${amount(result.totals.other)}。已有回货批次将重新试算；未收回的后续费用尚未包含。若批次追加加工费已计入收货明细，请先清零该笔追加费，避免重复计算。执行时会重新汇总当前已提交凭证。确认继续？`;
+                frappe.confirm(message, async () => {
+                    await frm.call("load_receipt_costs");
+                    await frm.reload_doc();
+                });
             });
         }
     }

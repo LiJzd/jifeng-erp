@@ -77,6 +77,15 @@ def smoke_test(company, item_group, stock_uom):
         assert "集沣生产流程单" in html and raw.name in html
         assert frappe.db.get_value("Material Request", request, "docstatus") == 0
         assert receipt_costs(flow.name)["rows"] == []
+        before_costs = (preview.material_amount, preview.processing_amount, preview.other_amount)
+        try:
+            preview.load_receipt_costs()
+        except frappe.ValidationError:
+            pass
+        else:
+            raise AssertionError("Actual costs require a posted receipt")
+        preview.reload()
+        assert (preview.material_amount, preview.processing_amount, preview.other_amount) == before_costs
         stock_availability(flow.name)
         settings = frappe._dict(sync_scope="smoke-" + suffix, company=company,
                                 stock_uom=stock_uom, item_group=item_group,
@@ -109,7 +118,7 @@ def smoke_test(company, item_group, stock_uom):
         assert frappe.db.get_value("Jifeng Flow Order", imported.items[0].flow_order, "source_status") == "Cancelled"
         assert all(frappe.db.count(dt) == count for dt, count in ledger_counts.items())
         return {"passed": True, "checks": ["flow_idempotency", "procurement_draft", "cost_preview", "rework_loss",
-                "receipt_cost_query", "stock_query", "sku_upsert", "order_upsert", "separate_lines", "source_change_guard",
+                "receipt_cost_query", "empty_receipt_import_guard", "stock_query", "sku_upsert", "order_upsert", "separate_lines", "source_change_guard",
                 "print_render", "no_ledger_posting"],
                 "business_data": "rolled_back"}
     finally:

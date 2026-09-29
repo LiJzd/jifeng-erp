@@ -529,6 +529,20 @@
 	font-style: normal;
 }
 
+.jfe-live-tag {
+	margin-left: auto;
+	padding: 2px 5px;
+	border-radius: 3px;
+	color: #196c45;
+	background: #e7f5ec;
+	font-size: 11px;
+	font-style: normal;
+}
+
+.jfe-function-card.is-live i {
+	margin-left: 0;
+}
+
 .jfe-list {
 	padding: 17px 20px 22px;
 }

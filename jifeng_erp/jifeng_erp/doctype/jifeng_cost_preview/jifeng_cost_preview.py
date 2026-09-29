@@ -1,5 +1,6 @@
 import frappe
 from frappe.model.document import Document
+from frappe.utils import now
 
 from jifeng_erp.costing import CostingError, calculate
 
@@ -42,4 +43,29 @@ class JifengCostPreview(Document):
         self.company, self.item_code, self.planned_qty = flow.company, flow.item_code, flow.planned_qty
         self.flow_order_no, self.external_order_no = flow.name, flow.online_order_id
         self.material_amount, self.processing_amount = flow.material_amount, flow.processing_amount
+        self.other_amount = 0
+        self.receipt_cost_sources = None
+        self.receipt_cost_loaded_at = None
         self.save()
+
+    @frappe.whitelist()
+    def load_receipt_costs(self):
+        """Explicitly replace estimated base costs with posted receipt costs."""
+        self.check_permission("write")
+        frappe.db.get_value(self.doctype, self.name, "name", for_update=True)
+        self.reload()
+        if not self.flow_order:
+            frappe.throw("请先关联流程单")
+
+        from jifeng_erp.workflow import receipt_costs
+
+        result = receipt_costs(self.flow_order)
+        if not result["rows"]:
+            frappe.throw("没有已提交且关联本流程单的委外收货明细，费用未更改")
+        self.material_amount = result["totals"]["material"]
+        self.processing_amount = result["totals"]["processing"]
+        self.other_amount = result["totals"]["other"]
+        self.receipt_cost_sources = "\n".join(sorted({row["receipt"] for row in result["rows"]}))
+        self.receipt_cost_loaded_at = now()
+        self.save()
+        return result
