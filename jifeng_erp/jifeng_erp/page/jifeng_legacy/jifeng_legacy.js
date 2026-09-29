@@ -278,7 +278,8 @@ class JifengLegacyWorkspace {
 		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
 		if (liveDoctype) {
 			const filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
-			frappe.route_options = filters || null;
+			// An empty object also tells a reused Frappe List view to clear its prior filters.
+			frappe.route_options = filters || {};
 			frappe.set_route("List", liveDoctype);
 			return;
 		}
