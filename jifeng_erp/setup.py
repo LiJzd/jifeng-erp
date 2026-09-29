@@ -32,7 +32,44 @@ def install():
     create_custom_fields(fields, update=True)
 
 
+_PROCUREMENT_SOURCES = {
+    "Purchase Order": (("material_request_item", "Material Request Item", "material_request"),),
+    "Purchase Receipt": (("purchase_order_item", "Purchase Order Item", "purchase_order"),),
+    "Purchase Invoice": (
+        ("pr_detail", "Purchase Receipt Item", "purchase_receipt"),
+        ("po_detail", "Purchase Order Item", "purchase_order"),
+    ),
+}
+
+
+def _propagate_procurement_flow(doc):
+    for row in doc.get("items") or []:
+        source_flows = set()
+        for source_field, source_doctype, parent_field in _PROCUREMENT_SOURCES.get(doc.doctype, ()):
+            source_name = row.get(source_field)
+            if not source_name:
+                continue
+            source = frappe.db.get_value(
+                source_doctype, source_name, ["parent", "jf_flow_order"], as_dict=True,
+            )
+            if not source:
+                frappe.throw("采购来源明细不存在，请重新生成单据")
+            if row.get(parent_field) and source.parent != row.get(parent_field):
+                frappe.throw("采购来源单据与来源明细不一致")
+            if source.jf_flow_order:
+                source_flows.add(source.jf_flow_order)
+        if len(source_flows) > 1:
+            frappe.throw("采购来源明细关联了不同流程单")
+        if source_flows:
+            flow_name = source_flows.pop()
+            if row.get("jf_flow_order") and row.jf_flow_order != flow_name:
+                frappe.throw("采购明细流程单与来源单据不一致")
+            row.jf_flow_order = flow_name
+
+
 def validate_flow_links(doc, method=None):
+    if doc.doctype in _PROCUREMENT_SOURCES:
+        _propagate_procurement_flow(doc)
     if doc.doctype == "Work Order":
         if not doc.get("jf_flow_order"):
             return

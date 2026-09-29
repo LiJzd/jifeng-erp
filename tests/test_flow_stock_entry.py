@@ -38,6 +38,13 @@ class TestFlowStockEntry(unittest.TestCase):
             ("Work Order", "WO-1"): self.work_order,
             ("Jifeng Flow Order", "FLOW-1"): self.flow,
         }[(doctype, name)]
+        sources = {
+            ("Material Request Item", "MR-ROW"): Record(parent="MR-1", jf_flow_order="FLOW-1"),
+            ("Purchase Order Item", "PO-ROW"): Record(parent="PO-1", jf_flow_order="FLOW-1"),
+            ("Purchase Receipt Item", "PR-ROW"): Record(parent="PR-1", jf_flow_order="FLOW-1"),
+        }
+        frappe.db = types.SimpleNamespace(get_value=lambda doctype, name, fields, as_dict=False:
+                                          sources.get((doctype, name)))
         custom = types.ModuleType("frappe.custom.doctype.custom_field.custom_field")
         custom.create_custom_fields = lambda *args, **kwargs: None
         modules = {
@@ -86,6 +93,23 @@ class TestFlowStockEntry(unittest.TestCase):
                 doc["items"][0].item_code = "SILVER"
                 doc.company = "OTHER"
                 with self.assertRaisesRegex(ValueError, "公司不一致"):
+                    self.setup.validate_flow_links(doc)
+
+    def test_procurement_source_links_fill_flow_and_reject_conflicts(self):
+        cases = (
+            ("Purchase Order", {"material_request_item": "MR-ROW", "material_request": "MR-1"}),
+            ("Purchase Receipt", {"purchase_order_item": "PO-ROW", "purchase_order": "PO-1"}),
+            ("Purchase Invoice", {"pr_detail": "PR-ROW", "purchase_receipt": "PR-1",
+                                  "po_detail": "PO-ROW", "purchase_order": "PO-1"}),
+        )
+        for doctype, references in cases:
+            with self.subTest(doctype=doctype):
+                row = Record(item_code="SILVER", jf_flow_order=None, **references)
+                doc = Record(doctype=doctype, company="JF", items=[row])
+                self.setup.validate_flow_links(doc)
+                self.assertEqual(row.jf_flow_order, "FLOW-1")
+                row.jf_flow_order = "FLOW-OTHER"
+                with self.assertRaisesRegex(ValueError, "与来源单据不一致"):
                     self.setup.validate_flow_links(doc)
 
 
