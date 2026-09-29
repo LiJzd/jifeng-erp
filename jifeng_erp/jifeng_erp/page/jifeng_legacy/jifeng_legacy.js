@@ -229,7 +229,11 @@ const JIFENG_LIVE_REPORTS = {
 		库存: "Stock Balance", 库存明细: "Stock Ledger", 进销存: "Stock Balance",
 		销售报表: "Sales Register", 销售分析: "Sales Analytics", 明细成本: "Gross Profit",
 	},
-	财务: { 销售账: "Accounts Receivable", 总报表: "General Ledger" },
+	财务: {
+		销售账: "Accounts Receivable", 总报表: "General Ledger",
+		收款报表: { name: "Jifeng Payment Analysis", filters: { payment_type: "Receive" } },
+		付款报表: { name: "Jifeng Payment Analysis", filters: { payment_type: "Pay" } },
+	},
 };
 
 class JifengLegacyWorkspace {
@@ -279,7 +283,8 @@ class JifengLegacyWorkspace {
 		}
 		const report = JIFENG_LIVE_REPORTS[moduleName]?.[name];
 		if (report) {
-			frappe.set_route("query-report", report);
+			frappe.route_options = report.filters || {};
+			frappe.set_route("query-report", report.name || report);
 			return;
 		}
 		const create = JIFENG_LIVE_CREATE[moduleName]?.[name];
