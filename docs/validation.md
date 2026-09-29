@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：生产工单关联流程单后，其生成的 Stock Entry 会在校验时把流程单写入已列入本单物料分析的物料行与成品行；不同流程单混挂或公司/商品不符会拒绝保存。未列入分析的副产品/废料保持空关联，需通过工单追溯。新增 4 项纯 Python 校验用例，合计 46 项通过；Ruff 和 `git diff --check` 通过。尚未在真实站点验证工单发料、生产入库及原生 Stock Entry 自动生成路径。
+
 2026-09-30：物料/材料旧菜单中申购、入库、出库、调拨、盘点现分别进入 Material Request、Purchase Receipt、Stock Entry（预设 Material Issue/Material Transfer）、Stock Reconciliation；库存及库存明细进入 ERPNext Stock Balance/Stock Ledger 报表。源码已核对单据选项和原生报表路由，Node VM 路由调用与 JS 语法通过。尚未在测试站点核对单据提交、库存台账、退回和流程单发料。
 
 2026-09-30：旧订单录入/查询入口接 ERPNext Sales Order；前台开单入口接 POS Invoice。路由静态检查和 Node VM 调用检查通过。手工 Sales Order 的选中明细 → 流程单逻辑已有纯 Python 测试，但当前站点不可用，尚未验证 Desk 新建、销售订单提交、POS Profile 设置、POS 库存和收款过账。
