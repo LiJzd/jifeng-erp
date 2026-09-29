@@ -15,7 +15,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "物料",
 		groups: [
 			{ name: "基础资料", items: ["物料类别", "物料档案", "仓库", "采购员", "出库方式", "领用人", "浏览"] },
-			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购收货", "发料凭证"] },
+			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
 			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
@@ -25,7 +25,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "材料",
 		groups: [
 			{ name: "基础资料", items: ["材料类别", "形状", "颜色", "材料档案", "仓库", "供应商", "采购员", "出库方式", "领用人", "浏览"] },
-			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购收货", "发料凭证"] },
+			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
 			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
@@ -97,7 +97,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "发镀",
 		groups: [
-			{ name: "正式业务", items: ["电镀委外单", "电镀收货单", "品检单"] },
+			{ name: "正式业务", items: ["新建委外采购", "委外采购单", "电镀委外单", "电镀收货单", "品检单"] },
 			{ name: "基础资料", items: ["电镀厂", "电镀类型"] },
 			{ name: "业务操作", items: ["电镀单", "电镀品检", "电镀对账", "电镀反审", "电镀跟踪", "品检反审"] },
 			{ name: "报表查询", items: ["电镀明细", "电镀单查询", "电镀报表"] },
@@ -107,7 +107,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "外发",
 		groups: [
 			{ name: "基础资料", items: ["外发工厂", "外发工序"] },
-			{ name: "正式业务", items: ["委外订单", "委外收货"] },
+			{ name: "正式业务", items: ["新建委外采购", "委外采购单", "委外订单", "委外收货"] },
 			{ name: "业务操作", items: ["外发加工", "收回", "对账", "反审", "未收", "收回反审"] },
 			{ name: "报表查询", items: ["外发明细", "收回明细", "外发查询", "收回查询", "外发报表", "收回报表"] },
 		],
@@ -145,8 +145,8 @@ const JIFENG_LEGACY_MODULES = [
 ];
 
 const JIFENG_LIVE_ROUTES = {
-	物料: { 物料档案: "Item", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
-	材料: { 材料档案: "Item", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
+	物料: { 物料档案: "Item", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
+	材料: { 材料档案: "Item", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
 	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
 	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
@@ -154,8 +154,8 @@ const JIFENG_LIVE_ROUTES = {
 	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
-	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
-	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
+	发镀: { 委外采购单: "Purchase Order", 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
+	外发: { 委外采购单: "Purchase Order", 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
 	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 费用登记单: "Jifeng Expense Voucher", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry", 费用登记查询: "Jifeng Expense Voucher" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
@@ -184,10 +184,12 @@ const JIFENG_LIVE_CREATE = {
 	},
 	工资: { 调薪录入: { doctype: "Salary Structure Assignment", values: {} } },
 	发镀: {
+		新建委外采购: { doctype: "Purchase Order", values: { is_subcontracted: 1 } },
 		电镀单: { doctype: "Subcontracting Order", values: {} },
 		电镀品检: { doctype: "Quality Inspection", values: { inspection_type: "Incoming", reference_type: "Subcontracting Receipt" } },
 	},
 	外发: {
+		新建委外采购: { doctype: "Purchase Order", values: { is_subcontracted: 1 } },
 		外发加工: { doctype: "Subcontracting Order", values: {} },
 		收回: { doctype: "Subcontracting Receipt", values: {} },
 	},
@@ -206,6 +208,8 @@ const JIFENG_LIVE_CREATE = {
 };
 
 const JIFENG_LIVE_LIST_FILTERS = {
+	发镀: { 委外采购单: { is_subcontracted: 1 } },
+	外发: { 委外采购单: { is_subcontracted: 1 } },
 	财务: { 收款凭证查询: { payment_type: "Receive" }, 付款凭证查询: { payment_type: "Pay" } },
 };
 
