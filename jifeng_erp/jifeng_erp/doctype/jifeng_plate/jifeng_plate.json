@@ -1,0 +1,35 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Plate",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-PLATE-{YYYY}-{#####}",
+ "title_field": "plate_no",
+ "search_fields": "plate_no,item_code,location,maker,modeler",
+ "track_changes": 1,
+ "allow_import": 1,
+ "field_order": [
+  "company", "plate_no", "item_code", "image", "plate_date",
+  "maker", "modeler", "reference_cost", "location", "retired",
+  "retired_date", "retired_reason", "notes"
+ ],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "plate_no", "fieldtype": "Data", "label": "版种编号", "reqd": 1, "unique": 1, "in_list_view": 1},
+  {"fieldname": "item_code", "fieldtype": "Link", "label": "关联商品", "options": "Item", "in_list_view": 1},
+  {"fieldname": "image", "fieldtype": "Attach Image", "label": "版种图片"},
+  {"fieldname": "plate_date", "fieldtype": "Date", "label": "建档日期", "reqd": 1, "default": "Today", "in_list_view": 1},
+  {"fieldname": "maker", "fieldtype": "Link", "label": "制版人", "options": "Employee"},
+  {"fieldname": "modeler", "fieldtype": "Link", "label": "建模人", "options": "Employee"},
+  {"fieldname": "reference_cost", "fieldtype": "Currency", "label": "参考制作费用", "options": "Company:company:default_currency", "description": "参考资料；不生成财务凭证。"},
+  {"fieldname": "location", "fieldtype": "Data", "label": "存放位置"},
+  {"fieldname": "retired", "fieldtype": "Check", "label": "已停用", "in_list_view": 1},
+  {"fieldname": "retired_date", "fieldtype": "Date", "label": "停用日期", "depends_on": "eval:doc.retired==1", "mandatory_depends_on": "eval:doc.retired==1"},
+  {"fieldname": "retired_reason", "fieldtype": "Small Text", "label": "停用原因", "depends_on": "eval:doc.retired==1"},
+  {"fieldname": "notes", "fieldtype": "Small Text", "label": "说明"}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "Manufacturing Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "Stock Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "print": 1}
+ ]
+}

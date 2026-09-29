@@ -88,6 +88,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "版种",
 		groups: [
+			{ name: "正式业务", items: ["版种档案"] },
 			{ name: "基础资料", items: ["制版人"] },
 			{ name: "版种管理", items: ["版种录入", "建模"] },
 			{ name: "报表查询", items: ["版种查询", "版种报表", "建模查询"] },
@@ -152,6 +153,7 @@ const JIFENG_LIVE_ROUTES = {
 	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation" },
 	工资: { 计薪记录: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资发放: "Payroll Entry" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
+	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
 	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection" },
 	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt" },
 	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
