@@ -6,6 +6,7 @@ frappe.ui.form.on("Jifeng Cost Preview", {
         if (frm.doc.flow_order !== name) return;
         await frm.set_value({ company: flow.company, item_code: flow.item_code,
             flow_order_no: flow.name, external_order_no: flow.online_order_id,
+            sales_order: flow.sales_order,
             planned_qty: flow.planned_qty, material_amount: flow.material_amount,
             processing_amount: flow.processing_amount, other_amount: 0,
             receipt_cost_sources: null, receipt_cost_loaded_at: null });

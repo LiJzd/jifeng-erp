@@ -7,13 +7,21 @@ from jifeng_erp.workflow import copy_recipe, make_material_request, recipe_total
 
 class JifengFlowOrder(Document):
     def validate(self):
-        if not self.external_order:
+        if self.external_order and self.sales_order:
+            frappe.throw("流程单不能同时关联外部订单和销售订单")
+        if not self.external_order and not self.sales_order:
             self.source_key = None
         previous = self.get_doc_before_save()
-        if (self.external_order or (previous and previous.external_order)) and not self.flags.from_sync:
+        sourced = self.external_order or self.sales_order or (previous and (previous.external_order or previous.sales_order))
+        if sourced and not (self.flags.from_sync or self.flags.from_sales_order):
             if not previous:
                 frappe.throw("有来源订单的流程单必须从订单生成")
-            protected = ("source_key", "external_order", "external_line_id", "online_order_id", "source_qty", "source_status", "company", "item_code")
+            protected = (
+                "source_key", "external_order", "external_line_id", "online_order_id",
+                "sales_order", "sales_order_item", "source_qty", "source_item_code", "source_status",
+                "source_requirements", "source_packaging", "source_requirements_attachment",
+                "company", "item_code",
+            )
             if any(self.get(f) != previous.get(f) for f in protected):
                 frappe.throw("来源身份和源单状态只能由同步更新")
             if self.source_changed != previous.source_changed and not self.flags.source_acknowledged:
@@ -68,6 +76,7 @@ class JifengFlowOrder(Document):
         preview = frappe.get_doc({
             "doctype": "Jifeng Cost Preview", "company": self.company, "flow_order": self.name,
             "flow_order_no": self.name, "external_order_no": self.online_order_id,
+            "sales_order": self.sales_order,
             "item_code": self.item_code, "planned_qty": self.planned_qty,
             "material_amount": self.material_amount, "processing_amount": self.processing_amount,
         })

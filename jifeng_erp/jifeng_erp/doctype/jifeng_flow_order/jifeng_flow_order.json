@@ -48,6 +48,8 @@
    "options": "Jifeng External Order",
    "read_only": 1
   },
+  {"fieldname": "sales_order", "fieldtype": "Link", "label": "销售订单", "options": "Sales Order", "read_only": 1, "in_list_view": 1},
+  {"fieldname": "sales_order_item", "fieldtype": "Data", "label": "销售订单明细号", "read_only": 1},
   {
    "fieldname": "external_line_id",
    "fieldtype": "Data",
@@ -104,6 +106,7 @@
    "read_only": 1,
    "precision": "6"
   },
+  {"fieldname": "source_item_code", "fieldtype": "Link", "label": "源订单商品", "options": "Item", "read_only": 1},
   {
    "fieldname": "source_status",
    "fieldtype": "Data",
@@ -122,6 +125,9 @@
    "label": "源单变更说明",
    "read_only": 1
   },
+  {"fieldname": "source_requirements", "fieldtype": "Text", "label": "源单定制/工艺要求", "read_only": 1},
+  {"fieldname": "source_packaging", "fieldtype": "Text", "label": "源单包装要求", "read_only": 1},
+  {"fieldname": "source_requirements_attachment", "fieldtype": "Attach", "label": "源单要求附件", "read_only": 1},
   {
    "fieldname": "requirements",
    "fieldtype": "Text",
@@ -164,6 +170,12 @@
    "options": "Company:company:default_currency"
   },
   {
+   "fieldname": "target_warehouse",
+   "fieldtype": "Link",
+   "label": "采购入库仓库",
+   "options": "Warehouse"
+  },
+  {
    "fieldname": "material_request",
    "fieldtype": "Link",
    "label": "采购申请",
@@ -186,17 +198,13 @@
    "fieldname": "specification",
    "fieldtype": "Small Text",
    "label": "规格"
-  },
-  {
-   "fieldname": "target_warehouse",
-   "fieldtype": "Link",
-   "label": "采购入库仓库",
-   "options": "Warehouse"
   }
  ],
  "field_order": [
   "source_key",
   "external_order",
+  "sales_order",
+  "sales_order_item",
   "external_line_id",
   "online_order_id",
   "company",
@@ -205,9 +213,13 @@
   "profile",
   "planned_qty",
   "source_qty",
+  "source_item_code",
   "source_status",
   "source_changed",
   "source_change_note",
+  "source_requirements",
+  "source_packaging",
+  "source_requirements_attachment",
   "requirements",
   "packaging",
   "requirements_attachment",

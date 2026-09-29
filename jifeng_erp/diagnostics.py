@@ -2,6 +2,25 @@
 import frappe
 
 
+def _begin_rollback_only(point):
+    """Prevent Frappe document notifications from committing smoke-test rows."""
+    if not hasattr(frappe.db, "_disable_transaction_control"):
+        frappe.throw("当前 Frappe 数据库接口不支持无提交冒烟测试")
+    frappe.db._disable_transaction_control += 1
+    try:
+        frappe.db.savepoint(point)
+    except Exception:
+        frappe.db._disable_transaction_control -= 1
+        raise
+
+
+def _end_rollback_only(point):
+    try:
+        frappe.db.rollback(save_point=point)
+    finally:
+        frappe.db._disable_transaction_control -= 1
+
+
 def check():
     frappe.only_for("System Manager")
     settings = frappe.get_single("Jushuitan Settings")
@@ -15,6 +34,9 @@ def check():
         "company_configured": bool(settings.company),
         "merchant_configured": bool(settings.merchant_id),
         "receipt_link_installed": frappe.get_meta("Subcontracting Receipt Item").has_field("jf_flow_order"),
+        "sales_order_fields_installed": all(frappe.get_meta("Sales Order Item").has_field(field)
+                                             for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
+                                                           "jf_requirements_attachment")),
     }
 
 
@@ -42,7 +64,7 @@ def smoke_test(company, item_group, stock_uom):
     from jifeng_erp.jushuitan import order_snapshot, record_key
     from jifeng_erp.sync import upsert_order, upsert_sku
     point = "jf_smoke"
-    frappe.db.savepoint(point)
+    _begin_rollback_only(point)
     try:
         ledger_counts = {dt: frappe.db.count(dt) for dt in ("GL Entry", "Stock Ledger Entry")}
         suffix = frappe.generate_hash(length=10)
@@ -122,4 +144,68 @@ def smoke_test(company, item_group, stock_uom):
                 "print_render", "no_ledger_posting"],
                 "business_data": "rolled_back"}
     finally:
-        frappe.db.rollback(save_point=point)
+        _end_rollback_only(point)
+
+
+def smoke_sales_order_flows(company, customer, item_group, stock_uom):
+    """Exercise submitted manual order → flow → source change/cancel; roll all rows back."""
+    frappe.only_for("System Manager")
+    from frappe.utils import add_days, today
+
+    from jifeng_erp.workflow import create_sales_order_flows
+
+    point = "jf_sales_smoke"
+    _begin_rollback_only(point)
+    try:
+        ledger_counts = {dt: frappe.db.count(dt) for dt in ("GL Entry", "Stock Ledger Entry")}
+        suffix = frappe.generate_hash(length=10)
+        item = frappe.get_doc({"doctype": "Item", "item_code": "JF-SALES-" + suffix,
+                               "item_group": item_group, "stock_uom": stock_uom}).insert()
+        frappe.get_doc({"doctype": "Jifeng Product Profile", "item_code": item.name,
+                        "company": company}).insert()
+        order = frappe.get_doc({
+            "doctype": "Sales Order", "company": company, "customer": customer,
+            "delivery_date": add_days(today(), 7),
+            "items": [{"item_code": item.name, "qty": 2, "rate": 10,
+                       "delivery_date": add_days(today(), 7),
+                       "jf_make_flow": 1, "jf_requirements": "测试刻字", "jf_packaging": "测试礼盒"}],
+        }).insert()
+        order.submit()
+        names = create_sales_order_flows(order.name)
+        assert create_sales_order_flows(order.name) == names and len(names) == 1
+        flow = frappe.get_doc("Jifeng Flow Order", names[0])
+        assert flow.sales_order == order.name and flow.sales_order_item == order.items[0].name
+        assert flow.requirements == "测试刻字" and flow.packaging == "测试礼盒"
+        assert flow.planned_qty == 2 and flow.source_qty == 2
+        assert order.name in frappe.get_print("Jifeng Flow Order", flow.name, print_format="Jifeng Flow Sheet")
+        preview = frappe.get_doc("Jifeng Cost Preview", flow.make_preview())
+        assert preview.sales_order == order.name
+        tampered = frappe.get_doc("Jifeng Flow Order", flow.name)
+        tampered.sales_order = None
+        try:
+            tampered.save()
+        except frappe.ValidationError:
+            pass
+        else:
+            raise AssertionError("Sales Order source identity cannot be removed manually")
+
+        order.items[0].jf_requirements = "测试改刻字"
+        order.save()
+        flow.reload()
+        assert flow.source_changed and flow.requirements == "测试刻字"
+        assert flow.source_requirements == "测试改刻字"
+        try:
+            flow.make_request()
+        except frappe.ValidationError:
+            pass
+        else:
+            raise AssertionError("Changed Sales Order must block new procurement")
+        order.cancel()
+        flow.reload()
+        assert flow.source_status == "Cancelled" and flow.source_changed
+        assert all(frappe.db.count(dt) == count for dt, count in ledger_counts.items())
+        return {"passed": True, "checks": ["sales_flow_idempotency", "source_line_trace", "source_identity_guard",
+                "requirements_snapshot", "print_source", "preview_source", "change_review",
+                "change_blocks_procurement", "cancel_review", "no_ledger_posting"], "business_data": "rolled_back"}
+    finally:
+        _end_rollback_only(point)

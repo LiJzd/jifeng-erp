@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 import frappe
-from frappe.utils import add_days, today
+from frappe.utils import add_days, cint, today
 
 from jifeng_erp.costing import CostingError, number
 from jifeng_erp.jushuitan import record_key
@@ -70,6 +70,111 @@ def create_flows(order):
     return created
 
 
+def sales_order_flow_key(order_name, row_name):
+    return record_key(f"sales-order:{order_name}", row_name)
+
+
+def _sales_row_selected(row):
+    return bool(cint(row.get("jf_make_flow")))
+
+
+def _sales_line_differs(flow, row):
+    return (
+        number(flow.source_qty, "源订单数量") != number(row.qty, "销售订单数量")
+        or flow.source_item_code != row.item_code
+        or (flow.source_requirements or "") != (row.get("jf_requirements") or "")
+        or (flow.source_packaging or "") != (row.get("jf_packaging") or "")
+        or (flow.source_requirements_attachment or "") != (row.get("jf_requirements_attachment") or "")
+    )
+
+
+@frappe.whitelist()
+def create_sales_order_flows(sales_order):
+    """Create one traceable flow per selected line of a submitted Sales Order."""
+    order = frappe.get_doc("Sales Order", sales_order)
+    order.check_permission("read")
+    frappe.db.get_value("Sales Order", order.name, "name", for_update=True)
+    order.reload()
+    if order.docstatus != 1 or order.status == "Closed":
+        frappe.throw("只能从已提交且未关闭的销售订单生成流程单")
+    created = []
+    for row in order.items:
+        if not _sales_row_selected(row):
+            continue
+        if not row.item_code or number(row.qty, "销售订单数量") <= 0:
+            frappe.throw("所选销售订单明细必须有商品且数量大于零")
+        key = sales_order_flow_key(order.name, row.name)
+        existing = frappe.db.get_value("Jifeng Flow Order", {"source_key": key}, "name")
+        if existing:
+            linked = frappe.get_doc("Jifeng Flow Order", existing)
+            linked.check_permission("read")
+            if linked.sales_order != order.name or linked.sales_order_item != row.name:
+                frappe.throw("流程单来源标识冲突，请检查订单明细")
+            created.append(existing)
+            continue
+        profile = frappe.db.get_value("Jifeng Product Profile", {"item_code": row.item_code}, "name")
+        flow = frappe.get_doc({
+            "doctype": "Jifeng Flow Order", "source_key": key,
+            "sales_order": order.name, "sales_order_item": row.name,
+            "company": order.company, "item_code": row.item_code, "profile": profile,
+            "planned_qty": row.qty, "source_qty": row.qty,
+            "source_item_code": row.item_code, "source_status": order.status,
+            "source_requirements": row.get("jf_requirements"),
+            "source_packaging": row.get("jf_packaging"),
+            "source_requirements_attachment": row.get("jf_requirements_attachment"),
+            "requirements": row.get("jf_requirements"), "packaging": row.get("jf_packaging"),
+            "requirements_attachment": row.get("jf_requirements_attachment"),
+        })
+        if profile:
+            template = frappe.get_doc("Jifeng Product Profile", profile)
+            template.check_permission("read")
+            if template.company != order.company:
+                frappe.throw("商品档案公司与销售订单公司不一致")
+            copy_recipe(flow, template)
+            flow.supplier_product_code = template.supplier_product_code
+            flow.specification = template.specification
+            flow.requirements = flow.requirements or template.requirements
+            flow.packaging = flow.packaging or template.packaging
+        flow.flags.from_sales_order = True
+        flow.insert()
+        created.append(flow.name)
+    if not created:
+        frappe.throw("没有勾选需要生成流程单的销售订单明细")
+    return created
+
+
+def refresh_sales_order_flows(order, method=None):
+    """Flag changed or cancelled source lines without overwriting production snapshots."""
+    names = frappe.get_all("Jifeng Flow Order", filters={"sales_order": order.name}, pluck="name")
+    if not names:
+        return
+    rows = {row.name: row for row in order.items}
+    for name in names:
+        flow = frappe.get_doc("Jifeng Flow Order", name)
+        row = rows.get(flow.sales_order_item)
+        active = order.docstatus == 1 and row and _sales_row_selected(row)
+        if not active:
+            flow.source_changed = 1
+            flow.source_status = "Cancelled"
+            flow.source_change_note = "销售订单取消或明细不再生成流程单，请核对采购、加工与回货。"
+        else:
+            requirements = row.get("jf_requirements") or ""
+            packaging = row.get("jf_packaging") or ""
+            attachment = row.get("jf_requirements_attachment") or ""
+            changed = _sales_line_differs(flow, row) or (order.status == "Closed" and flow.source_status != "Closed")
+            flow.source_qty = row.qty
+            flow.source_item_code = row.item_code
+            flow.source_status = order.status
+            flow.source_requirements = requirements
+            flow.source_packaging = packaging
+            flow.source_requirements_attachment = attachment
+            if changed:
+                flow.source_changed = 1
+                flow.source_change_note = "销售订单商品、数量、要求或状态已变，请核对流程单及后续单据。"
+        flow.flags.from_sales_order = True
+        flow.save(ignore_permissions=True)
+
+
 @frappe.whitelist()
 def receipt_costs(flow_order):
     flow = frappe.get_doc("Jifeng Flow Order", flow_order)
@@ -112,11 +217,19 @@ def stock_availability(flow_order):
 def make_material_request(flow):
     flow.check_permission("write")
     existing = frappe.db.get_value(flow.doctype, flow.name, "material_request", for_update=True)
+    flow.reload()
+    if flow.source_changed or flow.source_status in BLOCKED_STATUSES or (flow.sales_order and flow.source_status == "Closed"):
+        frappe.throw("请先核对源订单变更或取消状态")
+    if flow.sales_order:
+        sales_order = frappe.get_doc("Sales Order", flow.sales_order)
+        sales_order.check_permission("read")
+        if sales_order.docstatus != 1 or sales_order.status == "Closed":
+            frappe.throw("销售订单已取消或关闭，不能生成采购申请")
+        source_line = next((row for row in sales_order.items if row.name == flow.sales_order_item), None)
+        if not source_line or not _sales_row_selected(source_line) or _sales_line_differs(flow, source_line):
+            frappe.throw("销售订单明细已变化，请先核对流程单来源")
     if existing and frappe.db.exists("Material Request", existing):
         return existing
-    flow.reload()
-    if flow.source_changed or flow.source_status in BLOCKED_STATUSES:
-        frappe.throw("请先核对源订单变更或取消状态")
     if not flow.materials:
         frappe.throw("请先完成本单物料分析")
     if not flow.target_warehouse:

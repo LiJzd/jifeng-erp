@@ -3,10 +3,21 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 
 def install():
-    create_custom_fields({doctype: [{
+    fields = {doctype: [{
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
         "options": "Jifeng Flow Order", "insert_after": "item_code", "no_copy": 1,
-    }] for doctype in ("Subcontracting Receipt Item", "Material Request Item", "Stock Entry Detail")}, update=True)
+    }] for doctype in ("Subcontracting Receipt Item", "Material Request Item", "Stock Entry Detail")}
+    fields["Sales Order Item"] = [
+        {"fieldname": "jf_make_flow", "fieldtype": "Check", "label": "生成集沣流程单",
+         "insert_after": "description", "default": "1", "in_list_view": 1, "allow_on_submit": 1},
+        {"fieldname": "jf_requirements", "fieldtype": "Small Text", "label": "集沣定制/工艺要求",
+         "insert_after": "jf_make_flow", "allow_on_submit": 1},
+        {"fieldname": "jf_packaging", "fieldtype": "Small Text", "label": "集沣包装要求",
+         "insert_after": "jf_requirements", "allow_on_submit": 1},
+        {"fieldname": "jf_requirements_attachment", "fieldtype": "Attach", "label": "集沣要求附件",
+         "insert_after": "jf_packaging", "allow_on_submit": 1},
+    ]
+    create_custom_fields(fields, update=True)
 
 
 def validate_flow_links(doc, method=None):

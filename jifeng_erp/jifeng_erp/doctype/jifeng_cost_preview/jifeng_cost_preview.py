@@ -32,6 +32,10 @@ class JifengCostPreview(Document):
             if flow.company != self.company or flow.item_code != self.item_code:
                 frappe.throw("试算单与流程单的公司、商品必须一致")
             self.flow_order_no = flow.name
+            if flow.sales_order:
+                if self.sales_order and self.sales_order != flow.sales_order:
+                    frappe.throw("试算单销售订单与流程单来源不一致")
+                self.sales_order = flow.sales_order
 
     @frappe.whitelist()
     def load_flow_costs(self):
@@ -42,6 +46,7 @@ class JifengCostPreview(Document):
             frappe.throw("已有回货批次，请核对费用后手动调整，避免覆盖当前试算")
         self.company, self.item_code, self.planned_qty = flow.company, flow.item_code, flow.planned_qty
         self.flow_order_no, self.external_order_no = flow.name, flow.online_order_id
+        self.sales_order = flow.sales_order
         self.material_amount, self.processing_amount = flow.material_amount, flow.processing_amount
         self.other_amount = 0
         self.receipt_cost_sources = None
