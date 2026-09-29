@@ -275,7 +275,14 @@ def make_material_request(flow):
     flow.reload()
     validate_flow_source(flow)
     if existing and frappe.db.exists("Material Request", existing):
-        return existing
+        request = frappe.get_doc("Material Request", existing)
+        request.check_permission("read")
+        if request.docstatus != 2:
+            if request.company != flow.company or request.material_request_type != "Purchase":
+                frappe.throw("已有采购申请与流程单公司或申请类型不一致，请先核对")
+            if not request.items or any(row.get("jf_flow_order") != flow.name for row in request.items):
+                frappe.throw("已有采购申请明细未全部关联当前流程单，请先核对")
+            return existing
     if not flow.materials:
         frappe.throw("请先完成本单物料分析")
     if not flow.target_warehouse:

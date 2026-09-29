@@ -36,7 +36,8 @@ class Record(dict):
         return self
 
     def insert(self):
-        self.name = f"JF-FLOW-{len(self.store) + 1}"
+        prefix = "MR" if self.doctype == "Material Request" else "JF-FLOW"
+        self.name = f"{prefix}-{len(self.store) + 1}"
         self.store[self.name] = self
         return self
 
@@ -45,8 +46,9 @@ class Record(dict):
 
 
 class FakeDatabase:
-    def __init__(self, flows):
+    def __init__(self, flows, requests):
         self.flows = flows
+        self.requests = requests
 
     def get_value(self, doctype, lookup, field, **kwargs):
         if doctype == "Sales Order":
@@ -55,9 +57,16 @@ class FakeDatabase:
             return None
         if doctype == "Jifeng Flow Order":
             if isinstance(lookup, str):
+                if field == "material_request":
+                    return self.flows[lookup].get("material_request")
                 return lookup
             return next((name for name, flow in self.flows.items()
                          if flow.source_key == lookup["source_key"]), None)
+        raise AssertionError(doctype)
+
+    def exists(self, doctype, name):
+        if doctype == "Material Request":
+            return name in self.requests
         raise AssertionError(doctype)
 
 
@@ -65,6 +74,7 @@ class TestSalesOrderFlow(unittest.TestCase):
     def setUp(self):
         self.flows = {}
         self.work_orders = {}
+        self.requests = {}
         self.bom = Record(name="BOM-1", item="RING", company="JF", docstatus=1, is_active=1)
         self.order = Record(
             doctype="Sales Order", name="SO-0001", docstatus=1,
@@ -76,13 +86,17 @@ class TestSalesOrderFlow(unittest.TestCase):
         frappe = types.ModuleType("frappe")
         frappe.whitelist = lambda: lambda function: function
         frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
-        frappe.db = FakeDatabase(self.flows)
+        frappe.db = FakeDatabase(self.flows, self.requests)
         frappe.get_all = lambda doctype, **kwargs: list(self.work_orders if doctype == "Work Order" else self.flows)
 
         def get_doc(doctype, name=None):
             if isinstance(doctype, dict):
                 flow = Record(**doctype)
-                flow.store = self.work_orders if doctype["doctype"] == "Work Order" else self.flows
+                if doctype["doctype"] == "Material Request":
+                    flow.docstatus = 0
+                stores = {"Work Order": self.work_orders, "Material Request": self.requests,
+                          "Jifeng Flow Order": self.flows}
+                flow.store = stores[doctype["doctype"]]
                 return flow
             if doctype == "Sales Order":
                 return self.order
@@ -90,6 +104,8 @@ class TestSalesOrderFlow(unittest.TestCase):
                 return self.flows[name]
             if doctype == "Work Order":
                 return self.work_orders[name]
+            if doctype == "Material Request":
+                return self.requests[name]
             if doctype == "BOM":
                 return self.bom
             raise AssertionError(doctype)
@@ -176,6 +192,28 @@ class TestSalesOrderFlow(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "核对源订单"):
             self.workflow.make_work_order(flow)
         self.assertFalse(self.work_orders)
+
+    def test_cancelled_material_request_can_be_recreated(self):
+        flow = self.flows[self.workflow.create_sales_order_flows(self.order.name)[0]]
+        flow.materials = [Record(item_code="SILVER", uom="g", qty_per_unit=2)]
+        flow.target_warehouse = "Stores - JF"
+        flow.source_changed = 0
+        first = self.workflow.make_material_request(flow)
+        self.assertEqual(self.workflow.make_material_request(flow), first)
+        self.requests[first].docstatus = 2
+        second = self.workflow.make_material_request(flow)
+        self.assertNotEqual(second, first)
+        self.assertEqual(flow.material_request, second)
+
+    def test_mismatched_existing_request_is_not_reused(self):
+        flow = self.flows[self.workflow.create_sales_order_flows(self.order.name)[0]]
+        flow.materials = [Record(item_code="SILVER", uom="g", qty_per_unit=2)]
+        flow.target_warehouse = "Stores - JF"
+        flow.source_changed = 0
+        first = self.workflow.make_material_request(flow)
+        self.requests[first].items[0]["jf_flow_order"] = "FLOW-OTHER"
+        with self.assertRaisesRegex(ValueError, "未全部关联"):
+            self.workflow.make_material_request(flow)
 
 
 if __name__ == "__main__":
