@@ -143,16 +143,16 @@ const JIFENG_LEGACY_MODULES = [
 ];
 
 const JIFENG_LIVE_ROUTES = {
-	物料: { 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
-	材料: { 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
-	产品: { 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
-	订单: { 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
+	物料: { 物料档案: "Item", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
+	材料: { 材料档案: "Item", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry" },
+	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation" },
+	订单: { 客户: "Customer", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card" },
-	人事: { 员工档案: "Employee", 部门档案: "Department", 职位档案: "Designation" },
-	模具: { 模具档案: "Jifeng Mold" },
+	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 部门档案: "Department", 职位档案: "Designation" },
+	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	发镀: { 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection" },
 	外发: { 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt" },
-	销售: { 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
+	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
 	日志: { 服务器操作日志: "Activity Log" },
