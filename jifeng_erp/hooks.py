@@ -13,6 +13,7 @@ doctype_js = {
 }
 extend_doctype_class = {
     "Production Plan": ["jifeng_erp.production_instruction.ProductionInstructionMixin"],
+    "Purchase Receipt": ["jifeng_erp.purchase_returns.PurchaseReceiptMixin"],
 }
 
 after_install = "jifeng_erp.setup.install"
