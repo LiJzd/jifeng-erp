@@ -238,6 +238,11 @@ const JIFENG_LIVE_REPORTS = {
 		工序损耗: { name: "Jifeng Job Card Detail", filters: { only_loss: 1, approval: "已提交" } },
 		损耗汇总: { name: "Jifeng Production Progress", filters: { only_loss: 1 } } },
 	工资: { 工资分析: "Jifeng Wage Analysis" },
+	发镀: { 电镀明细: "Jifeng Subcontracting Receipt Ledger", 电镀报表: "Jifeng Subcontracting Progress",
+		电镀跟踪: "Jifeng Subcontracting Progress" },
+	外发: { 未收: { name: "Jifeng Subcontracting Progress", filters: { only_pending: 1 } },
+		外发明细: "Jifeng Subcontracting Progress", 外发报表: "Jifeng Subcontracting Progress",
+		收回明细: "Jifeng Subcontracting Receipt Ledger", 收回报表: "Jifeng Subcontracting Receipt Ledger" },
 	销售: {
 		库存: "Stock Balance", 库存明细: "Stock Ledger", 进销存: "Stock Balance",
 		销售报表: "Sales Register", 销售分析: "Sales Analytics", 明细成本: "Gross Profit",
@@ -250,6 +255,9 @@ const JIFENG_LIVE_REPORTS = {
 };
 
 const JIFENG_LIVE_REPORT_DEFAULTS = {
+	"Jifeng Subcontracting Progress": { only_pending: 0, only_overdue: 0, supplier: "",
+		item_code: "", flow_order: "", subcontracting_order: "" },
+	"Jifeng Subcontracting Receipt Ledger": { supplier: "", item_code: "", flow_order: "", subcontracting_order: "" },
 	"Jifeng Production Progress": { status: "", only_overdue: 0, only_loss: 0,
 		flow_order: "", sales_order: "", production_item: "" },
 	"Jifeng Job Card Detail": { approval: "全部", only_overdue: 0, only_loss: 0,
