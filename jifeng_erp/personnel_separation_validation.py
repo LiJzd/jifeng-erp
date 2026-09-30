@@ -539,9 +539,18 @@ def smoke(company, other_company):
         gate("manual_project_100_percent_does_not_prove_actual_task_completion")
         def manual():
             _, project, tasks, _ = _source_graph(active_source.name)
-            project.percent_complete_method, project.percent_complete = "Manual", 100
+            task_contents = _digest([task.as_dict() for task in tasks])
+            # Native Manual progress returns before automatic status updates.
+            # Explicit Completed is a supported native Project.save input.
+            project.status, project.percent_complete_method, project.percent_complete = "Completed", "Manual", 100
             native(project.save)
-            assert project.status == "Completed" and all(task.status != "Completed" for task in tasks)
+            _, project, tasks, _ = _source_graph(active_source.name)
+            assert project.status == "Completed" and project.percent_complete_method == "Manual" and project.percent_complete == 100
+            assert all(task.status != "Completed" and not task.completed_on for task in tasks)
+            assert task_contents == _digest([task.as_dict() for task in tasks]), "手动项目保存改变了实际交接任务"
+            evidence["native_manual_project"] = {"status": project.status, "percent_complete_method": project.percent_complete_method,
+                "percent_complete": project.percent_complete, "actual_tasks_completed": False,
+                "whole_task_contents_unchanged": True, "path": "native Project.save; no bulk task-status RPC"}
             native(lambda: finalize_separation(active_source.name))
         reject(manual, frappe.ValidationError, "完整精确任务")
         passed()
