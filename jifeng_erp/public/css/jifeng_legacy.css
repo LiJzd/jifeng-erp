@@ -1630,3 +1630,11 @@
 .jfe-personnel-editor .jfe-personnel-fields .form-group { margin-bottom: 9px; }
 .jfe-personnel-editor .jfe-employee-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
 @media (max-width: 820px) { .jfe-personnel-editor .jfe-personnel-fields .section-body { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.jfe-inventory-editor .modal-dialog { max-width: min(1200px, 96vw); }
+.jfe-inventory-editor .modal-body { max-height: calc(100vh - 170px); overflow-y: auto; }
+.jfe-inventory-editor .jfe-inventory-fields .section-body { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 16px; }
+.jfe-inventory-editor .jfe-inventory-fields .form-column { display: contents; }
+.jfe-inventory-editor .jfe-inventory-fields .frappe-control { min-width: 0; }
+.jfe-inventory-editor .jfe-inventory-fields .form-group { margin-bottom: 9px; }
+.jfe-dictionary-choice { margin: 4px; }
+@media (max-width: 820px) { .jfe-inventory-editor .jfe-inventory-fields .section-body { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

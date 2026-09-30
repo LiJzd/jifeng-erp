@@ -1,0 +1,24 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Inventory Dictionary",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-INV-D-{YYYY}-{#####}",
+ "title_field": "value",
+ "search_fields": "value",
+ "track_changes": 1,
+ "field_order": ["company", "archive_kind", "dictionary_type", "value", "inactive", "dictionary_key"],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "archive_kind", "fieldtype": "Select", "label": "档案种类", "options": "物料\n材料", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "dictionary_type", "fieldtype": "Select", "label": "词典类型", "options": "大类\n小类\n形状\n颜色", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "value", "fieldtype": "Data", "label": "词典内容", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1},
+  {"fieldname": "dictionary_key", "fieldtype": "Data", "label": "词典内容身份", "hidden": 1, "read_only": 1, "unique": 1, "no_copy": 1, "print_hide": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "Stock Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "Stock User", "read": 1, "select": 1, "report": 1, "print": 1},
+  {"role": "Manufacturing Manager", "read": 1, "select": 1, "report": 1, "print": 1}
+ ]
+}

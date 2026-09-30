@@ -88,6 +88,9 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	openCreate(spec) {
+		if (spec.inventoryArchive && window.JifengInventoryArchive) {
+			return this.openInventory(spec.inventoryArchive);
+		}
 		if (spec.personnelArchive && window.JifengPersonnelArchive) {
 			return this.openPersonnel();
 		}
@@ -140,6 +143,11 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		return this.personnelEditor.open(name).catch(() => {});
 	}
 
+	openInventory(kind, name) {
+		this.inventoryEditor ||= new window.JifengInventoryArchive(this);
+		return this.inventoryEditor.open(kind, name).catch(() => {});
+	}
+
 	mount(host, spec) {
 		const iframe = document.createElement("iframe");
 		iframe.className = "jfe-formal-iframe";
@@ -173,6 +181,16 @@ window.JifengClassicBridge = class JifengClassicBridge {
 						(spec.hideCreate ? ".page-head .primary-action{display:none!important}" : "");
 					child.document.head.appendChild(style);
 					if (spec.kind === "list") {
+						if (spec.inventoryArchive && window.JifengInventoryArchive) {
+							child.document.addEventListener("click", (event) => {
+								const link = event.target.closest?.(".list-row a[data-name]");
+								if (!link || child.frappe.get_route()[0] !== "List" ||
+									child.cur_list?.doctype !== "Jifeng Inventory Profile" ||
+									!child.cur_list.data?.some((row) => row.name === link.dataset.name)) return;
+								event.preventDefault(); event.stopImmediatePropagation();
+								this.openInventory(spec.inventoryArchive, link.dataset.name);
+							}, true);
+						}
 						if (spec.personnelArchive && window.JifengPersonnelArchive) {
 							child.document.addEventListener("click", (event) => {
 								const link = event.target.closest?.(".list-row a[data-name]");
@@ -188,7 +206,8 @@ window.JifengClassicBridge = class JifengClassicBridge {
 						child.frappe.new_doc = (doctype, opts, callback) => {
 							if (child.frappe.get_route()[0] === "List" && doctype === spec.doctype && !callback) {
 								if (spec.hideCreate) return Promise.resolve();
-								this.openCreate({ ...spec, title: "新增" + spec.title, kind: "create", values: opts || {} });
+								this.openCreate({ ...spec, title: "新增" + spec.title, kind: "create",
+									values: spec.dictionaryArchive ? { ...opts, ...spec.filters } : opts || {} });
 								return Promise.resolve();
 							}
 							return nativeNew.call(child.frappe, doctype, opts, callback);

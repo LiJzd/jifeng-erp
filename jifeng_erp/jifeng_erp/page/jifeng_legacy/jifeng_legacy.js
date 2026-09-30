@@ -145,8 +145,8 @@ const JIFENG_LEGACY_MODULES = [
 ];
 
 const JIFENG_LIVE_ROUTES = {
-	物料: { 物料档案: "Item", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
-	材料: { 材料档案: "Item", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
+	物料: { 物料类别: "Jifeng Inventory Dictionary", 物料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
+	材料: { 材料类别: "Jifeng Inventory Dictionary", 形状: "Jifeng Inventory Dictionary", 颜色: "Jifeng Inventory Dictionary", 材料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
 	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation" },
 	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card",
@@ -436,13 +436,19 @@ class JifengLegacyWorkspace {
 		}
 		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
 		if (liveDoctype) {
-			const filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
+			let filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
+			const inventoryArchive = liveDoctype === "Jifeng Inventory Profile" ? moduleName : null;
+			if (inventoryArchive) filters = { archive_kind: moduleName };
+			if (liveDoctype === "Jifeng Inventory Dictionary") filters = { archive_kind: moduleName,
+				...(name === "形状" || name === "颜色" ? { dictionary_type: name } : {}) };
 			// Frappe List views can restore saved user filters when no route filter is supplied.
 			frappe.route_options = filters || {};
 			if (this.formalBridge) {
 				frappe.route_options = null;
 				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
 					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {},
+					inventoryArchive,
+					dictionaryArchive: liveDoctype === "Jifeng Inventory Dictionary",
 					personnelArchive: moduleName === "人事" && name === "人事档案",
 					hideCreate: moduleName === "人事" && name === "人事浏览" });
 				return;
