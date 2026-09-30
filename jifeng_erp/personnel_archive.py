@@ -38,6 +38,8 @@ SUPPLEMENT_EDIT = {
 HISTORIES = {
     "work_history": ("Jifeng Legacy Work History", (
         "project", "work_content", "reason_for_leaving", "from_date", "to_date", "company_name", "title")),
+    "education_history": ("Jifeng Legacy Education History", (
+        "project", "study_content", "from_date", "to_date", "school", "title")),
     "salary_history": ("Jifeng Legacy Salary History", (
         "project", "content", "from_date", "to_date", "wage", "title")),
     "promotion_history": ("Jifeng Legacy Promotion History", (

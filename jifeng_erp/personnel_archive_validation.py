@@ -212,6 +212,19 @@ def smoke(company, other_company):
         assert _digest(_supplements(exclude=supplement.name)) == protected_supplements
         passed(current)
 
+        current = "native_old_education_fields_stable_ids_and_native_qualification_preserved"
+        result = native(lambda: save_archive(request(employee.name, histories={"education_history": [{
+            "project": "旧教育项目", "study_content": "原样学习内容", "from_date": "2000-01-01",
+            "to_date": "2004-01-01", "school": "旧学校", "title": "旧职务"}]})))
+        education_id = result["histories"]["education_history"][0]["name"]
+        result = native(lambda: save_archive(request(employee.name, histories={"education_history": [{
+            "name": education_id, "school": "更新学校"}]})))
+        education = result["histories"]["education_history"][0]
+        assert education["name"] == education_id and education["school"] == "更新学校"
+        assert education["project"] == "旧教育项目" and education["study_content"] == "原样学习内容"
+        _assert_native_history_preserved(native_history, frappe.get_doc("Employee", employee.name).as_dict())
+        passed(current)
+
         current = "native_versions_exist_and_no_formal_promotion_or_salary_assignment_created"
         versions = _versions("Employee", employee.name)
         supplement_versions = _versions(SUPPLEMENT, supplement.name)
@@ -229,6 +242,9 @@ def smoke(company, other_company):
         current = "native_post_employee_supplement_failure_rolls_back_both_and_versions"
         reject(lambda: save_archive(request(employee.name, employee={"first_name": prefix + "-must-rollback"},
             histories={"salary_history": [{"content": "invalid range", "from_date": "2022-01-01", "to_date": "2021-01-01"}]})),
+            frappe.ValidationError, "开始日期")
+        reject(lambda: save_archive(request(employee.name, employee={"first_name": prefix + "-education-rollback"},
+            histories={"education_history": [{"study_content": "invalid range", "from_date": "2022-01-01", "to_date": "2021-01-01"}]})),
             frappe.ValidationError, "开始日期")
         passed(current)
 

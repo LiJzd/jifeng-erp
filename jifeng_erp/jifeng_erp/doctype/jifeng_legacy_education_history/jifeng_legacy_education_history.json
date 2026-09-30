@@ -1,0 +1,16 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Legacy Education History",
+ "module": "Jifeng ERP",
+ "istable": 1,
+ "field_order": ["project", "study_content", "from_date", "to_date", "school", "title"],
+ "fields": [
+  {"fieldname": "project", "fieldtype": "Data", "label": "项目", "in_list_view": 1},
+  {"fieldname": "study_content", "fieldtype": "Small Text", "label": "学习内容", "in_list_view": 1},
+  {"fieldname": "from_date", "fieldtype": "Date", "label": "开始", "in_list_view": 1},
+  {"fieldname": "to_date", "fieldtype": "Date", "label": "结束", "in_list_view": 1},
+  {"fieldname": "school", "fieldtype": "Data", "label": "学校", "in_list_view": 1},
+  {"fieldname": "title", "fieldtype": "Data", "label": "职务", "in_list_view": 1}
+ ],
+ "permissions": []
+}

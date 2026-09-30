@@ -162,7 +162,7 @@ class TestPersonnelArchive(unittest.TestCase):
         NativeDocument.environment = self
         self.employee_fields()
         for folder in ("jifeng_employee_supplement", "jifeng_legacy_work_history",
-                       "jifeng_legacy_salary_history", "jifeng_legacy_promotion_history"):
+                       "jifeng_legacy_salary_history", "jifeng_legacy_promotion_history", "jifeng_legacy_education_history"):
             path = ROOT / "jifeng_erp/jifeng_erp/doctype" / folder / (folder + ".json")
             schema = json.loads(path.read_text(encoding="utf-8"))
             self.metas[schema["name"]] = Meta([Record(field) for field in schema["fields"]], self, schema["name"])
@@ -339,6 +339,20 @@ class TestPersonnelArchive(unittest.TestCase):
         self.assertEqual(result["supplement"]["notes"], "原备注")
         self.assertEqual(self.documents[("Employee", "EMP-1")]["ctc"], 99000)
         self.assertEqual({kind for kind, _ in self.documents} & {"Employee Promotion", "Salary Structure Assignment"}, set())
+
+    def test_old_education_fields_stable_identity_and_native_education_preserved(self):
+        before = deepcopy(self.documents[("Employee", "EMP-1")]["education"])
+        result = self.save(histories={"education_history": [{"project": "旧项目", "study_content": "学习内容",
+            "from_date": "2000-01-01", "to_date": "2004-01-01", "school": "旧学校", "title": "原职务"}]})
+        row = result["histories"]["education_history"][0]
+        self.assertTrue(row["name"])
+        updated = self.save(histories={"education_history": [{"name": row["name"], "school": "新学校"}]})
+        after = updated["histories"]["education_history"][0]
+        self.assertEqual(after["name"], row["name"])
+        self.assertEqual(after["project"], "旧项目")
+        self.assertEqual(after["study_content"], "学习内容")
+        self.assertEqual(after["school"], "新学校")
+        self.assertEqual(self.documents[("Employee", "EMP-1")]["education"], before)
 
     def test_native_linked_user_methods_are_skipped_only_for_exact_api_object(self):
         before = deepcopy((self.users, self.auth, self.user_permissions))

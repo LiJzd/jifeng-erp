@@ -81,9 +81,11 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 		fields.push({ fieldname: "records_section", fieldtype: "Section Break" },
 			{ fieldname: "record_tabs", fieldtype: "HTML" });
 		const tables = {
-			work_history: { label: "工作经历", columns: [["project", "项目"], ["work_content", "工作内容"],
+            work_history: { label: "工作经历", columns: [["project", "项目"], ["work_content", "工作内容"],
 				["reason_for_leaving", "离职原因"], ["from_date", "开始"], ["to_date", "结束"],
-				["company_name", "公司"], ["title", "职务"]] },
+                ["company_name", "公司"], ["title", "职务"]] },
+            education_history: { label: "教育经历", columns: [["project", "项目"], ["study_content", "学习内容"],
+                ["from_date", "开始"], ["to_date", "结束"], ["school", "学校"], ["title", "职务"]] },
 			salary_history: { label: "调薪记录", columns: [["project", "项目"], ["content", "内容"],
 				["from_date", "开始"], ["to_date", "结束"], ["wage", "薪资"], ["title", "职务"]] },
 			promotion_history: { label: "升职记录", columns: [["project", "项目"], ["work_content", "工作内容"],
@@ -105,7 +107,6 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 				})),
 			});
 		}
-		fields.push({ fieldname: "education_history", fieldtype: "HTML", hidden: 1 });
 		const dialog = new frappe.ui.Dialog({ title: archive.name ? "人事档案" : "新增人事档案",
 			size: "extra-large", fields, no_submit_on_enter: true });
 		dialog.$wrapper.addClass("jfe-personnel-editor");
@@ -165,13 +166,6 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 			wrapper.find("button").removeClass("btn-primary").addClass("btn-default");
 			$(event.currentTarget).addClass("btn-primary").removeClass("btn-default");
 		});
-		const education = state.dialog.fields_dict.education_history.$wrapper;
-		const button = $('<button type="button" class="btn btn-default btn-sm"></button>')
-			.text(__("维护教育经历")).prop("disabled", !state.archive.name);
-		education.append(button);
-		if (!state.archive.name) education.append($('<p class="text-muted"></p>').text(__("先保存人员档案。")));
-		button.on("click", () => this.bridge.openCreate({ title: "教育经历", kind: "page",
-			route: ["Form", "Employee", state.archive.name] }));
 	}
 
 	payload(state) {

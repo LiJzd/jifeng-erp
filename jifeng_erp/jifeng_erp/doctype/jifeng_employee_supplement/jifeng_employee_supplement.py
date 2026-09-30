@@ -15,7 +15,7 @@ class JifengEmployeeSupplement(Document):
         self.identity_number = (self.identity_number or "").strip() or None
         self.bank_account_name = (self.bank_account_name or "").strip() or None
 
-        for table in ("work_history", "salary_history", "promotion_history"):
+        for table in ("work_history", "education_history", "salary_history", "promotion_history"):
             for row in getattr(self, table, None) or []:
                 if row.get("from_date") and row.get("to_date") and getdate(row.from_date) > getdate(row.to_date):
                     frappe.throw("旧档案记录的开始日期不能晚于结束日期")
