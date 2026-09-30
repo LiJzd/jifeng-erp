@@ -169,10 +169,14 @@ def _return(invoice, qty=1, index=0):
     selected.qty = -qty
     document.posting_date, document.posting_time, document.set_posting_time = today(), "11:00:00", 1
     document.set("payments", [])
+    for field in ("paid_amount", "base_paid_amount", "change_amount", "base_change_amount",
+                  "write_off_amount", "base_write_off_amount"):
+        document.set(field, 0)
+    document.write_off_outstanding_amount_automatically = 0
     document.calculate_taxes_and_totals()
     if document.is_pos:
         document.append("payments", {"mode_of_payment": invoice.payments[0].mode_of_payment,
-                                    "amount": document.rounded_total or document.grand_total})
+            "amount": flt(document.rounded_total or document.grand_total, document.precision("grand_total"))})
     document.insert()
     document.submit()
     document.reload()
@@ -255,6 +259,7 @@ def _permission_edges(fixture, mirror, pos_sale, pos_return, direct, administrat
     permission = frappe.get_doc({"doctype": "User Permission", "user": user.name, "allow": "Sales Invoice",
         "for_value": direct.name, "apply_to_all_doctypes": 0, "applicable_for": "Sales Invoice"}).insert()
     share = frappe.share.add("POS Invoice", pos_sale.name, user=user.name, read=1, notify=0)
+    direct_share = frappe.share.add("Sales Invoice", direct.name, user=user.name, read=1, notify=0)
     try:
         frappe.set_user(user.name)
         assert frappe.get_doc("POS Invoice", pos_sale.name).has_permission("read")
@@ -264,8 +269,25 @@ def _permission_edges(fixture, mirror, pos_sale, pos_return, direct, administrat
     finally:
         frappe.set_user(administrator)
         share.delete()
+        direct_share.delete()
         permission.delete()
         frappe.set_user(original_user)
+
+
+def _dashboard_compare(fixture, report, administrator):
+    from jifeng_erp.dashboard import overview
+
+    original_user = frappe.session.user
+    before = _ledger_snapshot()
+    try:
+        frappe.set_user(administrator)
+        filters = _filters(fixture, customer=None)
+        rows = _read(report, filters)
+        result = overview(company=fixture.company, from_date=filters["from_date"], to_date=filters["to_date"])
+        assert flt(result["metrics"]["sales"], 6) == flt(sum(flt(row["base_net_total"]) for row in rows), 6)
+    finally:
+        frappe.set_user(original_user)
+        assert _ledger_snapshot() == before, "Dashboard or posted ledger changed ledger contents"
 
 
 def smoke(company, item_group, stock_uom, report_api=True):
@@ -310,6 +332,7 @@ def smoke(company, item_group, stock_uom, report_api=True):
         originals = {(row["doc_type"], row["document"]): flt(row["base_net_total"]) for row in before}
         assert {pos_sale.name, pos_return.name} <= {row["document"] for row in before}
         assert len(_read(posted_sales_ledger, _filters(fixture))) == 2
+        _dashboard_compare(fixture, posted_sales_ledger, original_user)
         closing = _closing(pos_opening)
         pos_sale.reload()
         pos_return.reload()
@@ -317,6 +340,7 @@ def smoke(company, item_group, stock_uom, report_api=True):
         after = _read(sales_transaction_ledger, _filters(fixture))
         assert {(row["doc_type"], row["document"]): flt(row["base_net_total"]) for row in after} == originals
         assert len(_read(posted_sales_ledger, _filters(fixture))) == 4
+        _dashboard_compare(fixture, posted_sales_ledger, original_user)
         assert flt(get_pos_reserved_qty(fixture.item.name, fixture.warehouse.name)) == 0
         _invalid(lambda: make_sales_return(pos_sale.consolidated_invoice))
         mirror = frappe.get_doc("Sales Invoice", pos_sale.consolidated_invoice)
@@ -333,6 +357,7 @@ def smoke(company, item_group, stock_uom, report_api=True):
         pos_return.reload()
         assert not pos_sale.consolidated_invoice and not pos_return.consolidated_invoice
         assert len(_read(posted_sales_ledger, _filters(fixture))) == 2
+        _dashboard_compare(fixture, posted_sales_ledger, original_user)
         assert {(row["doc_type"], row["document"]): flt(row["base_net_total"])
                 for row in _read(sales_transaction_ledger, _filters(fixture))} == originals
         pos_return.cancel()
@@ -359,6 +384,7 @@ def smoke(company, item_group, stock_uom, report_api=True):
         opening.reload()
         opening.cancel()
 
+        frappe.set_user(original_user)
         foreign_currency = "USD" if fixture.currency != "USD" else "CNY"
         foreign_list = frappe.get_doc({"doctype": "Price List", "price_list_name": "JF-SALES-FX-" + fixture.suffix,
             "currency": foreign_currency, "selling": 1, "enabled": 1}).insert()
@@ -367,24 +393,40 @@ def smoke(company, item_group, stock_uom, report_api=True):
         fixture.profile.save()
         fixture.price_list = foreign_list
         _mode("Sales Invoice")
+        frappe.set_user(fixture.cashier.name)
         fx_opening = _opening(fixture)
         foreign = _invoice(fixture, pos=True, qty=1, paid=50, currency=foreign_currency, conversion_rate=7)
         _money(_row(sales_transaction_ledger, fixture, foreign), foreign)
         fx_closing = _closing(fx_opening)
-        for role in ("Sales User", "Sales Manager", "Accounts User"):
+        for role in ("Accounts User", "Accounts Manager", "Sales User", "Sales Manager"):
             frappe.set_user(original_user)
-            user = frappe.get_doc({"doctype": "User", "email": f"jf-sales-{role.split()[0].lower()}-{fixture.suffix}@example.invalid",
+            user = frappe.get_doc({"doctype": "User", "email": f"jf-sales-{role.lower().replace(' ', '-')}-{fixture.suffix}@example.invalid",
                 "first_name": "销售报表权限验收", "send_welcome_email": 0, "roles": [{"role": role}]}).insert()
             frappe.get_doc({"doctype": "User Permission", "user": user.name, "allow": "Company",
                            "for_value": company, "apply_to_all_doctypes": 1}).insert()
             frappe.set_user(user.name)
+            if role.startswith("Sales"):
+                assert not frappe.has_permission("Sales Invoice", "read")
+                _denied(lambda: _read(sales_transaction_ledger, _filters(fixture)))
+                _denied(lambda: _read(posted_sales_ledger, _filters(fixture)))
+                if report_api:
+                    _denied(lambda: _api("Jifeng Sales Transaction Ledger", _filters(fixture)))
+                    _denied(lambda: _api("Jifeng Posted Sales Ledger", _filters(fixture)))
+                if role == "Sales Manager":
+                    frappe.set_user(original_user)
+                    share = frappe.share.add("Sales Invoice", foreign.name, user=user.name, read=1, notify=0)
+                    try:
+                        frappe.set_user(user.name)
+                        assert not frappe.has_permission("POS Profile", "read", doc=fixture.profile.name)
+                        assert frappe.has_permission("POS Profile", "select", doc=fixture.profile.name)
+                        _money(_row(sales_transaction_ledger, fixture, foreign, pos_profile=fixture.profile.name), foreign)
+                        _money(_row(posted_sales_ledger, fixture, foreign, pos_profile=fixture.profile.name), foreign)
+                    finally:
+                        frappe.set_user(original_user)
+                        share.delete()
+                continue
             _money(_row(sales_transaction_ledger, fixture, foreign), foreign)
             _money(_row(posted_sales_ledger, fixture, foreign), foreign)
-            if role == "Sales Manager":
-                assert not frappe.has_permission("POS Profile", "read", doc=fixture.profile.name)
-                assert frappe.has_permission("POS Profile", "select", doc=fixture.profile.name)
-                _money(_row(sales_transaction_ledger, fixture, foreign, pos_profile=fixture.profile.name), foreign)
-                _money(_row(posted_sales_ledger, fixture, foreign, pos_profile=fixture.profile.name), foreign)
             if report_api:
                 assert foreign.name in {row["document"] for row in _api("Jifeng Sales Transaction Ledger", _filters(fixture))}
                 assert foreign.name in {row["document"] for row in _api("Jifeng Posted Sales Ledger", _filters(fixture))}
@@ -414,7 +456,9 @@ def smoke(company, item_group, stock_uom, report_api=True):
             "missing_mirror_child_source_rejected", "closing_cancel_unlinks_and_reverses_native_si",
             "pos_cancel_releases_reservation", "native_customer_group_merge_exact_provenance",
             "original_group_customers_retained", "foreign_stored_currency_and_company_values",
-            "sales_and_accounts_user_access", "sales_manager_profile_select_without_profile_read",
+            "accounts_user_manager_report_access", "native_sales_only_financial_read_report_denied",
+            "sales_manager_profile_select_with_exact_shared_voucher_without_profile_read",
+            "dashboard_posted_sales_equals_signed_base_invoice_sum",
             "native_cancellation_excludes_all_fixture_transactions",
             "all_ledger_contents_unchanged_by_reports", "guest_denied",
         ] + (["native_report_api_role_access"] if report_api else [])}
