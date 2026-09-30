@@ -9,7 +9,7 @@ from jifeng_erp.inventory_scope import decimal_number, readable_documents
 def _aggregate(doctype, field, filters):
     if not frappe.has_permission(doctype, "read"):
         return None
-    return float(sum((decimal_number(doc.get(field)) for doc in readable_documents(doctype, filters)),
+    return float(sum((decimal_number(doc.get(field)) for doc in readable_documents(doctype, filters).values()),
                      decimal_number(0)))
 
 
@@ -23,7 +23,7 @@ def _stock_value(company):
     """Current bin valuation and source warehouses visible to this user."""
     if not frappe.has_permission("Warehouse", "read") or not frappe.has_permission("Bin", "read"):
         return None, []
-    warehouses = [doc.name for doc in readable_documents("Warehouse", {"company": company, "is_group": 0})]
+    warehouses = list(readable_documents("Warehouse", {"company": company, "is_group": 0}))
     if not warehouses:
         return None, []
     value = _aggregate("Bin", "stock_value", {

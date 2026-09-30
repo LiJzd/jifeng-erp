@@ -25,7 +25,8 @@ class TestDashboard(unittest.TestCase):
         self.sources = {}
         scope = types.ModuleType("jifeng_erp.inventory_scope")
         scope.decimal_number = Decimal
-        scope.readable_documents = Mock(side_effect=lambda doctype, query: self.sources.get(doctype, []))
+        scope.readable_documents = Mock(side_effect=lambda doctype, query: {
+            row.get("name") or str(index): row for index, row in enumerate(self.sources.get(doctype, []))})
         self.scope = scope
         utils = types.ModuleType("frappe.utils")
         utils.getdate = lambda value: datetime.date.fromisoformat(str(value))
