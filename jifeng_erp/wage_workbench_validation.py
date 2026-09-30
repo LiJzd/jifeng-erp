@@ -19,12 +19,17 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
         frappe.throw("请先迁移正式工资操作台请求字段")
     if not frappe.db.exists("Page", "jifeng-wage-workbench"):
         frappe.throw("请先迁移正式工资操作台页面")
+    for doctype in ("Jifeng Wage Entry", "Jifeng Wage Allocation"):
+        amendment = frappe.get_meta(doctype).get_field("amended_from")
+        if not amendment or amendment.fieldtype != "Link" or amendment.options != doctype:
+            frappe.throw("请先迁移工资单据的原生修改来源字段")
     original_user, original_test = frappe.session.user, frappe.in_test
     point = "jf_wage_workbench_native"
     suffix = frappe.generate_hash(length=9)
-    users, created, checks = [], [], []
+    users, created, created_allocations, checks = [], [], [], []
     ledgers_before = _ledger_snapshot()
     wage_count_before = frappe.db.count("Jifeng Wage Entry")
+    allocation_count_before = frappe.db.count("Jifeng Wage Allocation")
     employee_count_before = frappe.db.count("Employee")
     _begin_rollback_only(point)
     try:
@@ -92,7 +97,8 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
                 "for_value": company, "apply_to_all_doctypes": 1}).insert()
             return user
 
-        manager, accountant = actor("manager", "HR Manager"), actor("accounts", "Accounts User")
+        manager, accountant, clerk = (actor("manager", "HR Manager"), actor("accounts", "Accounts User"),
+                                      actor("clerk", "HR User"))
         frappe.set_user(manager.name)
         assert not frappe.has_permission("Operation", "write")
         assert not frappe.has_permission("Job Card", "write", doc=first)
@@ -120,6 +126,16 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
                 raise AssertionError("Invalid native wage request was accepted")
             finally:
                 frappe.db.rollback(save_point=checkpoint)
+
+        def native_amendment(source):
+            # Native Desk from_amend keeps no_copy fields; in_test Python copies
+            # also keep docstatus, whereas Desk starts the parent/children at 0.
+            amended = frappe.copy_doc(source)
+            amended.docstatus = 0
+            for child in amended.get_all_children():
+                child.docstatus = 0
+            amended.amended_from = source.name
+            return amended
 
         source = get_entry_source(first.name, company, employees[0].name)
         assert source["source_modified"] == str(first.modified)
@@ -165,13 +181,23 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
         restored = frappe.get_doc("Jifeng Wage Entry", restored_name)
         restored.submit()
         restored.cancel()
-        amended = frappe.copy_doc(restored)
-        amended.docstatus = 0
-        amended.amended_from = restored.name
+        frappe.set_user(clerk.name)
+        assert frappe.has_permission("Jifeng Wage Entry", "create")
+        assert not frappe.has_permission("Jifeng Wage Entry", "amend")
+        blocked(native_amendment(restored).insert, frappe.PermissionError)
+        frappe.set_user(manager.name)
+        checks.append("hr_user_create_cannot_forge_native_wage_amendment")
+        amended = native_amendment(restored)
+        assert amended.workbench_request_key == restored.workbench_request_key
         amended.insert()
         created.append(amended.name)
         assert not amended.workbench_request_key and not amended.workbench_request_fingerprint
-        checks.append("native_amendment_does_not_copy_unique_workbench_request")
+        assert amended.amended_from == restored.name
+        amended.submit()
+        amended.cancel()
+        old_receipt = batch_status(timing_request["request_id"], company, employees[0].name)["wages"]
+        assert len(old_receipt) == 1 and old_receipt[0]["name"] == restored.name and old_receipt[0]["docstatus"] == 2
+        checks.append("native_amendment_releases_copied_request_and_keeps_original_receipt")
         ordinary = []
         for index in range(2):
             doc = frappe.get_doc({"doctype": "Jifeng Wage Entry", "company": company, "employee": employees[0].name,
@@ -192,6 +218,57 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
         checks.append("stale_source_version_rejected_before_insert")
         blocked(lambda: save_drafts(payload([row(team, 1, 1)])))
         checks.append("team_piece_wages_require_supervisor_allocation")
+        allocation = frappe.get_doc({"doctype": "Jifeng Wage Allocation", "job_card": team.name,
+            "payroll_date": today(), "salary_component": component.name,
+            "employees": [{"employee": employees[index].name, "quantity": qty, "piece_rate": rate}
+                          for index, (qty, rate) in enumerate(((2, 3), (3, 4)))]}).insert()
+        created_allocations.append(allocation.name)
+        allocation.submit()
+        old_names = allocation.make_wages()
+        created.extend(old_names)
+        for name in old_names:
+            wage = frappe.get_doc("Jifeng Wage Entry", name)
+            wage.submit()
+            wage.cancel()
+        allocation.reload()
+        allocation.cancel()
+        old_rows = {entry.name for entry in allocation.employees}
+        old_references = [entry.wage_entry for entry in allocation.employees]
+        frappe.set_user(clerk.name)
+        assert frappe.has_permission("Jifeng Wage Allocation", "create")
+        assert not frappe.has_permission("Jifeng Wage Allocation", "amend")
+        blocked(native_amendment(allocation).insert, frappe.PermissionError)
+        frappe.set_user(manager.name)
+        checks.append("hr_user_create_cannot_forge_native_allocation_amendment")
+        revised = native_amendment(allocation)
+        assert [entry.wage_entry for entry in revised.employees] == old_references
+        for entry, qty, rate in zip(revised.employees, (1, 4), (5, 2)):
+            entry.quantity, entry.piece_rate = qty, rate
+        revised.insert()
+        created_allocations.append(revised.name)
+        assert revised.amended_from == allocation.name
+        assert all(not entry.wage_entry for entry in revised.employees)
+        assert old_rows.isdisjoint({entry.name for entry in revised.employees})
+        revised.submit()
+        new_names = revised.make_wages()
+        created.extend(new_names)
+        assert len(new_names) == 2 and set(new_names).isdisjoint(old_names)
+        assert new_names == revised.make_wages()
+        new_wages = [frappe.get_doc("Jifeng Wage Entry", name) for name in new_names]
+        assert [Decimal(str(wage.total_amount)) for wage in new_wages] == [Decimal(5), Decimal(8)]
+        assert all(wage.wage_allocation == revised.name and wage.wage_allocation_employee in
+                   {entry.name for entry in revised.employees} for wage in new_wages)
+        original = frappe.get_doc("Jifeng Wage Allocation", allocation.name)
+        assert original.docstatus == 2 and [entry.wage_entry for entry in original.employees] == old_references
+        assert all(frappe.get_doc("Jifeng Wage Entry", name).docstatus == 2 for name in old_names)
+        checks.append("native_allocation_amendment_generates_new_exact_wage_sources_and_preserves_history")
+        blocked(revised.cancel)
+        for wage in new_wages:
+            wage.submit()
+            wage.cancel()
+        revised.reload()
+        revised.cancel()
+        checks.append("amended_allocation_keeps_native_wage_reversal_order")
         blocked(lambda: get_entry_source(first.name, company, employees[1].name))
         checks.append("employee_not_in_explicit_source_rejected")
         forged = frappe.get_doc({"doctype": "Jifeng Wage Entry", "company": company, "employee": employees[0].name,
@@ -222,8 +299,10 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
         for doctype in ("Employee", "Operation", "Jifeng Wage Entry"):
             frappe.clear_cache(doctype=doctype)
     assert frappe.db.count("Jifeng Wage Entry") == wage_count_before
+    assert frappe.db.count("Jifeng Wage Allocation") == allocation_count_before
     assert frappe.db.count("Employee") == employee_count_before
     assert not any(frappe.db.exists("Jifeng Wage Entry", name) for name in created)
+    assert not any(frappe.db.exists("Jifeng Wage Allocation", name) for name in created_allocations)
     assert _ledger_snapshot() == ledgers_before
     result["rollback_verified"] = True
     return result

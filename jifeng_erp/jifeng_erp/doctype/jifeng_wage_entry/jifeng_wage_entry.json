@@ -12,7 +12,7 @@
   "employee", "employee_name", "company", "operation", "work_date", "payroll_date",
   "flow_order", "work_order", "job_card", "wage_allocation", "wage_allocation_employee", "salary_component", "calculation_section",
   "quantity", "stock_uom", "piece_rate", "piece_amount", "hours", "hourly_rate",
-  "time_amount", "extra_amount", "total_amount", "notes", "workbench_request_key", "workbench_request_fingerprint"
+  "time_amount", "extra_amount", "total_amount", "notes", "amended_from", "workbench_request_key", "workbench_request_fingerprint"
  ],
  "fields": [
   {"fieldname": "employee", "fieldtype": "Link", "label": "员工", "options": "Employee", "reqd": 1, "in_list_view": 1},
@@ -38,6 +38,7 @@
   {"fieldname": "extra_amount", "fieldtype": "Currency", "label": "附加费", "options": "Company:company:default_currency", "default": "0"},
   {"fieldname": "total_amount", "fieldtype": "Currency", "label": "计薪合计", "options": "Company:company:default_currency", "read_only": 1, "in_list_view": 1},
   {"fieldname": "notes", "fieldtype": "Small Text", "label": "备注"},
+  {"fieldname": "amended_from", "fieldtype": "Link", "label": "修改自", "options": "Jifeng Wage Entry", "read_only": 1, "no_copy": 1, "print_hide": 1},
   {"fieldname": "workbench_request_key", "fieldtype": "Data", "label": "工资录入请求", "read_only": 1, "hidden": 1, "unique": 1, "no_copy": 1},
   {"fieldname": "workbench_request_fingerprint", "fieldtype": "Data", "label": "工资录入请求内容", "read_only": 1, "hidden": 1, "no_copy": 1}
  ],

@@ -278,6 +278,82 @@ class TestWageWorkbench(unittest.TestCase):
         self.module.get_entry_source("JC-1", "C-1", "E-1")
         self.frappe.share.get_shared.assert_called_once_with("Job Card", "HR-TEST", rights=["read"], limit=1)
 
+    def test_native_amendment_requires_amend_source_read_and_cancelled_source(self):
+        for doctype in ("Jifeng Wage Entry", "Jifeng Wage Allocation"):
+            source = Doc(doctype=doctype, name="OLD", docstatus=2)
+            self.frappe.get_doc = Mock(return_value=source)
+            new = Doc(doctype=doctype, amended_from="OLD", denied=["amend"])
+            with self.assertRaises(PermissionError):
+                self.module.authorize_native_amendment(new)
+            self.frappe.get_doc.assert_not_called()
+            new.denied = []
+            source.denied = ["read"]
+            with self.assertRaises(PermissionError):
+                self.module.authorize_native_amendment(new)
+            source.denied = []
+            source.docstatus = 1
+            with self.assertRaisesRegex(ValueError, "已取消"):
+                self.module.authorize_native_amendment(new)
+            source.docstatus = 2
+            self.assertIs(self.module.authorize_native_amendment(new), source)
+            self.frappe.get_doc.assert_called_with(doctype, "OLD")
+
+    def test_amendment_source_must_be_an_exact_string_identity(self):
+        self.frappe.get_doc.reset_mock()
+        for value in (False, 123, {"name": "OLD"}, ["OLD"], " OLD", "OLD "):
+            with self.assertRaisesRegex(ValueError, "准确的原单编号"):
+                self.module.authorize_native_amendment(Doc(doctype="Jifeng Wage Entry", amended_from=value))
+        self.frappe.get_doc.assert_not_called()
+
+    def test_native_wage_amendment_clears_only_exact_copied_request(self):
+        self.module.save_drafts(self.payload)
+        source = self.persisted[0]
+        source.docstatus = 2
+        new = Doc(doctype=source.doctype, amended_from=source.name, flags=Doc(),
+                  workbench_request_key=source.workbench_request_key,
+                  workbench_request_fingerprint=source.workbench_request_fingerprint)
+        original_key = source.workbench_request_key
+        new.workbench_request_key = "forged"
+        with self.assertRaisesRegex(ValueError, "来自原已取消单据"):
+            self.module.prepare_wage_amendment(new)
+        new.workbench_request_key = original_key
+        self.module.authorize_native_restore(new)
+        self.module.prepare_wage_amendment(new)
+        self.module.guard_request_identity(new)
+        self.assertIsNone(new.workbench_request_key)
+        self.assertIsNone(new.workbench_request_fingerprint)
+        self.assertEqual(source.workbench_request_key, original_key)
+
+    def test_native_restore_token_preserves_an_amended_document_request(self):
+        self.module.save_drafts(self.payload)
+        source = self.persisted[0]
+        source.docstatus = 2
+        restored = Doc(doctype=source.doctype, name="RESTORED-AMENDMENT", amended_from=source.name,
+                       flags=Doc(from_restore=True), workbench_request_key=str(uuid.uuid4()) + ":000",
+                       workbench_request_fingerprint="native-restored-fingerprint")
+        fields = ("name", *self.module.EDIT_FIELDS, "job_card", "work_order", "flow_order",
+                  "workbench_request_key", "workbench_request_fingerprint")
+        snapshot = {field: getattr(restored, field, None) for field in fields}
+        snapshot["doctype"] = restored.doctype
+        self.deleted = [Doc(data=json.dumps(snapshot))]
+        self.module.authorize_native_restore(restored)
+        self.module.prepare_wage_amendment(restored)
+        self.module.guard_request_identity(restored)
+        self.assertEqual(restored.workbench_request_key, snapshot["workbench_request_key"])
+
+    def test_native_allocation_amendment_clears_new_refs_and_preserves_old_history(self):
+        source = Doc(doctype="Jifeng Wage Allocation", name="OLD", docstatus=2,
+                     employees=[Doc(employee="E-1", wage_entry="OLD-WAGE")])
+        self.frappe.get_doc = Mock(return_value=source)
+        new = Doc(doctype=source.doctype, amended_from=source.name, flags=Doc(),
+                  employees=[Doc(employee="E-1", wage_entry="FOREIGN-WAGE")])
+        with self.assertRaisesRegex(ValueError, "来自原已取消单据"):
+            self.module.prepare_allocation_amendment(new)
+        new.employees[0].wage_entry = "OLD-WAGE"
+        self.module.prepare_allocation_amendment(new)
+        self.assertIsNone(new.employees[0].wage_entry)
+        self.assertEqual(source.employees[0].wage_entry, "OLD-WAGE")
+
     def test_hidden_saved_rows_never_become_an_absent_batch(self):
         self.module.save_drafts(self.payload)
         self.frappe.get_list.side_effect = lambda *args, **kwargs: []

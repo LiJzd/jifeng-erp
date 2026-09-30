@@ -6,9 +6,13 @@ from jifeng_erp.wage_allocation import (
     validate_allocation,
     validate_allocation_cancel,
 )
+from jifeng_erp.wage_workbench import prepare_allocation_amendment
 
 
 class JifengWageAllocation(Document):
+    def before_insert(self):
+        prepare_allocation_amendment(self)
+
     def validate(self):
         validate_allocation(self)
 

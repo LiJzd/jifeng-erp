@@ -19,7 +19,8 @@ EDIT_FIELDS = ("company", "employee", "operation", "work_date", "payroll_date", 
                "quantity", "stock_uom", "piece_rate", "hours", "hourly_rate", "extra_amount", "notes")
 SOURCE_FIELDS = ("company", "operation", "operation_id", "work_order", "stock_uom", "posting_date", "is_corrective_job_card")
 SOURCE_TABLES = {("Job Card", "time_logs"): "Job Card Time Log",
-                 ("Work Order", "operations"): "Work Order Operation"}
+                 ("Work Order", "operations"): "Work Order Operation",
+                 ("Jifeng Wage Allocation", "employees"): "Jifeng Wage Allocation Employee"}
 
 
 def _request_id(value):
@@ -287,3 +288,48 @@ def authorize_native_restore(doc):
                for snapshot in _deleted_requests(key.split(":", 1)[0])):
         frappe.throw("工资恢复必须与原删除单据的编号、请求和内容一致")
     doc.flags.workbench_restore_token = RESTORE_TOKEN
+
+
+def authorize_native_amendment(doc):
+    """The insert API checks create; it does not enforce native amendment rights."""
+    source_name = getattr(doc, "amended_from", None)
+    if source_name is None or source_name == "":
+        return None
+    if not isinstance(source_name, str) or not source_name.strip() or source_name != source_name.strip():
+        frappe.throw("工资修改来源必须是准确的原单编号")
+    doc.check_permission("amend")
+    source = frappe.get_doc(doc.doctype, source_name)
+    source.check_permission("read")
+    if source.docstatus != 2:
+        frappe.throw("只有已取消的工资单据可以修改")
+    return source
+
+
+def prepare_wage_amendment(doc):
+    source = authorize_native_amendment(doc)
+    if not source or getattr(doc.flags, "workbench_restore_token", None) is RESTORE_TOKEN:
+        return
+    _fields(source, ("workbench_request_key", "workbench_request_fingerprint"))
+    key, fingerprint = (getattr(doc, field, None) or "" for field in
+                        ("workbench_request_key", "workbench_request_fingerprint"))
+    if (key or fingerprint) and (key != (source.workbench_request_key or "")
+            or fingerprint != (source.workbench_request_fingerprint or "")):
+        frappe.throw("修改单的工资录入请求必须来自原已取消单据")
+    # Desk's from_amend copy keeps no_copy fields. The original batch receipt
+    # stays on the cancelled source; the amendment has its own native identity.
+    doc.workbench_request_key = None
+    doc.workbench_request_fingerprint = None
+
+
+def prepare_allocation_amendment(doc):
+    source = authorize_native_amendment(doc)
+    if not source or getattr(doc.flags, "from_restore", False):
+        return
+    _child_fields(source, "employees", ("employee", "wage_entry"))
+    originals = {row.employee: row.wage_entry or "" for row in source.employees}
+    for row in doc.employees:
+        if row.wage_entry and row.wage_entry != originals.get(row.employee):
+            frappe.throw("修改分配单的计薪引用必须来自原已取消单据")
+        # Generated references are recreated against the new parent and row.
+        # They are not authority for generate_wages, which queries native docs.
+        row.wage_entry = None

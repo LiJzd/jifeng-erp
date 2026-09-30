@@ -4,12 +4,13 @@ from frappe.utils import getdate
 
 from jifeng_erp.payroll import active_additional_salary, wage_amounts
 from jifeng_erp.wage_allocation import validate_wage_source
-from jifeng_erp.wage_workbench import authorize_native_restore, guard_request_identity
+from jifeng_erp.wage_workbench import authorize_native_restore, guard_request_identity, prepare_wage_amendment
 
 
 class JifengWageEntry(Document):
     def before_insert(self):
         authorize_native_restore(self)
+        prepare_wage_amendment(self)
 
     def validate(self):
         guard_request_identity(self)
