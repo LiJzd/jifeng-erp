@@ -21,8 +21,7 @@ def _quantity(value, label):
 
 def _flow(name, company=None):
     # Lock before reading allocations so concurrent factories cannot overschedule.
-    frappe.db.get_value("Jifeng Flow Order", name, "name", for_update=True)
-    flow = frappe.get_doc("Jifeng Flow Order", name)
+    flow = frappe.get_doc("Jifeng Flow Order", name, for_update=True)
     flow.check_permission("read")
     if company and flow.company != company:
         frappe.throw("生产计划与流程单公司不一致")
@@ -39,9 +38,15 @@ def _allocated(flow_name, exclude_work=None, exclude_plan=None):
     if exclude_work:
         filters["name"] = ["!=", exclude_work]
     # Include hidden allocations in the guard; never return their identities.
-    rows = frappe.get_all("Work Order", filters=filters,
-                          fields=["qty", "production_plan", "docstatus", "produced_qty", "process_loss_qty"])
+    rows = _work_rows(filters, ["qty", "production_plan", "docstatus", "produced_qty", "process_loss_qty"])
     return sum(_committed(row) for row in rows if not exclude_plan or row.production_plan != exclude_plan)
+
+
+def _work_rows(filters, fields):
+    # A normal read can retain an old repeatable-read snapshot after waiting on
+    # the flow lock. Locking reads observe the most recent committed allocations.
+    return frappe.qb.get_query("Work Order", filters=filters, fields=fields, order_by="name asc",
+                               ignore_permissions=True, for_update=True).run(as_dict=True)
 
 
 def _committed(work):
@@ -58,9 +63,9 @@ class ProductionInstructionMixin:
         for row in self.po_items:
             if not row.get("jf_flow_order"):
                 continue
-            works = frappe.get_all("Work Order", filters={"production_plan": self.name,
-                                   "production_plan_item": row.name, "docstatus": ["<", 2]},
-                                   fields=["qty", "docstatus", "produced_qty", "process_loss_qty"])
+            works = _work_rows({"production_plan": self.name, "production_plan_item": row.name,
+                                "docstatus": ["<", 2]},
+                               ["qty", "docstatus", "produced_qty", "process_loss_qty"])
             # The native calculation counts submitted orders only. Draft orders from
             # a previous factory click also reserve this linked instruction row.
             result[row.name]["qty"] = max(0, flt(row.planned_qty) - sum(_committed(work) for work in works))
@@ -99,9 +104,9 @@ def validate_work_order(doc):
             if doc.get("jf_flow_order") and doc.jf_flow_order != source.jf_flow_order:
                 frappe.throw("生产工单流程单与生产计划来源不一致")
             doc.jf_flow_order = source.jf_flow_order
-            works = frappe.get_all("Work Order", filters={"production_plan_item": doc.production_plan_item,
-                                   "docstatus": ["<", 2], "name": ["!=", doc.name or ""]},
-                                   fields=["qty", "docstatus", "produced_qty", "process_loss_qty"])
+            works = _work_rows({"production_plan_item": doc.production_plan_item,
+                                "docstatus": ["<", 2], "name": ["!=", doc.name or ""]},
+                               ["qty", "docstatus", "produced_qty", "process_loss_qty"])
             if sum(_committed(work) for work in works) + _committed(doc) > flt(source.planned_qty) + 1e-6:
                 frappe.throw("有效生产工单数量超过对应生产计划明细数量")
     if not doc.get("jf_flow_order"):
@@ -132,6 +137,8 @@ def validate_plan(doc, method=None):
         if flow is None:
             flow = flows[row.jf_flow_order] = _flow(row.jf_flow_order, doc.company)
         _match(flow, row.item_code, row.bom_no, row.get("sales_order"), row.get("sales_order_item"))
+        if row.stock_uom != frappe.get_cached_value("Item", row.item_code, "stock_uom"):
+            frappe.throw("关联流程单的生产计划数量必须使用商品库存单位")
         if row.get("item_reference"):
             frappe.throw("关联流程单的计划明细不能合并多个销售来源，请分别安排")
         if doc.docstatus == 0 or getattr(doc, "_action", None) == "submit":
@@ -147,9 +154,9 @@ def validate_flow_allocation(doc, method=None):
     if doc.is_new():
         return
     frappe.db.get_value(doc.doctype, doc.name, "name", for_update=True)
-    works = frappe.get_all("Work Order", filters={"jf_flow_order": doc.name, "docstatus": ["<", 2]},
-                           fields=["qty", "bom_no", "company", "production_item", "docstatus",
-                                   "produced_qty", "process_loss_qty"])
+    works = _work_rows({"jf_flow_order": doc.name, "docstatus": ["<", 2]},
+                       ["qty", "bom_no", "company", "production_item", "docstatus",
+                        "produced_qty", "process_loss_qty"])
     if sum(_committed(work) for work in works) > flt(doc.planned_qty) + 1e-6:
         frappe.throw("流程单计划数量不能小于已有有效工单数量")
     if any(work.bom_no != doc.bom or work.company != doc.company or work.production_item != doc.item_code
@@ -167,8 +174,8 @@ def flow_plan_rows(company, flow_names):
         frappe.throw("请选择 1 至 100 张流程单")
     if len(set(names)) != len(names):
         frappe.throw("流程单不能重复选择")
-    company_doc = frappe.get_doc("Company", company)
-    company_doc.check_permission("read")
+    if not frappe.get_list("Company", filters={"name": company}, pluck="name", limit_page_length=1):
+        frappe.throw("没有安排该公司生产计划的权限", frappe.PermissionError)
     result = []
     # Sorted locking order also keeps multi-flow imports from deadlocking each other.
     for name in sorted(names):

@@ -181,14 +181,6 @@ def validate_flow_links(doc, method=None):
         from jifeng_erp.production_instruction import validate_work_order
 
         validate_work_order(doc)
-        if not doc.get("jf_flow_order"):
-            return
-        flow = frappe.get_doc("Jifeng Flow Order", doc.jf_flow_order)
-        flow.check_permission("read")
-        if (flow.company != doc.company or flow.item_code != doc.production_item
-                or flow.bom != doc.bom_no or flow.sales_order != doc.sales_order
-                or flow.sales_order_item != doc.sales_order_item):
-            frappe.throw("生产工单与集沣流程单的公司、商品、BOM 或销售来源不一致")
         return
     work_flow = None
     if doc.doctype == "Stock Entry" and doc.get("work_order"):

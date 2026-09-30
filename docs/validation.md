@@ -1,5 +1,7 @@
 # 验证记录
 
+2026-09-30：生产指令扩展到原生 Production Plan，保存多款商品与流程单明细，记录原编号、指令日期、重量及显式单位、公司本币参考金额和备注；启用原生 Version 变更记录。新增调入流程单与统一排期按钮，打印按库存单位分别汇总数量。原生批量生成工单时跳过 validate，已把流程继承与数量守卫放到 before_validate；针对关联流程单的计划明细，生成量另计已有草稿，重复点击不增加工单。数量校验覆盖同流程分批、每条计划明细及其他有效工单；已提交工单损耗按原生净承诺量处理，取消释放安排数量。锁定来源及使用当前锁定读取避免沿用旧数量快照。旧编号不替代原生主键，参考金额不会过账。原生提交检查、打印文字转义、版本记录、来源变更、BOM 变更、超量、Guest 权限及无库存/总账记账已通过；脚本 `jifeng_erp.instruction_validation.smoke` 使用保存点回滚合成数据。既有生产报工→制造入库的 15 项检查复核通过。原“调计划”窗口的实际语义、指令工序/工期等旧列、真实角色与现场单据仍需核对，不将当前按钮解释为旧流程已完整复刻。
+
 2026-09-30：生产模块浏览器只读复核通过。经典工作台“生产汇总”进入正式进度报表，“未投产分析”预设 `Not Started`；“工序损耗”预设已提交且有损耗，切到“工序逾期”后审核状态恢复全部、损耗条件清零、只保留逾期条件，回汇总时状态条件也清空，避免 Frappe 保留上次筛选。中文口径说明均可见。测试站点真实查询返回空数据，未渲染结果行及列标题；实际数据与列定义由前述后台提交链路核对，浏览器实际结果行布局仍待验证。“完成”进入 `docstatus=1/status=Completed` 工单列表，“入库单”进入 `stock_entry_type=Manufacture` 库存凭证列表，“生产指令单”打开新建 Production Plan，显示选物料/销售订单/物料需求等中文来源和待生产成品计划明细，未保存；此路由核验不等同旧指令字段完整映射。报工流程单 Link 元数据存在。页面级 JS 异常为零，开发单进程 Socket.IO 轮询 404 单独记录。截图及实测记录位于本地 `output/playwright/production-*.png` 和 `production-results.json`。
 
 2026-09-30：新增正式生产进度与工序报工明细报表，先核对公司可读权限，再用权限过滤的 Work Order / Job Card 查询；报工明细同时限制可读工单范围。工单按建立日期查询，完成与损耗读取制造入库更新值；报工按业务日期查询，草稿和已提交完成/损耗分列，取消不计，不同工序不汇总成成品数量。实际测试发现流程单生成工单未加载 BOM 工序，现已调用原生物料/工序加载方法并保留半成品模式；工单提交自动生成报工单且继承流程单，冲突及公司/商品不符被拒。Manufacturing User 新增流程单只读权限，并可进入工作台；在隔离站点保存点内以该角色实际保存并提交两道工序，首道完成 5，末道完成 4/损耗 1，各记录 0.5 小时，报表草稿/审核分列正确，工序损耗入口只返回末道。报工提交后工单入库数仍为零；实际制造入库成品 4/损耗 1 后工单 Completed、剩余 0、结清进度 100%、逾期归零，入库库存明细保留流程单且台账成品 +4。限制该用户只读一个工单时另一草稿工单不出现在报表，标准报表接口及经典工作台权限通过，Guest 被拒。可重复 `jifeng_erp.production_validation.smoke` 15 项检查通过，合成商品、工序、工作站、用户和台账已回滚。79 项单元测试、Ruff、相关 JS 语法、差异检查、站点迁移及完整构建通过。角色浏览器、旧指令字段/打印、多部门与多人报工/计薪仍待进一步验收。
@@ -138,6 +140,8 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_stock_flow --kwargs 
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_payments --kwargs '{"company":"测试公司","customer":"测试客户"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_expense_voucher --kwargs '{"company":"测试公司"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_work_order --kwargs '{"flow_order":"尚未生成工单且已关联有效BOM的测试流程单"}'
+bench --site YOUR_SITE execute jifeng_erp.instruction_validation.smoke --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
+bench --site YOUR_SITE execute jifeng_erp.production_validation.smoke --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_employee_supplement --kwargs '{"employee":"尚未有补充档案的测试员工编号"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs '{"employee":"已分配工资结构的在职测试员工编号","salary_component":"已启用的收入类工资项目"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs '{"employee":"已分配工资结构的在职测试员工编号","salary_component":"已启用的收入类工资项目","salary_structure":"员工当前已提交的工资结构"}'

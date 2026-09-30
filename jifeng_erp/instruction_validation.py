@@ -61,6 +61,9 @@ def smoke(company, item_group, stock_uom):
         assert sorted(work.qty for work in works) == [2, 3]
         assert {work.jf_flow_order for work in works} == {flow.name for flow in flows}
         assert all(str(work.planned_start_date) == add_days(today(), 2) + " 09:00:00" for work in works)
+        row_overrun = frappe.copy_doc(next(work for work in works if work.qty == 2))
+        row_overrun.qty = 3
+        _reject(lambda: validate_work_order(row_overrun), "对应生产计划明细")
         plan.make_work_order()
         assert frappe.db.count("Work Order", {"production_plan": plan.name}) == 2
         remaining = flow_plan_rows(company, [flows[0].name])
@@ -98,12 +101,36 @@ def smoke(company, item_group, stock_uom):
         split.cancel()
         assert flow_plan_rows(company, [flows[0].name])[0]["planned_qty"] == 3
         assert frappe.db.count("Stock Ledger Entry") == before_stock and frappe.db.count("GL Entry") == before_gl
+        plan.po_items[0].stock_uom = "wrong-unit"
+        _reject(lambda: validate_plan(plan), "商品库存单位")
+        plan.po_items[0].stock_uom = stock_uom
         plan.jf_instruction_amount = -1
         _reject(lambda: validate_plan(plan), "非负有限")
         plan.jf_instruction_amount = 120
         plan.po_items[0].jf_flow_order = flows[1].name if plan.po_items[0].item_code == first.name else flows[0].name
         _reject(lambda: validate_plan(plan), "商品、BOM")
         _reject(lambda: flow_plan_rows(company, [flows[0].name, flows[0].name]), "重复选择")
+        frappe.db.set_value("Jifeng Flow Order", flows[0].name, "source_changed", 1)
+        _reject(lambda: flow_plan_rows(company, [flows[0].name]), "来源已变更或关闭")
+        frappe.db.set_value("Jifeng Flow Order", flows[0].name, "source_changed", 0)
+        operator = frappe.get_doc({"doctype": "User", "email": f"jf-instruction-{suffix}@example.invalid",
+                                   "first_name": "生产指令验收", "send_welcome_email": 0,
+                                   "roles": [{"role": "Manufacturing User"}]}).insert()
+        frappe.get_doc({"doctype": "User Permission", "user": operator.name, "allow": "Company",
+                        "for_value": company, "apply_to_all_doctypes": 1}).insert()
+        frappe.set_user(operator.name)
+        operator_rows = flow_plan_rows(company, [flows[0].name])
+        assert operator_rows[0]["planned_qty"] == 3
+        operator_plan = frappe.get_doc({"doctype": "Production Plan", "company": company,
+                                        "po_items": operator_rows}).insert()
+        operator_plan.submit()
+        operator_plan.make_work_order()
+        operator_work = frappe.get_doc("Work Order", frappe.db.get_value(
+            "Work Order", {"production_plan": operator_plan.name}))
+        assert operator_work.jf_flow_order == flows[0].name and operator_work.qty == 3
+        assert "集沣生产指令单" in frappe.get_print("Production Plan", operator_plan.name,
+                                                  print_format="Jifeng Production Instruction")
+        assert frappe.db.count("Stock Ledger Entry") == before_stock and frappe.db.count("GL Entry") == before_gl
         frappe.set_user("Guest")
         try:
             flow_plan_rows(company, [flows[0].name])
@@ -114,10 +141,13 @@ def smoke(company, item_group, stock_uom):
         return {"passed": True, "checks": ["multi_product_plan", "weight_unit_required", "company_currency",
                 "plan_change_version", "schedule_inheritance", "native_factory_flow_inheritance",
                 "repeat_factory_no_duplicates", "partial_flow_allocation", "fully_planned_guard",
+                "plan_row_overrun_guard", "changed_source_guard",
                 "excess_work_order_guard", "source_conflict_guard", "flow_quantity_reduction_guard",
                 "flow_bom_change_guard", "native_instruction_print", "escaped_print_text",
                 "cancel_releases_allocation", "no_stock_or_gl_posting", "negative_amount_guard",
-                "plan_row_identity_guard", "duplicate_selection_guard", "guest_denied"],
+                "plan_row_identity_guard", "stock_uom_guard", "duplicate_selection_guard", "guest_denied",
+                "manufacturing_user_flow_import", "manufacturing_user_native_factory",
+                "manufacturing_user_instruction_print"],
                 "business_data": "rolled_back"}
     finally:
         frappe.set_user(user)
