@@ -17,6 +17,7 @@ from frappe.model import get_permitted_fields
 from frappe.utils import getdate
 
 from jifeng_erp.personnel_separation import _atomic
+from jifeng_erp.archive_versions import same_version
 
 
 EMPLOYEE = "Employee"
@@ -359,7 +360,7 @@ def _accounts(employee):
 
 
 def _latest(document, supplied, label):
-    if not document.is_new() and (not supplied or str(supplied) != str(_value(document.modified))):
+    if not document.is_new() and not same_version(document.modified, supplied):
         frappe.throw(label + "已被修改，请重新打开后保存", frappe.TimestampMismatchError)
 
 

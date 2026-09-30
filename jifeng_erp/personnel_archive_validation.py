@@ -213,6 +213,12 @@ def smoke(company, other_company):
         passed(current)
 
         current = "native_old_education_fields_stable_ids_and_native_qualification_preserved"
+        repeat = {"name": result["name"], "employee_modified": result["employee_modified"],
+                  "supplement_modified": result["supplement_modified"],
+                  "supplement": {"notes": "原备注"}}
+        result = native(lambda: save_archive(repeat))
+        _assert_native_history_preserved(native_history, frappe.get_doc("Employee", employee.name).as_dict())
+        passed("native_save_response_versions_support_immediate_repeat_save")
         result = native(lambda: save_archive(request(employee.name, histories={"education_history": [{
             "project": "旧教育项目", "study_content": "原样学习内容", "from_date": "2000-01-01",
             "to_date": "2004-01-01", "school": "旧学校", "title": "旧职务"}]})))
