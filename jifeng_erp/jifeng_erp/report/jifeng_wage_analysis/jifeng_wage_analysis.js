@@ -18,4 +18,10 @@ frappe.query_reports["Jifeng Wage Analysis"] = {
         { fieldname: "salary_component", label: "工资项目", fieldtype: "Link",
             options: "Salary Component" },
     ],
+    formatter(value, row, column, data, default_formatter) {
+        if (column.fieldtype === "Data") {
+            return frappe.utils.escape_html(String(value ?? ""));
+        }
+        return default_formatter(value, row, column, data);
+    },
 };

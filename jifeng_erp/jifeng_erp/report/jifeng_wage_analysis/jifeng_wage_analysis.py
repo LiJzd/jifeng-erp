@@ -59,7 +59,10 @@ def execute(filters=None):
         {"fieldname": "extra_amount", "label": "附加费", "fieldtype": "Currency", "options": "currency", "width": 110},
         {"fieldname": "total_amount", "label": "合计", "fieldtype": "Currency", "options": "currency", "width": 130},
     ]
-    return columns, [{**row, "currency": currency} for row in rows]
+    # A site's existing Report can retain add_total_row=1 across upgrades.
+    # Explicit native skip_total_row prevents server/export and grid totals
+    # from mixing different or historically unknown piecework units.
+    return columns, [{**row, "currency": currency} for row in rows], None, None, None, True
 
 
 _AMOUNT_FIELDS = ("quantity", "piece_amount", "hours", "time_amount", "extra_amount", "total_amount")

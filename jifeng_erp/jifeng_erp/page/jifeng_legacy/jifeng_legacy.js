@@ -269,7 +269,8 @@ const JIFENG_LIVE_REPORTS = {
 		部门进度: "Jifeng Department Progress", 计划图片: "Jifeng Production Picture",
 		工序损耗: { name: "Jifeng Job Card Detail", filters: { only_loss: 1, approval: "已提交" } },
 		损耗汇总: { name: "Jifeng Production Progress", filters: { only_loss: 1 } } },
-	工资: { 工资分析: "Jifeng Wage Analysis" },
+	工资: { 工资分析: "Jifeng Wage Analysis", 当月分析: "Jifeng Wage Analysis",
+		历史: "Jifeng Wage Analysis", 历史分析: "Jifeng Wage Analysis", 人员查询: "Jifeng Personnel Roster" },
 	人事: { 人事报表: "Jifeng Personnel Roster" },
 	发镀: { 原料发退台账: "Jifeng Subcontracting Material Ledger", 电镀明细: "Jifeng Subcontracting Receipt Ledger", 电镀报表: "Jifeng Subcontracting Progress",
 		电镀跟踪: "Jifeng Subcontracting Progress" },
@@ -298,6 +299,7 @@ const JIFENG_LIVE_REPORT_DEFAULTS = {
 	"Jifeng Product Material Catalog": { item_code: "", status: "" },
 	"Jifeng Product Analysis": { item_code: "", status: "", dimension: "品牌" },
 	"Jifeng Personnel Roster": { department: "", designation: "", status: "" },
+	"Jifeng Wage Analysis": { employee: "", operation: "", salary_component: "" },
 	"Jifeng Mold Catalog": { item_code: "", status: "" },
 	"Jifeng Plate Catalog": { item_code: "", status: "" },
 	"Jifeng Sales Transaction Ledger": { customer: "", pos_profile: "", cashier: "", only_returns: 0, source_type: "" },
@@ -370,7 +372,7 @@ class JifengLegacyWorkspace {
 		if (report) {
 			frappe.route_options = { ...(JIFENG_LIVE_REPORT_DEFAULTS[report.name || report] || {}),
 				...(report.filters || {}) };
-			if (["Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger", "Jifeng Sales Item Ranking"].includes(report.name || report)) {
+			if (["Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger", "Jifeng Sales Item Ranking", "Jifeng Wage Analysis"].includes(report.name || report)) {
 				frappe.route_options.from_date = report.daily ? frappe.datetime.get_today() : frappe.datetime.month_start();
 				frappe.route_options.to_date = frappe.datetime.get_today();
 			}

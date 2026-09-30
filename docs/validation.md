@@ -232,3 +232,9 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs 
 正式b3ef2f7 `fulfillment_validation.delta_smoke` 原生17门通过：两精确同商品SO行Flow A/B与显式UserPermission默认B，新DN/SI空来源默认清除，SO A映射DN/直SI、DN→SI、SI部分贷项、DN实物退回及其贷项全部从实际默认B继承精确A；Desk最终字典重建后保持原生库存/财务数量和价格。保存历史B/blank不清除、晚建隐藏SO Flow不回填历史空DN、非默认伪造/保存后改来源/隐藏Flow及DN祖先均拒。所有跟踪对象和原生tab*计数恢复，whole GL/SLE hash不变，未新增错误日志；原57门源码hash保持，未用重复跑旧门替代默认值差异检查。
 
 正式e7cc771商品排行默认原生12门通过：两真实不同库存单位Item、重复商品精确行、多张已提交SI、行/整单折扣后存储净额、精确原行负数贷项、草稿/取消/跨记账日排除；未合并POS不计、明确小批原生结班的合并SI只计一次。Accounts User/Manager+Purchase User实际QueryReport各4来源发票/6子行，完整Item读取与公司隔离；共享可读发票但隐藏Item拒绝部分排行，Manager无Item.read及Guest拒绝。汇总与子行数量/金额分列、来源行号/单位/方向/是否更新库存匹配。初轮夹具显式rate与行折扣冲突被原生按rate清除折扣，未改业务report；让原生计算折后rate后通过。两次失败及最终业务均完全回滚，Settings与whole GL/SLE相同；只保留7条精确预期PermissionError MyISAM日志（62→69），旧日志hash不变。全部其他tab*计数恢复，独立新连接两批13个来源ID均不存在、ledger一致。未构造同Item冲突库存单位，未覆盖至少10单后台结班队列；实际排行有数据的浏览器仍待完成。
+
+实际Admin只读UI追加：产品品牌/类别分析提示可见、维度切换清空商品/状态，当前无档案数据，只验页面与空态；人事报表本公司3名合成员工，00001激活、00002/00003失效且原生Employee链接正确，没有身份证/银行/手机列；销售排行默认本月/商品空、提示可见，清理后0行。三类页面pageerror/非Socket.IO HTTP错误0；空排行不替代真实数值UI验收。证据 product-analysis-r1.json、hr-report-r2.json、sales-ranking-r1.json及截图。
+
+新增工资当月分析、计薪历史/历史分析和人员查询4个正式路由，原工资分析也显式清空旧条件/重置本月；15个经典入口、8份报表Data转义、3份onload接口隔离Node检查通过。发现站点实际Report.add_total_row=1，尽管版本JSON=0，旧工资UI会显示跨未知单位的数量总计；修复为原生ScriptReport第六返回值skip_total_row=True，同时转义工资姓名/工序等Data。9项工资报表模型通过，全部调用方仅读取execute[1]或使用原生ReportAPI，保留兼容。当前363/219正式路由，其余144（13导航/131预览说明）。该自动总计修复的原生API及浏览器复核待执行。
+
+后续人事闭环审计已核验上游实际源码：晋升/调岗反审历史删除缺employee parent，晋升未传日期、跨公司调岗取消未恢复入职日期；反审直接采用来源单current而未核对后续员工变更。现有正式菜单不代表这些闭环已验收。正在开发只按本员工本来源精确快照恢复的扩展；create_new_employee_id及旧无来源快照单据的安全迁移仍需明确处理。原生Employee Separation只是交接任务项目，完成不自动变Left，离职办理尚未收口。

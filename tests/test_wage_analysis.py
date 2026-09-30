@@ -71,6 +71,16 @@ class TestWageAnalysis(unittest.TestCase):
         self.assertEqual({row["quantity"] for row in rows}, {5, 20})
         self.assertTrue(all(row["record_count"] == 1 and row["unit_note"] for row in rows))
 
+    def test_native_report_contract_disables_automatic_totals_for_mixed_and_unknown_units(self):
+        self.wage("PIECES", "Nos", 3, 6)
+        self.wage("WEIGHT", "Kg", 2, 8)
+        self.wage("LEGACY", quantity=5)
+        result = self.module.execute(self.filters)
+        self.assertEqual(len(result[1]), 3)
+        # Frappe's sixth Script Report return value governs server/export/grid
+        # totals even when an existing Report retains add_total_row=1.
+        self.assertIs(result[5], True)
+
     def test_time_only_wages_can_group_without_piece_unit(self):
         for name, hours in (("TIME1", 1.5), ("TIME2", 2)):
             doc = self.wage(name, quantity=0, amount=0)
