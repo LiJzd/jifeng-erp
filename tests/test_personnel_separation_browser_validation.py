@@ -323,6 +323,29 @@ class SeparationBrowserValidationTests(unittest.TestCase):
         self.frappe.db.commit.assert_not_called()
         self.assertFalse((self.directory / "private").exists())
 
+    def test_prepare_checks_physical_series_engine_without_requesting_series_metadata(self):
+        self.frappe.db.db_type = "mariadb"
+        self.frappe.db.exists.return_value = True
+        self.frappe.db.get_value.return_value = 1
+        self.frappe.has_permission = Mock(return_value=True)
+        self.frappe.generate_hash = Mock(return_value="012345abcdef")
+        self.frappe.get_meta = Mock(return_value=types.SimpleNamespace(get_table_fields=lambda: []))
+        tables = {"tab" + doctype: "InnoDB" for doctype in (
+            "Series", "Employee", "Employee Separation", "Employee Boarding Activity", "Project",
+            "Task", "Version", "Holiday List", "Holiday List Assignment")}
+        with patch.object(self.module, "_tab_counts", return_value=(tables, {})), \
+                patch.object(self.module, "_journal", side_effect=RuntimeError("stop before mutation")):
+            with self.assertRaisesRegex(RuntimeError, "stop before mutation"):
+                self.module.prepare("QA")
+        self.assertNotIn("Series", [call.args[0] for call in self.frappe.get_meta.call_args_list])
+        self.frappe.get_doc.assert_not_called()
+        self.module._begin_rollback_only.assert_not_called()
+        tables["tabSeries"] = "MyISAM"
+        with patch.object(self.module, "_tab_counts", return_value=(tables, {})):
+            with self.assertRaisesRegex(AssertionError, "编号计数表"):
+                self.module.prepare("QA")
+        self.frappe.db.commit.assert_not_called()
+
     def test_snapshot_intent_binds_amended_from_and_rejects_changed_origin(self):
         payload = self.payload()
         payload["source"]["amended_from"] = "CANCELLED-ORIGINAL"

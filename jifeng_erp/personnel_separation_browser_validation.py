@@ -280,7 +280,9 @@ def prepare(company, browser_user="Administrator"):
         "last_day": add_days(today(), -3)}
     data["reason"] = data["prefix"] + " 合成离职浏览器验收"
     tables, data["counts_before"] = _tab_counts()
-    for doctype in ("Employee", SOURCE, "Employee Boarding Activity", "Project", "Task", "Version", "Series",
+    # tabSeries is Frappe's physical naming counter, not a metadata DocType.
+    assert tables["tabSeries"] == "InnoDB", "原生编号计数表必须支持回滚"
+    for doctype in ("Employee", SOURCE, "Employee Boarding Activity", "Project", "Task", "Version",
                     "Holiday List", "Holiday List Assignment"):
         assert tables["tab" + doctype] == "InnoDB", "离职夹具写入对象必须支持回滚"
         for field in frappe.get_meta(doctype).get_table_fields():
