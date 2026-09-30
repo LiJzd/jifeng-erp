@@ -160,6 +160,10 @@ def smoke(company, item_group, stock_uom):
     levels = {"Employee": _field_levels("Employee", EMPLOYEE_FIELDS),
               SUPPLEMENT: _field_levels(SUPPLEMENT, SUPPLEMENT_FIELDS)}
     before, counts = _ledger_snapshot(), _counts()
+    log_engine = frappe.db.sql("SELECT ENGINE FROM information_schema.TABLES "
+                              "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tabError Log'")[0][0]
+    logs_before = set(frappe.get_all("Error Log", pluck="name"))
+    retained_audit = {}
     suffix = frappe.generate_hash(length=10)
     prefix, point = "JF-QA-ANALYSIS-" + suffix, "jf_analysis_" + suffix
     original_user, original_test = frappe.session.user, frappe.in_test
@@ -206,6 +210,7 @@ def smoke(company, item_group, stock_uom):
     def reject(operation, errors):
         nested = "jf_analysis_reject_" + frappe.generate_hash(length=8)
         ledger = _ledger_snapshot()
+        previous_logs = set(frappe.get_all("Error Log", pluck="name"))
         frappe.db.savepoint(nested)
         try:
             try:
@@ -217,6 +222,16 @@ def smoke(company, item_group, stock_uom):
         finally:
             frappe.db.rollback(save_point=nested)
         assert _ledger_snapshot() == ledger
+        for name in set(frappe.get_all("Error Log", pluck="name")) - previous_logs:
+            # Native query_report.run logs failures in a MyISAM table. Preserve
+            # those exact expected rejection records; savepoints cannot undo them.
+            assert log_engine == "MyISAM"
+            log = frappe.get_doc("Error Log", name)
+            assert log.method in {"Report execution failed for: " + report
+                                  for report in (PRODUCT_REPORT, PERSONNEL_REPORT)}
+            assert "frappe.exceptions." + actual in (log.error or "")
+            retained_audit[name] = {"method": log.method, "exception_type": actual,
+                                    "gate": current_gate, "engine": log_engine}
         return actual
 
     def product_actors():
@@ -457,13 +472,16 @@ def smoke(company, item_group, stock_uom):
                 for doctype, name in records:
                     frappe.clear_document_cache(doctype, name)
             assert all(not frappe.db.exists(doctype, name) for doctype, name in records), "回滚后残留 QA 对象/Version/File"
-            assert _counts() == counts, "回滚后主档/档案/用户权限/辅助表记录数有差异"
+            assert set(frappe.get_all("Error Log", pluck="name")) == logs_before | set(retained_audit), "出现未登记错误日志"
+            expected_counts = {**counts, "Error Log": counts["Error Log"] + len(retained_audit)}
+            assert _counts() == expected_counts, "回滚后事务表或非事务日志精确计数有差异"
             assert _ledger_snapshot() == before, "回滚后 whole GL/SLE hash 有差异"
     checks.extend(("rollback_all_tracked_masters_catalogs_permissions_versions_and_file_aliases",
-                   "rollback_whole_gl_sle_hashes_and_all_touched_table_counts"))
+                   "rollback_whole_gl_sle_hashes_and_transactional_counts_retaining_exact_native_error_audit"))
     return {"passed": True, "checks": checks, "gate_count": len(checks), "business_data": "rolled_back",
             "record_counts": dict(Counter(doctype for doctype, _ in records)), "evidence": evidence,
             "whole_ledger_hashes_before": before, "whole_ledger_hashes_after": _ledger_snapshot(),
             "table_counts_before": counts, "table_counts_after": _counts(),
+            "retained_native_audit": retained_audit,
             "images": "remote URL metadata only; report makes no image permission or download request",
             "execution": "direct Python, one invocation, serial rollback experiment"}
