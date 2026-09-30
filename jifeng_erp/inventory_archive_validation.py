@@ -230,6 +230,21 @@ def smoke(company, other_company, item_group, stock_uom, alternate_uom=None):
         reject(lambda: init_archive("物料", company=other_company), frappe.PermissionError)
         passed("real_stock_manager_update_company_scope_and_resolution_recheck")
 
+        current = "native_item_manager_creation_combination"
+        frappe.set_user("Administrator")
+        assert frappe.db.exists("Role", "Item Manager"), "原生商品管理角色必须存在"
+        creator = frappe.get_doc("User", actors["manager"])
+        creator.append("roles", {"role": "Item Manager"})
+        native(creator.save)
+        frappe.clear_cache(user=creator.name)
+        frappe.set_user(creator.name)
+        evidence["inventory_creator_roles"] = sorted(frappe.get_roles())
+        assert "System Manager" not in evidence["inventory_creator_roles"]
+        assert frappe.has_permission("Item", "create") and frappe.has_permission(PROFILE, "create")
+        created = create(new_payload("材料"))
+        assert created["name"] and created["item_code"]
+        passed("real_stock_manager_and_item_manager_joint_creation_without_permission_overrides")
+
         current = "clerk_and_guest"
         frappe.set_user(actors["clerk"])
         view = read_archive(material["name"], "物料")
