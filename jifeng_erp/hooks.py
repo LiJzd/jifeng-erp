@@ -6,7 +6,10 @@ app_email = "erp@example.invalid"
 app_license = "GPL-3.0-or-later"
 required_apps = ["erpnext", "hrms"]
 app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css"]
-doctype_js = {"Sales Order": "public/js/jifeng_sales_order.js"}
+doctype_js = {
+    "Sales Order": "public/js/jifeng_sales_order.js",
+    "Production Plan": "public/js/jifeng_production_instruction.js",
+}
 
 after_install = "jifeng_erp.setup.install"
 after_migrate = "jifeng_erp.setup.install"
@@ -26,7 +29,11 @@ doc_events = {
         "on_update_after_submit": "jifeng_erp.workflow.refresh_sales_order_flows",
         "on_cancel": "jifeng_erp.workflow.refresh_sales_order_flows",
     },
-    "Work Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
+    # Native Production Plan creates Work Orders with ignore_validate=True.
+    # before_validate still runs and must preserve flow identity and quantity limits.
+    "Work Order": {"before_validate": "jifeng_erp.setup.validate_flow_links"},
+    "Production Plan": {"validate": "jifeng_erp.production_instruction.validate_plan"},
+    "Jifeng Flow Order": {"validate": "jifeng_erp.production_instruction.validate_flow_allocation"},
     "Subcontracting Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Subcontracting Receipt": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Material Request": {"validate": "jifeng_erp.setup.validate_flow_links"},

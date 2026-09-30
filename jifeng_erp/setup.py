@@ -29,6 +29,31 @@ def install():
         "options": "Jifeng Flow Order", "insert_after": "work_order", "read_only": 1,
         "no_copy": 1, "in_list_view": 1,
     }]
+    fields["Production Plan Item"] = [{
+        "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
+        "options": "Jifeng Flow Order", "insert_after": "item_code", "in_list_view": 1,
+    }]
+    fields["Production Plan"] = [
+        {"fieldname": "jf_instruction_section", "fieldtype": "Section Break",
+         "label": "集沣生产指令", "insert_after": "posting_date"},
+        {"fieldname": "jf_instruction_no", "fieldtype": "Data", "label": "原指令编号",
+         "insert_after": "jf_instruction_section"},
+        {"fieldname": "jf_instruction_date", "fieldtype": "Date", "label": "指令日期",
+         "default": "Today", "insert_after": "jf_instruction_no"},
+        {"fieldname": "jf_instruction_weight", "fieldtype": "Float", "label": "指令重量",
+         "insert_after": "jf_instruction_date", "non_negative": 1},
+        {"fieldname": "jf_instruction_weight_uom", "fieldtype": "Link", "label": "重量单位",
+         "options": "UOM", "insert_after": "jf_instruction_weight"},
+        {"fieldname": "jf_instruction_column", "fieldtype": "Column Break",
+         "insert_after": "jf_instruction_weight_uom"},
+        {"fieldname": "jf_instruction_currency", "fieldtype": "Link", "label": "指令币种",
+         "options": "Currency", "read_only": 1, "insert_after": "jf_instruction_column"},
+        {"fieldname": "jf_instruction_amount", "fieldtype": "Currency", "label": "指令参考金额",
+         "options": "jf_instruction_currency", "insert_after": "jf_instruction_currency",
+         "non_negative": 1, "description": "用于指令记录和打印，不生成库存估价或财务凭证。"},
+        {"fieldname": "jf_instruction_remark", "fieldtype": "Small Text", "label": "指令备注",
+         "insert_after": "jf_instruction_amount"},
+    ]
     fields["Stock Entry"] = [{
         "fieldname": "jf_material_issue_flow", "fieldtype": "Link", "label": "按单配料流程单",
         "options": "Jifeng Flow Order", "insert_after": "work_order", "read_only": 1,
@@ -40,6 +65,9 @@ def install():
         "read_only": 1, "no_copy": 1, "unique": 1,
     }]
     create_custom_fields(fields, update=True)
+    from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+    make_property_setter("Production Plan", None, "track_changes", 1, "Check", for_doctype=True)
 
 
 _PROCUREMENT_SOURCES = {
@@ -150,6 +178,9 @@ def validate_flow_links(doc, method=None):
             validate_material_issue(doc)
         _propagate_subcontracting_stock_flow(doc)
     if doc.doctype == "Work Order":
+        from jifeng_erp.production_instruction import validate_work_order
+
+        validate_work_order(doc)
         if not doc.get("jf_flow_order"):
             return
         flow = frappe.get_doc("Jifeng Flow Order", doc.jf_flow_order)

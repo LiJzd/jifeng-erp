@@ -1,0 +1,10 @@
+{
+ "doctype": "Print Format",
+ "name": "Jifeng Production Instruction",
+ "module": "Jifeng ERP",
+ "doc_type": "Production Plan",
+ "standard": "Yes",
+ "custom_format": 1,
+ "print_format_type": "Jinja",
+ "html": "<style>.jf-instruction th,.jf-instruction td{padding:5px;border:1px solid #ccc;font-size:11px}.jf-instruction{width:100%;border-collapse:collapse}.jf-note{white-space:pre-wrap}</style><h2>集沣生产指令单</h2><p>单号：{{ doc.name | e }}　原编号：{{ (doc.jf_instruction_no or '') | e }}　状态：{{ {0:'草稿',1:'已审核',2:'已取消'}.get(doc.docstatus, '') }}</p><p>公司：{{ doc.company | e }}　登记日期：{{ doc.posting_date | e }}　指令日期：{{ (doc.jf_instruction_date or '') | e }}</p><p>重量：{{ doc.jf_instruction_weight or 0 }} {{ (doc.jf_instruction_weight_uom or '') | e }}　参考金额：{{ doc.get_formatted('jf_instruction_amount') }} {{ (doc.jf_instruction_currency or '') | e }}</p><table class=\"jf-instruction\"><thead><tr><th>序号</th><th>流程单</th><th>商品</th><th>BOM</th><th>销售订单</th><th>计划数量</th><th>单位</th><th>计划开工</th><th>已安排工单</th><th>已生产</th></tr></thead><tbody>{% for row in doc.po_items %}<tr><td>{{ row.idx }}</td><td>{{ (row.jf_flow_order or '') | e }}</td><td>{{ row.item_code | e }}</td><td>{{ row.bom_no | e }}</td><td>{{ (row.sales_order or '') | e }}</td><td>{{ row.planned_qty }}</td><td>{{ (row.stock_uom or '') | e }}</td><td>{{ (row.planned_start_date or '') | e }}</td><td>{{ row.ordered_qty or 0 }}</td><td>{{ row.produced_qty or 0 }}</td></tr>{% endfor %}</tbody></table><p>计划数量合计：{% for unit, rows in doc.po_items | groupby('stock_uom') %}{{ rows | sum(attribute='planned_qty') }} {{ unit | e }}{% if not loop.last %}；{% endif %}{% endfor %}</p><p class=\"jf-note\">备注：{{ (doc.jf_instruction_remark or '') | e }}</p><p>重量和参考金额用于生产指令记录。库存及财务以已提交的正式凭证为准。</p><p>编制：________　审核：________　接收：________</p>"
+}

@@ -27,7 +27,8 @@ def check():
     flow_hook = "jifeng_erp.setup.validate_flow_links"
     doc_events = frappe.get_hooks("doc_events")
     flow_hooks_active = {
-        doctype: flow_hook in doc_events.get(doctype, {}).get("validate", [])
+        doctype: flow_hook in doc_events.get(doctype, {}).get(
+            "before_validate" if doctype == "Work Order" else "validate", [])
         for doctype in (
             "Material Request", "Purchase Order", "Purchase Receipt", "Purchase Invoice",
             "Subcontracting Order", "Subcontracting Receipt", "Stock Entry", "Work Order", "Job Card",
@@ -54,6 +55,8 @@ def check():
                                              for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
                                                            "jf_requirements_attachment")),
         "work_order_link_installed": frappe.get_meta("Work Order").has_field("jf_flow_order"),
+        "production_plan_link_installed": frappe.get_meta("Production Plan Item").has_field("jf_flow_order"),
+        "production_instruction_print_installed": bool(frappe.db.exists("Print Format", "Jifeng Production Instruction")),
         "job_card_link_installed": frappe.get_meta("Job Card").has_field("jf_flow_order"),
         "production_reports_installed": all(frappe.db.exists("Report", name) for name in
                                             ("Jifeng Production Progress", "Jifeng Job Card Detail")),
