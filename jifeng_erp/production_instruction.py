@@ -39,8 +39,32 @@ def _allocated(flow_name, exclude_work=None, exclude_plan=None):
     if exclude_work:
         filters["name"] = ["!=", exclude_work]
     # Include hidden allocations in the guard; never return their identities.
-    rows = frappe.get_all("Work Order", filters=filters, fields=["qty", "production_plan"])
-    return sum(flt(row.qty) for row in rows if not exclude_plan or row.production_plan != exclude_plan)
+    rows = frappe.get_all("Work Order", filters=filters,
+                          fields=["qty", "production_plan", "docstatus", "produced_qty", "process_loss_qty"])
+    return sum(_committed(row) for row in rows if not exclude_plan or row.production_plan != exclude_plan)
+
+
+def _committed(work):
+    # Match native plan semantics for submitted loss, while reserving draft quantities.
+    if work.docstatus == 1:
+        return max(0, flt(work.get("produced_qty")), flt(work.qty) - flt(work.get("process_loss_qty")))
+    return flt(work.qty)
+
+
+class ProductionInstructionMixin:
+    def get_production_items(self):
+        frappe.db.get_value("Production Plan", self.name, "name", for_update=True)
+        result = super().get_production_items()
+        for row in self.po_items:
+            if not row.get("jf_flow_order"):
+                continue
+            works = frappe.get_all("Work Order", filters={"production_plan": self.name,
+                                   "production_plan_item": row.name, "docstatus": ["<", 2]},
+                                   fields=["qty", "docstatus", "produced_qty", "process_loss_qty"])
+            # The native calculation counts submitted orders only. Draft orders from
+            # a previous factory click also reserve this linked instruction row.
+            result[row.name]["qty"] = max(0, flt(row.planned_qty) - sum(_committed(work) for work in works))
+        return result
 
 
 def _match(flow, item, bom, sales_order, sales_order_item):
@@ -63,17 +87,23 @@ def _bom(flow):
 def validate_work_order(doc):
     if doc.get("production_plan_item"):
         source = frappe.db.get_value("Production Plan Item", doc.production_plan_item,
-                                    ["parent", "item_code", "jf_flow_order"], as_dict=True)
+                                    ["parent", "item_code", "jf_flow_order", "planned_qty"], as_dict=True)
         if not source or source.parent != doc.get("production_plan") or source.item_code != doc.production_item:
             frappe.throw("生产工单与生产计划来源明细不一致")
         if source.jf_flow_order:
             plan = frappe.get_doc("Production Plan", source.parent)
             plan.check_permission("read")
-            if plan.company != doc.company or plan.docstatus != 1 or plan.status in {"Closed", "Cancelled"}:
+            arranging = doc.docstatus == 0 or doc.is_new() or getattr(doc, "_action", None) == "submit"
+            if plan.company != doc.company or plan.docstatus != 1 or (arranging and plan.status == "Closed"):
                 frappe.throw("只能从同公司已提交且未关闭的生产计划生成工单")
             if doc.get("jf_flow_order") and doc.jf_flow_order != source.jf_flow_order:
                 frappe.throw("生产工单流程单与生产计划来源不一致")
             doc.jf_flow_order = source.jf_flow_order
+            works = frappe.get_all("Work Order", filters={"production_plan_item": doc.production_plan_item,
+                                   "docstatus": ["<", 2], "name": ["!=", doc.name or ""]},
+                                   fields=["qty", "docstatus", "produced_qty", "process_loss_qty"])
+            if sum(_committed(work) for work in works) + _committed(doc) > flt(source.planned_qty) + 1e-6:
+                frappe.throw("有效生产工单数量超过对应生产计划明细数量")
     if not doc.get("jf_flow_order"):
         return
     flow = _flow(doc.jf_flow_order, doc.company)
@@ -83,7 +113,7 @@ def validate_work_order(doc):
         _open_source(flow)
         _bom(flow)
     quantity = _quantity(doc.qty, "工单数量")
-    if quantity <= 0 or _allocated(flow.name, exclude_work=doc.name) + quantity > flt(flow.planned_qty) + 1e-6:
+    if quantity <= 0 or _allocated(flow.name, exclude_work=doc.name) + _committed(doc) > flt(flow.planned_qty) + 1e-6:
         frappe.throw("有效生产工单数量合计超过流程单计划数量，请核对已有工单")
 
 
@@ -118,8 +148,9 @@ def validate_flow_allocation(doc, method=None):
         return
     frappe.db.get_value(doc.doctype, doc.name, "name", for_update=True)
     works = frappe.get_all("Work Order", filters={"jf_flow_order": doc.name, "docstatus": ["<", 2]},
-                           fields=["qty", "bom_no", "company", "production_item"])
-    if sum(flt(work.qty) for work in works) > flt(doc.planned_qty) + 1e-6:
+                           fields=["qty", "bom_no", "company", "production_item", "docstatus",
+                                   "produced_qty", "process_loss_qty"])
+    if sum(_committed(work) for work in works) > flt(doc.planned_qty) + 1e-6:
         frappe.throw("流程单计划数量不能小于已有有效工单数量")
     if any(work.bom_no != doc.bom or work.company != doc.company or work.production_item != doc.item_code
            for work in works):

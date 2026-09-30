@@ -10,6 +10,9 @@ doctype_js = {
     "Sales Order": "public/js/jifeng_sales_order.js",
     "Production Plan": "public/js/jifeng_production_instruction.js",
 }
+extend_doctype_class = {
+    "Production Plan": ["jifeng_erp.production_instruction.ProductionInstructionMixin"],
+}
 
 after_install = "jifeng_erp.setup.install"
 after_migrate = "jifeng_erp.setup.install"

@@ -1,7 +1,7 @@
 """Native production instruction checks, limited to an isolated test site."""
 
 import frappe
-from frappe.utils import add_days, now_datetime, today
+from frappe.utils import add_days, today
 
 from jifeng_erp.diagnostics import _begin_rollback_only, _end_rollback_only
 
@@ -41,13 +41,13 @@ def smoke(company, item_group, stock_uom):
         first_row = next(row for row in rows if row["jf_flow_order"] == flows[0].name)
         first_row["planned_qty"] = 2
         plan = frappe.get_doc({"doctype": "Production Plan", "company": company, "po_items": rows,
-                               "jf_instruction_no": "TEST-<instruction>", "jf_instruction_weight": 7,
-                               "jf_instruction_amount": 120, "jf_instruction_remark": "<script>test</script>"})
+                               "jf_instruction_no": "TEST & instruction", "jf_instruction_weight": 7,
+                               "jf_instruction_amount": 120, "jf_instruction_remark": "原始备注"})
         _reject(lambda: validate_plan(plan), "重量单位")
         plan.jf_instruction_weight_uom = stock_uom
         plan.insert()
         assert plan.jf_instruction_currency == frappe.get_cached_value("Company", company, "default_currency")
-        plan.jf_instruction_remark = "<script>updated</script>"
+        plan.jf_instruction_remark = "更新备注 & <b>updated</b>"
         plan.save()
         assert frappe.db.exists("Version", {"ref_doctype": "Production Plan", "docname": plan.name})
         for row in plan.po_items:
@@ -81,14 +81,14 @@ def smoke(company, item_group, stock_uom):
         _reject(lambda: validate_work_order(conflict), "与生产计划来源不一致")
         flows[0].planned_qty = 4
         _reject(lambda: flows[0].save(), "不能小于已有")
-        flows[0].planned_qty = 5
+        flows[0].reload()
         flows[0].bom = flows[1].bom
         _reject(lambda: flows[0].save(), "已有有效生产工单")
-        flows[0].bom = split.bom_no
+        flows[0].reload()
         print_html = frappe.get_print("Production Plan", plan.name, print_format="Jifeng Production Instruction")
         assert "集沣生产指令单" in print_html and all(flow.name in print_html for flow in flows)
-        assert "&lt;script&gt;updated&lt;/script&gt;" in print_html and "<script>updated</script>" not in print_html
-        assert "TEST-&lt;instruction&gt;" in print_html and "参考金额" in print_html
+        assert "&lt;b&gt;updated&lt;/b&gt;" in print_html and "<b>updated</b>" not in print_html
+        assert "TEST &amp; instruction" in print_html and "参考金额" in print_html
         warehouse = frappe.db.get_value("Warehouse", {"company": company, "is_group": 0, "disabled": 0})
         split.source_warehouse = warehouse
         split.fg_warehouse = warehouse
