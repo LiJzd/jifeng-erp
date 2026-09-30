@@ -27,7 +27,7 @@
 			return;
 		}
 		const allowed = new Set(options.map((option) => option.value));
-		let selected, request = 0;
+		let selected, request = 0, requestedIdentity = null;
 		const dialog = new frappe.ui.Dialog({
 			title: __("变更岗位属性"),
 			fields: [
@@ -55,16 +55,29 @@
 		});
 		dialog.get_primary_btn().attr("disabled", true);
 		dialog.fields_dict.property.df.onchange = () => {
-			const fieldname = dialog.get_value("property"), token = ++request;
+			const fieldname = dialog.get_value("property"), employee = frm.doc.employee;
+			const identity = JSON.stringify([employee, fieldname]);
+			// Autocomplete can fire again on blur after its first response. Keep the
+			// existing Link control and the value the user has already started typing.
+			if (identity === requestedIdentity) return;
+			requestedIdentity = identity;
+			const token = ++request;
 			selected = null;
 			dialog.get_primary_btn().attr("disabled", true);
 			dialog.set_value("current", "");
 			if (!allowed.has(fieldname)) return;
 			frappe.call({
 				method: "hrms.hr.utils.get_employee_field_property",
-				args: { employee: frm.doc.employee, fieldname },
+				args: { employee, fieldname },
+				error: () => {
+					if (token === request) requestedIdentity = null;
+				},
 				callback: (response) => {
-					if (token !== request || !response.message) return;
+					if (token !== request) return;
+					if (!response.message || frm.doc.employee !== employee) {
+						requestedIdentity = null;
+						return;
+					}
 					const field = response.message;
 					selected = { fieldname, property: field.label, current: field.value };
 					dialog.set_value("current", field.value);
