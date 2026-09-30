@@ -154,10 +154,34 @@ window.JifengClassicBridge = class JifengClassicBridge {
 							return nativeNew.call(child.frappe, doctype, opts, callback);
 						};
 					}
-					if (spec.kind === "create") await child.frappe.new_doc(spec.doctype, { ...spec.values });
+					if (spec.kind === "create") {
+						await new Promise((resolve) => child.frappe.model.with_doctype(spec.doctype, resolve));
+						if (!child.frappe.model.can_create(spec.doctype)) {
+							loading.textContent = __("没有新建此单据的权限。");
+							return;
+						}
+						await child.frappe.new_doc(spec.doctype, { ...spec.values });
+					}
 					else {
 						child.frappe.route_options = { ...(spec.filters || {}) };
 						await child.frappe.set_route(...spec.route);
+						if (spec.kind === "list" && !Object.keys(spec.filters || {}).length) {
+							// Native empty route_options keeps saved filters. Classic
+							// entry defaults must start clear, once per mounted tab.
+							const list = await new Promise((resolve, reject) => {
+								let tries = 0;
+								timer = setInterval(() => {
+									const view = child.frappe.list_view;
+									if (stopped) { clearInterval(timer); resolve(null); }
+									else if (view?.doctype === spec.doctype && view.filter_area) { clearInterval(timer); resolve(view); }
+									else if (++tries >= 300) { clearInterval(timer); reject(new Error("List not ready")); }
+								}, 50);
+							});
+							if (!list || stopped) return;
+							child.frappe.route_options = null;
+							await list.filter_area.clear(false);
+							await list.refresh();
+						}
 					}
 					loading.remove();
 					iframe.classList.add("is-ready");

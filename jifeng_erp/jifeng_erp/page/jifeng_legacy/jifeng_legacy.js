@@ -1294,7 +1294,7 @@ class JifengLegacyWorkspace {
 			else if (action === "close-tab") { event.stopPropagation(); this.closeTab(button.dataset.key); }
 			else if (action === "fullscreen") this.fullscreen();
 			else if (action === "exit-fullscreen") this.exitFullscreen();
-			else if (action === "user") this.toast("经典工作台的编辑内容保存在当前浏览器。");
+			else if (action === "user") this.toast("当前用户：" + (frappe.session.user || ""));
 			else if (action === "history") this.toast("最近访问：" + this.tabs.slice(-4).map((tab) => tab.title).join("、"));
 			else if (action === "tab-menu") this.toast("已打开标签：" + this.tabs.map((tab) => tab.title).join("、"));
 			else if (action === "upload-image" || action === "find-similar") this.pickImage(action);
