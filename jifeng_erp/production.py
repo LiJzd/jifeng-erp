@@ -1,7 +1,14 @@
 """Permission-aware production reports; operation quantities are never added as finished goods."""
 
 import frappe
-from frappe.utils import date_diff, flt, getdate, today
+from frappe.utils import cint, date_diff, flt, getdate, today
+
+
+STATUS_LABELS = {"Draft": "草稿", "Not Started": "未投产", "In Process": "生产中",
+                 "Stock Reserved": "库存已预留", "Completed": "已完成", "Stopped": "已停止",
+                 "Closed": "已关闭", "Open": "待开始", "Work In Progress": "报工中",
+                 "Partially Transferred": "部分发料", "Material Transferred": "已发料",
+                 "On Hold": "暂停", "Submitted": "已提交"}
 
 
 def report_scope(filters, doctype):
@@ -40,11 +47,14 @@ def work_order_progress(filters=None):
     ], order_by="planned_start_date asc, name asc", limit_page_length=0)
     result = []
     for row in rows:
+        if cint(filters.only_loss) and flt(row.process_loss_qty) <= 0:
+            continue
         remaining = max(flt(row.qty) - flt(row.produced_qty) - flt(row.process_loss_qty), 0)
         overdue = overdue_days(row.planned_end_date, remaining, row.docstatus == 0 or row.status in ("Stopped", "Closed"))
-        if filters.only_overdue and not overdue:
+        if cint(filters.only_overdue) and not overdue:
             continue
         result.append({**row, "remaining_qty": remaining, "overdue_days": overdue,
+                       "status_label": STATUS_LABELS.get(row.status, row.status),
                        "approval": "已提交" if row.docstatus == 1 else "草稿",
                        "progress_percent": min(100, (flt(row.produced_qty) + flt(row.process_loss_qty)) / flt(row.qty) * 100) if row.qty else 0})
     columns = [
@@ -53,7 +63,7 @@ def work_order_progress(filters=None):
         column("sales_order", "销售订单", "Link", "Sales Order", 155),
         column("production_item", "商品编号", "Link", "Item", 150),
         column("item_name", "商品名称", width=150), column("stock_uom", "单位", "Link", "UOM", 80),
-        column("approval", "审核状态", width=95), column("status", "工单状态", width=130),
+        column("approval", "审核状态", width=95), column("status_label", "工单状态", width=130),
         column("qty", "计划数量", "Float"), column("produced_qty", "完工入库数量", "Float", width=125),
         column("process_loss_qty", "入库凭证损耗", "Float", width=125), column("remaining_qty", "尚未完工数量", "Float", width=125),
         column("progress_percent", "结清进度 %", "Percent"),
@@ -96,11 +106,14 @@ def job_card_progress(filters=None):
         ], order_by="posting_date asc, name asc", limit_page_length=0)
     result = []
     for row in rows:
+        if cint(filters.only_loss) and flt(row.process_loss_qty) <= 0:
+            continue
         remaining = max(flt(row.for_quantity) - flt(row.total_completed_qty) - flt(row.process_loss_qty), 0)
         overdue = overdue_days(row.expected_end_date, remaining)
-        if filters.only_overdue and not overdue:
+        if cint(filters.only_overdue) and not overdue:
             continue
         result.append({**row, "jf_flow_order": sources[row.work_order], "remaining_qty": remaining,
+                       "status_label": STATUS_LABELS.get(row.status, row.status),
                        "approved_qty": row.total_completed_qty if row.docstatus == 1 else 0,
                        "draft_qty": row.total_completed_qty if row.docstatus == 0 else 0,
                        "approved_loss_qty": row.process_loss_qty if row.docstatus == 1 else 0,
@@ -114,7 +127,7 @@ def job_card_progress(filters=None):
         column("posting_date", "报工日期", "Date"), column("production_item", "商品编号", "Link", "Item", 150),
         column("operation", "工序", "Link", "Operation", 130), column("workstation", "工作站", "Link", "Workstation", 140),
         column("stock_uom", "单位", "Link", "UOM", 80), column("approval", "审核状态", width=95),
-        column("status", "报工状态", width=130), column("for_quantity", "派工数量", "Float"),
+        column("status_label", "报工状态", width=130), column("for_quantity", "派工数量", "Float"),
         column("approved_qty", "已审核完成", "Float"), column("draft_qty", "待审核完成", "Float"),
         column("approved_loss_qty", "已审核损耗", "Float"), column("draft_loss_qty", "待审核损耗", "Float"),
         column("remaining_qty", "尚未报完", "Float"), column("hours", "记录工时", "Float"),

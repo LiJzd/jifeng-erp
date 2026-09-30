@@ -11,6 +11,7 @@ frappe.query_reports["Jifeng Job Card Detail"] = {
         { fieldname: "workstation", label: "工作站", fieldtype: "Link", options: "Workstation" },
         { fieldname: "approval", label: "审核状态", fieldtype: "Select", options: "全部\n草稿\n已提交", default: "全部" },
         { fieldname: "only_overdue", label: "仅逾期未报完", fieldtype: "Check" },
+        { fieldname: "only_loss", label: "仅有工序损耗", fieldtype: "Check" },
     ],
     onload(report) {
         report.page.main.find(".jifeng-production-note").remove();

@@ -150,7 +150,8 @@ const JIFENG_LIVE_ROUTES = {
 	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation" },
 	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card",
-		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation" },
+		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation",
+		入库单: "Stock Entry", 反审: "Work Order" },
 	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
 	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
@@ -215,7 +216,8 @@ const JIFENG_LIVE_CREATE = {
 };
 
 const JIFENG_LIVE_LIST_FILTERS = {
-	生产: { 完成: { docstatus: 1, status: "Completed" }, 刷单: { docstatus: ["<", 2] } },
+	生产: { 完成: { docstatus: 1, status: "Completed" }, 刷单: { docstatus: ["<", 2] },
+		入库单: { stock_entry_type: "Manufacture" }, 反审: { docstatus: 1 } },
 	物料: { 采购订单: { is_subcontracted: 0 }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },
 	材料: { 采购订单: { is_subcontracted: 0 }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },
 	发镀: { 委外采购单: { is_subcontracted: 1 } },
@@ -230,7 +232,9 @@ const JIFENG_LIVE_REPORTS = {
 		完成分析: "Jifeng Production Progress", 未投产分析: { name: "Jifeng Production Progress", filters: { status: "Not Started" } },
 		订单逾期: { name: "Jifeng Production Progress", filters: { only_overdue: 1 } },
 		刷卡明细: "Jifeng Job Card Detail", 刷卡报表: "Jifeng Job Card Detail",
-		工序逾期: { name: "Jifeng Job Card Detail", filters: { only_overdue: 1 } } },
+		工序逾期: { name: "Jifeng Job Card Detail", filters: { only_overdue: 1 } },
+		工序损耗: { name: "Jifeng Job Card Detail", filters: { only_loss: 1, approval: "已提交" } },
+		损耗汇总: { name: "Jifeng Production Progress", filters: { only_loss: 1 } } },
 	工资: { 工资分析: "Jifeng Wage Analysis" },
 	销售: {
 		库存: "Stock Balance", 库存明细: "Stock Ledger", 进销存: "Stock Balance",

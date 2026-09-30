@@ -68,14 +68,18 @@ def smoke(company, item_group, stock_uom):
                         "for_value": work.name, "apply_to_all_doctypes": 1}).insert()
         frappe.set_user(user.name)
         for idx, card in enumerate(cards):
+            completed = 5 if idx == 0 else 4
+            card.process_loss_qty = 0 if idx == 0 else 1
             card.append("time_logs", {"from_time": today() + f" {9 + idx}:00:00",
-                                      "to_time": today() + f" {9 + idx}:30:00", "completed_qty": 5})
+                                      "to_time": today() + f" {9 + idx}:30:00", "completed_qty": completed})
             card.save()
             row = next(row for row in job_card_progress(filters)[1] if row["name"] == card.name)
-            assert row["draft_qty"] == 5 and row["approved_qty"] == 0
+            assert row["draft_qty"] == completed and row["approved_qty"] == 0
             card.submit()
         detail = job_card_progress(filters)[1]
-        assert len(detail) == 2 and all(row["approved_qty"] == 5 and row["draft_qty"] == 0 for row in detail)
+        assert len(detail) == 2 and sorted(row["approved_qty"] for row in detail) == [4, 5]
+        assert all(row["draft_qty"] == 0 for row in detail)
+        assert len(job_card_progress({**filters, "only_loss": 1, "approval": "已提交"})[1]) == 1
         assert all(row["hours"] == 0.5 and row["jf_flow_order"] == flow.name for row in detail)
         assert work_order_progress(filters)[1][0]["produced_qty"] == 0, "Operation completion is not stock receipt"
         frappe.set_user(original_user)
@@ -83,11 +87,12 @@ def smoke(company, item_group, stock_uom):
         manufacture.submit()
         assert all(row.jf_flow_order == flow.name for row in manufacture.items)
         progress = work_order_progress(filters)[1][0]
-        assert (progress["produced_qty"], progress["remaining_qty"], progress["overdue_days"]) == (5, 0, 0)
+        assert (progress["produced_qty"], progress["process_loss_qty"], progress["remaining_qty"], progress["overdue_days"]) == (4, 1, 0, 0)
+        assert len(work_order_progress({**filters, "only_loss": 1})[1]) == 1
         assert progress["status"] == "Completed" and progress["progress_percent"] == 100
         ledger = frappe.get_all("Stock Ledger Entry", filters={"voucher_no": manufacture.name, "is_cancelled": 0},
                                 fields=["item_code", "actual_qty"])
-        assert sum(flt(row.actual_qty) for row in ledger if row.item_code == finished.name) == 5
+        assert sum(flt(row.actual_qty) for row in ledger if row.item_code == finished.name) == 4
 
         hidden = frappe.copy_doc(work)
         hidden.jf_flow_order = None
@@ -113,7 +118,7 @@ def smoke(company, item_group, stock_uom):
                 "overdue_work_order", "draft_completed_separation", "submitted_operation_quantities",
                 "operation_is_not_stock_receipt", "native_manufacture", "stock_flow_inheritance",
                 "finished_progress_and_ledger", "manufacturing_user_work_order_isolation",
-                "manufacturing_user_job_card_submit", "report_api_role_access", "guest_denied"],
+                "manufacturing_user_job_card_submit", "report_api_role_access", "loss_reporting", "guest_denied"],
                 "business_data": "rolled_back"}
     finally:
         frappe.set_user(original_user)

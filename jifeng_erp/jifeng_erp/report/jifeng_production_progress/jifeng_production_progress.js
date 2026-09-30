@@ -10,6 +10,7 @@ frappe.query_reports["Jifeng Production Progress"] = {
         { fieldname: "status", label: "工单状态", fieldtype: "Select",
             options: "\nDraft\nNot Started\nIn Process\nStock Reserved\nCompleted\nStopped\nClosed" },
         { fieldname: "only_overdue", label: "仅逾期未完工", fieldtype: "Check" },
+        { fieldname: "only_loss", label: "仅有入库损耗", fieldtype: "Check" },
     ],
     onload(report) {
         report.page.main.find(".jifeng-production-note").remove();
