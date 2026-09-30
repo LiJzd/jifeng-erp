@@ -50,16 +50,21 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
         settings = frappe.get_single("Manufacturing Settings")
         settings.disable_capacity_planning = 1
         settings.save()
-        bom = frappe.get_doc({"doctype": "BOM", "company": company, "item": finished.name,
-            "quantity": 1, "with_operations": 1, "transfer_material_against": "Work Order",
-            "items": [{"item_code": raw.name, "qty": 1, "rate": 1}],
-            "operations": [{"operation": selected.name, "workstation": workstation.name, "time_in_mins": 1}
-                           for selected in (operation, operation_two)]}).insert()
-        bom.submit()
+        boms = []
+        for index, selected in enumerate((operation, operation_two)):
+            bom = frappe.get_doc({"doctype": "BOM", "company": company, "item": finished.name,
+                "quantity": 1, "is_default": int(index == 0), "with_operations": 1,
+                "transfer_material_against": "Work Order",
+                "items": [{"item_code": raw.name, "qty": 1, "rate": 1}],
+                "operations": [{"operation": selected.name, "workstation": workstation.name,
+                                "time_in_mins": 1}]}).insert()
+            bom.submit()
+            boms.append(bom)
+        bom, bom_two = boms
 
-        def card(hour, people, selected_operation=operation):
+        def card(hour, people, selected_operation=operation, selected_bom=bom):
             flow = frappe.get_doc({"doctype": "Jifeng Flow Order", "company": company,
-                "item_code": finished.name, "planned_qty": 5, "bom": bom.name,
+                "item_code": finished.name, "planned_qty": 5, "bom": selected_bom.name,
                 "materials": [{"item_code": raw.name, "uom": stock_uom, "qty_per_unit": 1, "unit_price": 1}]}).insert()
             work = frappe.get_doc("Work Order", flow.make_work_order())
             work.source_warehouse = work.fg_warehouse = warehouse
@@ -77,7 +82,7 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
             source.submit()
             return source
 
-        first, second, team = card(8, employees[:1]), card(10, employees[:1], operation_two), card(12, employees)
+        first, second, team = card(8, employees[:1]), card(10, employees[:1], operation_two, bom_two), card(12, employees)
 
         def actor(kind, role):
             user = frappe.get_doc({"doctype": "User", "email": f"jf-wwb-{kind}-{suffix}@example.invalid",
