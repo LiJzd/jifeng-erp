@@ -27,19 +27,32 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                     frappe.msgprint("没有已提交且关联本流程单的委外回货明细。现有批次未更改。");
                     return;
                 }
-                const existing = new Set((frm.doc.batches || []).map((row) => row.source_receipt_item).filter(Boolean));
+                const existing = new Map((frm.doc.batches || [])
+                    .filter((row) => row.source_receipt_item).map((row) => [row.source_receipt_item, row]));
                 const manualReferences = new Set((frm.doc.batches || [])
                     .filter((row) => !row.source_receipt_item && row.reference_no)
                     .map((row) => row.reference_no));
                 let added = 0;
                 let manualConflicts = 0;
+                let fullyReturned = 0;
+                const changed = [];
                 for (const candidate of candidates) {
-                    if (existing.has(candidate.receipt_item)) continue;
+                    if (existing.has(candidate.receipt_item)) {
+                        const row = existing.get(candidate.receipt_item);
+                        if (Number(row.received_qty) !== Number(candidate.qty) || Number(row.lost_qty || 0) < Number(candidate.lost_qty || 0)) {
+                            changed.push(`${frappe.utils.escape_html(candidate.receipt)}：净回货 ${candidate.qty}，已退回 ${candidate.returned_qty || 0}，最低损耗 ${candidate.lost_qty || 0}`);
+                        }
+                        continue;
+                    }
+                    if (Number(candidate.qty) === 0) {
+                        fullyReturned++;
+                        continue;
+                    }
                     if (manualReferences.has(candidate.receipt)) {
                         manualConflicts++;
                         continue;
                     }
-                    frm.add_child("batches", {
+                    const addedRow = frm.add_child("batches", {
                         receipt_type: "首次回货",
                         reference_no: candidate.receipt,
                         source_receipt: candidate.receipt,
@@ -48,11 +61,11 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                         lost_qty: candidate.lost_qty || 0,
                         pending_qty: candidate.qty - (candidate.lost_qty || 0),
                     });
-                    existing.add(candidate.receipt_item);
+                    existing.set(candidate.receipt_item, addedRow);
                     added++;
                 }
                 frm.refresh_field("batches");
-                frappe.msgprint(`新增 ${added} 条回货批次${manualConflicts ? `；${manualConflicts} 条与手工回货单号相同，已跳过` : ""}。凭证中的工艺损耗已带入，其余数量先列为待检；请核对首次/返工类型及合格、返工、损耗、待检数量后保存。本操作不会自动保存或入账。`);
+                frappe.msgprint(`新增 ${added} 条净回货批次${manualConflicts ? `；${manualConflicts} 条与手工回货单号相同，已跳过` : ""}${fullyReturned ? `；${fullyReturned} 条已全额退回，未新增` : ""}。已扣除已提交退货，来源工艺损耗保留，其余先列为待检；请核对首次/返工类型和数量分类后保存。本操作不会自动保存或入账。${changed.length ? `<br><br>以下已有批次的来源数量已变化，分类未覆盖；请调整数量，净回货为零的批次请删除：<br>${changed.join("<br>")}` : ""}`);
             });
             frm.add_custom_button("读取流程单预计费用", async () => {
                 if (frm.is_dirty()) await frm.save();

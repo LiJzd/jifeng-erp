@@ -3,7 +3,7 @@ from decimal import Decimal
 import frappe
 from frappe.utils import add_days, cint, today
 
-from jifeng_erp.costing import CostingError, number
+from jifeng_erp.costing import CostingError, number, receipt_batch_quantities
 from jifeng_erp.jushuitan import record_key
 
 MATERIAL_FIELDS = ("item_code", "item_name", "uom", "qty_per_unit", "unit_price", "supplier", "note")
@@ -213,28 +213,50 @@ def receipt_batch_candidates(flow_order):
     parents = frappe.get_list("Subcontracting Receipt", filters=[
         ["Subcontracting Receipt", "docstatus", "=", 1],
         ["Subcontracting Receipt", "company", "=", flow.company],
+        ["Subcontracting Receipt", "is_return", "=", 0],
         ["Subcontracting Receipt Item", "jf_flow_order", "=", flow.name],
-    ], fields=["name", "posting_date", "is_return"], distinct=True,
+    ], fields=["name", "posting_date"], distinct=True,
         order_by="posting_date asc, name asc", limit_page_length=0)
-    if any(parent.is_return for parent in parents):
-        frappe.throw("本流程单已有委外退货，请先人工核对回货数量，不能直接带入批次")
     if not parents:
         return []
     details = frappe.get_all("Subcontracting Receipt Item", filters={
         "parent": ["in", [parent.name for parent in parents]],
         "parenttype": "Subcontracting Receipt", "jf_flow_order": flow.name,
         "item_code": flow.item_code,
-    }, fields=["name", "parent", "idx", "qty", "rejected_qty", "process_loss_qty"])
+    }, fields=["name", "parent", "idx", "item_code", "qty", "rejected_qty", "process_loss_qty"])
+    originals = {detail.name: detail for detail in details}
+    return_filters = {"company": flow.company, "docstatus": 1, "is_return": 1,
+                      "return_against": ["in", [parent.name for parent in parents]]}
+    returns = frappe.get_list("Subcontracting Receipt", filters=return_filters,
+                              fields=["name", "return_against"], limit_page_length=0)
+    if len(returns) != frappe.db.count("Subcontracting Receipt", return_filters):
+        frappe.throw("无法完整读取来源单据的退货记录，请核对退货读取权限", frappe.PermissionError)
+    return_parents = {parent.name: parent.return_against for parent in returns}
+    return_details = frappe.get_all("Subcontracting Receipt Item", filters={
+        "parent": ["in", list(return_parents)], "parenttype": "Subcontracting Receipt",
+    }, fields=["parent", "subcontracting_receipt_item", "item_code", "jf_flow_order", "qty", "rejected_qty"]) if returns and originals else []
+    returned = {name: Decimal(0) for name in originals}
+    for detail in return_details:
+        if detail.subcontracting_receipt_item not in originals:
+            if not detail.subcontracting_receipt_item and detail.item_code == flow.item_code and detail.jf_flow_order in (None, "", flow.name):
+                frappe.throw("委外退货缺少来源收货明细，无法计算净回货数量，请先核对")
+            continue
+        source = originals[detail.subcontracting_receipt_item]
+        qty, rejected = Decimal(str(detail.qty or 0)), Decimal(str(detail.rejected_qty or 0))
+        if return_parents[detail.parent] != source.parent or detail.item_code != source.item_code or qty > 0 or rejected > 0:
+            frappe.throw("关联委外退货的商品、来源或数量异常，请先核对")
+        returned[source.name] -= qty + rejected
     order = {parent.name: index for index, parent in enumerate(parents)}
     rows = []
     for detail in sorted(details, key=lambda row: (order[row.parent], row.idx)):
-        loss = Decimal(str(detail.process_loss_qty or 0))
-        qty = Decimal(str(detail.qty or 0)) + Decimal(str(detail.rejected_qty or 0)) + loss
-        if qty <= 0 or loss < 0 or loss > qty:
-            frappe.throw(f"委外收货 {detail.parent} 的回货数量无效，请先核对来源凭证")
+        try:
+            quantities = receipt_batch_quantities(detail, returned[detail.name])
+        except CostingError as exc:
+            frappe.throw(f"委外收货 {detail.parent}：{exc}")
         rows.append({
             "receipt": detail.parent, "receipt_item": detail.name,
-            "qty": qty, "lost_qty": loss,
+            "company": flow.company, "item_code": flow.item_code,
+            **quantities,
         })
     return rows
 

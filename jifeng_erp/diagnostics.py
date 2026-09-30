@@ -309,6 +309,117 @@ def smoke_stock_flow(company, item_group, stock_uom):
         _end_rollback_only(point)
 
 
+def smoke_receipt_batches(company, item_group, stock_uom):
+    """Submit native subcontract receipts/returns on a test site, then roll back."""
+    frappe.only_for("System Manager")
+    from frappe.utils import today
+    from erpnext.buying.doctype.purchase_order.purchase_order import make_subcontracting_order
+    from erpnext.controllers.subcontracting_controller import make_rm_stock_entry
+    from erpnext.subcontracting.doctype.subcontracting_order.subcontracting_order import make_subcontracting_receipt
+    from erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt import make_subcontract_return
+    from jifeng_erp.workflow import receipt_batch_candidates
+
+    warehouse = frappe.db.get_value("Warehouse", {"company": company, "is_group": 0, "disabled": 0}, "name")
+    supplier_group = frappe.db.get_value("Supplier Group", {"is_group": 0}, "name")
+    if not warehouse or not supplier_group:
+        frappe.throw("测试公司需要明细仓库和供应商分组")
+    point = "jf_receipt_batches_smoke"
+    _begin_rollback_only(point)
+    try:
+        suffix = frappe.generate_hash(length=10)
+        items = []
+        for kind in ("RAW", "FG", "SERVICE"):
+            items.append(frappe.get_doc({
+                "doctype": "Item", "item_code": f"JF-BATCH-{kind}-{suffix}",
+                "item_group": item_group, "stock_uom": stock_uom,
+                "is_stock_item": int(kind != "SERVICE"),
+                "is_sub_contracted_item": int(kind == "FG"),
+            }).insert())
+        raw, finished, service = items
+        supplier = frappe.get_doc({"doctype": "Supplier", "supplier_name": "JF-BATCH-SUP-" + suffix,
+                                   "supplier_type": "Company", "supplier_group": supplier_group}).insert()
+        supplier_warehouse = frappe.get_doc({"doctype": "Warehouse", "warehouse_name": "JF-BATCH-SUP-" + suffix,
+                                             "company": company}).insert()
+        rejected_warehouse = frappe.get_doc({"doctype": "Warehouse", "warehouse_name": "JF-BATCH-REJ-" + suffix,
+                                             "company": company}).insert()
+        bom = frappe.get_doc({"doctype": "BOM", "company": company, "item": finished.name,
+                             "quantity": 1, "items": [{"item_code": raw.name, "qty": 1, "rate": 10}]}).insert()
+        bom.submit()
+        flow = frappe.get_doc({"doctype": "Jifeng Flow Order", "company": company,
+                              "item_code": finished.name, "planned_qty": 5,
+                              "materials": [{"item_code": raw.name, "uom": stock_uom,
+                                             "qty_per_unit": 1, "unit_price": 10}]}).insert()
+        stock = frappe.get_doc({"doctype": "Stock Entry", "company": company,
+                                "stock_entry_type": "Material Receipt",
+                                "items": [{"item_code": raw.name, "qty": 5, "basic_rate": 10,
+                                           "t_warehouse": warehouse}]}).insert()
+        stock.submit()
+        purchase = frappe.get_doc({"doctype": "Purchase Order", "company": company,
+                                   "supplier": supplier.name, "is_subcontracted": 1,
+                                   "schedule_date": today(), "set_warehouse": warehouse,
+                                   "items": [{"item_code": service.name, "qty": 5, "rate": 20,
+                                              "fg_item": finished.name, "fg_item_qty": 5}]}).insert()
+        purchase.submit()
+        subcontract = make_subcontracting_order(purchase.name)
+        subcontract.supplier_warehouse = supplier_warehouse.name
+        subcontract.items[0].bom = bom.name
+        subcontract.items[0].jf_flow_order = flow.name
+        subcontract.insert()
+        subcontract.submit()
+        transfer = frappe.get_doc(make_rm_stock_entry(subcontract.name, [{
+            "item_code": finished.name, "rm_item_code": raw.name, "qty": 5,
+            "item_name": raw.name, "rate": 10, "stock_uom": stock_uom, "warehouse": warehouse,
+        }])).insert()
+        transfer.submit()
+        receipt = make_subcontracting_receipt(subcontract.name)
+        receipt.items[0].qty = 3
+        receipt.items[0].rejected_qty = 1
+        receipt.items[0].process_loss_qty = 1
+        receipt.items[0].rejected_warehouse = rejected_warehouse.name
+        receipt.insert()
+        receipt.submit()
+        assert receipt.items[0].jf_flow_order == flow.name
+        assert receipt_batch_candidates(flow.name)[0]["qty"] == 5
+        preview = frappe.get_doc("Jifeng Cost Preview", flow.make_preview())
+        preview.append("batches", {"receipt_type": "首次回货", "reference_no": receipt.name,
+                                   "source_receipt": receipt.name, "source_receipt_item": receipt.items[0].name,
+                                   "received_qty": 5, "pending_qty": 4, "lost_qty": 1})
+        preview.save()
+
+        def return_goods(qty):
+            returned = make_subcontract_return(receipt.name)
+            returned.items[0].qty = -qty
+            returned.items[0].rejected_qty = 0
+            returned.items[0].process_loss_qty = 0
+            returned.insert()
+            returned.submit()
+            assert returned.items[0].jf_flow_order == flow.name
+            return returned
+
+        partial = return_goods(2)
+        candidate = receipt_batch_candidates(flow.name)[0]
+        assert (candidate["qty"], candidate["lost_qty"], candidate["returned_qty"]) == (3, 1, 2)
+        try:
+            preview.save()
+        except frappe.ValidationError as exc:
+            assert "净回货数量已变化" in str(exc)
+        else:
+            raise AssertionError("Stale linked batch must be reconciled before save")
+        preview.batches[0].received_qty = 3
+        preview.batches[0].pending_qty = 2
+        preview.save()
+        assert preview.lost_qty == 1 and preview.pending_qty == 2 and preview.unreceived_qty == 2
+        partial.cancel()
+        candidate = receipt_batch_candidates(flow.name)[0]
+        assert (candidate["qty"], candidate["returned_qty"]) == (5, 0)
+        return {"passed": True, "checks": ["native_subcontract_chain", "accepted_rejected_loss_total",
+                "source_flow_inheritance", "partial_return_net", "confirmed_loss_preserved",
+                "stale_batch_save_guard", "reconciled_preview_save", "cancel_return_restores_quantity"],
+                "business_data": "rolled_back"}
+    finally:
+        _end_rollback_only(point)
+
+
 def smoke_payments(company, customer):
     """Submit one receipt and one supplier payment, then roll back both ledgers."""
     frappe.only_for("System Manager")

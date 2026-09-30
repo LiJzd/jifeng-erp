@@ -42,33 +42,31 @@ class JifengCostPreview(Document):
                 self.sales_order = flow.sales_order
 
     def _validate_batch_sources(self):
+        linked = [row for row in self.batches if row.source_receipt or row.source_receipt_item]
+        if not linked:
+            return
+        if not self.flow_order:
+            frappe.throw("已关联的回货批次必须包含流程单、委外收货单和明细行")
+        from jifeng_erp.workflow import receipt_batch_candidates
+
+        sources = {source["receipt_item"]: source for source in receipt_batch_candidates(self.flow_order)}
         seen = set()
-        for row in self.batches:
-            if not row.source_receipt and not row.source_receipt_item:
-                continue
-            if not self.flow_order or not row.source_receipt or not row.source_receipt_item:
+        for row in linked:
+            if not row.source_receipt or not row.source_receipt_item:
                 frappe.throw("已关联的回货批次必须包含流程单、委外收货单和明细行")
             if row.source_receipt_item in seen:
                 frappe.throw("同一委外收货明细不能重复带入试算")
             seen.add(row.source_receipt_item)
-            receipt = frappe.get_doc("Subcontracting Receipt", row.source_receipt)
-            receipt.check_permission("read")
-            if receipt.docstatus != 1 or receipt.company != self.company or receipt.is_return:
-                frappe.throw("来源委外收货单未提交、已退货或公司不一致")
-            if frappe.db.exists("Subcontracting Receipt", {
-                "return_against": receipt.name, "docstatus": 1,
-            }):
-                frappe.throw("来源委外收货单已有退货，请人工核对并删除来源批次后重新录入净回货数量")
-            detail = frappe.db.get_value("Subcontracting Receipt Item", row.source_receipt_item,
-                                         ["parent", "item_code", "jf_flow_order", "qty", "rejected_qty", "process_loss_qty"], as_dict=True)
-            source_qty = sum((Decimal(str(detail.get(field) or 0)) for field in (
-                "qty", "rejected_qty", "process_loss_qty",
-            )), Decimal(0)) if detail else Decimal(0)
-            if not detail or (detail.parent, detail.item_code, detail.jf_flow_order) != (
-                receipt.name, self.item_code, self.flow_order,
-            ) or source_qty != Decimal(str(row.received_qty or 0)):
-                frappe.throw("来源委外收货明细与试算批次的商品、流程单或数量不一致")
-            if Decimal(str(row.lost_qty or 0)) < Decimal(str(detail.process_loss_qty or 0)):
+            source = sources.get(row.source_receipt_item)
+            if not source or (source["receipt"], source["company"], source["item_code"]) != (
+                row.source_receipt, self.company, self.item_code,
+            ):
+                frappe.throw("来源收货明细未提交、不可读或与本公司的商品、流程单不一致")
+            if not source["qty"]:
+                frappe.throw("来源明细已全额退回，请删除对应回货批次")
+            if Decimal(str(source["qty"])) != Decimal(str(row.received_qty or 0)):
+                frappe.throw("来源净回货数量已变化，请读取来源并核对批次分类后保存")
+            if Decimal(str(row.lost_qty or 0)) < source["lost_qty"]:
                 frappe.throw("试算批次损耗不能少于来源凭证已确认的工艺损耗")
 
     @frappe.whitelist()

@@ -29,6 +29,18 @@ def text_number(value):
     return format(value.normalize(), "f") if value else "0"
 
 
+def receipt_batch_quantities(detail, returned_qty=0):
+    accepted = number(detail.get("qty"), "收货接收数量")
+    rejected = number(detail.get("rejected_qty"), "收货拒收数量")
+    lost = number(detail.get("process_loss_qty"), "收货工艺损耗")
+    returned = number(returned_qty, "已提交退货数量")
+    original = accepted + rejected + lost
+    if original <= 0 or returned > accepted + rejected:
+        raise CostingError("收货或退货数量无效，退货不能超过实际接收和拒收数量")
+    return {"qty": original - returned, "lost_qty": lost,
+            "original_qty": original, "returned_qty": returned}
+
+
 def calculate(planned_qty, material_amount, processing_amount, other_amount, batches):
     planned = number(planned_qty, "订单数量")
     if planned <= 0:
