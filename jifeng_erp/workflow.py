@@ -224,15 +224,17 @@ def receipt_batch_candidates(flow_order):
         "parent": ["in", [parent.name for parent in parents]],
         "parenttype": "Subcontracting Receipt", "jf_flow_order": flow.name,
         "item_code": flow.item_code,
-    }, fields=["name", "parent", "idx", "qty"])
+    }, fields=["name", "parent", "idx", "qty", "rejected_qty", "process_loss_qty"])
     order = {parent.name: index for index, parent in enumerate(parents)}
     rows = []
     for detail in sorted(details, key=lambda row: (order[row.parent], row.idx)):
-        if Decimal(str(detail.qty or 0)) <= 0:
+        loss = Decimal(str(detail.process_loss_qty or 0))
+        qty = Decimal(str(detail.qty or 0)) + Decimal(str(detail.rejected_qty or 0)) + loss
+        if qty <= 0 or loss < 0 or loss > qty:
             frappe.throw(f"委外收货 {detail.parent} 的回货数量无效，请先核对来源凭证")
         rows.append({
             "receipt": detail.parent, "receipt_item": detail.name,
-            "qty": detail.qty,
+            "qty": qty, "lost_qty": loss,
         })
     return rows
 

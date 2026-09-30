@@ -58,12 +58,15 @@ class JifengCostPreview(Document):
             if frappe.db.exists("Subcontracting Receipt", {
                 "return_against": receipt.name, "docstatus": 1,
             }):
-                frappe.throw("来源委外收货单已有退货，请人工核对并移除或调整来源批次")
+                frappe.throw("来源委外收货单已有退货，请人工核对并删除来源批次后重新录入净回货数量")
             detail = frappe.db.get_value("Subcontracting Receipt Item", row.source_receipt_item,
-                                         ["parent", "item_code", "jf_flow_order", "qty"], as_dict=True)
+                                         ["parent", "item_code", "jf_flow_order", "qty", "rejected_qty", "process_loss_qty"], as_dict=True)
+            source_qty = sum((Decimal(str(detail.get(field) or 0)) for field in (
+                "qty", "rejected_qty", "process_loss_qty",
+            )), Decimal(0)) if detail else Decimal(0)
             if not detail or (detail.parent, detail.item_code, detail.jf_flow_order) != (
                 receipt.name, self.item_code, self.flow_order,
-            ) or Decimal(str(detail.qty or 0)) != Decimal(str(row.received_qty or 0)):
+            ) or source_qty != Decimal(str(row.received_qty or 0)):
                 frappe.throw("来源委外收货明细与试算批次的商品、流程单或数量不一致")
 
     @frappe.whitelist()
