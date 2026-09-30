@@ -1,4 +1,8 @@
 frappe.query_reports["Jifeng Wage Analysis"] = {
+    onload(report) {
+        report.page.set_title(__("Jifeng Wage Analysis"));
+        report.page.set_intro("按工作日期查询可读的已审核计薪记录，按员工、工序、工资项目和计件单位分组。历史未记录单位的计件单逐笔展示，不混加数量；计时小时为已确认计薪工时。金额不代表工资已计提或已发放，请核对工资单、工资发放及付款凭证。", "blue");
+    },
     filters: [
         { fieldname: "company", label: "公司", fieldtype: "Link", options: "Company",
             default: frappe.defaults.get_user_default("Company"), reqd: 1 },

@@ -3,39 +3,27 @@
 import frappe
 from frappe.utils import getdate, nowdate
 
+from jifeng_erp.inventory_scope import decimal_number, readable_documents
+
 
 def _aggregate(doctype, field, filters):
     if not frappe.has_permission(doctype, "read"):
         return None
-    rows = frappe.get_list(
-        doctype,
-        filters=filters,
-        fields=[{"SUM": field, "as": "value"}],
-        limit_page_length=1,
-    )
-    return float(rows[0].value or 0) if rows else 0.0
+    return float(sum((decimal_number(doc.get(field)) for doc in readable_documents(doctype, filters)),
+                     decimal_number(0)))
 
 
 def _count(doctype, filters):
     if not frappe.has_permission(doctype, "read"):
         return None
-    rows = frappe.get_list(
-        doctype,
-        filters=filters,
-        fields=[{"COUNT": "*", "as": "value"}],
-        limit_page_length=1,
-    )
-    return int(rows[0].value or 0) if rows else 0
+    return len(readable_documents(doctype, filters))
 
 
 def _stock_value(company):
     """Current bin valuation and source warehouses visible to this user."""
     if not frappe.has_permission("Warehouse", "read") or not frappe.has_permission("Bin", "read"):
         return None, []
-    warehouses = frappe.get_list(
-        "Warehouse", filters={"company": company, "is_group": 0},
-        pluck="name", limit_page_length=0,
-    )
+    warehouses = [doc.name for doc in readable_documents("Warehouse", {"company": company, "is_group": 0})]
     if not warehouses:
         return None, []
     value = _aggregate("Bin", "stock_value", {
