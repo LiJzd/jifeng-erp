@@ -1,5 +1,13 @@
 # 验证记录
 
+2026-09-30：新增工作站/工序默认部门、工单工序派工快照及报工部门继承；部门订单查正式报工，部门逾期和部门进度查正式源工序汇总。工单显式部门优先，其次工作站和工序默认值，已派工历史不随默认值改变。部门汇总按工单建立批次读取全部可读报工，以实际工单工序行去重计划量；原生待完成数量属于转交其他卡，明细本卡数量扣除转交余额。真实续卡首卡计划5/完成1/转交4、续卡4/完成4后，源工序仍计划5/完成5/剩余0/100%，无假逾期。原生纠正卡保留原工序来源，以纠正工序保存提交，正常数量不增加，正常工时1小时、纠正工时0.25小时分列；错工序、错来源和隐藏来源被拒。`department_validation.smoke` 32 项通过，合成业务和台账保存点回滚。生产角色新安装规则明确 read=0/select=1，保留已有角色规则；报工范围的部门权限只返回本部门，全局部门权限导致整张跨部门工单不可读时，报表排除该工单。既有生产提交及制造入库 15 项回归通过。
+
+2026-09-30：计划图片接正式工单进度，优先可读流程单，回退可读商品；站内附件用原生 File 下载权限，私有图使用原生文件标识，拒绝把无权地址放入返回值。`production_picture_validation.smoke` 13 项真实检查通过，包含 Manufacturing User 的来源/附件权限、无权图隐藏、商品图回退、缺图、Guest、报表接口及数量单位。唯一合成32×24蓝橙PNG已通过原生File删除并核对实物；业务数据回滚，无库存或财务记账。91项Python测试、改动文件Ruff、JS语法与完整资源构建通过。部门和图片有数据的浏览器核验已完成，结果见下一条；不据此判定旧系统全模块可交付。
+
+2026-09-30：部门/图片真实浏览器核验通过。经典工作台部门订单显示两张正式合成卡：原派工5/5、转交0/4、本卡任务5/1、已审核5/1、本卡未报完0/0、各0.5小时。部门逾期进入部门汇总并预设仅逾期，只返回部门2（计划5、完成1、剩余4、20%、逾期工序1）；返回部门进度后逾期条件清零，两部门为100%/20%、计划5/5、损耗0。图片报表中文状态“生产中”返回计划5、入库0、剩余5、0%、逾期4；带原生文件标识的私有合成图真实加载，尺寸32×24。左右滚动截图保存于 `output/playwright/department-*.png`、`production-picture-image.png` 及 `production-picture.png`，明细为 `department-picture-results.json`；标题已显示部门生产进度/图片生产计划。页面级异常为零，404仅为开发站点Socket.IO轮询；浏览器使用管理员，生产用户/用户权限由前述真实后台测试核对，未进行浏览器保存或提交。
+
+本轮持久合成夹具已清理：两商品、两部门、两工作站、两工序、BOM、流程、工单、两报工及5个原生图片附件引用均为零，唯一图片实物删除、生产设置恢复。原生系统会把商品图片引用附到商品、流程、BOM和工单；清理现按精确QA文件路径、唯一PNG字节和夹具父单/子表身份追踪全部引用，保留独立QA哈希与原生哈希。前三次夹具创建断言失败均已回滚，遗留唯一QA实物在验证无File引用、无业务对象且字节匹配后用原生文件删除恢复，并在私有夹具JSON保留恢复记录；未删除业务上传。最终夹具日志为 `site/private/jifeng_qa/department-browser-909e32dc69ac.json`（阶段cleaned）。此验收覆盖普通工序任务，未验证半成品实际产出比例：本地v16派工和制造入库直接沿用任务数值，无自动比例换算，不能只调整报表比例。
+
 2026-09-30：生产指令本轮最终验收：`instruction_validation.smoke` 27 项通过，包含 Manufacturing User 实际调入流程、插入和提交计划、调用原生工单生成及打印。实际发现该角色可选择公司但不能读取完整公司档案，调入接口现与生产报表一致使用权限过滤的公司名称查询，不授予额外公司读取权限。79 项测试、改动文件 Ruff、JS 语法和差异检查通过；站点迁移、完整资源构建及既有生产提交链路 15 项复核通过。浏览器由实际选择器将 5/3 数量及对应商品/BOM/流程带入未保存计划，统一改为 2026-10-07 08:00；已保存合成草稿的真实打印预览为 7 列横排、两款完整、8 Nos 合计、参考金额仅一次币种、日期无微秒，并说明审核工单量不含草稿。未进行浏览器保存、提交或生成工单，未发现 pageerror；开发 Socket.IO 404 单独记录。证据位于 `output/playwright/instruction-*.png` 和相关 JSON。浏览器合成指令、流程、BOM 和商品已按确切标识验证后清理；后台保存点测试全部回滚，指令测试商品及用户残留数均为零。打印验证为页面和原生 HTML 渲染，未验证 PDF 导出、实体打印或分页。真实角色浏览器、生产损耗后的补排现场规则与旧指令其余字段仍需验收。
 
 2026-09-30：生产指令扩展到原生 Production Plan，保存多款商品与流程单明细，记录原编号、指令日期、重量及显式单位、公司本币参考金额和备注；启用原生 Version 变更记录。新增调入流程单与统一排期按钮，打印按库存单位分别汇总数量。原生批量生成工单时跳过 validate，已把流程继承与数量守卫放到 before_validate；针对关联流程单的计划明细，生成量另计已有草稿，重复点击不增加工单。数量校验覆盖同流程分批、每条计划明细及其他有效工单；已提交工单损耗按原生净承诺量处理，取消释放安排数量。锁定来源及使用当前锁定读取避免沿用旧数量快照。旧编号不替代原生主键，参考金额不会过账。原生提交检查、打印文字转义、版本记录、来源变更、BOM 变更、超量、Guest 权限及无库存/总账记账已通过；脚本 `jifeng_erp.instruction_validation.smoke` 使用保存点回滚合成数据。既有生产报工→制造入库的 15 项检查复核通过。原“调计划”窗口的实际语义、指令工序/工期等旧列、真实角色与现场单据仍需核对，不将当前按钮解释为旧流程已完整复刻。
@@ -144,6 +152,8 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_expense_voucher --kw
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_work_order --kwargs '{"flow_order":"尚未生成工单且已关联有效BOM的测试流程单"}'
 bench --site YOUR_SITE execute jifeng_erp.instruction_validation.smoke --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.production_validation.smoke --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
+bench --site YOUR_SITE execute jifeng_erp.department_validation.smoke --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
+bench --site YOUR_SITE execute jifeng_erp.production_picture_validation.smoke --kwargs '{"company":"测试公司","item_group":"Products","stock_uom":"Nos"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_employee_supplement --kwargs '{"employee":"尚未有补充档案的测试员工编号"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs '{"employee":"已分配工资结构的在职测试员工编号","salary_component":"已启用的收入类工资项目"}'
 bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs '{"employee":"已分配工资结构的在职测试员工编号","salary_component":"已启用的收入类工资项目","salary_structure":"员工当前已提交的工资结构"}'
