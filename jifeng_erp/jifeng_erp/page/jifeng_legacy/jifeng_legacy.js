@@ -282,6 +282,7 @@ const JIFENG_LIVE_REPORTS = {
 		入库明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "receipt" } },
 		调拨明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "transfer" } },
 		销售报表: "Sales Register", 销售分析: "Sales Analytics", 明细成本: "Gross Profit",
+		销售排行: "Jifeng Sales Item Ranking",
 		销售单查询: "Jifeng Sales Transaction Ledger", 日报表: { name: "Jifeng Sales Transaction Ledger", daily: true },
 		已过账销售台账: "Jifeng Posted Sales Ledger",
 	},
@@ -301,6 +302,7 @@ const JIFENG_LIVE_REPORT_DEFAULTS = {
 	"Jifeng Plate Catalog": { item_code: "", status: "" },
 	"Jifeng Sales Transaction Ledger": { customer: "", pos_profile: "", cashier: "", only_returns: 0, source_type: "" },
 	"Jifeng Posted Sales Ledger": { customer: "", pos_profile: "", cashier: "", only_returns: 0, source_type: "" },
+	"Jifeng Sales Item Ranking": { item_code: "" },
 	"Jifeng Purchase Request Ledger": { item_code: "", warehouse: "", flow_order: "", only_pending: 0 },
 	"Jifeng Purchase Receipt Ledger": { supplier: "", item_code: "", warehouse: "", flow_order: "", only_returns: 0 },
 	"Jifeng Stock Entry Ledger": { mode: "issue", item_code: "", warehouse: "", flow_order: "" },
@@ -368,7 +370,7 @@ class JifengLegacyWorkspace {
 		if (report) {
 			frappe.route_options = { ...(JIFENG_LIVE_REPORT_DEFAULTS[report.name || report] || {}),
 				...(report.filters || {}) };
-			if (["Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger"].includes(report.name || report)) {
+			if (["Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger", "Jifeng Sales Item Ranking"].includes(report.name || report)) {
 				frappe.route_options.from_date = report.daily ? frappe.datetime.get_today() : frappe.datetime.month_start();
 				frappe.route_options.to_date = frappe.datetime.get_today();
 			}

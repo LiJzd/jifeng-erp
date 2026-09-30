@@ -216,3 +216,11 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs 
 同批实际角色：追溯链Sales User+Stock Manager+Accounts Manager；纯Sales User可提交无Flow SO/DN，纯Accounts User可开无Flow SI；Accounts Manager+Purchase User+Projects User+Delivery User有SO.select而无SO.read，仍能从历史无Flow DN开SI。Manager不自动含User角色，AccountsUser本身拥有SO.read，故不冒充选择-only来源验收；最后组合依本地原生权限确认，未修改DocPerm。核验8项本夹具原生库存重算、所有主档/子行/辅助表计数及whole GL/SLE hash完全恢复。此项尚未实际发货浏览器，不等同旧成品出库MaterialIssue语义已确认。
 
 2a966e2花名册修复字段级权限边界：Frappe get_list会删除不可读字段，full get_doc仅用于来源与完整read核对，输出保留原生许可行字段，不从全文档补回隐藏值；21项专项模型测试通过。两新报表与字段完成隔离站点迁移，完整 `bench build` 退出0，35份JS语法和45份JSON解析通过。工资浏览器首阶段Admin实际选择来源卡后自动带入公司、工单、Flow、工序、商品、完成量5和两人工时各1；个人份额1/3工价3/4保存草稿JF-WALLOC-2026-00010合计4/总15，审核原生拒绝“各人计件份额合计必须等于来源报工单的已完成数量”，无本次Wage。私有journal已登记under_total_rejected，独立inspect全部来源/账簿/无外部引用通过。提交拒绝HTTP417符合预期；首次保存空白第三员工行被必填校验拦截后清掉空行保存成功，另/undefined404留存，pageerror=0。纠正/审核及工资提交仍待下一阶段。
+
+工资实际浏览器后续完成：主管表单把首人份额改为2，合计5/金额18，审核生成两笔草稿 JF-WAGE-2026-00011（2×3=6）与00012（3×4=12），精确员工/分配子行/源卡匹配；再次点击生成/查看仍为同两笔。两笔在 UI 审核后工资分析显示2行、审核笔数2、数量5、计件金额/总额18，计时及附加费0。报表首次暴露 Page 没有 set_intro 的实际错误；bed2bdf 修复工资与产品分析提示 DOM，重新通过经典入口加载和精确筛选，提示可见、pageerror=0、非 Socket.IO HTTP 错误0。未生成 Additional Salary 或 Payroll；原生全薪资链已有独立32项回滚验收，此处是 Admin UI 操作，不替代实际主管岗位 UI。
+
+工资夹具已精确逆序原生取消工资2、分配1、报工1、工单1、BOM1，员工2停用/商品2与工资项目1禁用；唯一工序、流程来源和无支持停用字段的原生主档保留可追溯历史。私有journal phase=cancelled_history_retained、cleanup_complete=true。独立新连接只读审计6凭证docstatus=2、5主档停用、本项目 Additional Salary/Salary Detail=0、工资分析0行、Bin数量/价值0；整个GL/SLE hash与准备前一致。保存证据 wage-analysis-r2-review.json/png、wage-cleanup-independent-verify.json；不手改账簿或强删历史。
+
+新增销售商品排行及经典入口，20项模型覆盖持久净额/库存单位数量、退货负数、同商品精确子行、汇总与来源值分列、权限和稳定排序；隔离Node检查10个经典入口重置、7份报表Data转义、3份报告onload原生Page接口通过。当前363入口中215正式路由、148其他（13导航/135预览说明），不是业务验收比例。产品/人员原生验收helper已准备，销售排行原生helper开发中；新排行迁移、实际角色数据与浏览器仍待验收。
+
+发货/发票来源默认修复补9项回归：只归一化新父单新子行恰等于原生new_doc实际Flow默认的值，再按精确来源继承；保存历史和同一服务器对象已继承来源不清除，隐藏来源仍拒。33项专项及全套466模型通过；多Flow实际默认值的原生补充门尚待完成，此前bbca324的57门不能替代本次差异验收。

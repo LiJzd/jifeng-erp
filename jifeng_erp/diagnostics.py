@@ -105,7 +105,8 @@ def check():
         "wage_source_guard_active": "jifeng_erp.wage_allocation.guard_job_card_allocation" in
                                     doc_events.get("Job Card", {}).get("before_update_after_submit", []),
         "sales_reports_installed": all(frappe.db.exists("Report", name) for name in
-                                        ("Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger")),
+                                        ("Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger",
+                                         "Jifeng Sales Item Ranking")),
         "catalog_reports_installed": all(frappe.db.exists("Report", name) for name in
                                          ("Jifeng Product Catalog", "Jifeng Product Material Catalog",
                                           "Jifeng Mold Catalog", "Jifeng Plate Catalog", "Jifeng Product Analysis")),
