@@ -238,3 +238,5 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs 
 新增工资当月分析、计薪历史/历史分析和人员查询4个正式路由，原工资分析也显式清空旧条件/重置本月；15个经典入口、8份报表Data转义、3份onload接口隔离Node检查通过。发现站点实际Report.add_total_row=1，尽管版本JSON=0，旧工资UI会显示跨未知单位的数量总计；修复为原生ScriptReport第六返回值skip_total_row=True，同时转义工资姓名/工序等Data。9项工资报表模型通过，全部调用方仅读取execute[1]或使用原生ReportAPI，保留兼容。当前363/219正式路由，其余144（13导航/131预览说明）。该自动总计修复的原生API及浏览器复核待执行。
 
 后续人事闭环审计已核验上游实际源码：晋升/调岗反审历史删除缺employee parent，晋升未传日期、跨公司调岗取消未恢复入职日期；反审直接采用来源单current而未核对后续员工变更。现有正式菜单不代表这些闭环已验收。正在开发只按本员工本来源精确快照恢复的扩展；create_new_employee_id及旧无来源快照单据的安全迁移仍需明确处理。原生Employee Separation只是交接任务项目，完成不自动变Left，离职办理尚未收口。
+
+34107d2工资总计修复追加原生/实际UI：同一个旧Report保存add_total_row=1保持不变，实际QueryReport响应add_total_row=false，仅两条基线来源且无第三总计数组。浏览器当月/历史/历史分析均显示各自2/3数量、21/35金额、空单位与单笔历史说明，来源00003/00004链接正确，无总计行及跨未知单位数量5footer；UI改起始日期08-31后切入口恢复09-01至09-30且员工/工序/项目空，人员查询3条员工正确。最终成功导航pageerror/非Socket.IO HTTP0；另首次经典入口HTTP500仍未取得异常栈，同路由重试和硬刷新成功，保留该历史故障。未修改或清理前批已有基线工资，仅只读查询；证据wage-history-menu-review-r2.json及截图。
