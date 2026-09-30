@@ -247,6 +247,13 @@ const JIFENG_LIVE_REPORTS = {
 	},
 };
 
+const JIFENG_LIVE_REPORT_DEFAULTS = {
+	"Jifeng Production Progress": { status: "", only_overdue: 0, only_loss: 0,
+		flow_order: "", sales_order: "", production_item: "" },
+	"Jifeng Job Card Detail": { approval: "全部", only_overdue: 0, only_loss: 0,
+		flow_order: "", work_order: "", production_item: "", operation: "", workstation: "" },
+};
+
 class JifengLegacyWorkspace {
 	constructor(host) {
 		this.host = host;
@@ -294,7 +301,8 @@ class JifengLegacyWorkspace {
 		}
 		const report = JIFENG_LIVE_REPORTS[moduleName]?.[name];
 		if (report) {
-			frappe.route_options = report.filters || {};
+			frappe.route_options = { ...(JIFENG_LIVE_REPORT_DEFAULTS[report.name || report] || {}),
+				...(report.filters || {}) };
 			frappe.set_route("query-report", report.name || report);
 			return;
 		}
