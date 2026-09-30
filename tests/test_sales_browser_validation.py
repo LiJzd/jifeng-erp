@@ -100,6 +100,26 @@ class TestSalesBrowserValidation(unittest.TestCase):
         query = self.frappe.get_all.call_args.kwargs["filters"]
         self.assertEqual(query, {"party": ["in", ["QA-CUSTOMER"]], "party_type": "Customer"})
 
+    def test_native_user_permission_audit_rejects_foreign_reference_or_actor(self):
+        self.data["users"], self.data["created_by"] = ["QA-USER"], "Administrator"
+        self.data["records"] = [{"doctype": "User", "name": "QA-USER"}]
+        field = Record(doctype="Permission Log", fieldname="for_document", fieldtype="Dynamic Link", options="for_doctype")
+        meta = Record(name="Permission Log", istable=False, issingle=False, is_virtual=False)
+        meta.get_field = lambda name: field
+        self.frappe.get_meta.return_value = meta
+        native = Record(name="PERM-1", for_doctype="User", for_document="QA-USER", owner="Administrator",
+                        changed_by="Administrator", reference_type=None, reference=None)
+        self.frappe.get_all.side_effect = [[field], [], [native]]
+        self.module._references(self.data)
+        self.assertNotIn("changes", self.frappe.get_all.call_args.kwargs["fields"])
+        for change in ({"reference_type": "User", "reference": "FOREIGN-USER"},
+                       {"changed_by": "FOREIGN-ACTOR"}, {"owner": "FOREIGN-ACTOR"},
+                       {"for_document": "FOREIGN-USER"}):
+            with self.subTest(change=change):
+                self.frappe.get_all.side_effect = [[field], [], [Record({**native, **change})]]
+                with self.assertRaisesRegex(AssertionError, "权限审计"):
+                    self.module._references(self.data)
+
     def test_immutable_native_ledger_requires_owned_voucher(self):
         self.data["customers"] = ["QA-CUSTOMER"]
         self.data["records"] = [{"doctype": "Customer", "name": "QA-CUSTOMER"},

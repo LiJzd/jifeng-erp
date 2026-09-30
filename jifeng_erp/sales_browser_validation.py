@@ -46,7 +46,7 @@ PARENT_FIELDS = {
     "Mode of Payment": ("mode_of_payment", "type"),
     "Price List": ("price_list_name", "currency", "selling", "buying"),
     # A User identity never includes passwords, API keys, tokens or sessions.
-    "User": ("email", "first_name", "user_type", "send_welcome_email", "role_profile_name"),
+    "User": ("email", "first_name", "user_type", "send_welcome_email", "role_profile_name", "module_profile"),
     "Contact": ("first_name", "last_name", "user", "email_id", "company_name"),
     "DocShare": ("user", "share_doctype", "share_name", "read", "write", "share", "submit", "everyone", "notify_by_email"),
     "POS Profile": ("company", "customer", "customer_group", "territory", "currency", "selling_price_list",
@@ -72,7 +72,7 @@ CHILD_FIELDS = {
     "Item": {"uoms": ("uom", "conversion_factor"), "item_defaults": ("company", "default_warehouse",
         "income_account", "expense_account", "selling_cost_center")},
     "Mode of Payment": {"accounts": ("company", "default_account")},
-    "User": {"roles": ("role",)},
+    "User": {"roles": ("role",), "block_modules": ("module",)},
     "Contact": {"email_ids": ("email_id", "is_primary"), "phone_nos": ("phone", "is_primary_phone", "is_primary_mobile_no"),
                 "links": ("link_doctype", "link_name")},
     "POS Profile": {"payments": ("mode_of_payment", "default"), "applicable_for_users": ("user", "default")},
@@ -297,10 +297,17 @@ def _references(data):
             fields = ["name", "parent", "parenttype"] if meta.istable else ["name"]
             if native_ledger:
                 fields += ["company", "voucher_type", "voucher_no"]
+            if meta.name == "Permission Log":
+                fields += ["owner", "changed_by", "for_doctype", "for_document", "reference_type", "reference"]
             references = frappe.get_all(meta.name, filters=filters, fields=fields, limit_page_length=0)
             for row in references:
                 if meta.name == "Comment" and field.fieldname == "reference_name":
                     continue  # Native submit/cancel comments retain their exact source history.
+                if meta.name == "Permission Log":
+                    assert (row.for_doctype == "User" and row.for_document in data["users"]
+                            and not row.reference_type and not row.reference
+                            and row.changed_by == row.owner == data["created_by"]), "验收权限审计存在日志外目标、引用或变更人"
+                    continue  # Keep native QA User role audit without reading its changes payload.
                 if native_ledger:
                     assert (row.voucher_type, row.voucher_no) in owned and row.company == data["company"], "销售来源被日志外原生账簿引用"
                     continue
