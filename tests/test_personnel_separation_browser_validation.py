@@ -1,6 +1,7 @@
 """Safety gates for the persistent fixture; native business gates run on site."""
 
 from copy import deepcopy
+from datetime import date, datetime, timedelta
 import importlib.util
 import json
 from pathlib import Path
@@ -41,6 +42,7 @@ class SeparationBrowserValidationTests(unittest.TestCase):
         utils.today = lambda: "2026-09-30"
         utils.cint = lambda value: int(value or 0)
         utils.add_days = Mock()
+        utils.get_datetime = lambda value: value if isinstance(value, datetime) else datetime.fromisoformat(value)
         diagnostics = types.ModuleType("jifeng_erp.diagnostics")
         diagnostics._begin_rollback_only = Mock()
         diagnostics._end_rollback_only = Mock()
@@ -354,6 +356,36 @@ class SeparationBrowserValidationTests(unittest.TestCase):
         altered["source"]["amended_from"] = "OTHER-ORIGINAL"
         with self.assertRaises(AssertionError):
             self.module._snapshot(self.data, Doc(jf_exit_snapshot=json.dumps(altered)), "finalized")
+
+    def test_insert_string_and_reloaded_datetime_creation_compare_exactly(self):
+        original = Doc(doctype="Employee", name="EMP-1", owner="Administrator",
+            creation="2026-10-01 00:03:57.394552", first_name="Synthetic", employee_number="Synthetic",
+            company="QA", user_id=None, date_of_joining="2026-07-03")
+        reloaded = deepcopy(original)
+        reloaded.creation = datetime(2026, 10, 1, 0, 3, 57, 394552)
+        reloaded.date_of_joining = date(2026, 7, 3)
+        before, after = self.module._record(original), self.module._record(reloaded)
+        self.assertEqual(before, after)
+        self.assertEqual(before["creation"], "2026-10-01T00:03:57.394552")
+        self.assertEqual(self.module._timestamp(original.creation), self.module._timestamp(reloaded.creation))
+        reloaded.creation += timedelta(microseconds=1)
+        self.assertNotEqual(before, self.module._record(reloaded))
+        for empty in (None, ""):
+            with self.subTest(empty=empty), self.assertRaisesRegex(AssertionError, "时间不能为空"):
+                self.module._timestamp(empty)
+
+    def test_identity_mismatch_names_exact_owned_record_and_fields_without_values(self):
+        self.owned_holiday_documents()
+        employee = self.frappe.get_doc("Employee", "EMP-1")
+        employee.creation = "2026-09-30 08:00:00.000001"
+        employee.first_name = "PRIVATE-UNEXPECTED-VALUE"
+        with self.assertRaises(AssertionError) as caught:
+            self.module._validate_owned(self.data)
+        message = str(caught.exception)
+        self.assertIn("Employee EMP-1", message)
+        self.assertIn("creation", message)
+        self.assertIn("identity.first_name", message)
+        self.assertNotIn("PRIVATE-UNEXPECTED-VALUE", message)
 
     def owned_holiday_documents(self):
         def doc(doctype, name, **values):

@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 
 import frappe
-from frappe.utils import add_days, cint, now, today
+from frappe.utils import add_days, cint, get_datetime, now, today
 
 from jifeng_erp.diagnostics import _begin_rollback_only, _end_rollback_only
 from jifeng_erp.inventory_validation import _ledger_snapshot
@@ -110,10 +110,17 @@ def _graph(source):
     doc, project, tasks, activities = _source_graph(source)
     owners = {row["task"]: row["name"] for row in activities}
     return _normal({"project": {"name": project.name, "company": project.company,
-                      "status": project.status, "modified": project.modified},
+                      "status": project.status, "modified": _timestamp(project.modified)},
         "tasks": [{"activity": owners[task.name], "task": task.name, "project": task.project,
                    "company": task.company, "status": task.status, "completed_on": task.completed_on,
-                   "modified": task.modified} for task in sorted(tasks, key=lambda row: row.name)]})
+                   "modified": _timestamp(task.modified)} for task in sorted(tasks, key=lambda row: row.name)]})
+
+
+def _timestamp(value):
+    assert value is not None and value != "", "原生创建或修改时间不能为空"
+    # Native insert uses now() strings; a fresh DB read yields datetime values.
+    # Canonicalize the representation while retaining the exact microseconds.
+    return get_datetime(value).isoformat()
 
 
 def _record(doc):
@@ -126,7 +133,7 @@ def _record(doc):
         "Holiday List Assignment": ("applicable_for", "assigned_to", "holiday_list", "from_date", "employee_company"),
     }
     return _normal({"doctype": doc.doctype, "name": doc.name, "owner": doc.owner,
-        "creation": doc.creation, "identity": {field: doc.get(field) for field in identity_fields[doc.doctype]}})
+        "creation": _timestamp(doc.creation), "identity": {field: doc.get(field) for field in identity_fields[doc.doctype]}})
 
 
 def _owned_state(data):
@@ -137,7 +144,7 @@ def _owned_state(data):
         if row["exists"]:
             doc = frappe.get_doc(record["doctype"], record["name"])
             row.update(record=_record(doc), docstatus=cint(doc.docstatus), status=doc.get("status"),
-                       modified=_normal(doc.modified))
+                       modified=_timestamp(doc.modified))
             if doc.doctype == SOURCE:
                 row.update(exit_status=doc.get(STATUS), snapshot=doc.get(SNAPSHOT),
                            activities=_intent(doc)["activities"], boarding_status=doc.boarding_status)
@@ -156,8 +163,13 @@ def _validate_owned(data):
     assert len(data["records"]) == len(expected) == 7, "离职夹具只允许五项业务对象及独立假日表、员工专属分配"
     assert {(row["doctype"], row["name"]) for row in data["records"]} == expected, "日志中的精确保留对象不一致"
     for record in data["records"]:
-        assert frappe.db.exists(record["doctype"], record["name"]), "离职夹具保留对象缺失"
-        assert _record(frappe.get_doc(record["doctype"], record["name"])) == record, "离职夹具所有权或业务绑定变化"
+        identity = record["doctype"] + " " + record["name"]
+        assert frappe.db.exists(record["doctype"], record["name"]), "离职夹具保留对象缺失: " + identity
+        actual = _record(frappe.get_doc(record["doctype"], record["name"]))
+        changed = [field for field in ("doctype", "name", "owner", "creation") if actual.get(field) != record.get(field)]
+        changed.extend("identity." + field for field in sorted(set(actual["identity"]) | set(record["identity"]))
+                       if actual["identity"].get(field) != record["identity"].get(field))
+        assert actual == record, "离职夹具所有权或业务绑定变化: " + identity + " 字段 " + ", ".join(changed)
     source, project, tasks, activities = _source_graph(data["source"])
     assert source.project == data["project"] and {row.task for row in source.activities} == set(data["tasks"])
     assert len(activities) == 2 and _intent(source) == data["source_intent"], "离职来源的精确交接活动变化"
@@ -214,7 +226,7 @@ def _observe(data):
         if snapshot_state == "finalized":
             assert source.docstatus == 1 and not data["cleanup_complete"]
             assert actual["fields"] == payload["after"]["fields"] and actual["history"] == before["history"]
-            assert _normal(frappe.db.get_value("Employee", data["employee"], "modified")) == payload["after"]["modified"]
+            assert _timestamp(frappe.db.get_value("Employee", data["employee"], "modified")) == payload["after"]["modified"]
             stage = "finalized"
         else:
             expected = deepcopy(before)
@@ -306,7 +318,7 @@ def prepare(company, browser_user="Administrator"):
         data["records"].append(_record(employee))
         _journal(data)
         data["employee_before"] = _state(employee.name)
-        data["employee_modified_before"] = _normal(employee.modified)
+        data["employee_modified_before"] = _timestamp(employee.modified)
         data["payroll_before"] = _audit_digest(_payroll_contents(employee.name))
         holiday = frappe.get_doc({"doctype": "Holiday List", "holiday_list_name": data["prefix"] + "-HOL",
             "from_date": add_days(employee.date_of_joining, -2), "to_date": add_days(today(), 30), "holidays": []}).insert()
