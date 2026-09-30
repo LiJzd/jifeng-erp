@@ -251,8 +251,6 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 			state.original = JSON.stringify(this.payload(state));
 			state.dialog.set_title(__("人事档案"));
 			button.text(__("保存"));
-			state.dialog.fields_dict.education_history.$wrapper.find("button").prop("disabled", false);
-			state.dialog.fields_dict.education_history.$wrapper.find("p").remove();
 			for (const cached of this.bridge.frames.values()) {
 				try { cached.iframe.contentWindow?.cur_list?.refresh(); } catch { /* pending frame */ }
 			}
