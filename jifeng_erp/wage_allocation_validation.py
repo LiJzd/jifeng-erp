@@ -200,7 +200,7 @@ def smoke(company, item_group, stock_uom, payroll=True):
             for name in split_allocation.make_wages():
                 frappe.delete_doc("Jifeng Wage Entry", name)
             split_allocation.cancel()
-        assert [row.source_completed_qty for row in split_allocations] == [2, 3]
+        assert [Decimal(str(row.source_completed_qty)) for row in split_allocations] == [Decimal(2), Decimal(3)]
         checks.append("continuation_cards_allocate_their_own_completion_once")
         draft = allocation(include_time=True)
         under = frappe.get_doc("Jifeng Wage Allocation", draft.name)
