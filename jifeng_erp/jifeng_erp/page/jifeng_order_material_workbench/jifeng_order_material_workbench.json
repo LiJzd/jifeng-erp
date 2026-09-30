@@ -1,0 +1,14 @@
+{
+ "doctype": "Page",
+ "name": "jifeng-order-material-workbench",
+ "page_name": "jifeng-order-material-workbench",
+ "title": "订单算料",
+ "module": "Jifeng ERP",
+ "standard": "Yes",
+ "roles": [
+  {"role": "Manufacturing User"},
+  {"role": "Manufacturing Manager"},
+  {"role": "Stock Manager"},
+  {"role": "System Manager"}
+ ]
+}

@@ -21,6 +21,9 @@ class Record(dict):
     def check_permission(self, permission):
         return None
 
+    def reload(self):
+        return self
+
 
 class TestMaterialIssue(unittest.TestCase):
     def setUp(self):
@@ -37,7 +40,7 @@ class TestMaterialIssue(unittest.TestCase):
             ("Warehouse", "MAIN - JF"): self.warehouse,
         }[(doctype, name)]
         frappe.get_all = lambda doctype, **kwargs: self.history if doctype == "Stock Entry Detail" else []
-        frappe.db = types.SimpleNamespace(get_value=self.db_value)
+        frappe.db = types.SimpleNamespace(get_value=self.db_value, sql=self.db_sql)
         erpnext = types.ModuleType("erpnext")
         stock = types.ModuleType("erpnext.stock")
         stock_doctype = types.ModuleType("erpnext.stock.doctype")
@@ -69,6 +72,16 @@ class TestMaterialIssue(unittest.TestCase):
         if doctype == "Stock Entry":
             return Record(docstatus=1, stock_entry_type="Material Issue")
         raise AssertionError((doctype, name, fields))
+
+    def db_sql(self, sql, values, as_dict=False):
+        if "JOIN `tabStock Entry`" in sql:
+            self.assertIn("FOR UPDATE", sql)
+            self.assertIn("entry.docstatus=1", sql)
+            self.assertEqual(values, ("FLOW-1",))
+            return self.history
+        if "docstatus=0" in sql:
+            return []
+        raise AssertionError(sql)
 
     def entry(self, qty):
         return Record(
@@ -102,6 +115,12 @@ class TestMaterialIssue(unittest.TestCase):
         entry.items[0].jf_flow_order = "FLOW-OTHER"
         with self.assertRaisesRegex(ValueError, "全部关联本流程单"):
             self.issue.validate_material_issue(entry)
+
+    def test_flow_is_reloaded_after_lock_before_quantity_guard(self):
+        self.flow.planned_qty = 6
+        self.flow.reload = lambda: self.flow.update(planned_qty=5)
+        with self.assertRaisesRegex(ValueError, "累计领料数量超过"):
+            self.issue.validate_material_issue(self.entry(1100))
 
 
 if __name__ == "__main__":

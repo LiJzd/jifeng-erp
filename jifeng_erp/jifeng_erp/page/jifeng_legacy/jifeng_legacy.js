@@ -166,6 +166,8 @@ const JIFENG_LIVE_ROUTES = {
 
 const JIFENG_LIVE_PAGES = {
 	工资: { 工资录入: "jifeng-wage-workbench" },
+	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
+		算料汇总: { name: "jifeng-order-material-workbench", mode: "summary" } },
 	权限: { 权限管理: "permission-manager" },
 	销售: { 零售开单: "point-of-sale", 前台开单: "point-of-sale" },
 };
@@ -397,11 +399,12 @@ class JifengLegacyWorkspace {
 	openPage(name, moduleName) {
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
+			const route = typeof livePage === "string" ? [livePage] : [livePage.name, livePage.mode];
 			if (this.formalBridge) {
-				this.formalBridge.open({ title: name, module: moduleName, kind: "page", route: [livePage] });
+				this.formalBridge.open({ title: name, module: moduleName, kind: "page", route });
 				return;
 			}
-			frappe.set_route(livePage);
+			frappe.set_route(...route);
 			return;
 		}
 		const report = JIFENG_LIVE_REPORTS[moduleName]?.[name];

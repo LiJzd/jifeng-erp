@@ -58,23 +58,18 @@ def _required_stock(flow):
 
 def _submitted_stock(flow_name, exclude=None):
     """Include manual Material Issue rows linked to this flow, not just generated ones."""
-    rows = frappe.get_all(
-        "Stock Entry Detail",
-        filters={"jf_flow_order": flow_name, "parenttype": "Stock Entry"},
-        fields=["parent", "item_code", "transfer_qty"],
-    )
+    # A caller may have opened a repeatable-read snapshot before waiting for
+    # the flow lock. Quantity caps must use the current submitted vouchers.
+    rows = frappe.db.sql("""SELECT detail.parent, detail.item_code, detail.transfer_qty
+        FROM `tabStock Entry Detail` detail JOIN `tabStock Entry` entry ON entry.name=detail.parent
+        WHERE detail.jf_flow_order=%s AND detail.parenttype='Stock Entry'
+        AND entry.docstatus=1 AND entry.stock_entry_type='Material Issue' FOR UPDATE""",
+                         (flow_name,), as_dict=True)
     issued = defaultdict(Decimal)
-    parent_status = {}
     for row in rows:
         if row.parent == exclude:
             continue
-        if row.parent not in parent_status:
-            parent_status[row.parent] = frappe.db.get_value(
-                "Stock Entry", row.parent, ["docstatus", "stock_entry_type"], as_dict=True,
-            )
-        parent = parent_status[row.parent]
-        if parent and parent.docstatus == 1 and parent.stock_entry_type == "Material Issue":
-            issued[row.item_code] += Decimal(str(row.transfer_qty or 0))
+        issued[row.item_code] += Decimal(str(row.transfer_qty or 0))
     return issued
 
 
@@ -98,17 +93,18 @@ def make_material_issue(flow, warehouse):
     _source_warehouse(warehouse, flow.company)
     required, units = _required_stock(flow)
 
-    drafts = frappe.get_all(
-        "Stock Entry", filters={"jf_material_issue_flow": flow.name, "docstatus": 0},
-        pluck="name", limit=2,
-    )
+    drafts = [row[0] for row in frappe.db.sql("""SELECT name FROM `tabStock Entry`
+        WHERE jf_material_issue_flow=%s AND docstatus=0 LIMIT 2 FOR UPDATE""", (flow.name,))]
     if len(drafts) > 1:
         frappe.throw("本流程单已有多张未提交领料单，请先核对")
     if drafts:
-        existing = frappe.get_doc("Stock Entry", drafts[0])
+        existing = frappe.get_doc("Stock Entry", drafts[0], for_update=True)
         existing.check_permission("read")
         if existing.company != flow.company or existing.stock_entry_type != "Material Issue":
             frappe.throw("已有领料草稿与当前流程单不一致")
+        validate_material_issue(existing)
+        if any(row.s_warehouse != warehouse for row in existing.items):
+            frappe.throw("已有领料草稿的来源仓库不同，请先核对原草稿")
         return existing.name
 
     issued = _submitted_stock(flow.name)
@@ -136,6 +132,7 @@ def validate_material_issue(doc):
     flow = frappe.get_doc("Jifeng Flow Order", doc.jf_material_issue_flow)
     flow.check_permission("read")
     frappe.db.get_value(flow.doctype, flow.name, "name", for_update=True)
+    flow.reload()
     validate_flow_source(flow)
     if doc.company != flow.company or doc.stock_entry_type != "Material Issue":
         frappe.throw("按单配料单必须为本公司物料出库凭证")

@@ -72,7 +72,8 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	frameCloseBlock(frame) {
-		try { return frame?.contentWindow?.jifeng_wage_workbench?.get_close_block() || ""; }
+		try { return frame?.contentWindow?.jifeng_wage_workbench?.get_close_block() ||
+			frame?.contentWindow?.jifeng_order_material_workbench?.get_close_block() || ""; }
 		catch { return ""; }
 	}
 
@@ -81,6 +82,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 			const child = frame?.contentWindow;
 			const quick = child?.frappe?.quick_entry?.dialog;
 			return !!(child?.cur_frm?.is_dirty() || child?.jifeng_wage_workbench?.is_dirty() ||
+				child?.jifeng_order_material_workbench?.is_dirty() ||
 				quick?.is_visible || quick?.display);
 		} catch { return true; }
 	}
