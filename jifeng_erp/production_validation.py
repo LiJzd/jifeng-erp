@@ -106,9 +106,9 @@ def smoke(company, item_group, stock_uom):
 
         assert len(run("Jifeng Production Progress", filters=filters)["result"]) == 1
         assert len(run("Jifeng Job Card Detail", filters=filters)["result"]) == 2
-        from frappe.desk.page import getpage
+        from frappe.desk.desk_page import get
 
-        assert getpage("jifeng-legacy")["name"] == "jifeng-legacy"
+        assert get("jifeng-legacy")["name"] == "jifeng-legacy"
         frappe.set_user("Guest")
         for report in (work_order_progress, job_card_progress):
             try:
