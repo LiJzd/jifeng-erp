@@ -90,6 +90,15 @@ def check():
         "employee_supplement_installed": bool(frappe.db.exists("DocType", "Jifeng Employee Supplement")),
         "hrms_installed": "hrms" in frappe.get_installed_apps(),
         "wage_entry_installed": bool(frappe.db.exists("DocType", "Jifeng Wage Entry")),
+        "wage_allocation_installed": all(frappe.db.exists("DocType", name) for name in
+                                         ("Jifeng Wage Allocation", "Jifeng Wage Allocation Employee")),
+        "wage_source_guard_active": "jifeng_erp.wage_allocation.guard_job_card_allocation" in
+                                    doc_events.get("Job Card", {}).get("before_update_after_submit", []),
+        "sales_reports_installed": all(frappe.db.exists("Report", name) for name in
+                                        ("Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger")),
+        "catalog_reports_installed": all(frappe.db.exists("Report", name) for name in
+                                         ("Jifeng Product Catalog", "Jifeng Product Material Catalog",
+                                          "Jifeng Mold Catalog", "Jifeng Plate Catalog")),
     }
 
 

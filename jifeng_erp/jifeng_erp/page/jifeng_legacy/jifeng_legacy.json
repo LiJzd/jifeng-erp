@@ -6,13 +6,47 @@
   "module": "Jifeng ERP",
   "standard": "Yes",
   "roles": [
-    { "role": "Stock User" },
-    { "role": "Purchase User" },
-    { "role": "Purchase Manager" },
-    { "role": "Manufacturing User" },
-    { "role": "Stock Manager" },
-    { "role": "Manufacturing Manager" },
-    { "role": "System Manager" },
-    { "role": "HR Manager" }
+    {
+      "role": "Stock User"
+    },
+    {
+      "role": "Purchase User"
+    },
+    {
+      "role": "Purchase Manager"
+    },
+    {
+      "role": "Manufacturing User"
+    },
+    {
+      "role": "Stock Manager"
+    },
+    {
+      "role": "Item Manager"
+    },
+    {
+      "role": "Manufacturing Manager"
+    },
+    {
+      "role": "Sales User"
+    },
+    {
+      "role": "Sales Manager"
+    },
+    {
+      "role": "Accounts User"
+    },
+    {
+      "role": "Accounts Manager"
+    },
+    {
+      "role": "System Manager"
+    },
+    {
+      "role": "HR Manager"
+    },
+    {
+      "role": "HR User"
+    }
   ]
 }

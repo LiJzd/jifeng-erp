@@ -31,3 +31,15 @@ Jifeng Historical Stock Balance,历史库存余额
 Jifeng Stock Reconciliation Ledger,库存盘点差异台账
 Jifeng Subcontracting Receipt Ledger,委外收回台账
 Jifeng Subcontracting Material Ledger,委外原料发退台账
+Point Of Sale,零售收银台
+POS Opening Entry,零售开班
+POS Closing Entry,零售结班
+POS Invoice,零售发票
+Jifeng Wage Allocation,多人计件分配
+Jifeng Wage Allocation Employee,计件分配员工
+Jifeng Sales Transaction Ledger,销售交易台账
+Jifeng Posted Sales Ledger,已过账销售台账
+Jifeng Product Catalog,产品档案明细
+Jifeng Product Material Catalog,产品材料配方明细
+Jifeng Mold Catalog,模具档案明细
+Jifeng Plate Catalog,版种档案明细

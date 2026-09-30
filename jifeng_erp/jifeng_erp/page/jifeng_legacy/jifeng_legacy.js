@@ -70,7 +70,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "工资",
 		groups: [
-			{ name: "正式业务", items: ["计薪记录", "工资附加项", "工资单", "工资发放", "调薪记录", "调薪录入"] },
+			{ name: "正式业务", items: ["计薪记录", "多人计件分配", "分配审核", "工资附加项", "工资单", "工资发放", "调薪记录", "调薪录入"] },
 			{ name: "基础资料", items: ["工序", "计件人员", "工价调用", "工序查询", "人员查询", "临工档案"] },
 			{ name: "工资操作", items: ["工资录入", "临工", "工资汇总", "审核", "计算", "临工打印"] },
 			{ name: "报表分析", items: ["工资明细", "临工明细", "工资分析", "临工分析", "临工浏览", "历史", "当月分析", "历史分析"] },
@@ -116,7 +116,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "销售",
 		groups: [
 			{ name: "基础资料", items: ["客户类型", "客户等级", "客户分类", "客户档案", "入库部门", "入库类型", "商品信息", "条码打印", "销售员", "条码标题", "收款方式", "快递公司", "销售页脚", "零售倍率", "库位模式"] },
-			{ name: "正式业务", items: ["销售订单", "零售开单", "发货单", "销售发票", "分批回货成本试算"] },
+			{ name: "正式业务", items: ["销售订单", "零售开单", "零售单记录", "零售开班", "零售结班", "发货单", "销售发票", "已过账销售台账", "分批回货成本试算"] },
 			{ name: "销售操作", items: ["销售入库", "前台开单", "销售调拨", "库位下架", "销售反审", "销售跟踪", "成品出库", "客户返修"] },
 			{ name: "仓库管理", items: ["销售盘点", "差异处理", "库存", "盘点明细", "PDA数据", "库存明细", "库位库存", "库位修改", "库存排行", "历史库存", "库存预警"] },
 			{ name: "报表分析", items: ["销售单查询", "日报表", "销售报表", "销售分析", "销售排行", "入库排行", "进销存", "入库明细", "明细查询", "调拨明细", "下架明细", "销售比", "新款分析", "明细成本", "同比", "部门同比", "导购同比", "客户同比", "品牌同比", "类别同比"] },
@@ -153,12 +153,12 @@ const JIFENG_LIVE_ROUTES = {
 		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation",
 		入库单: "Stock Entry", 反审: "Work Order", 工作站: "Workstation" },
 	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
-	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
+	工资: { 计薪记录: "Jifeng Wage Entry", 分配审核: "Jifeng Wage Allocation", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
 	发镀: { 委外采购单: "Purchase Order", 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
 	外发: { 委外采购单: "Purchase Order", 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
-	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售开单: "POS Invoice", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
+	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售单记录: "POS Invoice", 零售开班: "POS Opening Entry", 零售结班: "POS Closing Entry", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 费用登记单: "Jifeng Expense Voucher", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry", 费用登记查询: "Jifeng Expense Voucher" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
 	日志: { 服务器操作日志: "Activity Log", 操作日志: "Activity Log" },
@@ -166,6 +166,7 @@ const JIFENG_LIVE_ROUTES = {
 
 const JIFENG_LIVE_PAGES = {
 	权限: { 权限管理: "permission-manager" },
+	销售: { 零售开单: "point-of-sale", 前台开单: "point-of-sale" },
 };
 
 const JIFENG_LIVE_CREATE = {
@@ -185,13 +186,14 @@ const JIFENG_LIVE_CREATE = {
 			盘点: { doctype: "Stock Reconciliation", values: {} },
 			差异处理: { doctype: "Stock Reconciliation", values: {} },
 		},
-	产品: { 报价单: { doctype: "Quotation", values: { quotation_to: "Customer" } } },
+	产品: { 报价单: { doctype: "Quotation", values: { quotation_to: "Customer" } },
+		资料录入: { doctype: "Jifeng Product Profile", values: {} } },
 	订单: { 订单录入: { doctype: "Sales Order", values: {} } },
 	人事: {
 		晋升办理: { doctype: "Employee Promotion", values: {} },
 		调岗办理: { doctype: "Employee Transfer", values: {} },
 	},
-	工资: { 调薪录入: { doctype: "Salary Structure Assignment", values: {} } },
+	工资: { 调薪录入: { doctype: "Salary Structure Assignment", values: {} }, 多人计件分配: { doctype: "Jifeng Wage Allocation", values: {} } },
 	生产: { 生产指令单: { doctype: "Production Plan", values: {} } },
 	发镀: {
 		新建委外采购: { doctype: "Purchase Order", values: { is_subcontracted: 1 } },
@@ -209,7 +211,6 @@ const JIFENG_LIVE_CREATE = {
 		销售调拨: { doctype: "Stock Entry", values: { stock_entry_type: "Material Transfer" } },
 		销售盘点: { doctype: "Stock Reconciliation", values: {} },
 		差异处理: { doctype: "Stock Reconciliation", values: {} },
-		前台开单: { doctype: "POS Invoice", values: {} },
 	},
 	财务: {
 		收款凭证: { doctype: "Payment Entry", values: { payment_type: "Receive" } },
@@ -229,6 +230,10 @@ const JIFENG_LIVE_LIST_FILTERS = {
 };
 
 const JIFENG_LIVE_REPORTS = {
+	产品: { 产品浏览: "Jifeng Product Catalog", 产品明细: "Jifeng Product Catalog", 打印: "Jifeng Product Catalog",
+		产品材料明细: "Jifeng Product Material Catalog" },
+	模具: { 模具报表: "Jifeng Mold Catalog" },
+	版种: { 版种报表: "Jifeng Plate Catalog" },
 	物料: { 库存: "Jifeng Historical Stock Balance", 历史库存: "Jifeng Historical Stock Balance", 库存明细: "Stock Ledger",
 		盘点明细: "Jifeng Stock Reconciliation Ledger", 申购报表: "Jifeng Purchase Request Ledger", 申购明细: "Jifeng Purchase Request Ledger",
 		入库报表: "Jifeng Purchase Receipt Ledger", 入库明细: "Jifeng Purchase Receipt Ledger",
@@ -268,6 +273,8 @@ const JIFENG_LIVE_REPORTS = {
 		入库明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "receipt" } },
 		调拨明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "transfer" } },
 		销售报表: "Sales Register", 销售分析: "Sales Analytics", 明细成本: "Gross Profit",
+		销售单查询: "Jifeng Sales Transaction Ledger", 日报表: { name: "Jifeng Sales Transaction Ledger", daily: true },
+		已过账销售台账: "Jifeng Posted Sales Ledger",
 	},
 	财务: {
 		销售账: "Accounts Receivable", 费用账: "Jifeng Expense Ledger", 总报表: "General Ledger",
@@ -277,6 +284,12 @@ const JIFENG_LIVE_REPORTS = {
 };
 
 const JIFENG_LIVE_REPORT_DEFAULTS = {
+	"Jifeng Product Catalog": { item_code: "", status: "" },
+	"Jifeng Product Material Catalog": { item_code: "", status: "" },
+	"Jifeng Mold Catalog": { item_code: "", status: "" },
+	"Jifeng Plate Catalog": { item_code: "", status: "" },
+	"Jifeng Sales Transaction Ledger": { customer: "", pos_profile: "", cashier: "", only_returns: 0, source_type: "" },
+	"Jifeng Posted Sales Ledger": { customer: "", pos_profile: "", cashier: "", only_returns: 0, source_type: "" },
 	"Jifeng Purchase Request Ledger": { item_code: "", warehouse: "", flow_order: "", only_pending: 0 },
 	"Jifeng Purchase Receipt Ledger": { supplier: "", item_code: "", warehouse: "", flow_order: "", only_returns: 0 },
 	"Jifeng Stock Entry Ledger": { mode: "issue", item_code: "", warehouse: "", flow_order: "" },
@@ -344,6 +357,10 @@ class JifengLegacyWorkspace {
 		if (report) {
 			frappe.route_options = { ...(JIFENG_LIVE_REPORT_DEFAULTS[report.name || report] || {}),
 				...(report.filters || {}) };
+			if (["Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger"].includes(report.name || report)) {
+				frappe.route_options.from_date = report.daily ? frappe.datetime.get_today() : frappe.datetime.month_start();
+				frappe.route_options.to_date = frappe.datetime.get_today();
+			}
 			frappe.set_route("query-report", report.name || report);
 			return;
 		}
@@ -546,7 +563,7 @@ class JifengLegacyWorkspace {
 		else if (state && !companies.length) body = '<p class="jfe-dashboard-status">当前账号没有可查看的公司。</p>';
 		else if (state) {
 			const items = [
-				["sales", "销售净额", "已提交销售发票的本币未税净额，含退货冲减", "Sales Invoice", true],
+				["sales", "已过账销售净额", "已提交销售发票的本币未税净额，含合并发票及退货冲减；未合并零售凭证营业额见销售交易台账", "Sales Invoice", true],
 				["purchases", "采购净额", "已提交采购发票的本币未税净额，含退货冲减", "Purchase Invoice", true],
 				["expenses", "费用支出", "已提交集沣费用登记单金额", "Jifeng Expense Voucher", true],
 				["open_work_orders", "未完工工单", "当前已提交且未完成、停止或关闭的工单", "Work Order", false],
