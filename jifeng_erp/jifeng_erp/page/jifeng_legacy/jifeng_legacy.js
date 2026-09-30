@@ -61,10 +61,10 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "人事",
 		groups: [
-			{ name: "正式业务", items: ["员工档案", "员工补充档案", "部门档案", "职位档案", "晋升记录", "晋升办理", "调岗记录", "调岗办理", "离职流程"] },
-			{ name: "基础资料", items: ["部门", "专长", "文化", "民族"] },
-			{ name: "人员管理", items: ["人事档案", "人员浏览"] },
+			{ name: "基础资料", items: ["人事部门", "人事专长", "人事文化", "人事民族"] },
+			{ name: "操作功能", items: ["人事档案", "人事浏览"] },
 			{ name: "报表查询", items: ["人事报表"] },
+			{ name: "正式业务", items: ["员工档案", "员工补充档案", "部门档案", "职位档案", "晋升记录", "晋升办理", "调岗记录", "调岗办理", "离职流程"] },
 		],
 	},
 	{
@@ -152,7 +152,7 @@ const JIFENG_LIVE_ROUTES = {
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card",
 		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation",
 		入库单: "Stock Entry", 反审: "Work Order", 工作站: "Workstation" },
-	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
+	人事: { 人事档案: "Employee", 人事浏览: "Employee", 人事部门: "Department", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
 	工资: { 计薪记录: "Jifeng Wage Entry", 分配审核: "Jifeng Wage Allocation", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
@@ -328,20 +328,11 @@ class JifengLegacyWorkspace {
 		this.host = host;
 		this.tabs = [{ key: "home", title: "主页", kind: "home" }];
 		this.activeKey = "home";
-		this.search = "";
-		this.dateFrom = "";
-		this.dateTo = "";
-		this.onlyDate = false;
-		this.approvalFilter = "未审";
-		this.planStatus = "生产中";
-		this.deliveryFilter = false;
-		this.moldView = "列表模式";
-		this.moldPreview = true;
+		Object.assign(this, this.defaultViewState());
 		this.dashboard = null;
 		this.dashboardRequest = 0;
-		this.pageNo = 1;
-		this.pageSize = 15;
 		this.editing = null;
+		this.formalBridge = window.JifengClassicBridge ? new window.JifengClassicBridge(this) : null;
 		this.render();
 	}
 
@@ -352,6 +343,46 @@ class JifengLegacyWorkspace {
 	today() {
 		const now = new Date();
 		return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
+	}
+
+	defaultViewState(pageName) {
+		const state = {
+			search: "", dateFrom: "", dateTo: "", onlyDate: false,
+			approvalFilter: "未审", planStatus: "生产中", deliveryFilter: false,
+			moldView: "列表模式", moldPreview: true, pageNo: 1, pageSize: 15,
+		};
+		if (["操作日志", "销售单查询", "收款凭证", "付款凭证", "费用登记"].includes(pageName)) {
+			const today = this.today();
+			state.dateFrom = pageName === "操作日志" ? today + "T00:00" : today;
+			state.dateTo = pageName === "操作日志" ? today + "T23:59" : today;
+		}
+		return state;
+	}
+
+	saveActiveTabState() {
+		const active = this.activeTab();
+		if (!active) return;
+		// Keep entered filters even when the user switches tabs before Query.
+		for (const [field, selector, property] of [
+			["search", "[data-search]", "value"],
+			["dateFrom", '[data-filter="from"]', "value"],
+			["dateTo", '[data-filter="to"]', "value"],
+			["onlyDate", "[data-only-date]", "checked"],
+			["deliveryFilter", "[data-delivery-filter]", "checked"],
+		]) {
+			const input = this.host.querySelector(selector);
+			if (input) this[field] = input[property];
+		}
+		active.viewState = Object.fromEntries(Object.keys(this.defaultViewState()).map((field) => [field, this[field]]));
+	}
+
+	switchTab(key) {
+		const tab = this.tabs.find((item) => item.key === key);
+		if (!tab) return;
+		this.saveActiveTabState();
+		this.activeKey = key;
+		Object.assign(this, this.defaultViewState(tab.page), tab.viewState || {});
+		this.render();
 	}
 
 	openModule(name) {
@@ -365,22 +396,37 @@ class JifengLegacyWorkspace {
 	openPage(name, moduleName) {
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
+			if (this.formalBridge) {
+				this.formalBridge.open({ title: name, module: moduleName, kind: "page", route: [livePage] });
+				return;
+			}
 			frappe.set_route(livePage);
 			return;
 		}
 		const report = JIFENG_LIVE_REPORTS[moduleName]?.[name];
 		if (report) {
-			frappe.route_options = { ...(JIFENG_LIVE_REPORT_DEFAULTS[report.name || report] || {}),
+			const filters = { ...(JIFENG_LIVE_REPORT_DEFAULTS[report.name || report] || {}),
 				...(report.filters || {}) };
 			if (["Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger", "Jifeng Sales Item Ranking", "Jifeng Wage Analysis"].includes(report.name || report)) {
-				frappe.route_options.from_date = report.daily ? frappe.datetime.get_today() : frappe.datetime.month_start();
-				frappe.route_options.to_date = frappe.datetime.get_today();
+				filters.from_date = report.daily ? frappe.datetime.get_today() : frappe.datetime.month_start();
+				filters.to_date = frappe.datetime.get_today();
 			}
+			if (this.formalBridge) {
+				this.formalBridge.open({ title: name, module: moduleName, kind: "report",
+					route: ["query-report", report.name || report], filters });
+				return;
+			}
+			frappe.route_options = filters;
 			frappe.set_route("query-report", report.name || report);
 			return;
 		}
 		const create = JIFENG_LIVE_CREATE[moduleName]?.[name];
 		if (create) {
+			if (this.formalBridge) {
+				this.formalBridge.openCreate({ title: name, module: moduleName, kind: "create",
+					doctype: create.doctype, values: create.values || {} });
+				return;
+			}
 			frappe.new_doc(create.doctype, create.values);
 			return;
 		}
@@ -389,6 +435,12 @@ class JifengLegacyWorkspace {
 			const filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
 			// Frappe List views can restore saved user filters when no route filter is supplied.
 			frappe.route_options = filters || {};
+			if (this.formalBridge) {
+				frappe.route_options = null;
+				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
+					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {} });
+				return;
+			}
 			frappe.set_route("List", liveDoctype);
 			return;
 		}
@@ -396,19 +448,6 @@ class JifengLegacyWorkspace {
 			this.openModule(name);
 			return;
 		}
-		this.search = "";
-		this.dateFrom = "";
-		this.dateTo = "";
-		this.onlyDate = false;
-		this.approvalFilter = "未审";
-		this.pageNo = 1;
-		if (["操作日志", "销售单查询", "收款凭证", "付款凭证", "费用登记"].includes(name)) {
-			const today = this.today();
-			this.dateFrom = name === "操作日志" ? today + "T00:00" : today;
-			this.dateTo = name === "操作日志" ? today + "T23:59" : today;
-		}
-		if (name === "计划图片") { this.planStatus = "生产中"; this.deliveryFilter = false; }
-		if (name === "模具录入") { this.moldView = "列表模式"; this.moldPreview = true; }
 		this.addTab({
 			key: "page:" + moduleName + ":" + name,
 			title: name,
@@ -420,25 +459,32 @@ class JifengLegacyWorkspace {
 
 	addTab(tab) {
 		const existing = this.tabs.find((item) => item.key === tab.key);
-		if (existing) {
-			this.activeKey = tab.key;
-		} else {
+		if (!existing) {
+			tab.viewState = this.defaultViewState(tab.page);
 			this.tabs.push(tab);
-			this.activeKey = tab.key;
 		}
-		this.render();
+		this.switchTab(tab.key);
 	}
 
 	activeTab() {
 		return this.tabs.find((item) => item.key === this.activeKey) || this.tabs[0];
 	}
 
-	closeTab(key) {
+	closeTab(key, discard = false) {
 		if (key === "home") return;
 		const index = this.tabs.findIndex((item) => item.key === key);
 		if (index < 0) return;
+		if (!discard && this.formalBridge && !this.formalBridge.canClose(key)) {
+			frappe.confirm(__("尚有未保存的修改，关闭并放弃修改？"), () => this.closeTab(key, true));
+			return;
+		}
+		this.saveActiveTabState();
 		this.tabs.splice(index, 1);
-		if (this.activeKey === key) this.activeKey = this.tabs[Math.max(0, index - 1)].key;
+		if (this.activeKey === key) {
+			const tab = this.tabs[Math.max(0, index - 1)];
+			this.activeKey = tab.key;
+			Object.assign(this, this.defaultViewState(tab.page), tab.viewState || {});
+		}
 		this.render();
 	}
 
@@ -454,6 +500,7 @@ class JifengLegacyWorkspace {
 			'<main class="jfe-content">' + this.renderActive(active) + '</main></section></div>' +
 			'<div class="jfe-toast" data-toast></div><div class="jfe-modal-root" data-modal-root></div></div>';
 		this.bindEvents();
+		this.formalBridge?.sync();
 		this.updateClock();
 		if (active.kind === "module" && active.module === "总经理") this.loadDashboard();
 		clearInterval(this.clockTimer);
@@ -487,6 +534,7 @@ class JifengLegacyWorkspace {
 	}
 
 	renderActive(tab) {
+		if (tab.kind === "formal") return this.formalBridge.content(tab);
 		if (tab.kind === "home") return this.renderHome();
 		if (tab.kind === "module") return this.renderModule(tab.module);
 		if (tab.kind === "list" && tab.module === "工资" && tab.page === "工资录入") return this.renderPayrollEntry();
@@ -1240,7 +1288,9 @@ class JifengLegacyWorkspace {
 				frappe.route_options = filters;
 				frappe.set_route("List", button.dataset.doctype);
 			}
-			else if (action === "tab") { this.activeKey = button.dataset.key; this.render(); }
+			else if (action === "tab") this.switchTab(button.dataset.key);
+			else if (action === "classic-home") this.switchTab("home");
+			else if (action === "classic-module") this.openModule(button.dataset.module);
 			else if (action === "close-tab") { event.stopPropagation(); this.closeTab(button.dataset.key); }
 			else if (action === "fullscreen") this.fullscreen();
 			else if (action === "exit-fullscreen") this.exitFullscreen();
