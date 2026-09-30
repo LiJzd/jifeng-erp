@@ -186,6 +186,11 @@ def smoke(company, item_group, stock_uom):
             frappe.db.MAX_WRITES_PER_TRANSACTION = write_limit
 
     def post(document, kind):
+        # Match savedocs: a mapper mutates an initially blank controller, while
+        # Desk sends its final values back as a new document dictionary. Native
+        # DN.__init__ builds its return status_updater from is_return, so this
+        # reconstruction is required before inserting a mapped return.
+        document = frappe.get_doc(document.as_dict())
         remember(document)
         document.insert()
         records.add((document.doctype, document.name))
