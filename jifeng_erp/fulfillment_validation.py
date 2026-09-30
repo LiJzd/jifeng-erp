@@ -632,3 +632,436 @@ def smoke(company, item_group, stock_uom):
             "whole_ledger_hashes_before": before, "whole_ledger_hashes_after": _ledger_snapshot(),
             "table_counts_before": before_counts, "table_counts_after": _counts(),
             "evidence": evidence, "execution": "direct Python; one call; serial rollback experiment"}
+
+
+def delta_smoke(company, item_group, stock_uom):
+    """Validate native readonly Flow defaults, separately from the 57-gate smoke.
+
+    Run once in an exclusive business-write window with the same direct Python
+    contract as ``smoke``, substituting this import and this single invocation::
+
+        from jifeng_erp.fulfillment_validation import delta_smoke
+        result = delta_smoke(company="Jifeng ERP UI Validation",
+                             item_group="Products", stock_uom="Nos")
+
+    Real User Permissions permit A+B and explicitly default to B. Final mapped
+    dictionaries rebuild Desk controllers before native insert/submit, including
+    returns. Every rejection rolls back its own savepoint with whole GL/SLE and
+    table-count audits; all successful transactions also roll back on exit.
+    No override of defaults, field metadata, permissions or posting is used.
+    """
+    from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
+    from erpnext.controllers.sales_and_purchase_return import make_return_doc
+    from erpnext.selling.doctype.sales_order.sales_order import (
+        make_delivery_note,
+        make_sales_invoice as make_order_invoice,
+    )
+    from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_invoice
+
+    from jifeng_erp.workflow import create_sales_order_flows
+
+    def delta_counts():
+        result = _counts()
+        for doctype in ("Error Log", "Activity Log", "Access Log"):
+            if frappe.db.table_exists(doctype):
+                result[doctype] = frappe.db.count(doctype)
+        return result
+
+    frappe.only_for("System Manager")
+    fixture = _preflight(company, item_group, stock_uom)
+    original_user, original_test = frappe.session.user, frappe.in_test
+    original_repost = frappe.flags.through_repost_item_valuation
+    original_max_writes = frappe.db.MAX_WRITES_PER_TRANSACTION
+    before, before_counts = _ledger_snapshot(), delta_counts()
+    point = "jf_fulfill_delta_" + frappe.generate_hash(length=10)
+    prefix = "JF-QA-FULFILL-DELTA-" + frappe.generate_hash(length=10)
+    objects, records, users, checks, evidence, vouchers = [], set(), [], [], {}, set()
+    current_gate = "begin"
+    _begin_rollback_only(point)
+
+    def gate(label):
+        nonlocal current_gate
+        current_gate = label
+
+    def passed():
+        checks.append(current_gate)
+
+    def remember(document):
+        objects.append(document)
+        if document.name:
+            records.add((document.doctype, document.name))
+        return document
+
+    def insert(doctype, **fields):
+        document = remember(frappe.get_doc({"doctype": doctype, **fields}))
+        document.insert()
+        records.add((document.doctype, document.name))
+        return document
+
+    def native_action(document, action):
+        repost_flag = frappe.flags.through_repost_item_valuation
+        write_limit = frappe.db.MAX_WRITES_PER_TRANSACTION
+        try:
+            return getattr(document, action)()
+        finally:
+            frappe.flags.through_repost_item_valuation = repost_flag
+            frappe.db.MAX_WRITES_PER_TRANSACTION = write_limit
+
+    def desk_insert(document, submit=False, default=None):
+        # Match savedocs, rather than retaining the mapper's initially blank
+        # controller or any private server-side normalization/inheritance flags.
+        document = remember(frappe.get_doc(document.as_dict()))
+        assert not document.flags.ignore_permissions, "Desk 重建后不能保留 mapper 的权限跳过标志"
+        if default is not None:
+            assert len(document.items) == 1 and document.items[0].jf_flow_order == default
+            assert document.is_new() and document.items[0].is_new()
+            evidence.setdefault("desk_inputs", []).append({
+                "doctype": document.doctype, "is_return": int(bool(document.get("is_return"))),
+                "default_flow": document.items[0].jf_flow_order,
+                "so_detail": document.items[0].get("so_detail"),
+                "dn_detail": document.items[0].get("dn_detail"),
+                "sales_invoice_item": document.items[0].get("sales_invoice_item"),
+            })
+        document.insert()
+        records.add((document.doctype, document.name))
+        if submit:
+            native_action(document, "submit")
+            vouchers.add((document.doctype, document.name))
+        return document.reload()
+
+    def reject(label, operation, error, text, hidden=()):
+        gate(label)
+        nested = "jf_fulfill_delta_denied_" + frappe.generate_hash(length=8)
+        ledger, counts = _ledger_snapshot(), delta_counts()
+        frappe.db.savepoint(nested)
+        try:
+            try:
+                operation()
+            except error as exception:
+                message = str(exception)
+                assert text in message, (label, "wrong rejection", message)
+                assert all(name not in message for name in hidden), "错误泄露不可读流程单编号"
+                evidence.setdefault("rejections", []).append({"gate": label, "type": type(exception).__name__})
+            else:
+                raise AssertionError(label + " did not reject")
+        finally:
+            frappe.db.rollback(save_point=nested)
+        assert _ledger_snapshot() == ledger, label + " changed whole GL/SLE"
+        assert delta_counts() == counts, label + " left records after source savepoint rollback"
+        passed()
+
+    def order(traced):
+        return desk_insert(frappe.get_doc({"doctype": "Sales Order", "company": company,
+            "customer": fixture.customer.name, "delivery_date": add_days(today(), 7),
+            "selling_price_list": fixture.price_list.name, "price_list_currency": fixture.currency,
+            "currency": fixture.currency, "conversion_rate": 1, "plc_conversion_rate": 1,
+            "ignore_pricing_rule": 1, "disable_rounded_total": 1,
+            "items": [{"item_code": fixture.item.name, "qty": qty, "rate": rate,
+                       "delivery_date": add_days(today(), 7), "warehouse": fixture.warehouse.name,
+                       "jf_make_flow": int(traced), "jf_requirements": prefix + "要求"}
+                      for qty, rate in ((4, 11), (3, 17))]}), submit=True)
+
+    def default_row(document):
+        row = frappe.new_doc(document.doctype + " Item", parent_doc=document, parentfield="items")
+        assert row.jf_flow_order == flow_b.name, "原生新建子行没有实际默认到 B"
+        return row
+
+    def standalone(doctype, clock="07:00:00"):
+        document = frappe.new_doc(doctype)
+        document.update({"company": company, "customer": fixture.customer.name,
+            "selling_price_list": fixture.price_list.name, "price_list_currency": fixture.currency,
+            "currency": fixture.currency, "conversion_rate": 1, "plc_conversion_rate": 1})
+        row = default_row(document)
+        row.update({"item_code": fixture.item.name, "qty": 1, "rate": 5,
+                    "warehouse": fixture.warehouse.name, "uom": stock_uom, "stock_uom": stock_uom,
+                    "conversion_factor": 1, "income_account": fixture.accounts.income,
+                    "expense_account": fixture.accounts.expense, "cost_center": fixture.cost_center})
+        document.append("items", row)
+        if doctype == "Sales Invoice":
+            document.debit_to = fixture.accounts.receivable
+            document.update_stock = 0
+        return _stamp(document, clock)
+
+    def dn(source, child, qty, clock):
+        document = make_delivery_note(source.name, kwargs={"filtered_children": [child]})
+        assert len(document.items) == 1 and document.items[0].so_detail == child
+        assert document.items[0].jf_flow_order == flow_b.name, "SO mapper 未保留实际原生默认 B"
+        document.items[0].qty = qty
+        return _stamp(document, clock)
+
+    def si(source, clock):
+        document = make_sales_invoice(source.name)
+        assert len(document.items) == 1 and document.items[0].jf_flow_order == flow_b.name
+        document.debit_to = fixture.accounts.receivable
+        document.update_stock = 0
+        return _stamp(document, clock)
+
+    def returned(source, clock):
+        document = make_sales_return(source.name) if source.doctype == "Sales Invoice" else make_return_doc(
+            "Delivery Note", source.name)
+        assert len(document.items) == 1 and document.items[0].jf_flow_order == flow_b.name
+        document.items[0].qty = -1
+        document.items[0].warehouse = fixture.warehouse.name
+        if document.doctype == "Sales Invoice":
+            document.update_stock = 0
+        return _stamp(document, clock)
+
+    def changed_source(document):
+        document.items[0].so_detail = first
+        return native_action(document, "save")
+
+    def forged_nondefault():
+        document = dn(traced, second, 1, "17:00:00")
+        document.items[0].jf_flow_order = flow_a.name  # Actual default is B, so this is deliberate input.
+        return desk_insert(document)
+
+    def hidden_dn_source():
+        document = standalone("Sales Invoice", "17:30:00")
+        document.items[0].update({"delivery_note": delivery_a.name, "dn_detail": delivery_a.items[0].name})
+        return desk_insert(document, default=flow_b.name)
+
+    try:
+        frappe.in_test = True  # Native valuation reposts run synchronously, within the transaction barrier.
+        frappe.set_user("Administrator")
+        gate("native_delta_fixture_stock_and_two_exact_same_item_flows")
+        fixture.warehouse = insert("Warehouse", company=company, warehouse_name=prefix)
+        fixture.item = insert("Item", item_code=prefix, item_group=item_group, stock_uom=stock_uom,
+            is_stock_item=1, valuation_method="Moving Average", item_defaults=[{
+                "company": company, "default_warehouse": fixture.warehouse.name,
+                "income_account": fixture.accounts.income, "expense_account": fixture.accounts.expense,
+                "buying_cost_center": fixture.cost_center, "selling_cost_center": fixture.cost_center}])
+        fixture.customer = insert("Customer", customer_name=prefix, customer_type="Company",
+                                  customer_group=fixture.customer_group, territory=fixture.territory)
+        fixture.price_list = insert("Price List", price_list_name=prefix, currency=fixture.currency,
+                                    selling=1, enabled=1)
+        actor = insert("User", email=prefix.lower() + "@example.invalid", first_name="发货默认增量验收",
+                       send_welcome_email=0, roles=[{"role": role} for role in ROLES["traced"]])
+        users.append(actor.name)
+        insert("User Permission", user=actor.name, allow="Company", for_value=company, apply_to_all_doctypes=1)
+        insert("User Permission", user=actor.name, allow="Item", for_value=fixture.item.name,
+               apply_to_all_doctypes=1)
+        frappe.set_user(actor.name)
+        for doctype in ("Sales Order", "Delivery Note", "Sales Invoice"):
+            assert all(frappe.has_permission(doctype, perm) for perm in ("read", "create", "submit"))
+        assert frappe.has_permission(FLOW, "read") and frappe.has_permission(FLOW, "create")
+        assert frappe.get_doc("Company", company).has_permission("read")
+        assert frappe.get_doc("Item", fixture.item.name).has_permission("read")
+        seed = desk_insert(frappe.get_doc({"doctype": "Stock Entry", "company": company,
+            "stock_entry_type": "Material Receipt", "posting_date": add_days(today(), -1),
+            "posting_time": "06:00:00", "set_posting_time": 1,
+            "items": [{"item_code": fixture.item.name, "qty": 30, "basic_rate": 2,
+                       "t_warehouse": fixture.warehouse.name, "expense_account": fixture.accounts.expense,
+                       "cost_center": fixture.cost_center}]}), submit=True)
+        _stock(fixture.item.name, fixture.warehouse.name, today(), 30, 60)
+        traced, ordinary = order(True), order(False)
+        flow_names = create_sales_order_flows(traced.name)
+        assert len(flow_names) == 2 and not frappe.db.exists(FLOW, {"sales_order": ordinary.name})
+        flows = {frappe.get_doc(FLOW, name).sales_order_item: remember(frappe.get_doc(FLOW, name))
+                 for name in flow_names}
+        first, second = (row.name for row in traced.items)
+        flow_a, flow_b = flows[first], flows[second]
+        assert flow_a.name != flow_b.name and flow_a.item_code == flow_b.item_code == fixture.item.name
+        evidence["native_roles"] = list(ROLES["traced"])
+        evidence["source_rows"] = {first: flow_a.name, second: flow_b.name}
+        passed()
+
+        gate("native_multiple_flow_permissions_a_b_actual_default_b")
+        frappe.set_user("Administrator")
+        permission_a = insert("User Permission", user=actor.name, allow=FLOW,
+                              for_value=flow_a.name, apply_to_all_doctypes=1, is_default=0)
+        permission_b = insert("User Permission", user=actor.name, allow=FLOW,
+                              for_value=flow_b.name, apply_to_all_doctypes=1, is_default=1)
+        frappe.clear_cache(user=actor.name)
+        frappe.set_user(actor.name)  # Native API resets new_doc_templates and user-permission caches.
+        assert flow_a.has_permission("read") and flow_b.has_permission("read")
+        assert frappe.db.get_value("User Permission", permission_b.name, "is_default") == 1
+        assert frappe.db.count("User Permission", {"user": actor.name, "allow": FLOW}) == 2
+        for doctype in ("Delivery Note", "Sales Invoice"):
+            default_row(frappe.new_doc(doctype))
+        evidence["native_flow_user_permissions"] = {
+            "allowed": [flow_a.name, flow_b.name], "default": flow_b.name,
+            "is_default_record": permission_b.name,
+            "strict_user_permissions": bool(frappe.get_system_settings("apply_strict_user_permissions")),
+        }
+        passed()
+
+        gate("native_standalone_dn_si_defaults_clear_after_desk_reconstruction")
+        plain_drafts = [desk_insert(standalone(doctype), default=flow_b.name)
+                        for doctype in ("Delivery Note", "Sales Invoice")]
+        assert all(not document.items[0].jf_flow_order for document in plain_drafts)
+        assert all(flt(document.items[0].qty) == 1 and flt(document.items[0].rate) == 5
+                   for document in plain_drafts)
+        passed()
+
+        gate("native_so_a_to_si_default_b_inherits_exact_a_after_desk_reconstruction")
+        ledger = _ledger_snapshot()
+        direct = make_order_invoice(traced.name, args={"filtered_children": [first]})
+        assert len(direct.items) == 1 and direct.items[0].so_detail == first
+        assert direct.items[0].jf_flow_order == flow_b.name
+        direct.items[0].qty = 1
+        direct.debit_to = fixture.accounts.receivable
+        direct.update_stock = 0
+        direct = desk_insert(_stamp(direct, "07:30:00"), default=flow_b.name)
+        assert direct.items[0].jf_flow_order == flow_a.name
+        assert direct.items[0].sales_order == traced.name and not direct.items[0].dn_detail
+        assert flt(direct.items[0].qty) == 1 and flt(direct.items[0].rate) == 11
+        assert _ledger_snapshot() == ledger, "SO 直开 SI 草稿不能过账 GL/SLE"
+        passed()
+
+        gate("native_so_a_to_dn_default_b_inherits_exact_a_and_posts_native_stock")
+        delivery_a = desk_insert(dn(traced, first, 2, "08:00:00"), submit=True, default=flow_b.name)
+        assert delivery_a.items[0].jf_flow_order == flow_a.name
+        assert delivery_a.items[0].so_detail == first and flt(delivery_a.items[0].rate) == 11
+        assert sum(flt(row.actual_qty) for row in _voucher_entries("Stock Ledger Entry", delivery_a)) == -2
+        passed()
+
+        gate("native_dn_a_to_si_default_b_inherits_exact_a_without_stock_reposting")
+        ledger = _ledger_snapshot()
+        invoice_a = desk_insert(si(delivery_a, "09:00:00"), submit=True, default=flow_b.name)
+        _assert_invoice(invoice_a, delivery_a, flow_a.name, 2)
+        assert _ledger_snapshot()["Stock Ledger Entry"] == ledger["Stock Ledger Entry"]
+        passed()
+
+        gate("native_si_partial_return_default_b_keeps_exact_original_a_child")
+        ledger = _ledger_snapshot()
+        credit_a = desk_insert(returned(invoice_a, "10:00:00"), submit=True, default=flow_b.name)
+        assert credit_a.return_against == invoice_a.name
+        assert credit_a.items[0].sales_invoice_item == invoice_a.items[0].name
+        _assert_invoice(credit_a, delivery_a, flow_a.name, -1)
+        assert _ledger_snapshot()["Stock Ledger Entry"] == ledger["Stock Ledger Entry"]
+        passed()
+
+        gate("native_dn_partial_return_default_b_keeps_exact_original_a_child")
+        return_a = desk_insert(returned(delivery_a, "11:00:00"), submit=True, default=flow_b.name)
+        assert return_a.return_against == delivery_a.name
+        assert return_a.items[0].dn_detail == delivery_a.items[0].name
+        assert return_a.items[0].jf_flow_order == flow_a.name and flt(return_a.items[0].qty) == -1
+        assert sum(flt(row.actual_qty) for row in _voucher_entries("Stock Ledger Entry", return_a)) == 1
+        passed()
+
+        gate("native_credit_from_return_dn_default_b_keeps_exact_a_chain")
+        return_credit = desk_insert(si(return_a, "12:00:00"), submit=True, default=flow_b.name)
+        assert return_credit.is_return and not return_credit.return_against
+        _assert_invoice(return_credit, return_a, flow_a.name, -1)
+        passed()
+
+        gate("native_saved_default_matched_flow_and_blank_drafts_are_preserved")
+        historical_b = desk_insert(dn(traced, second, 1, "13:00:00"), default=flow_b.name)
+        assert historical_b.items[0].jf_flow_order == flow_b.name and not historical_b.is_new()
+        plain_dn = desk_insert(dn(ordinary, ordinary.items[0].name, 1, "14:00:00"),
+                               submit=True, default=flow_b.name)
+        historical_blank = desk_insert(dn(ordinary, ordinary.items[1].name, 1, "14:10:00"),
+                                       default=flow_b.name)
+        assert not historical_blank.items[0].jf_flow_order
+        for document, expected in ((historical_b, flow_b.name), (historical_blank, None),
+                                   *[(document, None) for document in plain_drafts]):
+            document.remarks = prefix + "历史保存"
+            document.save(ignore_version=False)
+            document.reload()
+            assert (document.items[0].jf_flow_order or None) == expected
+        evidence["saved_history"] = {"flow_b": historical_b.name, "blank": historical_blank.name}
+        passed()
+
+        reject("saved_flow_b_cannot_change_to_exact_a_source", lambda: changed_source(
+            frappe.get_doc("Delivery Note", historical_b.name)), frappe.ValidationError, "精确来源不一致")
+        reject("nondefault_client_flow_a_cannot_forge_source_b", forged_nondefault,
+               frappe.ValidationError, "精确来源不一致")
+
+        gate("historical_blank_dn_ignores_later_hidden_so_flow_even_with_default_b")
+        frappe.set_user("Administrator")
+        ordinary.reload()
+        ordinary.items[0].jf_make_flow = 1
+        ordinary.save()
+        late_names = create_sales_order_flows(ordinary.name)
+        assert len(late_names) == 1
+        late_flow = remember(frappe.get_doc(FLOW, late_names[0]))
+        frappe.clear_cache(user=actor.name)
+        frappe.set_user(actor.name)
+        assert not late_flow.has_permission("read") and not plain_dn.items[0].jf_flow_order
+        # The mapper itself requires native full parent.read. If this site's
+        # strict permissions deny blank Flow links, the native API cannot make
+        # this ordinary mapping; never grant or ignore permissions to force it.
+        assert plain_dn.has_permission("read"), "原生 User Permission 拒绝读取无 Flow 的 DN，无法构造普通映射"
+        plain_invoice = desk_insert(si(plain_dn, "15:00:00"), default=flow_b.name)
+        assert not plain_invoice.items[0].jf_flow_order
+        assert plain_invoice.items[0].dn_detail == plain_dn.items[0].name
+        passed()
+
+        # Only remove this run's A permission. B stays genuinely default; a
+        # hidden ancestor must fail, rather than becoming the unrelated B.
+        frappe.set_user("Administrator")
+        frappe.delete_doc("User Permission", permission_a.name)
+        frappe.clear_cache(user=actor.name)
+        frappe.set_user(actor.name)
+        assert not flow_a.has_permission("read") and flow_b.has_permission("read")
+        assert not delivery_a.has_permission("read")
+        for doctype in ("Delivery Note", "Sales Invoice"):
+            default_row(frappe.new_doc(doctype))
+        reject("native_default_b_does_not_authorize_hidden_so_a_flow", lambda: desk_insert(
+            dn(traced, first, 1, "17:00:00"), default=flow_b.name), frappe.PermissionError,
+            "没有完整读取销售来源单据或流程单的权限", hidden=(flow_a.name, flow_b.name))
+        reject("native_default_b_does_not_authorize_hidden_dn_a_ancestor", hidden_dn_source,
+               frappe.PermissionError, "没有完整读取销售来源单据或流程单的权限",
+               hidden=(flow_a.name, flow_b.name))
+
+        frappe.set_user("Administrator")
+        _finish_fixture_reposts(company, [fixture.item.name], [fixture.warehouse.name], vouchers)
+        _stock(fixture.item.name, fixture.warehouse.name, today(), 28, 56)
+        pending = frappe.get_all("Repost Item Valuation", filters={"item_code": fixture.item.name,
+            "warehouse": fixture.warehouse.name, "status": ["in", ["Queued", "In Progress", "Failed"]]}, pluck="name")
+        assert not pending, "本次增量夹具存在未完成的原生库存重算"
+        evidence["native_posting"] = {
+            "seed": seed.name, "delivery_a": delivery_a.name, "invoice_a": invoice_a.name,
+            "si_return": credit_a.name, "dn_return": return_a.name, "dn_return_credit": return_credit.name,
+            "ordinary_dn": plain_dn.name, "all_reposts_finished": True,
+        }
+    except Exception as exception:
+        exception.add_note("fulfillment delta smoke failed at gate: " + current_gate)
+        raise
+    finally:
+        try:
+            frappe.set_user("Administrator")
+            for document in objects:
+                if document.name:
+                    records.add((document.doctype, document.name))
+                records.update((row.doctype, row.name) for row in document.get_all_children() if row.name)
+            order_names = [name for doctype, name in records if doctype == "Sales Order"]
+            if order_names:
+                records.update((FLOW, name) for name in frappe.get_all(
+                    FLOW, filters={"sales_order": ["in", order_names]}, pluck="name"))
+            item_name = fixture.item.name if fixture.get("item") else None
+            if item_name:
+                records.update(("Bin", name) for name in frappe.get_all(
+                    "Bin", filters={"item_code": item_name}, pluck="name"))
+            records.update(("Repost Item Valuation", row.name) for row in frappe.get_all(
+                "Repost Item Valuation", filters={"company": company},
+                fields=["name", "item_code", "voucher_type", "voucher_no"])
+                if (item_name and row.item_code == item_name)
+                or (row.voucher_type, row.voucher_no) in vouchers)
+            own_names = list({name for _, name in records})
+            if own_names:
+                for doctype, field in (("File", "attached_to_name"), ("Version", "docname")):
+                    records.update((doctype, name) for name in frappe.get_all(
+                        doctype, filters={field: ["in", own_names]}, pluck="name"))
+        finally:
+            try:
+                _end_rollback_only(point)
+            finally:
+                frappe.in_test = original_test
+                frappe.flags.through_repost_item_valuation = original_repost
+                frappe.db.MAX_WRITES_PER_TRANSACTION = original_max_writes
+                frappe.set_user(original_user)
+                for user in users:
+                    frappe.clear_cache(user=user)
+                for doctype, name in records:
+                    frappe.clear_document_cache(doctype, name)
+            assert all(not frappe.db.exists(doctype, name) for doctype, name in records), "增量回滚后残留夹具记录"
+            assert delta_counts() == before_counts, "增量回滚后业务/主档/辅助表记录数有差异"
+            assert _ledger_snapshot() == before, "增量回滚后 whole GL/SLE hash 有差异"
+    checks.extend(("delta_rollback_all_tracked_records_and_table_counts",
+                   "delta_rollback_whole_gl_and_sle_hashes"))
+    return {"passed": True, "checks": checks, "gate_count": len(checks),
+            "business_data": "rolled_back", "tracked_records": dict(Counter(dt for dt, _ in records)),
+            "whole_ledger_hashes_before": before, "whole_ledger_hashes_after": _ledger_snapshot(),
+            "table_counts_before": before_counts, "table_counts_after": delta_counts(), "evidence": evidence,
+            "execution": "direct Python; one delta call; serial rollback experiment"}
