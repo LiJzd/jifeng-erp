@@ -233,7 +233,7 @@ const JIFENG_LIVE_REPORTS = {
 		订单逾期: { name: "Jifeng Production Progress", filters: { only_overdue: 1 } },
 		刷卡明细: "Jifeng Job Card Detail", 刷卡报表: "Jifeng Job Card Detail",
 		工序逾期: { name: "Jifeng Job Card Detail", filters: { only_overdue: 1 } },
-		部门订单: "Jifeng Job Card Detail", 部门逾期: { name: "Jifeng Job Card Detail", filters: { only_overdue: 1 } },
+		部门订单: "Jifeng Job Card Detail", 部门逾期: { name: "Jifeng Department Progress", filters: { only_overdue: 1 } },
 		部门进度: "Jifeng Department Progress", 计划图片: "Jifeng Production Picture",
 		工序损耗: { name: "Jifeng Job Card Detail", filters: { only_loss: 1, approval: "已提交" } },
 		损耗汇总: { name: "Jifeng Production Progress", filters: { only_loss: 1 } } },

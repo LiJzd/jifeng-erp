@@ -40,8 +40,20 @@ def validate_job_card_department(doc, method=None):
     work = frappe.get_doc("Work Order", doc.work_order)
     work.check_permission("read")
     source = next((row for row in work.get("operations") or [] if row.name == doc.operation_id), None)
-    if not source or source.operation != doc.operation or work.company != doc.company:
+    corrective = cint(doc.get("is_corrective_job_card"))
+    original_operation = doc.get("for_operation") if corrective else doc.operation
+    if not source or source.operation != original_operation or work.company != doc.company:
         frappe.throw("报工单部门来源与生产工单工序、公司不一致")
+    if corrective:
+        if not frappe.get_list("Operation", filters={"name": doc.operation, "is_corrective_operation": 1},
+                               pluck="name", limit_page_length=1):
+            frappe.throw("返工报工必须选择有权限的纠正工序")
+        if doc.get("for_job_card"):
+            original = frappe.get_doc("Job Card", doc.for_job_card)
+            original.check_permission("read")
+            if (original.work_order != work.name or original.operation_id != source.name
+                    or original.company != work.company):
+                frappe.throw("返工报工来源与原工单工序不一致")
     department = source.get("jf_department")
     if doc.get("jf_department") and doc.jf_department != department:
         frappe.throw("报工单生产部门与派工工序不一致")
