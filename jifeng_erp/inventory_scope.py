@@ -14,9 +14,9 @@ def decimal_number(value):
     try:
         number = Decimal(str(value if value not in (None, "") else 0))
     except (InvalidOperation, TypeError, ValueError):
-        frappe.throw("采购或库存数量、金额不是有效数字，请核对来源凭证")
+        frappe.throw("来源数量或金额不是有效数字，请核对来源凭证")
     if not number.is_finite():
-        frappe.throw("采购或库存数量、金额不是有限数字，请核对来源凭证")
+        frappe.throw("来源数量或金额不是有限数字，请核对来源凭证")
     return number
 
 
@@ -24,7 +24,7 @@ def report_scope(filters, doctypes):
     filters = frappe._dict(filters or {})
     for doctype in doctypes:
         if not frappe.has_permission(doctype, "read"):
-            frappe.throw("没有读取采购或库存单据的权限", frappe.PermissionError)
+            frappe.throw("没有读取业务单据的权限", frappe.PermissionError)
     if not filters.company or not filters.from_date or not filters.to_date:
         frappe.throw("请选择公司、开始日期和结束日期")
     # Stock/Purchase users can select Company without reading its full profile.
@@ -41,7 +41,7 @@ def report_scope(filters, doctypes):
         if field in ("warehouse", "flow_order"):
             query["company"] = filters.company
         if not frappe.get_list(doctype, filters=query, pluck="name", limit_page_length=1):
-            frappe.throw("没有读取所选采购或库存查询条件的权限", frappe.PermissionError)
+            frappe.throw("没有读取所选业务查询条件的权限", frappe.PermissionError)
         frappe.get_doc(doctype, filters[field]).check_permission("read")
     return filters, start, end
 
