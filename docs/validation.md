@@ -1,5 +1,40 @@
 # 验证记录
 
+## 2026-10-01 教育新表实际界面及提交数据
+
+Luna 在127.0.0.1真实登录后实测六列表头顺序、新增两条未保存记录、修改第一条学校与学习内容、切换到调薪再返回保留数据、删除第二条。X和底部关闭均显示“否/是”放弃确认，选是后原列表唯一筛选仍匹配1项，非零scrollTop=90保留。没有发送save_archive，不能将其算作浏览器保存。未捕获pageerror；console有19次404及15次Socket.IO轮询错误，故不能记为无console错误。原始证据 `output/playwright/education-table-review.json` 与截图保留。
+
+源码复核实际Frappe Grid：非Form的Dialog新行标记__islocal后会自动补随机name，旧前端把该name提交为已保存身份，服务器正确拒绝“明细不属于当前档案”。02518f4修复仅发送已保存行的身份；所有四种历史表统一处理。人员前端协议检查采用真实临时name+__islocal行形状通过，涵盖新调薪/教育行省略name与客户端标记、保存响应用服务器ID重复编辑、权限字段过滤、失败保留草稿。原有后端拒绝外来ID不放宽。7fc8c60另删除旧教育维护按钮保存后强制启用逻辑，表格按钮继续遵循权限。两项前端修复已完整build，服务重启。
+
+日志确认轮询请求错误发到8000/socket.io，原隔离站仅启动bench serve且缺bench start所设DEV_SERVER环境和实时服务。现本地启动原生9000 Socket.IO，web按标准开发环境DEV_SERVER=true重启，两端口监听正常；没有禁用异步功能或改全局数据库配置。后续Luna真实浏览器核验9000轮询均200，两次WebSocket建立、无断开或错误且connected=true；没有Socket.IO 404、其他请求失败或pageerror。仍有一条/undefined图片404，parser发起文档为/desk；另两条/desk/undefined图片请求200。请求前后DOM及文档标签扫描均未找到对应控件，不能声称已定位或修复该资源问题；本批未复现favicon404。
+
+同一实际浏览器Dialog中，新教育行确有随机name及__islocal=true；使用已加载的人员编辑器payload方法对实际cur_dialog序列化，name和__islocal均省略，合成学校与学习内容保留。随后实际X→是关闭并丢弃，save_archive请求数为0；这是实际表格载荷验证，尚不等同浏览器保存或真实岗位验收。脱敏证据及截图为忽略的 `output/playwright/education-payload-runtime-review.json`、`.png`。
+
+## 2026-10-01 领料并发与来源保护补验
+
+3b138d8 修复原生 Flow.reload 保留非锁 flags 时仍读旧 RR 快照的问题：工厂显式锁后 reload 使用 for_update，保存校验直接加载锁定的当前 Flow。新增 Stock Entry mixin 在原生 check_if_latest 之前按排序锁当前及原有 Flow；保留原生权限、时间戳和状态流转，锁后的实际旧来源若不在预锁集合就整体拒绝，不在已持库存锁时补取 Flow 锁。已有凭证的领料头来源不能清空、替换或从空重新绑定，关闭仅靠前端 read_only 可绕过领料上限的路径。隐藏关联库存凭证的拒绝提示不含其编号。移除分析行后仍列出该物料已提交出库，需用0、已发6、差额−6；新领料仍要求有效分析。
+
+两个 Flow 共享手工出库凭证时，详情原先可能先持各自子行再等待同一父单。当前来源发现及父单预锁使用 NOWAIT，已提交数量扫描也使用 NOWAIT；占用时整体拒绝，不跳过、不给部分余额、不内部重试。dc80c4e 为 Stock Entry.jf_material_issue_flow 和 Stock Entry Detail.jf_flow_order 添加索引；测试站 migrate退出0，并用 SHOW INDEX 确认两列索引存在，避免无索引扫描造成无关库存行锁。
+
+668项 Python 模型通过，其中14项新增早期锁模型，以及忙碌凭证拒绝的模型。原生材料 r5 在恢复已删除分析子行的测试夹具失败，原有已删除 name 不能用 DB update 重新插入；213b498 改为原生新增子行，r6原生15项通过。新增头来源三种绕过拒绝、隐藏编号不泄露、删除分析仍可核对已发，且原有分6/9提交、超量拒绝和取消净账继续通过。失败与成功夹具均完整回滚；独立新连接全tab计数无变化、员工/账户/补充档案及全GL/SLE哈希不变。
+
+另以两个真实连接做8项检查，在专属新Item/仓库/两Flow/两Stock Entry草稿上运行，无任何提交、取消或库存财务过账：
+
+- 本站实际 REPEATABLE-READ + innodb_snapshot_isolation=1 时，旧快照遇已变Flow以原生 ER_CHECKREAD(1020)拒绝，需结束事务重新查询。
+- 只在测试子连接临时关闭 snapshot_isolation，证明标准RR锁定当前读采用新需用7，允许6、拒绝8；连接销毁恢复默认，未改全局/站点配置。
+- A持Flow时，B原生Stock Entry.save先等待Flow；A可获取库存父单及全部子行锁，释放后B完成保存并回滚。
+- 多Flow共享凭证被另一连接占用，详情收到原生QueryTimeoutError后泛化拒绝；失败连接回滚后不遗留子行锁。
+
+添加索引后的最终8项全部通过，独立新连接确认7个专属主/草稿夹具均不存在，wholeGL/SLE、员工、账户、补充档案哈希不变。保留原生审计新增3个Version、7个Deleted Document与7个Deleted Comment，逐条确认只指向本批专属夹具。原生Deleted Comment将身份存于subject而不是reference_name，初次审计分类失败及只读补验保留；最终新批映射正确全部通过，未为通过而删审计或重复库存过账。前序缺参考估价及站点快照保护导致的失败批次也保留，没有冒充通过。
+
+证据位于忽略的 `classic-materials-native-result-r5.json`、`-r6.json` 和 `material-concurrency-JF-CONCUR-*.json`。本应用主动锁库存单的两个调用方已核对先持Flow；第三方预先锁库存再保存不受早期mixin兜底，须遵守该顺序。本次没有做并发原生审核/取消、完整大数据压测或真实岗位界面保存，不能将8项外推为所有库存并发均已验收。
+
+## 2026-10-01 教育经历子表
+
+d53f0b3 已同步隔离站，migrate、完整 build 和服务重启成功。653项 Python 模型通过。独立 direct Python 人员 r3 原生13项通过，新增教育经历插入、更新学校而保留行标识及学习内容，非法日期与员工修改联合回滚。整个夹具回滚后另一个新连接确认全 tab 表计数无变化，wholeEmployee/children、User/Auth/Role/Profile/UP、Supplement/children 和 wholeGL/SLE 内容哈希不变。旧 Employee.education 没有被新旧教育字段互相覆盖。新增教育表格的浏览器保存尚未验收，之前“教育经历”维护按钮的界面记录不算本次新表验收。
+
+Luna 旧站只读取得教育6字段与物料/材料档案完整顺序、独立类别词典入口；未保存、上传或更改旧业务记录。空 Canvas 的词典内部列和项目控件绑定仍未知，不能据此声称完整数据语义迁移。证据为忽略的 `classic-personnel-native-result-r3.json` 和 `playwright/legacy-catalog-education-review.json`。
+
 ## 2026-10-01 算料/汇总与本批实际界面
 
 1602b41–5fcdd0b 已本地提交并同步隔离站。新增Page的站点migrate及完整bench build均退出0，最后保护修复同步后清缓存并重启8000。652项Python模型通过，新增12项算料请求状态协议通过：过期查询不显示、条件变化需重查、未知生成结果冻结、核对失败仍冻结、成功只打开原草稿不再POST、HTML数据转义。协议检查不是浏览器。
