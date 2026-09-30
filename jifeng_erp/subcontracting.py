@@ -181,6 +181,7 @@ def receipt_movements(order_items, receipts, all_order_items=None):
             if row.subcontracting_order_item in order_items:
                 movements.append(_movement(doc, row, source, accepted, rejected, loss))
     returned = {name: [Decimal(0), Decimal(0)] for name in originals}
+    original_receipt_names = {source["receipt"] for source in originals.values()}
     for doc in receipts.values():
         if not doc.is_return:
             continue
@@ -189,7 +190,7 @@ def receipt_movements(order_items, receipts, all_order_items=None):
                 continue
             source = originals.get(row.subcontracting_receipt_item)
             if not source:
-                if row.subcontracting_order_item in order_items or doc.return_against in {s["receipt"] for s in originals.values()}:
+                if row.subcontracting_order_item in order_items or doc.return_against in original_receipt_names:
                     # A different item on the same multi-item receipt can be out of
                     # scope. Its exact source link proves that it belongs elsewhere.
                     if row.subcontracting_receipt_item:

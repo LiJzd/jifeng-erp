@@ -307,10 +307,12 @@ def _restored(data):
         gl_total[row["account"]] += Decimal(str(row["debit"] or 0)) - Decimal(str(row["credit"] or 0))
     assert all(abs(value) < Decimal("0.000001") for value in stock_total.values()), "QA库存凭证尚未全部冲销"
     assert all(abs(value) < Decimal("0.000001") for value in gl_total.values()), "QA按账户总账净额尚未冲销"
+    assert all(row["is_cancelled"] for row in rows["stock"]), "QA存在未取消的库存明细"
+    zero_fields = ("actual_qty", "stock_value", "ordered_qty", "reserved_qty_for_sub_contract", "projected_qty")
     bins = frappe.get_all("Bin", filters={"item_code": ["in", data["items"]]},
-                         fields=["item_code", "warehouse", "actual_qty", "stock_value"], limit_page_length=0)
-    assert all(abs(flt(row.actual_qty)) < 0.000001 and abs(flt(row.stock_value)) < 0.000001 for row in bins), \
-        "QA库存数量或估值尚未恢复零余额"
+                         fields=["item_code", "warehouse", *zero_fields], limit_page_length=0)
+    assert all(abs(flt(row.get(field))) < 0.000001 for row in bins for field in zero_fields), \
+        "QA库存数量、估值、订购或委外预留尚未恢复零余额"
     assert not any(frappe.db.get_value(doctype, name, "docstatus") == 1 for kind, doctype in KINDS.items()
                    if kind in ("receipts", "stock_entries", "subcontracting_orders", "purchase_orders", "boms")
                    for name in data[kind]), "QA提交单据未全部取消"
@@ -384,7 +386,9 @@ def cleanup(data):
         data["remaining_rows"] = {kind: [name for name in data[kind] if frappe.db.exists(doctype, name)]
                                   for kind, doctype in KINDS.items()}
         data["cleaned"] = not any(data["remaining_rows"].values())
-        data["phase"] = "cleaned" if data["cleaned"] else "cancelled_history_retained"
+        data["cleanup_errors"] = [row for row in retained if row["error_type"] != "LinkExistsError"]
+        data["phase"] = "cleaned" if data["cleaned"] else (
+            "cancelled_cleanup_incomplete" if data["cleanup_errors"] else "cancelled_history_retained")
         _journal(data)
         return data
     finally:

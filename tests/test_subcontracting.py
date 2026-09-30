@@ -61,7 +61,6 @@ class TestSubcontractingMovements(unittest.TestCase):
         self.assertEqual(sum(r["covered_qty"] for r in rows), Decimal(9))
 
     def test_native_rejected_return_maps_qty_to_rejected_warehouse(self):
-        self.return_row.warehouse = "Rejected"
         # Native mapper's temporary flag is not present after a document reload.
         self.return_row["warehouse"] = "Rejected"
         rows = self.movements()
