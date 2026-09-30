@@ -24,10 +24,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 
 	content(tab) {
 		const escape = (value) => this.workspace.esc(value);
-		return '<section class="jfe-formal-page"><nav class="jfe-formal-breadcrumb" aria-label="页面位置">' +
-			'<button data-action="classic-home">主页</button><span>›</span>' +
-			'<button data-action="classic-module" data-module="' + escape(tab.module) + '">' + escape(tab.module) + '</button>' +
-			'<span>›</span><b>' + escape(tab.title) + '</b></nav>' +
+		return '<section class="jfe-formal-page">' +
 			'<div class="jfe-formal-anchor" aria-label="' + escape(tab.title) + '"></div></section>';
 	}
 

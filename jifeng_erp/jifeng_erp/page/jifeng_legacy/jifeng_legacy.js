@@ -497,7 +497,7 @@ class JifengLegacyWorkspace {
 			'<button class="jfe-icon-btn" data-action="history" title="最近访问">◷</button><button class="jfe-user" data-action="user">◉ <span>当前用户</span>⌄</button></div></header>' +
 			'<div class="jfe-body"><nav class="jfe-sidebar">' + this.renderSidebar() + '</nav>' +
 			'<section class="jfe-work"><div class="jfe-tabs">' + this.renderTabs() + '<button class="jfe-tab-menu" data-action="tab-menu" title="标签列表">☷</button></div>' +
-			'<main class="jfe-content">' + this.renderActive(active) + '</main></section></div>' +
+			'<main class="jfe-content">' + this.renderBreadcrumb(active) + this.renderActive(active) + '</main></section></div>' +
 			'<div class="jfe-toast" data-toast></div><div class="jfe-modal-root" data-modal-root></div></div>';
 		this.bindEvents();
 		this.formalBridge?.sync();
@@ -540,6 +540,14 @@ class JifengLegacyWorkspace {
 		if (tab.kind === "list" && tab.module === "工资" && tab.page === "工资录入") return this.renderPayrollEntry();
 		if (tab.kind === "list") return this.renderList(tab.module, tab.page);
 		return this.renderHome();
+	}
+
+	renderBreadcrumb(tab) {
+		if (tab.kind === "home") return "";
+		return '<nav class="jfe-formal-breadcrumb" aria-label="页面位置">' +
+			'<button data-action="classic-home">主页</button><span>›</span>' +
+			(tab.kind === "module" ? '<b>' + this.esc(tab.module) + '</b>' :
+				'<button data-action="classic-module" data-module="' + this.esc(tab.module) + '">' + this.esc(tab.module) + '</button><span>›</span><b>' + this.esc(tab.title) + '</b>') + '</nav>';
 	}
 
 	renderPayrollEntry() {
