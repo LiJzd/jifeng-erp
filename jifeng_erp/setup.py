@@ -96,6 +96,62 @@ def install():
         }).insert(ignore_permissions=True)
         validate_permissions_for_doctype("Department")
 
+    _install_wage_source_permissions()
+    _install_wage_reversal_permissions()
+
+
+def _install_wage_source_permissions():
+    """Allow HR supervisors to verify wage sources without production edits."""
+    from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
+    from frappe.permissions import setup_custom_perms
+
+    for doctype, readable in (
+        ("Job Card", True), ("Work Order", True), ("Item", True),
+        ("Jifeng Flow Order", True), ("Operation", False), ("UOM", False),
+    ):
+        rules = frappe.get_meta(doctype).permissions
+        # A site's explicit HR rule takes precedence, including an intentional
+        # denial. Existing shared read/select rules need no extra permission.
+        if any(row.role == "HR Manager" for row in rules):
+            continue
+        if any(row.role == "All" and (row.read if readable else row.read or row.select) for row in rules):
+            continue
+        setup_custom_perms(doctype)
+        frappe.get_doc({
+            "doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
+            "parentfield": "permissions", "role": "HR Manager", "permlevel": 0,
+            "if_owner": 0, "read": int(readable), "select": 1,
+            "write": 0, "create": 0, "delete": 0, "submit": 0, "cancel": 0,
+            "amend": 0, "report": 0, "export": 0, "share": 0, "print": 0,
+        }).insert(ignore_permissions=True)
+        validate_permissions_for_doctype(doctype)
+
+
+def _install_wage_reversal_permissions():
+    """Give default HR supervisors a native reversal path for additional wages."""
+    from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
+    from frappe.permissions import setup_custom_perms
+
+    doctype = "Additional Salary"
+    # Custom permissions are an explicit site decision. Never overwrite them.
+    if frappe.db.exists("Custom DocPerm", {"parent": doctype}):
+        return
+    setup_custom_perms(doctype)
+    names = frappe.get_all("Custom DocPerm", filters={
+        "parent": doctype, "role": "HR Manager", "permlevel": 0,
+    }, pluck="name", limit_page_length=0)
+    for name in names:
+        rule = frappe.get_doc("Custom DocPerm", name)
+        if not rule.submit:
+            continue
+        rule.cancel, rule.delete = 1, 1
+        rule.save(ignore_permissions=True)
+    validate_permissions_for_doctype(doctype)
+    if names:
+        frappe.get_doc("DocType", doctype).add_comment(
+            "Info", "集沣工资分配安装：默认 HR Manager 补充原生附加薪资取消和草稿删除权限；保留原生已提交单据及来源链接校验。已有站点自定义权限不覆盖。",
+        )
+
 
 _PROCUREMENT_SOURCES = {
     "Purchase Order": (("material_request_item", "Material Request Item", "material_request"),),

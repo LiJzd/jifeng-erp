@@ -29,6 +29,7 @@ doc_events = {
         "before_validate": "jifeng_erp.production_department.validate_job_card_department",
         "validate": "jifeng_erp.setup.validate_flow_links",
         "before_cancel": "jifeng_erp.payroll.validate_job_card_cancel",
+        "before_update_after_submit": "jifeng_erp.wage_allocation.guard_job_card_allocation",
     },
     "Employee": {"on_update": "jifeng_erp.jifeng_erp.doctype.jifeng_employee_supplement.jifeng_employee_supplement.refresh_employee_supplement"},
     "Sales Order": {

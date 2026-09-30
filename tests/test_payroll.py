@@ -14,7 +14,7 @@ class TestPayroll(unittest.TestCase):
     def setUp(self):
         self.frappe = types.ModuleType("frappe")
         self.frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
-        self.frappe.db = types.SimpleNamespace(get_value=Mock(return_value=None))
+        self.frappe.db = types.SimpleNamespace(get_value=Mock(return_value=None), sql=Mock(return_value=[]))
         path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "payroll.py"
         with patch.dict(sys.modules, {"frappe": self.frappe}):
             spec = importlib.util.spec_from_file_location("payroll_under_test", path)
@@ -34,6 +34,7 @@ class TestPayroll(unittest.TestCase):
 
     def test_additional_salary_must_match_submitted_wage(self):
         wage = types.SimpleNamespace(name="W-1", docstatus=1, employee="E-1",
+                                     check_permission=Mock(),
                                      company="C-1", salary_component="Piece",
                                      payroll_date="2026-09-30", total_amount=Decimal("28.19"))
         self.frappe.get_doc = Mock(return_value=wage)
@@ -49,10 +50,12 @@ class TestPayroll(unittest.TestCase):
 
     def test_duplicate_active_salary_is_rejected(self):
         wage = types.SimpleNamespace(name="W-1", docstatus=1, employee="E-1",
+                                     check_permission=Mock(),
                                      company="C-1", salary_component="Piece",
                                      payroll_date="2026-09-30", total_amount=Decimal("10"))
         self.frappe.get_doc = Mock(return_value=wage)
-        self.frappe.db.get_value.side_effect = ["W-1", "A-existing"]
+        self.frappe.db.get_value.return_value = "W-1"
+        self.frappe.db.sql.return_value = [("A-existing",)]
         salary = types.SimpleNamespace(name="A-2", ref_doctype="Jifeng Wage Entry",
                                        ref_docname="W-1")
         with self.assertRaisesRegex(ValueError, "重复计薪"):
@@ -72,15 +75,18 @@ class TestWageJobCardLink(unittest.TestCase):
         frappe = types.ModuleType("frappe")
         frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
         frappe.whitelist = lambda: (lambda fn: fn)
-        self.employee = types.SimpleNamespace(company="C-1", status="Active", employee_name="员工甲")
+        frappe.db = types.SimpleNamespace(sql=Mock(return_value=[]))
+        self.employee = types.SimpleNamespace(company="C-1", status="Active", employee_name="员工甲", check_permission=Mock())
         self.card = types.SimpleNamespace(company="C-1", work_order="WO-1", operation="抛光",
+                                          name="JC-1", stock_uom="Nos", total_completed_qty=5,
+                                          check_permission=Mock(),
                                           docstatus=1, time_logs=[types.SimpleNamespace(employee="E-1")])
-        self.work = types.SimpleNamespace(name="WO-1", company="C-1", jf_flow_order="FLOW-1")
-        self.flow = types.SimpleNamespace(company="C-1")
-        component = types.SimpleNamespace(type="Earning", disabled=0)
+        self.work = types.SimpleNamespace(name="WO-1", company="C-1", jf_flow_order="FLOW-1", check_permission=Mock())
+        self.flow = types.SimpleNamespace(company="C-1", check_permission=Mock())
+        component = types.SimpleNamespace(type="Earning", disabled=0, check_permission=Mock())
         docs = {"Employee": self.employee, "Job Card": self.card, "Work Order": self.work,
                 "Jifeng Flow Order": self.flow, "Salary Component": component}
-        frappe.get_doc = lambda doctype, name: docs[doctype]
+        frappe.get_doc = lambda doctype, name, **kwargs: docs[doctype]
         model = types.ModuleType("frappe.model")
         document = types.ModuleType("frappe.model.document")
         document.Document = type("Document", (), {})
@@ -89,14 +95,20 @@ class TestWageJobCardLink(unittest.TestCase):
         payroll = types.ModuleType("jifeng_erp.payroll")
         payroll.active_additional_salary = Mock(return_value=None)
         payroll.wage_amounts = lambda *args: (Decimal("10"), Decimal("0"), Decimal("10"))
+        payroll.nonnegative = lambda value, label: Decimal(str(value or 0))
         path = (pathlib.Path(__file__).parents[1] / "jifeng_erp" / "jifeng_erp" /
                 "doctype" / "jifeng_wage_entry" / "jifeng_wage_entry.py")
         with patch.dict(sys.modules, {"frappe": frappe, "frappe.model": model,
                                       "frappe.model.document": document, "frappe.utils": utils,
                                       "jifeng_erp.payroll": payroll}):
-            spec = importlib.util.spec_from_file_location("wage_entry_under_test", path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            allocation_path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "wage_allocation.py"
+            allocation_spec = importlib.util.spec_from_file_location("allocation_under_test", allocation_path)
+            allocation = importlib.util.module_from_spec(allocation_spec)
+            allocation_spec.loader.exec_module(allocation)
+            with patch.dict(sys.modules, {"jifeng_erp.wage_allocation": allocation}):
+                spec = importlib.util.spec_from_file_location("wage_entry_under_test", path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
         self.wage = module.JifengWageEntry()
         self.wage.employee, self.wage.company = "E-1", "C-1"
         self.wage.operation, self.wage.flow_order, self.wage.work_order = "抛光", None, None

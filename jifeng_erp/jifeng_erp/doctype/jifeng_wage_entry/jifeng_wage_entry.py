@@ -3,19 +3,23 @@ from frappe.model.document import Document
 from frappe.utils import getdate
 
 from jifeng_erp.payroll import active_additional_salary, wage_amounts
+from jifeng_erp.wage_allocation import validate_wage_source
 
 
 class JifengWageEntry(Document):
     def validate(self):
         employee = frappe.get_doc("Employee", self.employee)
+        employee.check_permission("read")
         if employee.company != self.company or employee.status != "Active":
             frappe.throw("计薪员工必须是当前公司的在职员工")
         if self.flow_order:
             flow = frappe.get_doc("Jifeng Flow Order", self.flow_order)
+            flow.check_permission("read")
             if flow.company != self.company:
                 frappe.throw("流程单公司与计薪公司不一致")
         if self.job_card:
             card = frappe.get_doc("Job Card", self.job_card)
+            card.check_permission("read")
             if card.company != self.company:
                 frappe.throw("报工单公司与计薪公司不一致")
             if self.work_order and self.work_order != card.work_order:
@@ -26,8 +30,12 @@ class JifengWageEntry(Document):
             if self.operation and self.operation != card.operation:
                 frappe.throw("计薪工序与报工单工序不一致")
             self.operation = card.operation
+            if getattr(self, "stock_uom", None) and self.stock_uom != card.stock_uom:
+                frappe.throw("计件单位必须与报工单库存单位一致")
+            self.stock_uom = card.stock_uom
         if self.work_order:
             work = frappe.get_doc("Work Order", self.work_order)
+            work.check_permission("read")
             if work.company != self.company:
                 frappe.throw("生产工单公司与计薪公司不一致")
             if self.flow_order and work.jf_flow_order != self.flow_order:
@@ -36,6 +44,7 @@ class JifengWageEntry(Document):
                 self.flow_order = work.jf_flow_order
         if self.salary_component:
             component = frappe.get_doc("Salary Component", self.salary_component)
+            component.check_permission("read")
             if component.type != "Earning" or component.disabled:
                 frappe.throw("请选择启用的收入类工资项目")
         piece, timed, total = wage_amounts(
@@ -47,18 +56,22 @@ class JifengWageEntry(Document):
             frappe.throw("计薪日期不能早于工作日期")
         self.piece_amount, self.time_amount, self.total_amount = piece, timed, total
         self.employee_name = employee.employee_name
+        if self.quantity and not getattr(self, "stock_uom", None):
+            frappe.throw("请填写计件数量的单位")
+        validate_wage_source(self)
 
     def before_submit(self):
         if not self.job_card:
             return
         card = frappe.get_doc("Job Card", self.job_card)
+        card.check_permission("read")
         if card.docstatus != 1:
             frappe.throw("只有已提交的报工单可以作为审核计薪依据")
         if not any(row.employee == self.employee for row in card.time_logs):
             frappe.throw("报工单中没有这位员工的报工时间记录")
 
     def on_cancel(self):
-        if active_additional_salary(self.name):
+        if active_additional_salary(self.name, for_update=True):
             frappe.throw("请先取消或删除关联的工资附加项，再取消计薪记录")
 
     @frappe.whitelist()
@@ -68,7 +81,7 @@ class JifengWageEntry(Document):
         self.reload()
         if self.docstatus != 1:
             frappe.throw("请先审核计薪记录")
-        existing = active_additional_salary(self.name)
+        existing = active_additional_salary(self.name, for_update=True)
         if existing:
             frappe.get_doc("Additional Salary", existing).check_permission("read")
             return existing

@@ -10,8 +10,8 @@
  "allow_import": 1,
  "field_order": [
   "employee", "employee_name", "company", "operation", "work_date", "payroll_date",
-  "flow_order", "work_order", "job_card", "salary_component", "calculation_section",
-  "quantity", "piece_rate", "piece_amount", "hours", "hourly_rate",
+  "flow_order", "work_order", "job_card", "wage_allocation", "wage_allocation_employee", "salary_component", "calculation_section",
+  "quantity", "stock_uom", "piece_rate", "piece_amount", "hours", "hourly_rate",
   "time_amount", "extra_amount", "total_amount", "notes"
  ],
  "fields": [
@@ -24,13 +24,16 @@
   {"fieldname": "flow_order", "fieldtype": "Link", "label": "流程单", "options": "Jifeng Flow Order"},
   {"fieldname": "work_order", "fieldtype": "Link", "label": "生产工单", "options": "Work Order"},
   {"fieldname": "job_card", "fieldtype": "Link", "label": "工序报工单", "options": "Job Card", "description": "关联后在审核时核对报工单已提交且员工存在报工时间记录。"},
+  {"fieldname": "wage_allocation", "fieldtype": "Link", "label": "工资分配", "options": "Jifeng Wage Allocation", "read_only": 1},
+  {"fieldname": "wage_allocation_employee", "fieldtype": "Data", "label": "来源员工行", "read_only": 1, "hidden": 1},
   {"fieldname": "salary_component", "fieldtype": "Link", "label": "收入工资项目", "options": "Salary Component", "reqd": 1},
   {"fieldname": "calculation_section", "fieldtype": "Section Break", "label": "计薪明细"},
   {"fieldname": "quantity", "fieldtype": "Float", "label": "计件数量", "precision": "6", "default": "0"},
-  {"fieldname": "piece_rate", "fieldtype": "Currency", "label": "计件工价", "options": "Company:company:default_currency", "default": "0"},
+  {"fieldname": "stock_uom", "fieldtype": "Link", "label": "计件单位", "options": "UOM"},
+  {"fieldname": "piece_rate", "fieldtype": "Currency", "label": "计件工价", "precision": "6", "options": "Company:company:default_currency", "default": "0"},
   {"fieldname": "piece_amount", "fieldtype": "Currency", "label": "计件金额", "options": "Company:company:default_currency", "read_only": 1},
   {"fieldname": "hours", "fieldtype": "Float", "label": "计时小时", "precision": "6", "default": "0"},
-  {"fieldname": "hourly_rate", "fieldtype": "Currency", "label": "计时单价", "options": "Company:company:default_currency", "default": "0"},
+  {"fieldname": "hourly_rate", "fieldtype": "Currency", "label": "计时单价", "precision": "6", "options": "Company:company:default_currency", "default": "0"},
   {"fieldname": "time_amount", "fieldtype": "Currency", "label": "计时金额", "options": "Company:company:default_currency", "read_only": 1},
   {"fieldname": "extra_amount", "fieldtype": "Currency", "label": "附加费", "options": "Company:company:default_currency", "default": "0"},
   {"fieldname": "total_amount", "fieldtype": "Currency", "label": "计薪合计", "options": "Company:company:default_currency", "read_only": 1, "in_list_view": 1},
@@ -38,7 +41,7 @@
  ],
  "permissions": [
   {"role": "HR User", "read": 1, "write": 1, "create": 1, "report": 1, "print": 1},
-  {"role": "HR Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1},
-  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1}
+  {"role": "HR Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1}
  ]
 }

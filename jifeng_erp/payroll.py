@@ -29,7 +29,14 @@ def wage_amounts(quantity, piece_rate, hours, hourly_rate, extra_amount):
     return piece, timed, (piece + timed + extra).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-def active_additional_salary(wage_name, exclude=None):
+def active_additional_salary(wage_name, exclude=None, *, for_update=False):
+    if for_update:
+        rows = frappe.db.sql(
+            """SELECT name FROM `tabAdditional Salary` WHERE ref_doctype = 'Jifeng Wage Entry'
+               AND ref_docname = %s AND docstatus < 2 AND name != %s FOR UPDATE""",
+            (wage_name, exclude or ""),
+        )
+        return rows[0][0] if rows else None
     filters = {"ref_doctype": "Jifeng Wage Entry", "ref_docname": wage_name,
                "docstatus": ["<", 2]}
     if exclude:
@@ -46,9 +53,10 @@ def validate_wage_additional_salary(doc, method=None):
     # Serialize competing HRMS edits against the wage entry.
     frappe.db.get_value("Jifeng Wage Entry", doc.ref_docname, "name", for_update=True)
     wage = frappe.get_doc("Jifeng Wage Entry", doc.ref_docname)
+    wage.check_permission("read")
     if wage.docstatus != 1:
         frappe.throw("只有已审核的计薪记录可以生成工资附加项")
-    if active_additional_salary(wage.name, doc.name):
+    if active_additional_salary(wage.name, doc.name, for_update=True):
         frappe.throw("该计薪记录已经关联有效工资附加项，不能重复计薪")
     expected = (wage.employee, wage.company, wage.salary_component,
                 str(wage.payroll_date), Decimal(str(wage.total_amount)))
@@ -61,3 +69,6 @@ def validate_wage_additional_salary(doc, method=None):
 def validate_job_card_cancel(doc, method=None):
     if frappe.db.exists("Jifeng Wage Entry", {"job_card": doc.name, "docstatus": 1}):
         frappe.throw("报工单已有审核计薪记录；请先取消关联工资附加项及计薪记录")
+    from jifeng_erp.wage_allocation import guard_job_card_allocation
+
+    guard_job_card_allocation(doc, "before_cancel")

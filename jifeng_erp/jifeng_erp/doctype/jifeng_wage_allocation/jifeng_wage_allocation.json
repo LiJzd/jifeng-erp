@@ -1,0 +1,36 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Wage Allocation",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-WALLOC-{YYYY}-{#####}",
+ "title_field": "job_card",
+ "search_fields": "job_card,work_order,flow_order,operation",
+ "track_changes": 1,
+ "is_submittable": 1,
+ "field_order": ["job_card", "company", "currency", "work_order", "flow_order", "operation", "operation_id", "item_code", "stock_uom", "work_date", "payroll_date", "salary_component", "source_completed_qty", "allocated_qty", "total_amount", "employees", "notes", "source_signature"],
+ "fields": [
+  {"fieldname": "job_card", "fieldtype": "Link", "label": "工序报工单", "options": "Job Card", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "read_only": 1, "reqd": 1, "in_list_view": 1},
+  {"fieldname": "currency", "fieldtype": "Link", "label": "工资币种", "options": "Currency", "read_only": 1},
+  {"fieldname": "work_order", "fieldtype": "Link", "label": "生产工单", "options": "Work Order", "read_only": 1},
+  {"fieldname": "flow_order", "fieldtype": "Link", "label": "流程单", "options": "Jifeng Flow Order", "read_only": 1},
+  {"fieldname": "operation", "fieldtype": "Link", "label": "工序", "options": "Operation", "read_only": 1, "in_list_view": 1},
+  {"fieldname": "operation_id", "fieldtype": "Data", "label": "来源工序行", "read_only": 1, "hidden": 1},
+  {"fieldname": "item_code", "fieldtype": "Link", "label": "商品", "options": "Item", "read_only": 1},
+  {"fieldname": "stock_uom", "fieldtype": "Link", "label": "计件单位", "options": "UOM", "read_only": 1},
+  {"fieldname": "work_date", "fieldtype": "Date", "label": "报工日期", "read_only": 1},
+  {"fieldname": "payroll_date", "fieldtype": "Date", "label": "计薪日期", "reqd": 1, "default": "Today"},
+  {"fieldname": "salary_component", "fieldtype": "Link", "label": "收入工资项目", "options": "Salary Component", "reqd": 1},
+  {"fieldname": "source_completed_qty", "fieldtype": "Float", "label": "报工完成量", "precision": "6", "read_only": 1},
+  {"fieldname": "allocated_qty", "fieldtype": "Float", "label": "份额合计", "precision": "6", "read_only": 1},
+  {"fieldname": "total_amount", "fieldtype": "Currency", "label": "计薪合计", "options": "currency", "read_only": 1, "in_list_view": 1},
+  {"fieldname": "employees", "fieldtype": "Table", "label": "员工计件份额", "options": "Jifeng Wage Allocation Employee", "reqd": 1},
+  {"fieldname": "notes", "fieldtype": "Small Text", "label": "备注"},
+  {"fieldname": "source_signature", "fieldtype": "Data", "label": "报工核对版本", "read_only": 1, "hidden": 1}
+ ],
+ "permissions": [
+  {"role": "HR User", "read": 1, "write": 1, "create": 1, "report": 1, "print": 1},
+  {"role": "HR Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1}
+ ]
+}
