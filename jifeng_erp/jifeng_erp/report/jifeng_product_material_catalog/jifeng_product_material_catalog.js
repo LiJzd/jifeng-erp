@@ -16,6 +16,9 @@ frappe.query_reports["Jifeng Product Material Catalog"] = {
             const url = frappe.utils.escape_html(String(value));
             return `<a href="${url}" target="_blank" rel="noopener noreferrer"><img src="${url}" alt="档案图片" style="max-width:100px;max-height:70px;object-fit:contain"></a>`;
         }
+        if (column.fieldtype === "Data") {
+            return frappe.utils.escape_html(String(value ?? ""));
+        }
         return default_formatter(value, row, column, data);
     },
 };

@@ -231,7 +231,15 @@ const JIFENG_LIVE_LIST_FILTERS = {
 
 const JIFENG_LIVE_REPORTS = {
 	产品: { 产品浏览: "Jifeng Product Catalog", 产品明细: "Jifeng Product Catalog", 打印: "Jifeng Product Catalog",
-		产品材料明细: "Jifeng Product Material Catalog" },
+		产品材料明细: "Jifeng Product Material Catalog",
+		品牌分析: { name: "Jifeng Product Analysis", filters: { dimension: "品牌" } },
+		类别分析: { name: "Jifeng Product Analysis", filters: { dimension: "类别" } },
+		材质分析: { name: "Jifeng Product Analysis", filters: { dimension: "材质" } },
+		来源分析: { name: "Jifeng Product Analysis", filters: { dimension: "来源" } },
+		设计分析: { name: "Jifeng Product Analysis", filters: { dimension: "设计" } },
+		打版分析: { name: "Jifeng Product Analysis", filters: { dimension: "打版" } },
+		建模分析: { name: "Jifeng Product Analysis", filters: { dimension: "建模" } },
+		风格分析: { name: "Jifeng Product Analysis", filters: { dimension: "风格" } } },
 	模具: { 模具报表: "Jifeng Mold Catalog" },
 	版种: { 版种报表: "Jifeng Plate Catalog" },
 	物料: { 库存: "Jifeng Historical Stock Balance", 历史库存: "Jifeng Historical Stock Balance", 库存明细: "Stock Ledger",
@@ -262,6 +270,7 @@ const JIFENG_LIVE_REPORTS = {
 		工序损耗: { name: "Jifeng Job Card Detail", filters: { only_loss: 1, approval: "已提交" } },
 		损耗汇总: { name: "Jifeng Production Progress", filters: { only_loss: 1 } } },
 	工资: { 工资分析: "Jifeng Wage Analysis" },
+	人事: { 人事报表: "Jifeng Personnel Roster" },
 	发镀: { 原料发退台账: "Jifeng Subcontracting Material Ledger", 电镀明细: "Jifeng Subcontracting Receipt Ledger", 电镀报表: "Jifeng Subcontracting Progress",
 		电镀跟踪: "Jifeng Subcontracting Progress" },
 	外发: { 原料发退台账: "Jifeng Subcontracting Material Ledger", 未收: { name: "Jifeng Subcontracting Progress", filters: { only_pending: 1 } },
@@ -286,6 +295,8 @@ const JIFENG_LIVE_REPORTS = {
 const JIFENG_LIVE_REPORT_DEFAULTS = {
 	"Jifeng Product Catalog": { item_code: "", status: "" },
 	"Jifeng Product Material Catalog": { item_code: "", status: "" },
+	"Jifeng Product Analysis": { item_code: "", status: "", dimension: "品牌" },
+	"Jifeng Personnel Roster": { department: "", designation: "", status: "" },
 	"Jifeng Mold Catalog": { item_code: "", status: "" },
 	"Jifeng Plate Catalog": { item_code: "", status: "" },
 	"Jifeng Sales Transaction Ledger": { customer: "", pos_profile: "", cashier: "", only_returns: 0, source_type: "" },

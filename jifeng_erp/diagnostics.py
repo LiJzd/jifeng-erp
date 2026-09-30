@@ -97,6 +97,7 @@ def check():
                                              "Jifeng Department Progress", "Jifeng Production Picture")),
         "material_issue_link_installed": frappe.get_meta("Stock Entry").has_field("jf_material_issue_flow"),
         "employee_supplement_installed": bool(frappe.db.exists("DocType", "Jifeng Employee Supplement")),
+        "personnel_roster_installed": bool(frappe.db.exists("Report", "Jifeng Personnel Roster")),
         "hrms_installed": "hrms" in frappe.get_installed_apps(),
         "wage_entry_installed": bool(frappe.db.exists("DocType", "Jifeng Wage Entry")),
         "wage_allocation_installed": all(frappe.db.exists("DocType", name) for name in
@@ -107,7 +108,7 @@ def check():
                                         ("Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger")),
         "catalog_reports_installed": all(frappe.db.exists("Report", name) for name in
                                          ("Jifeng Product Catalog", "Jifeng Product Material Catalog",
-                                          "Jifeng Mold Catalog", "Jifeng Plate Catalog")),
+                                          "Jifeng Mold Catalog", "Jifeng Plate Catalog", "Jifeng Product Analysis")),
     }
 
 
