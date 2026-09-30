@@ -78,7 +78,8 @@ def _masters(company, item_group, stock_uom):
 
 
 def _invoice(fixture, doctype="Sales Invoice", pos=False, qty=2, paid=0, duplicate=False,
-             customer=None, posting_date=None, posting_time="08:00:00", currency=None, conversion_rate=1):
+             customer=None, posting_date=None, posting_time="08:00:00", currency=None, conversion_rate=1,
+             update_stock=1):
     items = [{"item_code": fixture.item.name, "qty": qty, "rate": 10.123,
         "warehouse": fixture.warehouse.name, "income_account": fixture.accounts.income,
         "expense_account": fixture.accounts.expense, "cost_center": fixture.cost_center}]
@@ -89,7 +90,7 @@ def _invoice(fixture, doctype="Sales Invoice", pos=False, qty=2, paid=0, duplica
         "currency": currency or fixture.currency, "conversion_rate": conversion_rate,
         "selling_price_list": fixture.price_list.name, "price_list_currency": currency or fixture.currency,
         "plc_conversion_rate": conversion_rate, "posting_date": posting_date or today(),
-        "posting_time": posting_time, "set_posting_time": 1, "update_stock": 1,
+        "posting_time": posting_time, "set_posting_time": 1, "update_stock": int(update_stock),
         "disable_rounded_total": 1, "is_pos": int(pos or doctype == "POS Invoice"),
         "is_created_using_pos": int(pos and doctype == "Sales Invoice"),
         "pos_profile": fixture.profile.name if pos or doctype == "POS Invoice" else None,
