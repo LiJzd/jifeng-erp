@@ -410,14 +410,25 @@ def smoke(company, other_company=None):
         for doctype in CONFIG:
             assert all(frappe.has_permission(doctype, permission) for permission in ("create", "submit", "cancel"))
         field_evidence = {}
+        employee_meta = frappe.get_meta("Employee")
+        history_table = employee_meta.get_field("internal_work_history")
+        assert history_table and history_table.fieldtype == "Table" and history_table.options == "Employee Internal Work History"
         for permission in ("read", "write"):
             employee_fields = set(get_permitted_fields("Employee", permission_type=permission, ignore_virtual=True))
             history_fields = set(get_permitted_fields("Employee Internal Work History", parenttype="Employee",
                                                       permission_type=permission, ignore_virtual=True))
-            assert (WATCH | {"ctc", "internal_work_history"}) <= employee_fields
+            assert (WATCH | {"ctc"}) <= employee_fields
+            assert "internal_work_history" not in employee_fields, "原生物理列 API 不应返回 Table 字段"
+            table_levels = set(employee_meta.get_permlevel_access(permission_type=permission))
+            table_level = history_table.permlevel or 0
+            assert table_level in table_levels, "实际 HR Manager 无原生父表字段权限"
             assert set(HISTORY_FIELDS[5:]) <= history_fields
-            field_evidence[permission] = {"employee": sorted((WATCH | {"ctc", "internal_work_history"}) & employee_fields),
-                                          "history_child": sorted(set(HISTORY_FIELDS[5:]) & history_fields)}
+            field_evidence[permission] = {"employee": sorted((WATCH | {"ctc"}) & employee_fields),
+                "history_table": {"fieldname": history_table.fieldname, "fieldtype": history_table.fieldtype,
+                                  "options": history_table.options, "permlevel": table_level,
+                                  "native_permlevels": sorted(table_levels), "permitted": True,
+                                  "column_api_contains_table": "internal_work_history" in employee_fields},
+                "history_child": sorted(set(HISTORY_FIELDS[5:]) & history_fields)}
         evidence["native_hr_manager_field_permissions"] = field_evidence
         evidence["field_denial_limit"] = "native positive read/write observed; field-level denial is static-model coverage; no permlevels/DocPerm changed"
         passed()
