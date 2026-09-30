@@ -10,6 +10,9 @@ def install():
         "Subcontracting Order Item", "Subcontracting Receipt Item", "Material Request Item", "Purchase Order Item",
         "Purchase Receipt Item", "Purchase Invoice Item", "Stock Entry Detail",
     )}
+    # Current locking reads for material balance must select this flow's
+    # children instead of scanning and locking unrelated stock rows.
+    fields["Stock Entry Detail"][0]["search_index"] = 1
     fields["Sales Order Item"] = [
         {"fieldname": "jf_make_flow", "fieldtype": "Check", "label": "生成集沣流程单",
          "insert_after": "description", "default": "1", "in_list_view": 1, "allow_on_submit": 1},
@@ -75,7 +78,7 @@ def install():
     fields["Stock Entry"] = [{
         "fieldname": "jf_material_issue_flow", "fieldtype": "Link", "label": "按单配料流程单",
         "options": "Jifeng Flow Order", "insert_after": "work_order", "read_only": 1,
-        "no_copy": 1,
+        "no_copy": 1, "search_index": 1,
     }]
     fields["Journal Entry"] = [{
         "fieldname": "jf_expense_voucher", "fieldtype": "Link", "label": "集沣费用登记",
