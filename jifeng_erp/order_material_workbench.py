@@ -141,6 +141,7 @@ def _summarize(rows):
         target["sources"].append({"flow_order": row["flow_order"], "material_row": row["material_row"],
                                   "order": row["order"], "source_doctype": row["source_doctype"],
                                   "date": row["date"], "customer": row["customer"],
+                                  "date_basis": row["date_basis"],
                                   "quantity": row["quantity"], "budget_amount": row["budget_amount"]})
     return [groups[key] for key in sorted(groups)]
 
@@ -275,6 +276,7 @@ def detail(flow_order, company):
 @frappe.whitelist(methods=["POST"])
 def create_issue(flow_order, company, flow_modified, warehouse):
     _company(company)
+    frappe.has_permission("Stock Entry", "read", throw=True)
     # The native factory locks the same flow, reuses the original draft and
     # performs native insert validation. Lock BEFORE checking the UI snapshot.
     flow = _flow(flow_order, company, lock=True)

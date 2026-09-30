@@ -126,7 +126,7 @@ class JifengOrderMaterialWorkbench {
             ...(this.mode === "summary" ? [] : [["qty_per_unit", "单件用量"], ["unit_price", "预算单价"], ["material_row", "分析行"]])];
     }
     cell(row, field) {
-        if (this.mode === "summary" && ["date", "order", "customer"].includes(field)) {
+        if (this.mode === "summary" && ["date", "order", "customer", "date_basis"].includes(field)) {
             const values = [...new Set(row.sources.map(source => source[field] || "").filter(Boolean))];
             return values.length > 1 ? `多项 (${values.length})` : values[0] || "";
         }
@@ -182,6 +182,7 @@ class JifengOrderMaterialWorkbench {
         await this.detail(row.flow_order);
     }
     async detail(flow) {
+        if (this.issueDialog?.is_visible) { frappe.msgprint("请先关闭当前用料明细。"); return; }
         const company = this.value("company");
         const response = await frappe.call({ method: "jifeng_erp.order_material_workbench.detail", args: { flow_order: flow, company } });
         const result = response.message, esc = value => frappe.utils.escape_html(String(value));
@@ -252,6 +253,7 @@ class JifengOrderMaterialWorkbench {
         } finally { this.busy = false; }
     }
     openNative(doctype, name) {
+        if (this.nativeForm) { frappe.msgprint("请先关闭当前单据。"); return; }
         const dialog = new frappe.ui.Dialog({ title: name, size: "extra-large", fields: [{ fieldname: "form", fieldtype: "HTML" }] });
         const frame = document.createElement("iframe");
         frame.title = name;
