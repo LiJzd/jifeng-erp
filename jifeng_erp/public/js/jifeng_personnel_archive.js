@@ -187,7 +187,9 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 			const control = dialog.fields_dict[key];
 			if (!control || control.df.read_only) continue;
 			result.histories[key] = (control.get_value() || []).map((row) => {
-				const values = row.name ? { name: row.name } : {};
+				// Dialog grids assign random names to unsaved rows. Only a
+				// persisted server identity may be sent back as an update.
+				const values = row.name && !row.__islocal ? { name: row.name } : {};
 				for (const df of control.df.fields) if (!df.read_only) values[df.fieldname] = row[df.fieldname] ?? null;
 				return values;
 			});

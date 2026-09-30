@@ -31,16 +31,20 @@ function fixture() {
 		supplement_legacy_base_salary: control(0),
 		supplement_legacy_account: control("00123"),
 		salary_history: control([{ name: "CHILD-1", project: "旧项目", wage: 0, title: "旧职務",
-			protected_column: "retained only on server" }, { project: "新项目", wage: 20 }]),
+			protected_column: "retained only on server" },
+			{ name: "dialog-random-row", __islocal: true, idx: 2, project: "新项目", wage: 20 }]),
+		education_history: control([{ name: "dialog-random-education", __islocal: true,
+			project: "学习", study_content: "内容", school: "学校" }]),
 	};
 	fields.salary_history.df.fields = [
 		{ fieldname: "project" }, { fieldname: "wage" }, { fieldname: "title", read_only: true },
 	];
 	let refreshes = 0;
 	fields.salary_history.grid = { refresh() { fields.salary_history.value = fields.salary_history.df.data; refreshes++; } };
+	fields.education_history.df.fields = ["project", "study_content", "from_date", "to_date", "school", "title"]
+		.map((fieldname) => ({ fieldname }));
+	fields.education_history.grid = { refresh() { fields.education_history.value = fields.education_history.df.data; } };
 	const button = { disabled: false, prop(_, value) { this.disabled = value; return this; }, text() {} };
-	const dom = { find() { return this; }, prop() { return this; }, remove() {} };
-	fields.education_history = { $wrapper: dom };
 	const dialog = { fields_dict: fields, get_values: () => ({}), get_primary_btn: () => button,
 		async set_values(values) { for (const [key, value] of Object.entries(values)) fields[key].value = value; },
 		set_df_property(key, property, value) { fields[key].df[property] = value; }, set_title() {} };
@@ -50,7 +54,7 @@ function fixture() {
 		{ group: "supplement", fieldname: "legacy_base_salary", controlName: "supplement_legacy_base_salary" },
 		{ group: "supplement", fieldname: "legacy_account", controlName: "supplement_legacy_account" },
 	];
-	return { archive, dialog, bindings, tables: { salary_history: {} }, saving: false,
+	return { archive, dialog, bindings, tables: { salary_history: {}, education_history: {} }, saving: false,
 		button, get refreshes() { return refreshes; } };
 }
 
@@ -61,6 +65,9 @@ async function main() {
 	assert.equal(payload.supplement.legacy_account, "00123", "raw account stays text");
 	assert.deepEqual(Object.keys(payload.employee), [], "unchanged split name and locked native state are absent");
 	assert.equal(payload.histories.salary_history[0].name, "CHILD-1", "row identity is retained");
+	assert.ok(!("name" in payload.histories.salary_history[1]), "new dialog row random name is not a server identity");
+	assert.ok(!("name" in payload.histories.education_history[0]), "new education rows use native insert");
+	assert.ok(!("__islocal" in payload.histories.education_history[0]), "client grid flags are not server input");
 	assert.ok(!("title" in payload.histories.salary_history[0]), "read-only child columns are absent");
 	assert.ok(!("protected_column" in payload.histories.salary_history[0]), "unknown child columns are absent");
 	state.dialog.fields_dict.archive_name.value = "新名字";
@@ -73,12 +80,14 @@ async function main() {
 	state.dialog.fields_dict.archive_name.value = "王 小 明";
 	reply = { ...state.archive, employee_modified: "new-employee-version", supplement_modified: "new-supplement-version",
 		histories: { salary_history: [{ name: "CHILD-1", project: "旧项目", wage: 0 },
-			{ name: "NEW-CHILD-ID", project: "新项目", wage: 20 }] } };
+			{ name: "NEW-CHILD-ID", project: "新项目", wage: 20 }],
+			education_history: [{ name: "EDUCATION-ROW", project: "学习", study_content: "内容", school: "学校" }] } };
 	await editor.save(state);
 	payload = editor.payload(state);
 	assert.equal(payload.employee_modified, "new-employee-version");
 	assert.equal(payload.supplement_modified, "new-supplement-version");
 	assert.equal(payload.histories.salary_history[1].name, "NEW-CHILD-ID", "repeat save uses server child IDs");
+	assert.equal(payload.histories.education_history[0].name, "EDUCATION-ROW", "education repeat save uses server child ID");
 	assert.equal(state.refreshes, 1);
 	assert.equal(state.original, JSON.stringify(payload));
 	assert.equal(state.button.disabled, false);
