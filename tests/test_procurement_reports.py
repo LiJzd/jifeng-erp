@@ -48,6 +48,7 @@ class TestProcurementReports(unittest.TestCase):
             filters.warehouse, [filters.warehouse]))
         self.frappe.get_list = Mock(side_effect=lambda doctype, filters, **kwargs: list(self.candidates(doctype, filters, visible=True)))
         self.frappe.get_doc = Mock(side_effect=lambda doctype, name: self.documents[doctype][name])
+        self.frappe.get_all = Mock(side_effect=self.get_all)
         self.frappe.db = types.SimpleNamespace(get_value=Mock(return_value="CNY"))
         path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "procurement_reports.py"
         with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.utils": utils,
@@ -70,8 +71,14 @@ class TestProcurementReports(unittest.TestCase):
         self.receipt = Record(name="PR-1", company="JF", docstatus=1, posting_date="2026-09-05",
                               posting_time="10:00:00", is_return=0, supplier="SUP", supplier_name="供应商",
                               currency="USD", conversion_rate=7, items=[self.receipt_row])
+        self.order_row = Record(self.request_row)
+        self.order_row.update(name="POI-1", qty=1, stock_qty=3, material_request=self.request.name,
+                              material_request_item=self.request_row.name)
+        self.order = Record(name="PO-1", company="JF", supplier="SUP", docstatus=1,
+                            status="To Receive and Bill", items=[self.order_row])
         self.documents = {
             "Material Request": {self.request.name: self.request}, "Purchase Receipt": {self.receipt.name: self.receipt},
+            "Purchase Order": {self.order.name: self.order},
             "Item": {"RAW": Record(name="RAW", stock_uom="Kg", is_stock_item=1,
                                    uoms=[Record(uom="Box", conversion_factor=3)])},
             "Warehouse": {name: Record(name=name, company="JF", is_group=0) for name in ("MAIN", "REJECT")},
@@ -85,11 +92,39 @@ class TestProcurementReports(unittest.TestCase):
                 if isinstance(value, (list, tuple)) and value[0] == "between":
                     if not value[1][0] <= str(doc.get(field)) <= value[1][1]:
                         return False
+                elif isinstance(value, (list, tuple)) and value[0] == "in":
+                    if doc.get(field) not in value[1]:
+                        return False
                 elif doc.get(field) != value:
                     return False
             return True
         return {name: doc for name, doc in self.documents.get(doctype, {}).items()
                 if matches(doc) and (not visible or (doctype, name) not in self.hidden)}
+
+    def get_all(self, doctype, filters, or_filters=None, pluck=None, **kwargs):
+        if doctype.endswith(" Item"):
+            rows = []
+            for parent in self.documents.get(doctype[:-5], {}).values():
+                for child in parent.items:
+                    row = Record(child)
+                    row.update(parent=parent.name, parenttype=doctype[:-5], docstatus=parent.docstatus)
+                    rows.append(row)
+            def match(row, field, value):
+                return row.get(field) in value[1] if isinstance(value, (list, tuple)) else row.get(field) == value
+            result = [row for row in rows if all(match(row, field, value) for field, value in filters.items())
+                      and (not or_filters or any(match(row, field, value) for field, value in or_filters.items()))]
+        else:
+            result = list(self.candidates(doctype, filters).values())
+        return list(dict.fromkeys(row.get(pluck) for row in result)) if pluck else result
+
+    def set_order_quantity(self, quantity):
+        self.order_row.update(stock_qty=quantity, qty=Decimal(str(quantity)) / 3)
+
+    def link_receipt_to_request(self, quantity, via_order=False):
+        self.receipt_row.update(stock_qty=quantity, qty=Decimal(str(quantity)) / 3,
+                                material_request=self.request.name, material_request_item=self.request_row.name)
+        if via_order:
+            self.receipt_row.update(purchase_order=self.order.name, purchase_order_item=self.order_row.name)
 
     def readable(self, doctype, query, complete=False):
         candidates = self.candidates(doctype, query)
@@ -131,23 +166,142 @@ class TestProcurementReports(unittest.TestCase):
 
     def test_request_over_order_is_not_a_negative_pending_balance(self):
         self.request_row["ordered_qty"] = 8
+        self.set_order_quantity(8)
         row = self.request_rows()[0]
         self.assertEqual((row["remaining_qty"], row["pending_qty"]), (Decimal(0), Decimal(0)))
 
     def test_direct_receipts_reduce_pending_without_overwriting_unordered_history(self):
         self.request_row.update(ordered_qty=0, received_qty=4)
+        self.order["docstatus"] = 2
+        self.link_receipt_to_request(4)
         row = self.request_rows()[0]
         self.assertEqual((row["received_qty"], row["remaining_qty"], row["pending_qty"]), (4, 6, 2))
         self.request_row["received_qty"] = 6
+        self.link_receipt_to_request(6)
         self.assertEqual(self.request_rows()[0]["pending_qty"], 0)
         self.assertEqual(self.request_rows(only_pending=1), [])
 
     def test_order_and_receipt_progress_overlap_instead_of_adding(self):
         self.request_row["received_qty"] = 4
+        self.link_receipt_to_request(4, via_order=True)
         row = self.request_rows()[0]
         self.assertEqual((row["ordered_qty"], row["received_qty"], row["pending_qty"]), (3, 4, 2))
         self.request_row.update(ordered_qty=5, received_qty=2)
+        self.set_order_quantity(5)
+        self.link_receipt_to_request(2, via_order=True)
         self.assertEqual(self.request_rows()[0]["pending_qty"], 1)
+
+    def test_direct_receipt_and_remaining_order_cover_distinct_parts(self):
+        self.link_receipt_to_request(3)
+        row = self.request_rows()[0]
+        self.assertEqual((row["ordered_qty"], row["received_qty"], row["covered_qty"], row["pending_qty"]), (3, 3, 6, 0))
+        self.assertEqual(self.request_rows(only_pending=1), [])
+
+    def test_exact_po_item_can_retain_request_identity_without_duplicate_mr_links(self):
+        self.link_receipt_to_request(3, via_order=True)
+        self.receipt_row.update(material_request=None, material_request_item=None)
+        self.assertEqual((self.request_rows()[0]["received_qty"], self.request_rows()[0]["pending_qty"]), (3, 3))
+
+    def test_closed_order_keeps_order_history_but_only_receipts_cover_demand(self):
+        self.link_receipt_to_request(2, via_order=True)
+        self.order["status"] = "Closed"
+        row = self.request_rows()[0]
+        self.assertEqual((row["ordered_qty"], row["remaining_qty"], row["received_qty"], row["pending_qty"]), (3, 3, 2, 4))
+
+    def test_cancelled_orders_release_commitment_and_cancelled_receipts_release_received(self):
+        self.link_receipt_to_request(2)
+        self.order["docstatus"] = 2
+        self.assertEqual(self.request_rows()[0]["pending_qty"], 4)
+        self.receipt["docstatus"] = 2
+        row = self.request_rows()[0]
+        self.assertEqual((row["ordered_qty"], row["received_qty"], row["pending_qty"]), (0, 0, 6))
+
+    def test_rejected_return_does_not_reduce_request_net_accepted(self):
+        self.link_receipt_to_request(6)
+        self.order["docstatus"] = 2
+        self.return_doc(rejected=True)
+        # Native cached received_qty can include the rejected-return stock_qty.
+        self.request_row["received_qty"] = 3
+        row = self.request_rows()[0]
+        self.assertEqual((row["received_qty"], row["pending_qty"]), (6, 0))
+
+    def test_accepted_direct_return_opens_gap_and_cancel_return_restores_coverage(self):
+        self.link_receipt_to_request(6)
+        self.order["docstatus"] = 2
+        returned = self.return_doc()
+        self.assertEqual((self.request_rows()[0]["received_qty"], self.request_rows()[0]["pending_qty"]), (3, 3))
+        returned["docstatus"] = 2
+        self.assertEqual(self.request_rows()[0]["pending_qty"], 0)
+
+    def test_active_order_return_keeps_unfilled_order_commitment(self):
+        self.set_order_quantity(6)
+        self.link_receipt_to_request(6, via_order=True)
+        self.return_doc()
+        self.assertEqual((self.request_rows()[0]["received_qty"], self.request_rows()[0]["pending_qty"]), (3, 0))
+
+    def test_request_related_receipts_and_returns_outside_request_dates_are_included(self):
+        self.link_receipt_to_request(6)
+        self.order["docstatus"] = 2
+        self.receipt["posting_date"] = "2026-08-01"
+        returned = self.return_doc()
+        returned["posting_date"] = "2026-10-01"
+        self.assertEqual(self.request_rows()[0]["received_qty"], 3)
+
+    def test_hidden_order_original_or_return_denies_incomplete_request_progress(self):
+        self.link_receipt_to_request(6)
+        returned = self.return_doc()
+        for doctype, name in (("Purchase Order", self.order.name), ("Purchase Receipt", self.receipt.name),
+                               ("Purchase Receipt", returned.name)):
+            with self.subTest(doctype=doctype, name=name):
+                self.hidden.add((doctype, name))
+                with self.assertRaises(PermissionError):
+                    self.request_rows()
+                self.hidden.clear()
+
+    def test_missing_request_or_order_source_never_falls_back_to_same_item(self):
+        self.link_receipt_to_request(6, via_order=True)
+        for document, field, value in ((self.order_row, "material_request_item", None),
+                                       (self.receipt_row, "purchase_order_item", "MISSING"),
+                                       (self.receipt_row, "material_request_item", "MISSING")):
+            with self.subTest(field=field):
+                original = document[field]
+                document[field] = value
+                with self.assertRaises(ValueError):
+                    self.request_rows()
+                document[field] = original
+
+    def test_request_return_missing_original_key_fails_even_when_mr_link_is_intact(self):
+        self.link_receipt_to_request(6)
+        returned = self.return_doc()
+        returned.items[0]["purchase_receipt_item"] = None
+        with self.assertRaisesRegex(ValueError, "精确的原收货明细"):
+            self.request_rows()
+
+    def test_duplicate_requested_items_are_not_merged_by_item_code(self):
+        second = Record(self.request_row)
+        second.update(name="MRI-2", idx=2)
+        self.request.items.append(second)
+        self.link_receipt_to_request(3)
+        self.receipt_row["material_request_item"] = second.name
+        rows = self.request_rows()
+        by_item = {row["request_item"]: row for row in rows}
+        self.assertEqual((by_item["MRI-1"]["ordered_qty"], by_item["MRI-1"]["received_qty"]), (3, 0))
+        self.assertEqual((by_item["MRI-2"]["ordered_qty"], by_item["MRI-2"]["received_qty"]), (0, 3))
+
+    def test_multiple_individual_returns_cannot_overdraw_source_pool(self):
+        self.link_receipt_to_request(3)
+        first = self.return_doc()
+        second = Record(first)
+        second.update(name="RETURN-SECOND", items=[Record(first.items[0])])
+        second.items[0]["name"] = "RETURN-SECOND-ROW"
+        self.documents["Purchase Receipt"][second.name] = second
+        with self.assertRaisesRegex(ValueError, "累计退货"):
+            self.request_rows()
+
+    def test_request_coverage_ignores_stale_native_cached_progress(self):
+        self.request_row.update(ordered_qty=999, received_qty=-3)
+        row = self.request_rows()[0]
+        self.assertEqual((row["ordered_qty"], row["received_qty"], row["pending_qty"]), (3, 0, 3))
 
     def test_only_submitted_purchase_requests_and_transaction_dates(self):
         for changes in (dict(docstatus=0), dict(docstatus=2), dict(material_request_type="Material Transfer"),
@@ -177,8 +331,7 @@ class TestProcurementReports(unittest.TestCase):
         self.assertEqual(self.request_rows()[0]["requested_qty"], Decimal("0.333"))
 
     def test_invalid_non_finite_and_negative_request_quantities_fail(self):
-        for field, value in (("conversion_factor", 0), ("ordered_qty", -1), ("received_qty", -1),
-                             ("received_qty", "inf"), ("qty", "nan"), ("stock_qty", None)):
+        for field, value in (("conversion_factor", 0), ("qty", "nan"), ("stock_qty", None)):
             with self.subTest(field=field):
                 original = self.request_row[field]
                 self.request_row[field] = value

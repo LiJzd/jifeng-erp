@@ -82,6 +82,139 @@ def _item_match(row, filters):
             and (not filters.flow_order or row.get("jf_flow_order") == filters.flow_order))
 
 
+def _related_parents(doctype, references):
+    """Find exact child references without hiding candidates behind permissions."""
+    parents = frappe.get_all(doctype + " Item", filters={"docstatus": 1, "parenttype": doctype},
+                            or_filters=references, pluck="parent", distinct=True, limit_page_length=0)
+    return readable_documents(doctype, {"name": ["in", list(set(parents))], "docstatus": 1},
+                              complete=True) if parents else {}
+
+
+def _request_link(request, row):
+    identity, header = row.get("material_request_item"), row.get("material_request")
+    items = {item.name: item for item in request.items}
+    if header == request.name or identity in items:
+        if header != request.name or identity not in items:
+            frappe.throw("采购进度来源缺少一致的精确申请明细，请先核对")
+        return identity
+    return None
+
+
+def _request_source(request, parent, row, identity, cache):
+    source = next(item for item in request.items if item.name == identity)
+    if (parent.company != request.company or row.item_code != source.item_code
+            or row.stock_uom != source.stock_uom or row.get("jf_flow_order") != source.get("jf_flow_order")):
+        frappe.throw("采购进度来源的公司、商品、库存单位或流程单与申请不一致，请先核对")
+    _context(parent, row, cache)
+
+
+def _receipt_request_link(request, parent, row, cache):
+    """A precise PO item can establish the MRI link; item-code guesses cannot."""
+    identity = _request_link(request, row)
+    order_name, order_item = row.get("purchase_order"), row.get("purchase_order_item")
+    if bool(order_name) != bool(order_item):
+        frappe.throw("采购收货缺少精确的采购订单明细，请先核对")
+    order_key = None
+    if order_name:
+        order = _exact_document("Purchase Order", order_name, cache)
+        source = next((item for item in order.items if item.name == order_item), None)
+        if (order.docstatus != 1 or not source or order.company != parent.company
+                or order.supplier != parent.supplier):
+            frappe.throw("采购收货的原订单公司、供应商或精确明细不一致，请先核对")
+        linked = _request_link(request, source)
+        if identity and identity != linked:
+            frappe.throw("采购收货与原订单的申请明细不一致，请先核对")
+        identity = identity or linked
+        if identity:
+            _request_source(request, order, source, identity, cache)
+            order_key = (order.name, source.name)
+    if identity:
+        _request_source(request, parent, row, identity, cache)
+    return identity, order_key
+
+
+def _request_coverage(request, cache):
+    """Compute coverage from complete submitted PO and signed PR source closures."""
+    key = ("request_coverage", request.name)
+    if key in cache:
+        return cache[key]
+    identities = [item.name for item in request.items]
+    references = {"material_request": request.name, "material_request_item": ["in", identities]}
+    orders = _related_parents("Purchase Order", references)
+    commitments = {}
+    for order in orders.values():
+        cache[("Purchase Order", order.name)] = order
+        for row in order.items:
+            identity = _request_link(request, row)
+            if not identity:
+                continue
+            _request_source(request, order, row, identity, cache)
+            quantity = _stock_qty(row)
+            if quantity < 0:
+                frappe.throw("采购订单库存数量不能为负数，请先核对")
+            commitments[(order.name, row.name)] = (identity, quantity,
+                order.status not in ("Closed", "Stopped", "Cancelled"))
+    receipt_references = {**references}
+    if orders:
+        receipt_references.update(purchase_order=["in", list(orders)],
+                                  purchase_order_item=["in", [key[1] for key in commitments]])
+    receipts = _related_parents("Purchase Receipt", receipt_references)
+    originals = {name: doc for name, doc in receipts.items() if not doc.is_return}
+    if originals:
+        returns = readable_documents("Purchase Receipt", {"docstatus": 1, "is_return": 1,
+                                      "return_against": ["in", list(originals)]}, complete=True)
+        receipts.update(returns)
+    for name, document in receipts.items():
+        cache[("Purchase Receipt", name)] = document
+    pools = {}
+
+    def original_pool(parent, row):
+        source_key = (parent.name, row.name)
+        if source_key not in pools:
+            identity, order_key = _receipt_request_link(request, parent, row, cache)
+            accepted, rejected, _, _, _, _ = _receipt_quantities(parent, row, cache)
+            pools[source_key] = {"identity": identity, "order_key": order_key,
+                                 "accepted": accepted, "rejected": rejected}
+        return pools[source_key]
+
+    for document in receipts.values():
+        for row in document.items:
+            if not document.is_return:
+                original_pool(document, row)
+                continue
+            accepted, rejected, _, _, source_doc, source_row = _receipt_quantities(document, row, cache)
+            pool = original_pool(source_doc, source_row)
+            identity, order_key = _receipt_request_link(request, document, row, cache)
+            if (identity and identity != pool["identity"]) or (order_key and order_key != pool["order_key"]):
+                frappe.throw("采购退货的申请或订单明细与原收货不一致，请先核对")
+            # Returns are found through their original even if the native return
+            # no longer carries an MR link. Its exact original child remains required.
+            pool["accepted"] += accepted
+            pool["rejected"] += rejected
+    progress = {identity: {"ordered": Decimal(0), "received": Decimal(0), "covered": Decimal(0)}
+                for identity in identities}
+    received_by_order = {order_key: Decimal(0) for order_key in commitments}
+    for pool in pools.values():
+        identity = pool["identity"]
+        if not identity:
+            continue
+        if min(pool["accepted"], pool["rejected"]) < 0:
+            frappe.throw("采购收货明细的累计退货超过对应接收或拒收数量，请先核对")
+        progress[identity]["received"] += pool["accepted"]
+        if pool["order_key"]:
+            if pool["order_key"] not in commitments:
+                frappe.throw("采购收货缺少可完整核对的申请订购来源，请先核对")
+            received_by_order[pool["order_key"]] += pool["accepted"]
+        else:
+            progress[identity]["covered"] += pool["accepted"]
+    for order_key, (identity, quantity, active) in commitments.items():
+        progress[identity]["ordered"] += quantity
+        received = received_by_order[order_key]
+        progress[identity]["covered"] += max(quantity, received) if active else received
+    cache[key] = progress
+    return progress
+
+
 def purchase_request_ledger(filters=None):
     filters, start, end = report_scope(filters, ("Material Request",))
     warehouses = set(selected_warehouses(filters)) if filters.warehouse else None
@@ -94,14 +227,13 @@ def purchase_request_ledger(filters=None):
                 continue
             item = _context(doc, row, cache)
             _warehouse(row.warehouse, doc.company, cache, required=bool(item.is_stock_item))
-            requested, ordered = _stock_qty(row), decimal_number(row.get("ordered_qty"))
-            received = decimal_number(row.get("received_qty"))
+            requested = _stock_qty(row)
+            coverage = _request_coverage(doc, cache)[row.name]
+            ordered, received = coverage["ordered"], coverage["received"]
             if min(requested, ordered, received) < 0:
                 frappe.throw("采购申请库存数量、已订数量或已收数量不能为负数，请先核对")
             remaining = max(requested - ordered, Decimal(0))
-            # Native direct receipts can satisfy a request without a PO. Orders
-            # and receipts overlap; adding them would count the same supply twice.
-            pending = max(requested - max(ordered, received), Decimal(0))
+            pending = max(requested - coverage["covered"], Decimal(0))
             if doc.status in ("Stopped", "Cancelled", "Closed"):
                 pending = Decimal(0)
             if cint(filters.only_pending) and pending <= 0:
@@ -112,6 +244,7 @@ def purchase_request_ledger(filters=None):
                          "warehouse": row.warehouse, "flow_order": row.get("jf_flow_order"),
                          "status_label": REQUEST_STATUS.get(doc.status, doc.status), "status": doc.status,
                          "requested_qty": requested, "ordered_qty": ordered, "received_qty": received,
+                         "covered_qty": coverage["covered"],
                          "remaining_qty": remaining, "pending_qty": pending})
     columns = [column("material_request", "采购申请", "Link", "Material Request", 180),
                column("transaction_date", "申请日期", "Date"), column("status_label", "申请状态"),
