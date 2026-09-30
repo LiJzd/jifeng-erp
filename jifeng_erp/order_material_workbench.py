@@ -63,7 +63,12 @@ def _flow(name, company, *, lock=False):
 def _company(name):
     if frappe.session.user == "Guest" or not name:
         frappe.throw("请选择有权读取的公司", frappe.PermissionError)
-    doc = _read("Company", name, ("default_currency",))
+    # Stock clerks have native Company selection, not full Company-profile
+    # read permission. The derived business currency is used by stock reports.
+    if not frappe.get_list("Company", filters={"name": name}, pluck="name", limit_page_length=1):
+        frappe.throw("没有查询该公司的权限", frappe.PermissionError)
+    doc = frappe.get_doc("Company", name)
+    doc.check_permission("select")
     if not doc.default_currency:
         frappe.throw("公司未配置本币")
     return doc
