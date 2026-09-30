@@ -131,25 +131,43 @@ def _install_wage_reversal_permissions():
     """Give default HR supervisors a native reversal path for additional wages."""
     from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
     from frappe.permissions import setup_custom_perms
+    from jifeng_erp.wage_permissions import default_wage_permissions
 
     doctype = "Additional Salary"
-    # Custom permissions are an explicit site decision. Never overwrite them.
-    if frappe.db.exists("Custom DocPerm", {"parent": doctype}):
-        return
+    custom = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=["*"], limit_page_length=0)
+    if custom:
+        fields = ("role", "permlevel", *[field.fieldname for field in frappe.get_meta("DocPerm").fields
+                                          if field.fieldtype == "Check"])
+        native = frappe.get_all("DocPerm", filters={"parent": doctype}, fields=["*"], limit_page_length=0)
+        ess = frappe.get_doc("User Type", "Employee Self Service") if frappe.db.exists(
+            "User Type", "Employee Self Service") else None
+        salary_field = frappe.get_meta("Salary Detail").get_field("additional_salary") if frappe.db.exists(
+            "DocType", "Salary Detail") else None
+        # HRMS creates an exact native clone plus ESS selection permissions from
+        # Salary Slip -> Salary Detail.additional_salary. This is not a manual
+        # site policy. Any meaningful deviation still prevents installation.
+        ess_generated = bool(ess and ess.role == "Employee Self Service"
+            and any(row.document_type == "Salary Slip" for row in ess.user_doctypes)
+            and any(row.document_type == doctype for row in ess.select_doctypes)
+            and salary_field and salary_field.options == doctype)
+        if not default_wage_permissions(native, custom, ess_generated=ess_generated, fields=fields):
+            return
     setup_custom_perms(doctype)
     names = frappe.get_all("Custom DocPerm", filters={
         "parent": doctype, "role": "HR Manager", "permlevel": 0,
     }, pluck="name", limit_page_length=0)
+    changed = False
     for name in names:
         rule = frappe.get_doc("Custom DocPerm", name)
-        if not rule.submit:
+        if not rule.submit or (rule.cancel and rule.delete):
             continue
         rule.cancel, rule.delete = 1, 1
         rule.save(ignore_permissions=True)
+        changed = True
     validate_permissions_for_doctype(doctype)
-    if names:
+    if changed:
         frappe.get_doc("DocType", doctype).add_comment(
-            "Info", "集沣工资分配安装：默认 HR Manager 补充原生附加薪资取消和草稿删除权限；保留原生已提交单据及来源链接校验。已有站点自定义权限不覆盖。",
+            "Info", "集沣工资分配安装：核对原生权限及 HRMS 员工自助选择权限后，默认 HR Manager 补充附加薪资取消和草稿删除权限；原生已提交状态与来源链接校验保留。有实质差异的站点自定义权限不覆盖。",
         )
 
 
