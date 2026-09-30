@@ -201,8 +201,10 @@ def smoke(company, item_group, stock_uom):
         assert source_operation.completed_qty == 5 and source_operation.actual_operation_time == 60
 
         frappe.set_user(original_user)
-        frappe.get_doc({"doctype": "User Permission", "user": operator.name, "allow": "Department",
-                        "for_value": departments[0].name, "apply_to_all_doctypes": 1}).insert()
+        department_permission = frappe.get_doc({
+            "doctype": "User Permission", "user": operator.name, "allow": "Department",
+            "for_value": departments[0].name, "apply_to_all_doctypes": 0, "applicable_for": "Job Card",
+        }).insert()
         frappe.set_user(operator.name)
         visible = job_card_progress(filters)[1]
         assert len(visible) == 1 and visible[0]["jf_department"] == departments[0].name
@@ -220,6 +222,13 @@ def smoke(company, item_group, stock_uom):
             pass
         else:
             raise AssertionError("Hidden department Job Card cannot be copied as a corrective source")
+        frappe.set_user(original_user)
+        department_permission.apply_to_all_doctypes = 1
+        department_permission.applicable_for = None
+        department_permission.save()
+        frappe.set_user(operator.name)
+        assert not frappe.get_doc("Work Order", work.name).has_permission("read")
+        assert not job_card_progress(filters)[1] and not department_progress(filters)[1]
         assert frappe.db.count("Stock Ledger Entry") == before_stock and frappe.db.count("GL Entry") == before_gl
         frappe.set_user("Guest")
         try:
@@ -238,7 +247,8 @@ def smoke(company, item_group, stock_uom):
                 "continuation_completed_without_false_overdue", "corrective_native_mapping",
                 "corrective_native_save_submit", "corrective_quantity_excluded", "corrective_time_separation",
                 "corrective_native_operation_unchanged", "corrective_source_permission",
-                "corrective_for_operation_guard", "corrective_for_job_card_guard"], "business_data": "rolled_back"}
+                "corrective_for_operation_guard", "corrective_for_job_card_guard",
+                "global_department_parent_read_guard"], "business_data": "rolled_back"}
     finally:
         frappe.set_user(original_user)
         _end_rollback_only(point)

@@ -97,7 +97,10 @@ def job_card_progress(filters=None, date_basis="posting_date"):
     sources = {}
     for parent in parents:
         work = frappe.get_doc("Work Order", parent.name)
-        work.check_permission("read")
+        # A cross-department document can be unreadable despite a visible list
+        # row. Never use that parent's data to populate the report.
+        if not work.has_permission("read"):
+            continue
         sources[parent.name] = {"flow_order": parent.jf_flow_order, "qty": flt(parent.qty),
                                 "status": parent.status, "operations": {
                                     operation.name: operation for operation in work.get("operations") or []}}
