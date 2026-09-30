@@ -80,6 +80,7 @@ def smoke(company, item_group, stock_uom):
         conflict.jf_department = None
         conflict.operation_id = cards[1].operation_id
         _reject(lambda: validate_job_card_department(conflict), "工序、公司不一致")
+        workstations[0].reload()
         workstations[0].jf_department = departments[1].name
         workstations[0].save()
         cards[0].reload()
@@ -101,6 +102,9 @@ def smoke(company, item_group, stock_uom):
             card.reload()
             card.expected_start_date = add_days(today(), -1) + " 08:00:00"
             card.expected_end_date = add_days(today(), -1) + " 09:00:00"
+            # Native Job Card treats the uncompleted balance as process loss
+            # unless the operator explicitly records it as pending production.
+            card.pending_qty = 0 if idx == 0 else 4
             card.append("time_logs", {"from_time": today() + f" {9 + idx}:00:00",
                                       "to_time": today() + f" {9 + idx}:30:00", "completed_qty": 5 if idx == 0 else 1})
             card.save()
@@ -108,7 +112,7 @@ def smoke(company, item_group, stock_uom):
             assert draft["draft_qty"] == (5 if idx == 0 else 1) and draft["approved_qty"] == 0
             card.submit()
         summary = department_progress(filters)[1]
-        assert len(summary) == 2 and sorted(row["approved_percent"] for row in summary) == [20, 100]
+        assert len(summary) == 2 and sorted(row["approved_percent"] for row in summary) == [20, 100], summary
         assert all(row["for_quantity"] == 5 and row["hours"] == 0.5 for row in summary)
         overdue = job_card_progress({**filters, "only_overdue": 1})[1]
         assert len(overdue) == 1 and overdue[0]["jf_department"] == departments[1].name and overdue[0]["remaining_qty"] == 4

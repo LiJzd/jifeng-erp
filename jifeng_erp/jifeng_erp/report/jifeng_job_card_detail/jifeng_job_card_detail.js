@@ -19,7 +19,7 @@ frappe.query_reports["Jifeng Job Card Detail"] = {
     onload(report) {
         report.page.main.find(".jifeng-production-note").remove();
         $("<div class='alert alert-info jifeng-production-note'>")
-            .text("每行一道工序报工；草稿和已提交数量分列，已取消不计。不同工序完成数量不能相加作为成品数量；记录工时包含草稿，不作为工资金额。")
+            .text("每行一道工序报工；草稿和已提交数量分列，已取消不计。部分报工请填写报工单的待完成数量，未填写时差额会计为损耗。不同工序完成数量不能相加作为成品数量；记录工时包含草稿，不作为工资金额。")
             .prependTo(report.page.main);
     },
 };

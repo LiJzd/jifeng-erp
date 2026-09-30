@@ -58,8 +58,27 @@ def check():
         "production_plan_link_installed": frappe.get_meta("Production Plan Item").has_field("jf_flow_order"),
         "production_instruction_print_installed": bool(frappe.db.exists("Print Format", "Jifeng Production Instruction")),
         "job_card_link_installed": frappe.get_meta("Job Card").has_field("jf_flow_order"),
+        "production_department_fields_installed": all(
+            frappe.get_meta(doctype).has_field("jf_department")
+            for doctype in ("Workstation", "Operation", "Work Order Operation", "Job Card")
+        ),
+        "production_department_hooks_active": all(
+            hook in doc_events.get(doctype, {}).get(event, [])
+            for doctype, event, hook in (
+                ("Workstation", "validate", "jifeng_erp.production_department.validate_default_department"),
+                ("Operation", "validate", "jifeng_erp.production_department.validate_default_department"),
+                ("Work Order", "before_validate", "jifeng_erp.production_department.validate_work_order_departments"),
+                ("Job Card", "before_validate", "jifeng_erp.production_department.validate_job_card_department"),
+            )
+        ),
+        "manufacturing_department_selector_permissions": {
+            role: any(row.role == role and (row.get("select") or row.get("read"))
+                      for row in frappe.get_meta("Department").permissions)
+            for role in ("Manufacturing User", "Manufacturing Manager")
+        },
         "production_reports_installed": all(frappe.db.exists("Report", name) for name in
-                                            ("Jifeng Production Progress", "Jifeng Job Card Detail")),
+                                            ("Jifeng Production Progress", "Jifeng Job Card Detail",
+                                             "Jifeng Department Progress", "Jifeng Production Picture")),
         "material_issue_link_installed": frappe.get_meta("Stock Entry").has_field("jf_material_issue_flow"),
         "employee_supplement_installed": bool(frappe.db.exists("DocType", "Jifeng Employee Supplement")),
         "hrms_installed": "hrms" in frappe.get_installed_apps(),

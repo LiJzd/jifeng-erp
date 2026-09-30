@@ -80,12 +80,21 @@ def install():
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
     make_property_setter("Production Plan", None, "track_changes", 1, "Check", for_doctype=True)
-    from frappe.permissions import add_permission
+    from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
+    from frappe.permissions import setup_custom_perms
 
     for role in ("Manufacturing User", "Manufacturing Manager"):
-        if not any(row.role == role and (row.get("select") or row.get("read"))
-                   for row in frappe.get_meta("Department").permissions):
-            add_permission("Department", role, ptype="select")
+        # Preserve site-specific rules. Custom DocPerm defaults read to 1, so
+        # explicitly disable it when installing a new selector-only rule.
+        if any(row.role == role for row in frappe.get_meta("Department").permissions):
+            continue
+        setup_custom_perms("Department")
+        frappe.get_doc({
+            "doctype": "Custom DocPerm", "parent": "Department", "parenttype": "DocType",
+            "parentfield": "permissions", "role": role, "permlevel": 0,
+            "if_owner": 0, "read": 0, "select": 1,
+        }).insert(ignore_permissions=True)
+        validate_permissions_for_doctype("Department")
 
 
 _PROCUREMENT_SOURCES = {

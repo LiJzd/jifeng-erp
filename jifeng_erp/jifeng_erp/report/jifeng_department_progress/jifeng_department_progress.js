@@ -17,7 +17,7 @@ frappe.query_reports["Jifeng Department Progress"] = {
     onload(report) {
         report.page.main.find(".jifeng-production-note").remove();
         $("<div class='alert alert-info jifeng-production-note'>")
-            .text("按派工时的部门、工序和单位分组；未指定部门单列。不同工序及单位的数量不相加作为成品数量。待审核与已审核分列；记录工时包含草稿，不作为工资金额。")
+            .text("按派工时的部门、工序和单位分组；未指定部门单列。部分报工请填写报工单的待完成数量，未填写时差额会计为损耗。不同工序及单位的数量不相加作为成品数量。待审核与已审核分列；记录工时包含草稿，不作为工资金额。")
             .prependTo(report.page.main);
     },
 };
