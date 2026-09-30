@@ -26,6 +26,7 @@ class Record(dict):
 
 class TestPersonnelRoster(unittest.TestCase):
     def setUp(self):
+        self.hidden_fields = {}
         self.documents, self.listed, self.permissions = {}, {}, {"Employee": True,
             "Jifeng Employee Supplement": False}
         frappe = types.ModuleType("frappe")
@@ -66,7 +67,8 @@ class TestPersonnelRoster(unittest.TestCase):
             document = self.documents[(doctype, name)]
             if all(document.get(field) in value[1] if isinstance(value, list) and value[0] == "in"
                    else document.get(field) == value for field, value in filters.items()):
-                rows.append(Record({field: document.get(field) for field in fields}))
+                rows.append(Record({field: document.get(field) for field in fields
+                                    if field not in self.hidden_fields.get(doctype, set())}))
         return rows
 
     def report(self, **filters):
@@ -241,6 +243,23 @@ class TestPersonnelRoster(unittest.TestCase):
         _, rows = self.report()
         self.assertIsNone(rows[0]["term_type"])
         self.assertEqual(rows[0]["wage_method"], "")
+
+    def test_native_field_permissions_are_not_refilled_from_full_employee(self):
+        self.hidden_fields["Employee"] = {"employee_number", "employee_name", "relieving_date"}
+        self.employee.employee_number = "FIELD-HIDDEN-NUMBER"
+        self.employee.employee_name = "FIELD-HIDDEN-NAME"
+        self.employee.relieving_date = "2026-09-30"
+        _, rows = self.report()
+        self.assertEqual(rows[0]["employee"], "EMP-1")
+        self.assertTrue(all(rows[0][field] is None for field in self.hidden_fields["Employee"]))
+        self.assertNotIn("FIELD-HIDDEN", json.dumps(rows))
+
+    def test_native_field_permissions_are_not_refilled_from_full_supplement(self):
+        self.supplement()
+        self.hidden_fields[self.module.SUPPLEMENT] = {"term_type", "wage_method"}
+        _, rows = self.report()
+        self.assertIsNone(rows[0]["term_type"])
+        self.assertIsNone(rows[0]["wage_method"])
 
     def test_report_definition_uses_native_employee_and_hr_roles(self):
         directory = ROOT / "jifeng_erp/jifeng_erp/report/jifeng_personnel_roster"

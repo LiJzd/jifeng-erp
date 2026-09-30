@@ -53,7 +53,11 @@ def _employees(query):
         # current data, so an out-of-scope source must not appear in the result.
         if any(document.get(field) != value for field, value in query.items()):
             continue
-        documents[document.name] = document
+        # get_list already removed fields denied by native field-level read
+        # permissions. The full document is only a scope/read guard; never
+        # refill values that the list query deliberately omitted.
+        documents[document.name] = frappe._dict({field: row.get(field)
+                                               for field in EMPLOYEE_FIELDS if field in row})
     return sorted(documents.values(), key=lambda doc: (doc.employee_name or "", doc.name))
 
 
@@ -76,7 +80,8 @@ def _supplements(company, employees):
         except frappe.PermissionError:
             continue
         if readable and document.company == company and document.employee in employees:
-            documents[document.employee] = document
+            documents[document.employee] = {field: row.get(field)
+                                            for field in SUPPLEMENT_FIELDS if field in row}
     return True, documents
 
 
