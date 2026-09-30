@@ -44,37 +44,67 @@ def _track(data, kind, doc):
     return doc
 
 
+def _attachment_owner(data, file):
+    """A native clone may belong to an exact fixture parent or its real child row."""
+    allowed = {(doctype, name) for kind, doctype in KINDS.items() if kind != "files" for name in data[kind]}
+    attachment = (file.attached_to_doctype, file.attached_to_name)
+    if attachment in allowed:
+        return attachment
+    if file.attached_to_doctype and file.attached_to_name and frappe.get_meta(file.attached_to_doctype).istable:
+        child = frappe.get_doc(file.attached_to_doctype, file.attached_to_name)
+        if (child.parenttype, child.parent) in allowed:
+            return child.parenttype, child.parent
+    raise AssertionError("QA图片出现未追踪的附件引用，拒绝删除: {0} → {1} / {2}".format(
+        file.name, file.attached_to_doctype, file.attached_to_name))
+
+
 def _collect_files(data, objects=None):
-    """Track native image clones sharing this fixture's unique content and URL."""
+    """Find every native reference by exact URL; native clones may lack a hash."""
+    from frappe.utils.file_manager import get_content_hash
+
     candidates = list(objects or [])
     records = {row["name"]: row for row in data.get("file_records", [])}
-    seeds = {(row["content_hash"], row["file_url"]) for row in records.values()}
+    seeds = {row["file_url"] for row in records.values()}
     for file in candidates:
-        if file.content_hash and file.file_url and file.file_name.startswith(data["prefix"] + "-"):
-            seeds.add((file.content_hash, file.file_url))
-    allowed = {("Item", name) for name in data["items"]} | {
-        ("Jifeng Flow Order", name) for name in data["flows"]}
+        if file.file_url and file.file_name.startswith(data["prefix"] + "-"):
+            seeds.add(file.file_url)
+    suffix = data["prefix"].removeprefix("JF-DEPT-BROWSER-")
+    payload = _qa_png(suffix + "-DEPARTMENT-BROWSER")
+    qa_digest = get_content_hash(payload)
     known = {file.name for file in candidates if file.name}
-    for digest, url in seeds:
-        names = frappe.get_all("File", filters={"content_hash": digest, "file_url": url}, pluck="name")
+    errors, diagnostics = [], []
+    for url in seeds:
+        assert url.startswith("/private/files/" + data["prefix"] + "-")
+        names = frappe.get_all("File", filters={"file_url": url}, pluck="name", limit_page_length=0)
         for name in names:
             file = frappe.get_doc("File", name)
-            if not file.file_name.startswith(data["prefix"] + "-") or (
-                file.attached_to_doctype, file.attached_to_name
-            ) not in allowed:
-                continue
-            assert file.is_private and file.file_url.startswith("/private/files/" + data["prefix"] + "-")
-            if name not in known:
-                candidates.append(file)
-                known.add(name)
-            if name not in data["files"]:
-                data["files"].append(name)
-            record = records.setdefault(name, {"name": name, "native_clone": True})
-            record.update({"file_name": file.file_name, "file_url": file.file_url,
-                           "physical_path": file.get_full_path(), "content_hash": file.content_hash,
-                           "attached_to_doctype": file.attached_to_doctype, "attached_to_name": file.attached_to_name})
+            diagnostic = {"name": name, "file_url": file.file_url, "content_hash": file.content_hash,
+                          "attached_to_doctype": file.attached_to_doctype, "attached_to_name": file.attached_to_name}
+            diagnostics.append(diagnostic)
+            try:
+                assert file.file_name.startswith(data["prefix"] + "-") and file.is_private
+                owner = _attachment_owner(data, file)
+                diagnostic["fixture_parenttype"], diagnostic["fixture_parent"] = owner
+                assert file.exists_on_disk() and file.get_content() == payload, "QA附件实物不是当前唯一合成PNG: " + name
+                if name not in known:
+                    candidates.append(file)
+                    known.add(name)
+                if name not in data["files"]:
+                    data["files"].append(name)
+                record = records.setdefault(name, {"name": name, "native_clone": True})
+                record.update({"file_name": file.file_name, "file_url": file.file_url,
+                               "physical_path": file.get_full_path(), "content_hash": file.content_hash,
+                               "qa_content_hash": qa_digest, "attached_to_doctype": file.attached_to_doctype,
+                               "attached_to_name": file.attached_to_name, "fixture_parenttype": owner[0], "fixture_parent": owner[1]})
+                diagnostic["accepted"] = True
+            except Exception as exc:
+                diagnostic.update({"accepted": False, "error": str(exc)})
+                errors.append(exc)
     data["file_records"] = list(records.values())
+    data["file_reference_diagnostics"] = diagnostics
     _journal(data)
+    if errors:
+        raise ExceptionGroup("QA图片附件引用或实物核对失败，未删除附件", errors)
     if objects is not None:
         objects[:] = candidates
     return candidates
@@ -180,6 +210,7 @@ def create(company, item_group, stock_uom):
         assert image.exists_on_disk() and image.get_content() == payload
         data["file_records"].append({"name": image.name, "file_name": image.file_name, "file_url": image.file_url,
                                      "physical_path": image.get_full_path(), "content_hash": image.content_hash,
+                                     "qa_content_hash": digest,
                                      "native_clone": False, "attached_to_doctype": "Item", "attached_to_name": finished.name})
         _journal(data)
         finished.image = image.file_url
@@ -303,8 +334,8 @@ def _validate_objects(data):
     for file in docs["files"]:
         meta = next(row for row in data["file_records"] if row["name"] == file.name)
         assert file.file_name.startswith(prefix + "-") and file.content_hash == meta["content_hash"] and file.is_private
-        assert file.file_url == meta["file_url"] and (file.attached_to_doctype, file.attached_to_name) in (
-            {("Item", name) for name in data["items"]} | {("Jifeng Flow Order", name) for name in data["flows"]})
+        assert file.file_url == meta["file_url"]
+        assert _attachment_owner(data, file) == (meta["fixture_parenttype"], meta["fixture_parent"])
     assert not frappe.db.exists("Stock Ledger Entry", {"item_code": ["in", data["items"]]})
     assert not frappe.db.exists("Stock Entry", {"work_order": ["in", data["work_orders"]]})
     return docs
