@@ -33,6 +33,7 @@ class TestPersonnelSeparation(unittest.TestCase):
         self.source_table_level = 0
         self.clock, self.employee_saves, self.source_hooks, self.user_calls = 0, 0, 0, []
         self.fail_source, self.extra_task = False, False
+        self.native_validations = 0
         self.employee_fields = {"company", "employee_name", "department", "designation", "branch", "grade",
             "status", "date_of_joining", "relieving_date", "user_id", "employment_type", "reports_to", "ctc",
             "create_user_permission", "resignation_letter_date", "reason_for_leaving", "phone"}
@@ -40,7 +41,7 @@ class TestPersonnelSeparation(unittest.TestCase):
             "Employee Internal Work History": {"branch", "department", "designation", "from_date", "to_date"},
             "Project": {"company", "status"}, "Task": {"company", "project", "status", "completed_on"},
             "Employee Separation": {"employee", "company", "project", "boarding_begins_on", "resignation_letter_date",
-                "jf_last_working_day", "jf_reason_for_leaving", "jf_exit_snapshot", "jf_exit_status"},
+                "jf_last_working_day", "jf_reason_for_leaving", "jf_exit_snapshot", "jf_exit_status", "amended_from"},
             "Employee Boarding Activity": {"name", "task", "activity_name", "role", "description"}}
         test = self
         self.frappe = types.ModuleType("frappe")
@@ -143,6 +144,12 @@ class TestPersonnelSeparation(unittest.TestCase):
                 return self
 
         class NativeSource(NativeDoc):
+            def validate(self):
+                test.native_validations += 1
+                if self.amended_from:
+                    for activity in self.activities:
+                        activity.task = ""
+
             def on_submit(self):
                 project = test.Project(doctype="Project", project_name="Employee Separation : " + self.employee,
                     company=self.company, flags=Doc(), meta=test.project_meta)
@@ -157,6 +164,7 @@ class TestPersonnelSeparation(unittest.TestCase):
                 if self.docstatus == 1:
                     self.check_permission("submit")
                 self.before_validate()
+                self.validate()
                 if self.docstatus == 1:
                     self.before_update_after_submit()
                 super().save()
@@ -737,12 +745,68 @@ class TestPersonnelSeparation(unittest.TestCase):
 
     def test_empty_source_cancel_never_selects_or_deletes_unassigned_tasks(self):
         self.store[("Employee Separation", "SOURCE")].update(project=None, activities=[])
+        self.store.pop(("Employee Boarding Activity", "ACTIVITY"))
         self.store[("Task", "UNASSIGNED")] = Doc(doctype="Task", name="UNASSIGNED", project=None, status="Open")
         source = self.source()
         source.before_cancel()
         source.on_cancel()
         self.assertEqual(self.store[("Task", "UNASSIGNED")].status, "Open")
         self.frappe.db.delete.assert_not_called()
+
+    def test_submitted_pending_activity_cannot_clear_replace_or_remove_persisted_task(self):
+        for mutation in (lambda source: setattr(source.activities[0], "task", ""),
+                         lambda source: setattr(source.activities[0], "task", "OTHER"),
+                         lambda source: setattr(source, "activities", [])):
+            source = self.source()
+            mutation(source)
+            baseline = deepcopy(self.store)
+            with self.assertRaisesRegex(ValueError, "不能移除、清空或更换"):
+                source.save()
+            self.assertEqual(self.store, baseline)
+
+    def test_submitted_pending_activity_can_append_new_native_taskless_activity(self):
+        source = self.source()
+        source.activities.append(Doc(name="NEW-ACTIVITY", task=None))
+        source.validate()
+        self.assertEqual(source.activities[0].task, "TASK")
+        self.assertIsNone(source.activities[1].task)
+        self.assertEqual(self.native_validations, 1)
+
+    def test_amended_submitted_lifecycle_preserves_exact_task_links_and_native_validation(self):
+        original = deepcopy(self.store[("Employee Separation", "SOURCE")])
+        original.update(name="ORIGINAL", docstatus=2, project="ORIGINAL-PROJECT", activities=[])
+        self.store[("Employee Separation", "ORIGINAL")] = original
+        self.store[("Employee Separation", "SOURCE")].amended_from = "ORIGINAL"
+        baseline = deepcopy(original)
+        self.finalize()
+        snapshot = json.loads(self.store[("Employee Separation", "SOURCE")].jf_exit_snapshot)
+        self.assertEqual(snapshot["source"]["amended_from"], "ORIGINAL")
+        self.reverse()
+        self.assertEqual(self.source().activities[0].task, "TASK")
+        self.assertEqual(self.store[("Employee Separation", "ORIGINAL")], baseline)
+        self.assertEqual(self.native_validations, 2)
+        self.assertEqual(self.store[("Employee", "EMP")].status, "Active")
+
+    def test_amended_draft_still_runs_native_task_reset_without_restoring_submitted_links(self):
+        self.store[("Employee Separation", "SOURCE")].update(docstatus=0, amended_from="ORIGINAL")
+        source = self.source()
+        source.validate()
+        self.assertEqual(source.activities[0].task, "")
+        self.assertEqual(self.native_validations, 1)
+
+    def test_amended_origin_must_be_cancelled_readable_and_same_employee_company(self):
+        original = deepcopy(self.store[("Employee Separation", "SOURCE")])
+        original.update(name="ORIGINAL", docstatus=2)
+        self.store[("Employee Separation", "SOURCE")].amended_from = "ORIGINAL"
+        for changed in ({"docstatus": 1}, {"employee": "OTHER"}, {"company": "OTHER"}):
+            self.store[("Employee Separation", "ORIGINAL")] = Doc(deepcopy(original), **changed)
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "同员工、同公司的已取消"):
+                self.source().validate()
+        self.store[("Employee Separation", "ORIGINAL")] = original
+        self.denied[("Employee Separation", "ORIGINAL")] = {"read"}
+        with self.assertRaises(PermissionError):
+            self.source().validate()
+        self.assertEqual(self.native_validations, 0)
 
 
 if __name__ == "__main__":

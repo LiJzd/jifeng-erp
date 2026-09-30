@@ -31,7 +31,7 @@ EMPLOYEE_FIELDS = WATCH_FIELDS | JOB_FIELDS | {
     "ctc", "create_user_permission", "resignation_letter_date", "reason_for_leaving"}
 SOURCE_READ_FIELDS = {"company", "employee_name", "department", "designation", "grade", "resignation_letter_date"}
 SOURCE_INTENT_FIELDS = {"employee", "company", "project", "boarding_begins_on", "resignation_letter_date",
-                        "jf_last_working_day", "jf_reason_for_leaving"}
+                        "jf_last_working_day", "jf_reason_for_leaving", "amended_from"}
 ACTIVITY = "Employee Boarding Activity"
 CHANGING_FIELDS = {"status", "relieving_date", "reason_for_leaving"}
 PAYROLL_TYPES = ("Jifeng Wage Entry", "Additional Salary", "Salary Slip", "Salary Structure Assignment")
@@ -113,7 +113,8 @@ def _employee_state(employee):
 
 def _intent(source):
     return {"name": source.name, "employee": source.employee, "company": source.company,
-        "project": source.project, "boarding_begins_on": _value(source.boarding_begins_on),
+        "project": source.project, "amended_from": source.amended_from or None,
+        "boarding_begins_on": _value(source.boarding_begins_on),
         "resignation_letter_date": _value(source.resignation_letter_date),
         "last_working_day": _value(source.get("jf_last_working_day")),
         "reason": source.get("jf_reason_for_leaving") or "",
@@ -140,9 +141,10 @@ def _parse_snapshot(raw):
     require(data["version"] == 1 and data["state"] in ("finalized", "reversed"))
     require(isinstance(data["source"], dict) and set(data["source"]) == {
         "name", "employee", "company", "project", "boarding_begins_on", "resignation_letter_date",
-        "last_working_day", "reason", "activities", "activities_hash"})
+        "last_working_day", "reason", "activities", "activities_hash", "amended_from"})
     source = data["source"]
     require(all(isinstance(source[key], str) and source[key] for key in ("name", "employee", "company", "project")))
+    require(source["amended_from"] is None or isinstance(source["amended_from"], str) and bool(source["amended_from"]))
     require(isinstance(source["last_working_day"], str) and source["last_working_day"])
     require(isinstance(source["reason"], str))
     require(isinstance(data["source"]["activities"], list))
@@ -479,6 +481,13 @@ class SeparationProjectMixin:
 
 
 class EmployeeSeparationMixin:
+    def _persisted_activity_tasks(self):
+        if self.is_new():
+            return {}
+        return {row.name: row.task for row in frappe.get_all(
+            ACTIVITY, filters={"parent": self.name, "parenttype": DOCTYPE, "parentfield": "activities"},
+            fields=["name", "task"], limit_page_length=0)}
+
     def _guard_employee_company(self):
         if not self.employee:
             return
@@ -501,7 +510,8 @@ class EmployeeSeparationMixin:
         if self.flags.get("jf_exit_server_save") is _SERVER:
             _snapshot(self)
             return
-        stored = {} if self.is_new() else frappe.db.get_value(DOCTYPE, self.name, [SNAPSHOT, STATUS, "project"], as_dict=True)
+        stored = {} if self.is_new() else frappe.db.get_value(
+            DOCTYPE, self.name, [SNAPSHOT, STATUS, "project", "docstatus", "amended_from"], as_dict=True)
         stored = stored or {}
         if (self.get(SNAPSHOT) or "") != (stored.get(SNAPSHOT) or ""):
             frappe.throw(TAMPER)
@@ -511,14 +521,42 @@ class EmployeeSeparationMixin:
             frappe.throw("交接项目只能由原生离职来源创建，不能预填")
         if not self.is_new() and self.project != stored.get("project"):
             frappe.throw("交接项目只能由原生离职来源创建，不能更换")
-        saved = {} if self.is_new() else {row.name: row.task for row in frappe.get_all(
-            "Employee Boarding Activity", filters={"parent": self.name, "parenttype": DOCTYPE,
-                "parentfield": "activities"}, fields=["name", "task"], limit_page_length=0)}
+        saved = self._persisted_activity_tasks()
+        current = {row.name: row.task for row in self.activities or [] if row.name}
+        if stored.get("docstatus") == 1:
+            if any(task and current.get(name) != task for name, task in saved.items()):
+                frappe.throw("已提交的交接活动及任务不能移除、清空或更换")
+            if (self.amended_from or "") != (stored.get("amended_from") or ""):
+                frappe.throw("已提交的离职修订来源不能更换")
         for row in self.activities or []:
             if row.task and row.task != saved.get(row.name):
                 frappe.throw("交接任务只能由原生来源活动创建，不能伪造或更换")
         if self.get(SNAPSHOT):
             _snapshot(self)  # Completed/reversed source intent stays frozen.
+
+    def validate(self):
+        self._guard_exit_fields()
+        stored = None if self.is_new() else frappe.db.get_value(
+            DOCTYPE, self.name, ["docstatus", "amended_from"], as_dict=True)
+        restore_tasks = bool(stored and stored.docstatus == 1 and self.amended_from)
+        saved = self._persisted_activity_tasks() if restore_tasks else {}
+        if restore_tasks:
+            if stored.amended_from != self.amended_from:
+                frappe.throw("已提交的离职修订来源不能更换")
+            original = frappe.get_doc(DOCTYPE, self.amended_from)
+            original.check_permission("read")
+            if (original.docstatus != 2 or original.employee != self.employee or original.company != self.company):
+                frappe.throw("离职修订必须来自同员工、同公司的已取消正式来源")
+        # HRMS clears activity.task on every amended document validation. Keep
+        # its complete validation, then preserve only this submitted source's
+        # exact persisted task links; drafts still use the native reset.
+        method = getattr(super(), "validate", None)
+        result = method() if method else None
+        if restore_tasks:
+            for row in self.activities or []:
+                if saved.get(row.name):
+                    row.task = saved[row.name]
+        return result
 
     def before_validate(self):
         self._guard_exit_fields()
