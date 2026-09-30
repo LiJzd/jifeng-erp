@@ -481,6 +481,49 @@ class SeparationProjectMixin:
 
 
 class EmployeeSeparationMixin:
+    def _copy_origin(self):
+        if self.amended_from:
+            original = frappe.get_doc(DOCTYPE, self.amended_from)
+            if original.docstatus != 2:
+                frappe.throw("离职修订必须来自同员工、同公司的已取消正式来源")
+        elif self.project and self.is_new():
+            names = frappe.get_all(DOCTYPE, filters={"project": self.project}, pluck="name", limit_page_length=0)
+            if len(names) != 1:
+                frappe.throw("新离职来源不能预填无可靠来源的交接项目")
+            original = frappe.get_doc(DOCTYPE, names[0])
+            if original.docstatus not in (1, 2):
+                frappe.throw("复制离职来源必须使用正式来源的交接项目")
+        else:
+            return None
+        original.check_permission("read")
+        if original.employee != self.employee or original.company != self.company:
+            frappe.throw("离职修订或复制必须来自同员工、同公司的可读正式来源")
+        return original
+
+    def _normalize_new_copy(self):
+        if not self.is_new():
+            return
+        original = self._copy_origin()
+        if not original:
+            return
+        # Desk Amend intentionally copies no_copy fields, including our state
+        # and snapshot; ordinary Duplicate also copies native project. Verify
+        # their exact readable origin, then start a fresh native handover.
+        if self.project and self.project != original.project:
+            frappe.throw("复制的交接项目与实际修订来源不一致")
+        if self.get(SNAPSHOT) and self.get(SNAPSHOT) != original.get(SNAPSHOT):
+            frappe.throw(TAMPER)
+        if self.get(STATUS) not in (None, "", PENDING, original.get(STATUS)):
+            frappe.throw(TAMPER)
+        tasks = {row.task for row in original.activities or [] if row.task}
+        if any(row.task and row.task not in tasks for row in self.activities or []):
+            frappe.throw("复制的交接任务与实际来源不一致")
+        self.project = None
+        self.set(SNAPSHOT, None)
+        self.set(STATUS, PENDING)
+        for row in self.activities or []:
+            row.task = ""
+
     def _persisted_activity_tasks(self):
         if self.is_new():
             return {}
@@ -500,6 +543,7 @@ class EmployeeSeparationMixin:
         frappe.get_doc("Company", self.company).check_permission("select")
 
     def _guard_exit_fields(self):
+        self._normalize_new_copy()
         for name in (SNAPSHOT, STATUS):
             field = self.meta.get_field(name)
             if not (field and field.read_only and field.no_copy and field.allow_on_submit):
@@ -528,35 +572,13 @@ class EmployeeSeparationMixin:
                 frappe.throw("已提交的交接活动及任务不能移除、清空或更换")
             if (self.amended_from or "") != (stored.get("amended_from") or ""):
                 frappe.throw("已提交的离职修订来源不能更换")
+        if not self.is_new() and self.amended_from:
+            self._copy_origin()
         for row in self.activities or []:
             if row.task and row.task != saved.get(row.name):
                 frappe.throw("交接任务只能由原生来源活动创建，不能伪造或更换")
         if self.get(SNAPSHOT):
             _snapshot(self)  # Completed/reversed source intent stays frozen.
-
-    def validate(self):
-        self._guard_exit_fields()
-        stored = None if self.is_new() else frappe.db.get_value(
-            DOCTYPE, self.name, ["docstatus", "amended_from"], as_dict=True)
-        restore_tasks = bool(stored and stored.docstatus == 1 and self.amended_from)
-        saved = self._persisted_activity_tasks() if restore_tasks else {}
-        if restore_tasks:
-            if stored.amended_from != self.amended_from:
-                frappe.throw("已提交的离职修订来源不能更换")
-            original = frappe.get_doc(DOCTYPE, self.amended_from)
-            original.check_permission("read")
-            if (original.docstatus != 2 or original.employee != self.employee or original.company != self.company):
-                frappe.throw("离职修订必须来自同员工、同公司的已取消正式来源")
-        # HRMS clears activity.task on every amended document validation. Keep
-        # its complete validation, then preserve only this submitted source's
-        # exact persisted task links; drafts still use the native reset.
-        method = getattr(super(), "validate", None)
-        result = method() if method else None
-        if restore_tasks:
-            for row in self.activities or []:
-                if saved.get(row.name):
-                    row.task = saved[row.name]
-        return result
 
     def before_validate(self):
         self._guard_exit_fields()

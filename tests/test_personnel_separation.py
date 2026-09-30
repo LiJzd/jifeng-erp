@@ -164,9 +164,10 @@ class TestPersonnelSeparation(unittest.TestCase):
                 if self.docstatus == 1:
                     self.check_permission("submit")
                 self.before_validate()
-                self.validate()
                 if self.docstatus == 1:
                     self.before_update_after_submit()
+                else:
+                    self.validate()
                 super().save()
                 test.source_hooks += 1
                 if test.extra_task:
@@ -496,7 +497,7 @@ class TestPersonnelSeparation(unittest.TestCase):
             source.before_validate()
 
     def test_new_source_cannot_accept_client_server_state_or_prelinked_project(self):
-        for field, value in (("jf_exit_snapshot", "{}"), ("jf_exit_status", "已办理"), ("project", "PROJECT")):
+        for field, value in (("jf_exit_snapshot", "{}"), ("jf_exit_status", "已办理"), ("project", "UNBOUND-PROJECT")):
             source = self.source()
             source.update(__islocal=1, project=None)
             source[field] = value
@@ -767,12 +768,12 @@ class TestPersonnelSeparation(unittest.TestCase):
     def test_submitted_pending_activity_can_append_new_native_taskless_activity(self):
         source = self.source()
         source.activities.append(Doc(name="NEW-ACTIVITY", task=None))
-        source.validate()
+        source.before_update_after_submit()
         self.assertEqual(source.activities[0].task, "TASK")
         self.assertIsNone(source.activities[1].task)
-        self.assertEqual(self.native_validations, 1)
+        self.assertEqual(self.native_validations, 0)
 
-    def test_amended_submitted_lifecycle_preserves_exact_task_links_and_native_validation(self):
+    def test_amended_submitted_lifecycle_preserves_exact_task_links_via_native_after_submit(self):
         original = deepcopy(self.store[("Employee Separation", "SOURCE")])
         original.update(name="ORIGINAL", docstatus=2, project="ORIGINAL-PROJECT", activities=[])
         self.store[("Employee Separation", "ORIGINAL")] = original
@@ -784,12 +785,17 @@ class TestPersonnelSeparation(unittest.TestCase):
         self.reverse()
         self.assertEqual(self.source().activities[0].task, "TASK")
         self.assertEqual(self.store[("Employee Separation", "ORIGINAL")], baseline)
-        self.assertEqual(self.native_validations, 2)
+        self.assertEqual(self.native_validations, 0)
         self.assertEqual(self.store[("Employee", "EMP")].status, "Active")
 
     def test_amended_draft_still_runs_native_task_reset_without_restoring_submitted_links(self):
+        original = deepcopy(self.store[("Employee Separation", "SOURCE")])
+        original.update(name="ORIGINAL", docstatus=2)
+        self.store[("Employee Separation", "ORIGINAL")] = original
         self.store[("Employee Separation", "SOURCE")].update(docstatus=0, amended_from="ORIGINAL")
         source = self.source()
+        source.__islocal = 1
+        source.before_validate()
         source.validate()
         self.assertEqual(source.activities[0].task, "")
         self.assertEqual(self.native_validations, 1)
@@ -800,13 +806,57 @@ class TestPersonnelSeparation(unittest.TestCase):
         self.store[("Employee Separation", "SOURCE")].amended_from = "ORIGINAL"
         for changed in ({"docstatus": 1}, {"employee": "OTHER"}, {"company": "OTHER"}):
             self.store[("Employee Separation", "ORIGINAL")] = Doc(deepcopy(original), **changed)
-            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "同员工、同公司的已取消"):
-                self.source().validate()
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "同员工、同公司"):
+                self.source().before_update_after_submit()
         self.store[("Employee Separation", "ORIGINAL")] = original
         self.denied[("Employee Separation", "ORIGINAL")] = {"read"}
         with self.assertRaises(PermissionError):
-            self.source().validate()
+            self.source().before_update_after_submit()
         self.assertEqual(self.native_validations, 0)
+
+    def test_native_desk_amend_copy_is_normalized_without_reusing_snapshot_project_or_tasks(self):
+        self.finalize()
+        self.reverse()
+        original = self.source()
+        original.docstatus = 2
+        self.store[("Employee Separation", "SOURCE")].docstatus = 2
+        copy = self.Source(original.as_dict(), flags=Doc(), meta=self.source_meta)
+        copy.update(name="COPY", __islocal=1, docstatus=0, amended_from="SOURCE")
+        baseline = deepcopy(self.store)
+        copy.before_validate()
+        copy.validate()
+        self.assertIsNone(copy.project)
+        self.assertIsNone(copy.jf_exit_snapshot)
+        self.assertEqual(copy.jf_exit_status, "待办理")
+        self.assertEqual(copy.activities[0].task, "")
+        self.assertEqual(self.store, baseline)
+        self.assertEqual(self.native_validations, 1)
+
+    def test_native_duplicate_resets_only_links_from_the_exact_readable_same_employee_source(self):
+        copy = self.source()
+        copy.update(name="COPY", __islocal=1, docstatus=0)
+        baseline = deepcopy(self.store)
+        copy.before_validate()
+        self.assertIsNone(copy.project)
+        self.assertEqual(copy.activities[0].task, "")
+        self.assertEqual(self.store, baseline)
+        copy = self.source()
+        copy.update(name="COPY", __islocal=1, docstatus=0, employee="OTHER")
+        with self.assertRaisesRegex(ValueError, "同员工、同公司"):
+            copy.before_validate()
+
+    def test_amend_copy_rejects_forged_snapshot_task_or_project_instead_of_silently_resetting(self):
+        self.store[("Employee Separation", "SOURCE")].docstatus = 2
+        for changed in ({"project": "OTHER"}, {"jf_exit_snapshot": "forged"}, {"jf_exit_status": "FORGED"}):
+            copy = self.source()
+            copy.update(name="COPY", __islocal=1, docstatus=0, amended_from="SOURCE", **changed)
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                copy.before_validate()
+        copy = self.source()
+        copy.update(name="COPY", __islocal=1, docstatus=0, amended_from="SOURCE")
+        copy.activities[0].task = "OTHER"
+        with self.assertRaisesRegex(ValueError, "实际来源不一致"):
+            copy.before_validate()
 
 
 if __name__ == "__main__":
