@@ -45,7 +45,8 @@ def check():
         "merchant_configured": bool(settings.merchant_id),
         "receipt_link_installed": frappe.get_meta("Subcontracting Receipt Item").has_field("jf_flow_order"),
         "subcontracting_reports_installed": all(frappe.db.exists("Report", name) for name in
-                                               ("Jifeng Subcontracting Progress", "Jifeng Subcontracting Receipt Ledger")),
+                                               ("Jifeng Subcontracting Progress", "Jifeng Subcontracting Receipt Ledger",
+                                                "Jifeng Subcontracting Material Ledger")),
         "subcontracting_order_link_installed": frappe.get_meta("Subcontracting Order Item").has_field("jf_flow_order"),
         "procurement_links_installed": all(
             frappe.get_meta(doctype).has_field("jf_flow_order")

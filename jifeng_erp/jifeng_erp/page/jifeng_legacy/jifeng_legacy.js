@@ -97,7 +97,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "发镀",
 		groups: [
-			{ name: "正式业务", items: ["新建委外采购", "委外采购单", "电镀委外单", "电镀收货单", "品检单"] },
+			{ name: "正式业务", items: ["新建委外采购", "委外采购单", "电镀委外单", "电镀收货单", "原料发退台账", "品检单"] },
 			{ name: "基础资料", items: ["电镀厂", "电镀类型"] },
 			{ name: "业务操作", items: ["电镀单", "电镀品检", "电镀对账", "电镀反审", "电镀跟踪", "品检反审"] },
 			{ name: "报表查询", items: ["电镀明细", "电镀单查询", "电镀报表"] },
@@ -107,7 +107,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "外发",
 		groups: [
 			{ name: "基础资料", items: ["外发工厂", "外发工序"] },
-			{ name: "正式业务", items: ["新建委外采购", "委外采购单", "委外订单", "委外收货"] },
+			{ name: "正式业务", items: ["新建委外采购", "委外采购单", "委外订单", "委外收货", "原料发退台账"] },
 			{ name: "业务操作", items: ["外发加工", "收回", "对账", "反审", "未收", "收回反审"] },
 			{ name: "报表查询", items: ["外发明细", "收回明细", "外发查询", "收回查询", "外发报表", "收回报表"] },
 		],
@@ -238,9 +238,9 @@ const JIFENG_LIVE_REPORTS = {
 		工序损耗: { name: "Jifeng Job Card Detail", filters: { only_loss: 1, approval: "已提交" } },
 		损耗汇总: { name: "Jifeng Production Progress", filters: { only_loss: 1 } } },
 	工资: { 工资分析: "Jifeng Wage Analysis" },
-	发镀: { 电镀明细: "Jifeng Subcontracting Receipt Ledger", 电镀报表: "Jifeng Subcontracting Progress",
+	发镀: { 原料发退台账: "Jifeng Subcontracting Material Ledger", 电镀明细: "Jifeng Subcontracting Receipt Ledger", 电镀报表: "Jifeng Subcontracting Progress",
 		电镀跟踪: "Jifeng Subcontracting Progress" },
-	外发: { 未收: { name: "Jifeng Subcontracting Progress", filters: { only_pending: 1 } },
+	外发: { 原料发退台账: "Jifeng Subcontracting Material Ledger", 未收: { name: "Jifeng Subcontracting Progress", filters: { only_pending: 1 } },
 		外发明细: "Jifeng Subcontracting Progress", 外发报表: "Jifeng Subcontracting Progress",
 		收回明细: "Jifeng Subcontracting Receipt Ledger", 收回报表: "Jifeng Subcontracting Receipt Ledger" },
 	销售: {
@@ -258,6 +258,7 @@ const JIFENG_LIVE_REPORT_DEFAULTS = {
 	"Jifeng Subcontracting Progress": { only_pending: 0, only_overdue: 0, supplier: "",
 		item_code: "", flow_order: "", subcontracting_order: "" },
 	"Jifeng Subcontracting Receipt Ledger": { supplier: "", item_code: "", flow_order: "", subcontracting_order: "" },
+	"Jifeng Subcontracting Material Ledger": { supplier: "", item_code: "", rm_item_code: "", flow_order: "", subcontracting_order: "" },
 	"Jifeng Production Progress": { status: "", only_overdue: 0, only_loss: 0,
 		flow_order: "", sales_order: "", production_item: "" },
 	"Jifeng Job Card Detail": { approval: "全部", only_overdue: 0, only_loss: 0,
@@ -492,7 +493,7 @@ class JifengLegacyWorkspace {
 		}
 		const module = this.module(moduleName);
 		if (!module) return this.renderHome();
-		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>“正式业务”进入服务器单据；其余页面为本地交互预览</p></div></div>' +
+		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>带“正式”标记的入口连接业务单据与报表</p></div></div>' +
 			module.groups.map((group) =>
 				'<section class="jfe-group"><header><b>' + this.esc(group.name) + '</b><span>' + group.items.length + " 项</span></header><div class=\"jfe-function-grid\">" +
 				group.items.map((name) => '<button class="jfe-function-card' + (JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_PAGES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? ' is-live' : '') + '" data-action="open-page" data-module="' + this.esc(moduleName) + '" data-page="' + this.esc(name) + '">' +

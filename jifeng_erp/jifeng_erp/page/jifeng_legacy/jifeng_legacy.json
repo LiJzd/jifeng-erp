@@ -6,6 +6,9 @@
   "module": "Jifeng ERP",
   "standard": "Yes",
   "roles": [
+    { "role": "Stock User" },
+    { "role": "Purchase User" },
+    { "role": "Purchase Manager" },
     { "role": "Manufacturing User" },
     { "role": "Stock Manager" },
     { "role": "Manufacturing Manager" },

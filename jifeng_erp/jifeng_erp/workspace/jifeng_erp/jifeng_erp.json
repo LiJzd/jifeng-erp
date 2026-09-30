@@ -89,6 +89,9 @@
  ],
  "links": [],
  "roles": [
+  { "role": "Stock User" },
+  { "role": "Purchase User" },
+  { "role": "Purchase Manager" },
   {
    "role": "Manufacturing User"
   },
