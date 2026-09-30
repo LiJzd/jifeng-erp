@@ -52,7 +52,7 @@ class TestReceiptBatches(unittest.TestCase):
             self.preview_module = self.load("preview", "jifeng_erp/jifeng_erp/doctype/jifeng_cost_preview/jifeng_cost_preview.py")
         self.preview = self.preview_module.JifengCostPreview()
         self.preview.company, self.preview.item_code, self.preview.flow_order = "JF", "RING", "FLOW"
-        self.preview.batches = [Record(source_receipt="SCR", source_receipt_item="ROW", received_qty=4)]
+        self.preview.batches = [Record(source_receipt="SCR", source_receipt_item="ROW", received_qty=4, lost_qty=1)]
 
     @staticmethod
     def load(name, relative_path):
@@ -87,6 +87,11 @@ class TestReceiptBatches(unittest.TestCase):
     def test_source_quantity_change_requires_reconciliation(self):
         self.detail["qty"] = 1
         with self.assertRaisesRegex(ValueError, "数量不一致"):
+            self.preview._validate_batch_sources()
+
+    def test_confirmed_source_loss_cannot_be_reclassified_as_good(self):
+        self.preview.batches[0]["lost_qty"] = 0
+        with self.assertRaisesRegex(ValueError, "工艺损耗"):
             self.preview._validate_batch_sources()
 
     def test_other_flow_source_cannot_be_used(self):

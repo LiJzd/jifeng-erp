@@ -15,10 +15,13 @@ frappe.ui.form.on("Jifeng Cost Preview", {
         frm.set_intro("按预计最终合格数量分摊的试算；后续损耗和追加费用会改变结果。保存不产生库存或财务凭证。", "blue");
         if (!frm.is_new() && frm.doc.flow_order) {
             frm.add_custom_button("读取已提交委外回货批次", async () => {
+                const flowOrder = frm.doc.flow_order;
+                const previewName = frm.doc.name;
                 const response = await frappe.call({
                     method: "jifeng_erp.workflow.receipt_batch_candidates",
-                    args: { flow_order: frm.doc.flow_order },
+                    args: { flow_order: flowOrder },
                 });
+                if (frm.doc.name !== previewName || frm.doc.flow_order !== flowOrder) return;
                 const candidates = response.message || [];
                 if (!candidates.length) {
                     frappe.msgprint("没有已提交且关联本流程单的委外回货明细。现有批次未更改。");

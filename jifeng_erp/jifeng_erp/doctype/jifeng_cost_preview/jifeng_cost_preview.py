@@ -68,6 +68,8 @@ class JifengCostPreview(Document):
                 receipt.name, self.item_code, self.flow_order,
             ) or source_qty != Decimal(str(row.received_qty or 0)):
                 frappe.throw("来源委外收货明细与试算批次的商品、流程单或数量不一致")
+            if Decimal(str(row.lost_qty or 0)) < Decimal(str(detail.process_loss_qty or 0)):
+                frappe.throw("试算批次损耗不能少于来源凭证已确认的工艺损耗")
 
     @frappe.whitelist()
     def load_flow_costs(self):
