@@ -316,7 +316,9 @@ def smoke_receipt_batches(company, item_group, stock_uom):
     from erpnext.buying.doctype.purchase_order.purchase_order import make_subcontracting_order
     from erpnext.controllers.subcontracting_controller import make_rm_stock_entry
     from erpnext.subcontracting.doctype.subcontracting_order.subcontracting_order import make_subcontracting_receipt
-    from erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt import make_subcontract_return
+    from erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt import (
+        make_subcontract_return, make_subcontract_return_against_rejected_warehouse,
+    )
     from jifeng_erp.workflow import receipt_batch_candidates
 
     warehouse = frappe.db.get_value("Warehouse", {"company": company, "is_group": 0, "disabled": 0}, "name")
@@ -409,13 +411,22 @@ def smoke_receipt_batches(company, item_group, stock_uom):
         preview.batches[0].received_qty = 3
         preview.batches[0].pending_qty = 2
         preview.save()
-        assert preview.lost_qty == 1 and preview.pending_qty == 2 and preview.unreceived_qty == 2
+        actual = tuple(float(value) for value in (preview.lost_qty, preview.pending_qty, preview.unreceived_qty))
+        assert actual == (1, 2, 2), actual
         partial.cancel()
         candidate = receipt_batch_candidates(flow.name)[0]
         assert (candidate["qty"], candidate["returned_qty"]) == (5, 0)
+        return_goods(3)
+        rejected_return = make_subcontract_return_against_rejected_warehouse(receipt.name)
+        rejected_return.items[0].process_loss_qty = 0
+        rejected_return.insert()
+        rejected_return.submit()
+        candidate = receipt_batch_candidates(flow.name)[0]
+        assert (candidate["qty"], candidate["lost_qty"], candidate["returned_qty"]) == (1, 1, 4)
         return {"passed": True, "checks": ["native_subcontract_chain", "accepted_rejected_loss_total",
                 "source_flow_inheritance", "partial_return_net", "confirmed_loss_preserved",
-                "stale_batch_save_guard", "reconciled_preview_save", "cancel_return_restores_quantity"],
+                "stale_batch_save_guard", "reconciled_preview_save", "cancel_return_restores_quantity",
+                "accepted_and_rejected_returns_keep_loss"],
                 "business_data": "rolled_back"}
     finally:
         _end_rollback_only(point)
