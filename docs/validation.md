@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-01 算料/汇总与本批实际界面
+
+1602b41–5fcdd0b 已本地提交并同步隔离站。新增Page的站点migrate及完整bench build均退出0，最后保护修复同步后清缓存并重启8000。652项Python模型通过，新增12项算料请求状态协议通过：过期查询不显示、条件变化需重查、未知生成结果冻结、核对失败仍冻结、成功只打开原草稿不再POST、HTML数据转义。协议检查不是浏览器。
+
+`order_material_workbench_validation.smoke` direct Python r1在真正Stock Manager的Company完整读权限处失败，改用与库存报表一致的原生Company选择范围，仅派生本币；没有授予Company资料读取。r2发现纯Stock Manager没有Warehouse读权限，保留拒绝守门，夹具先证明拒绝，再加入原生Stock User作为正常仓库岗位组合。r3及最终5fcdd0b r4共13项通过：精确物料分析行/预算、相同物料不同单位分别汇总、关键字和日期/指定日期、真实2倍Item单位换算、旧版本/异公司仓库拒绝、草稿不记账/重复复用/不同仓库不默改、分6及9两次原生提交、超量10拒绝、领完不额外生成、取消恢复余量、错流程明细/源变化拒绝、Stock Manager+Stock User真实查询/详情/草稿与Company权限、隐藏相关出库凭证时拒绝给不完整余额及生成、Manufacturing User不能写、取消后全SLE净量等于原生收货30。库存累计扫描和唯一草稿查询采用锁后当前读，validate在Flow锁后reload；双事务竞争仍未另做验收。
+
+每次失败与成功均整个保存点回滚，另一个独立新连接核对 `count_changes={}`，wholeEmployee/child、User/Auth/Role/Profile/UP、Supplement/child以及wholeGL/SLE哈希不变。合成UOM、Item、Warehouse、Flow、Stock Entry与角色夹具无永久残留。私密证据 `output/classic-materials-native-result-r1.json` 至 `-r4.json`，失败没有按通过记录。
+
+Luna旧站只读确认算料/汇总前18/13列及工具栏，配料父页分两入口，空Canvas未核实行内行为。新站Admin真实菜单进入、默认日期/指定日期/格式1、日期查询返回3行/API200、双击详情及原生流程只读打开关闭、筛选保留均通过；监听期间没有console/page错误，没有出库生成、审核、撤销、打印或导出。滚动为空不算算料滚动测试。源字段未知的旧分类、形状、颜色、库存等显示未提供；保留列头不等于数据语义已迁移。查询当前最多一千个可读流程，超量要求指定流程，不做部分汇总。
+
+同批补人员/工资实际界面：127.0.0.1真实登录成功（此前jifeng.localhost一次输入被拒，原生只读哈希确认测试secret匹配，改直接Node内部fill后HTTP200；未修改账户或打印凭据）。新增人事四标签、字段顺序、未保存关闭取消/放弃及原列表筛选/50px滚动保留；工资Page、当天日期、人员/工序选择与Escape、双击姓名计时弹窗已通过，无保存。仅勾多人/多工序没有自动加字段，这是触发方式检查，不能计为两种来源录入验收；工资默认含义、教育列、真实岗位保存仍待。证据为忽略的 `output/playwright/classic-personnel-wage-review.json` 和 `order-material-workbench-review.json`。菜单已核算363/221，124业务预览未落地，整目标继续进行。
+
 ## 2026-10-01 人员与工资专用录入
 
 050c27d–3c17f0d 已在隔离站点同步。050c27d站点迁移与完整资源build均退出0；3c17f0d工资改单schema迁移退出0，服务器清缓存重启。当前全仓651项Python模型通过；17项工资客户端协议、人员载荷/身份/重复保存/脏关闭协议检查通过，41份JS语法/50份JSON解析/159份Python AST的先前检查仅对应首次录入实现，新改单改动另做编译与schema检查。命令曾用不存在的 tests 包模块路径导致ImportError，改用实际 unittest discover -s tests 后651项通过，没有将错误命令算通过。
