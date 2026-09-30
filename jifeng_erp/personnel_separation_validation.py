@@ -19,8 +19,9 @@ Run once after migration in root's exclusive business-write window::
 
 Never use bench execute: its exception fallback may invoke a failing helper
 twice. Synthetic fixtures use native inserts and real roles/User Permissions.
-Native source submission needs System Manager on this site; HR Manager alone
-has no submit/cancel grant. HR Manager performs the actual finalize/reverse.
+The production installer supplies HR Manager's scoped native source submit /
+cancel grant; HR Manager performs submission, cancel, finalize and reverse.
+HR User has no submit/cancel grant and is exercised as the rejected actor.
 Business actions briefly use in_test=False for real Employee/source Versions.
 No schema/DocPerm change, permission bypass, manual docstatus, logger patch,
 force deletion, bulk task completion, commit, or payroll accounting is used.
@@ -29,6 +30,7 @@ private existing employee/payroll values are returned. No GUI/network needed.
 """
 
 from collections import Counter
+from copy import deepcopy
 from datetime import date, datetime
 from decimal import Decimal
 import hashlib
@@ -56,6 +58,26 @@ STATE_FIELDS = {"company", "department", "designation", "branch", "status", "dat
 HISTORY_FIELDS = ("name", "parent", "parenttype", "parentfield", "idx", "branch",
                   "department", "designation", "from_date", "to_date")
 PAYROLL_TYPES = ("Jifeng Wage Entry", "Additional Salary", "Salary Slip", "Salary Structure Assignment")
+
+
+def _local_context():
+    present = hasattr(frappe.local, "_realtime_log")
+    saving_present = "currently_saving" in frappe.flags
+    return {"realtime_present": present,
+            "realtime": deepcopy(frappe.local._realtime_log) if present else None,
+            "saving_present": saving_present,
+            "saving": deepcopy(frappe.flags["currently_saving"]) if saving_present else None}
+
+
+def _restore_local_context(state):
+    if state["realtime_present"]:
+        frappe.local._realtime_log = deepcopy(state["realtime"])
+    elif hasattr(frappe.local, "_realtime_log"):
+        del frappe.local._realtime_log
+    if state["saving_present"]:
+        frappe.flags["currently_saving"] = deepcopy(state["saving"])
+    else:
+        frappe.flags.pop("currently_saving", None)
 
 
 def _audit_digest(value):
@@ -150,7 +172,8 @@ def _snapshot(source, before, after, actor, state="finalized"):
         assert payload[section]["modified"]
     intent = payload["source"]
     assert intent == {"name": source.name, "employee": source.employee, "company": source.company,
-                      "project": source.project, "boarding_begins_on": str(source.boarding_begins_on),
+                      "project": source.project, "amended_from": source.amended_from or None,
+                      "boarding_begins_on": str(source.boarding_begins_on),
                       "resignation_letter_date": str(source.resignation_letter_date) if source.resignation_letter_date else None,
                       "last_working_day": str(source.get(LAST_DAY)), "reason": source.get(REASON) or "",
                       "activities": [{"name": row.name, "task": row.task} for row in source.activities],
@@ -213,11 +236,12 @@ def smoke(company, other_company):
     staff_before, users_before = _digest(_employee_contents()), _digest(_user_contents())
     logs_before = set(frappe.get_all("Error Log", pluck="name"))
     callbacks_before = _callbacks()
+    context_before = _local_context()
     original_user, original_test = frappe.session.user, frappe.in_test
     suffix = frappe.generate_hash(length=10)
     prefix, point = "JF-QA-SEPARATION-" + suffix, "jf_separation_" + suffix
     objects, records, users, checks = [], set(), [], []
-    evidence = {"roles": {"business": ["HR Manager"], "native_submission": ["HR Manager", "System Manager"]},
+    evidence = {"roles": {"business": ["HR Manager"], "native_submission": ["HR Manager"], "rejected": ["HR User"]},
                 "execution": "one direct Python call; native save/submit/cancel; no bench execute/retry",
                 "field_denial_limit": "native existing permission levels only; no schema/DocPerm change manufactured",
                 "legacy_limit": "no existing legacy source scanned or fake submitted source manufactured"}
@@ -275,6 +299,7 @@ def smoke(company, other_company):
         nested = "jf_separation_reject_" + frappe.generate_hash(length=8)
         ledger, staff, accounts = _ledger_snapshot(), _digest(_employee_contents()), _digest(_user_contents())
         logs, callbacks = set(frappe.get_all("Error Log", pluck="name")), _callbacks()
+        context = _local_context()
         frappe.db.savepoint(nested)
         try:
             try:
@@ -290,6 +315,7 @@ def smoke(company, other_company):
                 frappe.db.rollback(save_point=nested)
             finally:
                 _restore_callbacks(callbacks)
+                _restore_local_context(context)
                 for employee in (focus,):
                     if employee:
                         frappe.clear_document_cache("Employee", employee.name)
@@ -309,6 +335,9 @@ def smoke(company, other_company):
 
     def submit(doc):
         frappe.set_user(actors["submit"])
+        # A rejected submit mutates in-memory docstatus/modified before the
+        # native submit permission check. Savepoint rollback only restores DB.
+        doc = remember(frappe.get_doc(SOURCE, doc.name))
         native(doc.submit)
         doc.reload()
         _, project, tasks, _ = _source_graph(doc.name)
@@ -408,8 +437,9 @@ def smoke(company, other_company):
                        internal_work_history=[dict(row) for row in history], **common)
         actors = {}
         for kind, roles, companies in (("local", ["HR Manager"], [company]),
-                                        ("submit", ["HR Manager", "System Manager"], [company, other_company]),
-                                        ("cross", ["HR Manager"], [company, other_company])):
+                                        ("submit", ["HR Manager"], [company, other_company]),
+                                        ("cross", ["HR Manager"], [company, other_company]),
+                                        ("denied", ["HR User"], [company])):
             user = insert("User", email=f"{prefix.lower()}-{kind}@example.invalid", first_name=prefix + "-" + kind,
                           send_welcome_email=0, roles=[{"role": role} for role in roles])
             users.append(user.name)
@@ -435,8 +465,10 @@ def smoke(company, other_company):
         wage.submit()
         draft = separation(primary)
         assert draft.has_permission("read") and draft.has_permission("write")
-        assert not draft.has_permission("submit") and not draft.has_permission("cancel")
+        assert draft.has_permission("submit") and draft.has_permission("cancel")
+        assert all(frappe.has_permission(SOURCE, permission) for permission in ("submit", "cancel"))
         evidence["actual_actor_roles"] = {kind: sorted(frappe.get_roles(name)) for kind, name in actors.items()}
+        assert all("System Manager" not in roles for roles in evidence["actual_actor_roles"].values())
         assert all(frappe.has_permission(dt, p) for dt in ("Employee", "Project", "Task") for p in ("read", "write"))
         assert not frappe.get_doc("Employee", peer.name).has_permission("read")
         assert not frappe.get_doc("Company", other_company).has_permission("select")
@@ -465,7 +497,13 @@ def smoke(company, other_company):
                    "Employee" in {row.role for row in frappe.get_doc("User", user.name).roles} for user in linked)
         evidence["linked_account_baseline"] = {"native_password_hash_rows": 2, "nonempty_role_profiles": 2,
                                                "enabled_states": [1, 0], "actual_distinct_employee_users": True}
-        reject(lambda: native(draft.submit), frappe.PermissionError)
+        frappe.set_user(actors["denied"])
+        assert not frappe.has_permission(SOURCE, "submit") and not frappe.has_permission(SOURCE, "cancel")
+        reject(lambda: native(frappe.get_doc(SOURCE, draft.name).submit), frappe.PermissionError)
+        assert frappe.get_doc(SOURCE, draft.name).docstatus == 0
+        evidence["source_role_permissions"] = {"HR Manager": {"submit": True, "cancel": True},
+                                                "HR User": {"submit": False, "cancel": False}}
+        frappe.set_user(actors["local"])
         passed()
 
         gate("draft_and_client_forged_server_status_snapshot_reject")
@@ -523,6 +561,16 @@ def smoke(company, other_company):
         assert boarding_date != last_day
         passed()
 
+        gate("native_hr_user_cannot_cancel_submitted_source_or_finalize_valid_completed_handover")
+        frappe.set_user(actors["denied"])
+        assert not frappe.has_permission(SOURCE, "submit") and not frappe.has_permission(SOURCE, "cancel")
+        reject(lambda: native(frappe.get_doc(SOURCE, active_source.name).cancel), frappe.PermissionError)
+        assert frappe.get_doc(SOURCE, active_source.name).docstatus == 1
+        reject(lambda: native(lambda: finalize_separation(active_source.name)), frappe.PermissionError)
+        frappe.set_user(actors["local"])
+        assert _state(primary.name) == initial
+        passed()
+
         gate("unapproved_wages_through_last_day_block_finalization")
         def unapproved():
             insert("Jifeng Wage Entry", employee=primary.name, company=company, salary_component=component.name,
@@ -538,6 +586,10 @@ def smoke(company, other_company):
         assert finalized["fields"]["reason_for_leaving"] == active_source.get(REASON)
         assert finalized["fields"]["user_id"] == linked[0].name and frappe.db.get_value("User", linked[0].name, "enabled") == 1
         _snapshot(active_source, initial, finalized, actors["local"])
+        frappe.set_user(actors["denied"])
+        reject(lambda: native(lambda: reverse_separation(active_source.name)), frappe.PermissionError)
+        frappe.set_user(actors["local"])
+        assert _state(primary.name) == finalized
         passed()
 
         gate("repeat_finalization_has_no_employee_user_source_version_writes")
@@ -756,6 +808,9 @@ def smoke(company, other_company):
             insert("Employee", company=company, first_name=prefix + "-duplicate-user", employee_number=prefix + "-E",
                    user_id=linked[0].name, **common)
         reject(duplicate_active, frappe.DuplicateEntryError)
+        passed()
+
+        gate("native_failed_employee_save_rpc_preserves_existing_realtime_callbacks_and_saving_context")
         def active_subordinate():
             frappe.set_user("Administrator")
             insert("Employee", company=company, first_name=prefix + "-subordinate", employee_number=prefix + "-F",
@@ -763,8 +818,26 @@ def smoke(company, other_company):
             frappe.set_user(actors["local"])
             doc = submit(separation(probe))
             complete(doc)
-            native(lambda: finalize_separation(doc.name))
+            context, callbacks = _local_context(), _callbacks()
+            managers = {field: id(getattr(frappe.db, field)) for field in callbacks}
+            assert context["realtime_present"] and context["realtime"], "原生交接保存未生成可核验的此前 realtime 队列"
+            assert any(getattr(function, "__name__", None) == "flush_realtime_log"
+                       for function in callbacks["after_commit"])
+            try:
+                native(lambda: finalize_separation(doc.name))
+            finally:
+                assert _local_context() == context, "失败 RPC 改变旧 realtime_log/currently_saving 内容或存在性"
+                assert _callbacks() == callbacks, "失败 RPC 未保留此前 callback 完整队列"
+                assert managers == {field: id(getattr(frappe.db, field)) for field in callbacks}
+            # Source/Employee callbacks are preserved by production before the
+            # outer rejection savepoint restores this synthetic scenario.
         reject(active_subordinate, frappe.ValidationError)
+        evidence["rpc_failure_context"] = {"natural_native_employee_validate_status_failure": True,
+            "existing_nonempty_realtime_log_and_flush_callback_preserved": True,
+            "exact_currently_saving_key_presence_and_contents_preserved": True,
+            "four_callback_manager_identities_and_queues_preserved": True,
+            "after_employee_sql_write_source_save_failure_verified": False,
+            "fault_injection": False, "external_realtime_emitted_by_helper": False}
         frappe.set_user(actors["local"])
         passed()
 
@@ -797,6 +870,85 @@ def smoke(company, other_company):
             "distinct_native_titles_contain_full_source_ids": True, "old_title_and_task_links_unchanged": True}
         passed()
 
+        gate("native_copied_cancelled_source_amendment_keeps_original_graph_and_supports_full_hr_manager_chain")
+        frappe.set_user(actors["local"])
+        assert _state(primary.name) == initial and initial["fields"]["status"] == "Active"
+        assert not frappe.has_permission(SOURCE, "amend")
+        originals = {}
+        for name in (active_source.name, pending.name):
+            original, original_project, original_tasks, _ = _source_graph(name)
+            assert original.docstatus == 2 and original_project.status == "Cancelled"
+            assert all(task.status == "Cancelled" for task in original_tasks)
+            originals[name] = _digest((original.as_dict(), original_project.as_dict(),
+                                      [task.as_dict() for task in original_tasks]))
+
+        def assert_originals_unchanged():
+            for name, digest in originals.items():
+                original, original_project, original_tasks, _ = _source_graph(name)
+                assert digest == _digest((original.as_dict(), original_project.as_dict(),
+                                          [task.as_dict() for task in original_tasks])), "修订改变旧来源或精确项目任务内容"
+
+        original = frappe.get_doc(SOURCE, active_source.name)
+        original.check_permission("read")
+        assert original.get(SNAPSHOT) and original.get(STATUS) == "已撤销"
+        # Preserve every no_copy field as the Desk from_amend=1 copy does.
+        # Native in_test=False still resets parent/child docstatus and names.
+        copied = remember(native(lambda: frappe.copy_doc(original, ignore_no_copy=True)))
+        assert copied.is_new() and not copied.docstatus
+        assert copied.get(SNAPSHOT) == original.get(SNAPSHOT) and copied.get(STATUS) == "已撤销"
+        assert copied.activities and all(row.is_new() for row in copied.activities)
+        assert [row.task for row in copied.activities] == [row.task for row in original.activities]
+        # Do not clean any copied server field here. The production guard must
+        # verify the readable cancelled origin and normalize the whole copy.
+        assert copied.project == original.project
+        copied.amended_from = original.name
+        native(copied.insert)
+        assert copied.docstatus == 0 and not copied.project and not copied.get(SNAPSHOT)
+        assert copied.get(STATUS) == "待办理" and all(not row.task for row in copied.activities)
+        amended = submit(copied)
+        _, amended_project, amended_tasks, amended_activities = _source_graph(amended.name)
+        assert amended.amended_from == original.name and amended.employee == primary.name and amended.company == company
+        assert amended.project not in {old_project.name, pending.project}
+        assert {task.name for task in amended_tasks}.isdisjoint({row.task for row in original.activities})
+        assert {row.name for row in amended.activities}.isdisjoint({row.name for row in original.activities})
+        amended_graph_ids = (amended_project.name, {task.name for task in amended_tasks}, amended_activities)
+        assert_originals_unchanged()
+        complete(amended)
+        assert _state(primary.name) == initial
+        assert_originals_unchanged()
+        business(amended, finalize_separation)
+        amended_finalized = _state(primary.name)
+        assert amended_finalized["fields"]["status"] == "Left"
+        _snapshot(amended, initial, amended_finalized, actors["local"])
+        assert_originals_unchanged()
+        business(amended, reverse_separation)
+        assert _state(primary.name) == initial
+        _snapshot(amended, initial, amended_finalized, actors["local"], state="reversed")
+        assert_originals_unchanged()
+        source_versions, employee_versions = set(_versions(SOURCE, amended.name)), set(_versions("Employee", primary.name))
+        native(frappe.get_doc(SOURCE, amended.name).cancel)
+        amended.reload()
+        _, amended_project, amended_tasks, amended_activities = _source_graph(amended.name)
+        assert amended.docstatus == 2 and amended.get(STATUS) == "已撤销" and amended.amended_from == original.name
+        assert (amended_project.name, {task.name for task in amended_tasks}, amended_activities) == amended_graph_ids
+        assert amended_project.status == "Cancelled" and all(task.status == "Cancelled" for task in amended_tasks)
+        assert _state(primary.name) == initial and employee_versions == set(_versions("Employee", primary.name))
+        cancel_versions = {name: data for name, data in _versions(SOURCE, amended.name).items() if name not in source_versions}
+        assert cancel_versions and any(["docstatus", 1, 2] in data.get("changed", []) for data in cancel_versions.values())
+        records.update(("Version", name) for name in cancel_versions)
+        assert_originals_unchanged()
+        evidence["native_copied_amended_source"] = {"original_source": original.name, "amended_source": amended.name,
+            "original_project": original.project, "amended_project": amended_project.name,
+            "amended_project_title": amended_project.project_name, "company": company,
+            "copy_api": "frappe.copy_doc(ignore_no_copy=True) with in_test=False",
+            "from_amend_semantics_preserve_old_snapshot_state_project_tasks": True,
+            "copied_server_fields_normalized_by_server": True,
+            "native_amended_from_cancelled_validation": True, "actor_amend_permission": False,
+            "path": "explicit new-source copy and native insert; not the Desk Amend action",
+            "business_actor_roles": ["HR Manager"], "original_sources_projects_tasks_full_contents_unchanged": True,
+            "source_cancel_versions": sorted(cancel_versions), "employee_restored_exactly": True}
+        passed()
+
         evidence["native_counts_before_rollback"] = {
             doctype: {"before": counts_before["tab" + doctype], "during": frappe.db.count(doctype)}
             for doctype in (SOURCE, "Employee Boarding Activity", "Project", "Task", "Employee", "Version",
@@ -825,6 +977,7 @@ def smoke(company, other_company):
                 _end_rollback_only(point)
             finally:
                 _restore_callbacks(callbacks_before)
+                _restore_local_context(context_before)
                 frappe.in_test = original_test
                 frappe.set_user(original_user)
                 for user in users:
