@@ -46,6 +46,8 @@ CHILD_FIELDS = {
                                "subcontracting_order", "subcontracting_order_item", "subcontracting_receipt_item"),
 }
 
+WAREHOUSE_HISTORY_GUARD = "Warehouse can not be deleted as stock ledger entry exists for this warehouse."
+
 
 def _path(data):
     match = re.fullmatch(r"JF-SUB-BROWSER-([a-f0-9]{12})", data.get("prefix", ""))
@@ -293,6 +295,9 @@ def _ledger_rows(data):
                                 "is_cancelled"], limit_page_length=0)
     assert all((row.voucher_type, row.voucher_no) in owned and row.company == data["company"]
                and row.warehouse in data["warehouses"] for row in stock), "QA物料出现未追踪库存凭证，不能清理"
+    warehouse_rows = frappe.get_all("Stock Ledger Entry", filters={"warehouse": ["in", data["warehouses"]]},
+                                    pluck="name", limit_page_length=0)
+    assert set(warehouse_rows) == {row.name for row in stock}, "QA仓库出现其他物料库存历史，不能自动清理或停用"
     assert all((row.voucher_type, row.voucher_no) in owned and row.company == data["company"]
                for row in gl), "QA总账来源不属于精确夹具集合"
     return {"stock": [dict(row) for row in stock], "gl": [dict(row) for row in gl]}
@@ -319,6 +324,94 @@ def _restored(data):
     data["stock_restored"], data["gl_restored"] = True, True
     data["cancelled_ledger_records"] = rows
     data["remaining_stock_bins"] = [dict(row) for row in bins]
+
+
+def _is_history_guard(data, record):
+    if record["error_type"] == "LinkExistsError":
+        return True
+    if (record["doctype"] != "Warehouse" or record["name"] not in data["warehouses"]
+            or record["error_type"] != "ValidationError"
+            or record["reason"] not in (WAREHOUSE_HISTORY_GUARD, frappe._(WAREHOUSE_HISTORY_GUARD))):
+        return False
+    # Warehouse.on_trash uses this exact guard whenever an SLE exists, including
+    # cancelled history. _restored verifies every owned row and every net balance;
+    # _ledger_rows also rejects any unrelated item history in these warehouses.
+    return bool(frappe.db.exists("Stock Ledger Entry", {"warehouse": record["name"]}))
+
+
+def _classify_history(data):
+    _restored(data)
+    retained = data.get("retained_records", [])
+    data["cleanup_errors"] = [record for record in retained if not _is_history_guard(data, record)]
+    data["remaining_rows"] = {kind: [name for name in data[kind] if frappe.db.exists(doctype, name)]
+                              for kind, doctype in KINDS.items()}
+    data["cleaned"] = not any(data["remaining_rows"].values())
+    data["phase"] = "cleaned" if data["cleaned"] else (
+        "cancelled_cleanup_incomplete" if data["cleanup_errors"] else "cancelled_history_retained")
+
+
+def finalize_history(data):
+    """Read verified cancelled history and correct its journal classification only."""
+    frappe.only_for("System Manager")
+    data = _load(data)
+    if not data.get("business_cancelled") or not data.get("settings_restored"):
+        frappe.throw("尚未确认原生取消和设置恢复，不能认定已留存历史")
+    _validate(data)
+    _classify_history(data)
+    data["history_verified_at"] = now()
+    _journal(data)
+    return data
+
+
+def disable_retained_masters(data):
+    """Stop only the exact owned QA masters through their native disabled field."""
+    frappe.only_for("System Manager")
+    data = _load(data)
+    if not data.get("business_cancelled") or not data.get("settings_restored"):
+        frappe.throw("请先完成原生取消和设置恢复，再停用QA主档")
+    original_user = frappe.session.user
+    frappe.set_user("Administrator")
+    try:
+        docs = _validate(data)
+        _classify_history(data)
+        if data["cleanup_errors"]:
+            frappe.throw("仍有未确认的清理异常，请核对后再停用QA主档")
+        before = _ledger_rows(data)
+        changes, added = data.setdefault("disabled_master_records", []), []
+        point = "jf_sub_disable_" + data["prefix"].rsplit("-", 1)[-1]
+        _begin_rollback_only(point)
+        try:
+            for kind in ("items", "suppliers", "warehouses"):
+                for doc in docs[kind]:
+                    field = frappe.get_meta(doc.doctype).get_field("disabled")
+                    assert field and field.fieldtype == "Check", "QA主档没有受支持的原生停用字段"
+                    previous = int(doc.get("disabled") or 0)
+                    if previous:
+                        continue
+                    doc.disabled = 1
+                    doc.save()
+                    assert frappe.db.get_value(doc.doctype, doc.name, "disabled") == 1
+                    added.append({"doctype": doc.doctype, "name": doc.name, "field": "disabled",
+                                  "previous_value": previous, "value": 1, "changed_at": now()})
+            assert before == _ledger_rows(data), "停用QA主档不能改变库存或总账历史"
+            _restored(data)
+        except Exception as exc:
+            _end_rollback_only(point)
+            data["disable_error"] = str(exc)
+            data["disable_rolled_back_records"] = added
+            _journal(data)
+            raise
+        changes.extend(added)
+        _commit(data, "disable_masters")
+        data["masters_disabled"] = True
+        data["unsupported_master_actions"] = [{"doctype": "Jifeng Flow Order", "name": doc.name,
+                                                "reason": "原生模型无disabled或业务取消状态，保留已核对的QA历史来源"}
+                                               for doc in docs["flows"]]
+        _classify_history(data)
+        _journal(data)
+        return data
+    finally:
+        frappe.set_user(original_user)
 
 
 def cleanup(data):
@@ -381,14 +474,8 @@ def cleanup(data):
             _journal(data)
             exc.add_note("原生删除提交结果待核对: " + data["artifact_path"])
             raise
-        _restored(data)
         data["retained_records"] = retained
-        data["remaining_rows"] = {kind: [name for name in data[kind] if frappe.db.exists(doctype, name)]
-                                  for kind, doctype in KINDS.items()}
-        data["cleaned"] = not any(data["remaining_rows"].values())
-        data["cleanup_errors"] = [row for row in retained if row["error_type"] != "LinkExistsError"]
-        data["phase"] = "cleaned" if data["cleaned"] else (
-            "cancelled_cleanup_incomplete" if data["cleanup_errors"] else "cancelled_history_retained")
+        _classify_history(data)
         _journal(data)
         return data
     finally:
