@@ -474,7 +474,7 @@ def prepare(company, item_group, stock_uom):
         _track(data, pos_closing)  # Cancel Closing before its native Merge Log/SI children.
         data["opening_closing_links"][pos_opening.name] = pos_closing.name
         unmerged_opening = _track(data, _opening(fixture))
-        unmerged_sale = _track(data, _invoice(fixture, "POS Invoice", qty=2, duplicate=True, paid=35, posting_time="12:00:00", update_stock=0))
+        unmerged_sale = _track(data, _invoice(fixture, "POS Invoice", qty=2, duplicate=True, paid=35, posting_time="10:00:00", update_stock=0))
         unmerged_return = _track(data, _return(unmerged_sale, index=1))
         data["unmerged_pos"] = [unmerged_sale.name, unmerged_return.name]
         data["browser_documents"] = {"ordinary_si": ordinary.name, "direct_pos_si": direct.name,
