@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-01 两类库存档案、词典与保存响应版本
+
+95505c6新增Inventory Profile/Dictionary及联合录入API，旧物料/材料字段顺序分开，编号/代码/旧号独立；创建原生Item明确opening_stock=0、standard_rate=0。既有档案只改Profile，真实Item名称、单位、uoms/defaults/估值等保持；参考价格、换算值及停用不产生价格表、库存或财务动作。分类按公司/种类/词典类型持久保存，材料形状颜色不能写入物料；公司/绑定/请求身份不可改，原生Form也守门，档案不能删除请求身份。复制当前为清身份的新草稿，不能当作已复刻旧复制语义。创建有UUID4及载荷摘要，重复同请求读原档案，不同载荷拒绝；并发唯一冲突仍整体回滚，未做两连接建档实测。网络结果未知冻结当前草稿，只读核对后恢复，不自动重试创建；跨刷新草稿恢复未实现。本批界面结构与行为只由客户端协议检查，实际GUI及岗位浏览器保存没有通过。
+
+首次两次直接Python启动在Frappe日志初始化失败（工作目录先继承Windows、再为bench根），均尚未建立数据库连接或进入业务套件；修正为bench/sites，记录 `output/inventory-native-runner-setup-failures.json`。r1实际创建后紧接更新发现TimestampMismatchError：原生save返回modified空格字符串，数据库重读datetime经序列化变ISO T。失败整批回滚，独立新连接tab计数无变化、员工/账户/补充档案及GL/SLE哈希不变；未将失败算通过。f64fc98修复两个档案API共用的版本比较，保留精确微秒及过期守门，拒绝无效/超精度/时区输入，不改变原生Document时间戳校验。新增4个针对真实格式的模型，全部690项通过；库存客户端未知结果/核对/复制源脏数据/已有绑定及HTTP环境UUID协议、既有人事协议、JS语法及改动Python Ruff通过。
+
+r2原生库存11项通过，另一个新连接只读核对完整Item及所有已安装子表、ItemPrice、Profile、Dictionary、Version哈希均与批前相同。f08364b补验真实正常建档角色后r3原生12项通过：两类联合新增、Item身份独立、全Item字段/子表/价格保持、实际Version、重复UUID与改载荷拒绝、两版本过期与复制清身份、第二文档失败导致Item/回调/上下文联合回滚、原生伪造新建/身份修改/删除/跨类字段拒绝、词典隔离与原生改绑拒绝、纯Stock Manager创建缺Item.create正确拒绝及可更新自身公司档案、隐藏异公司结果拒绝、Stock Manager+Item Manager无System Manager实际联合新建、Stock User只读与Guest拒绝。未更改DocPerm或真实用户角色。所有合成记录/Version/价格表/回调整批回滚；独立新连接计数变化为空，完整物料/所有子表/价格/两档案/Version、员工/账户/人员补充档案及全GL/SLE一致。原生未做并发、导入或浏览器保存。
+
+同根因的人员档案r4原生14项通过，新增直接使用上一保存响应employee_modified/supplement_modified再次保存，不重新查询掩盖问题；旧资格/经历、关联账号及权限依旧保持。整批回滚后的新连接全表计数及员工/账户/补充档案/账簿哈希不变。私密证据为忽略的 `classic-inventory-native-result-r1.json`至`-r3.json`、`inventory-native-r2-fresh-content-audit.json`、`classic-personnel-native-result-r4.json`。
+
+两个新增DocType的migrate与完整bench build退出0，版本修复只有Python无需重复build，最后清缓存并重启8000，原生Socket.IO9000持续监听。新旧界面Luna再启动均被agent thread limit reached阻止，没有绕过限制由主智能体操作GUI。当前363个菜单包含225个直接路由（6Page/91Report/34Create/94List），仍有120个业务预览和各项语义/岗位/界面验收缺口；全部旧模块正式可用的目标仍未完成。
+
 ## 2026-10-01 教育新表实际界面及提交数据
 
 Luna 在127.0.0.1真实登录后实测六列表头顺序、新增两条未保存记录、修改第一条学校与学习内容、切换到调薪再返回保留数据、删除第二条。X和底部关闭均显示“否/是”放弃确认，选是后原列表唯一筛选仍匹配1项，非零scrollTop=90保留。没有发送save_archive，不能将其算作浏览器保存。未捕获pageerror；console有19次404及15次Socket.IO轮询错误，故不能记为无console错误。原始证据 `output/playwright/education-table-review.json` 与截图保留。
