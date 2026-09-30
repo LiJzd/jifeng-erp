@@ -209,12 +209,9 @@ def smoke(company, item_group, stock_uom):
         visible = job_card_progress(filters)[1]
         assert len(visible) == 1 and visible[0]["jf_department"] == departments[0].name
         assert len(department_progress(filters)[1]) == 1
-        try:
-            job_card_progress({**filters, "department": departments[1].name})
-        except frappe.PermissionError:
-            pass
-        else:
-            raise AssertionError("Hidden department cannot be queried")
+        # The permission applies specifically to Job Card, so Department links
+        # remain selectable but the other department's cards cannot be returned.
+        assert not job_card_progress({**filters, "department": departments[1].name})[1]
         try:
             make_corrective_job_card(cards[1].name, operation=corrective_operation.name,
                                      for_operation=cards[1].operation)
@@ -229,6 +226,12 @@ def smoke(company, item_group, stock_uom):
         frappe.set_user(operator.name)
         assert not frappe.get_doc("Work Order", work.name).has_permission("read")
         assert not job_card_progress(filters)[1] and not department_progress(filters)[1]
+        try:
+            job_card_progress({**filters, "department": departments[1].name})
+        except frappe.PermissionError:
+            pass
+        else:
+            raise AssertionError("Globally hidden department cannot be queried")
         assert frappe.db.count("Stock Ledger Entry") == before_stock and frappe.db.count("GL Entry") == before_gl
         frappe.set_user("Guest")
         try:
