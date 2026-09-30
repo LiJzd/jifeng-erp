@@ -9,6 +9,7 @@ app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css"]
 doctype_js = {
     "Sales Order": "public/js/jifeng_sales_order.js",
     "Production Plan": "public/js/jifeng_production_instruction.js",
+    "Work Order": "public/js/jifeng_work_order.js",
 }
 extend_doctype_class = {
     "Production Plan": ["jifeng_erp.production_instruction.ProductionInstructionMixin"],
@@ -24,6 +25,7 @@ doc_events = {
         "before_cancel": "jifeng_erp.accounting.validate_expense_journal_entry_cancel",
     },
     "Job Card": {
+        "before_validate": "jifeng_erp.production_department.validate_job_card_department",
         "validate": "jifeng_erp.setup.validate_flow_links",
         "before_cancel": "jifeng_erp.payroll.validate_job_card_cancel",
     },
@@ -34,7 +36,10 @@ doc_events = {
     },
     # Native Production Plan creates Work Orders with ignore_validate=True.
     # before_validate still runs and must preserve flow identity and quantity limits.
-    "Work Order": {"before_validate": "jifeng_erp.setup.validate_flow_links"},
+    "Work Order": {"before_validate": ["jifeng_erp.setup.validate_flow_links",
+                                       "jifeng_erp.production_department.validate_work_order_departments"]},
+    "Workstation": {"validate": "jifeng_erp.production_department.validate_default_department"},
+    "Operation": {"validate": "jifeng_erp.production_department.validate_default_department"},
     "Production Plan": {"validate": "jifeng_erp.production_instruction.validate_plan"},
     "Jifeng Flow Order": {"validate": "jifeng_erp.production_instruction.validate_flow_allocation"},
     "Subcontracting Order": {"validate": "jifeng_erp.setup.validate_flow_links"},

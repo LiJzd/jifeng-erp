@@ -28,7 +28,19 @@ def install():
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
         "options": "Jifeng Flow Order", "insert_after": "work_order", "read_only": 1,
         "no_copy": 1, "in_list_view": 1,
+    }, {
+        "fieldname": "jf_department", "fieldtype": "Link", "label": "生产部门",
+        "options": "Department", "insert_after": "operation", "read_only": 1,
+        "no_copy": 1, "in_list_view": 1,
     }]
+    for doctype in ("Workstation", "Operation", "Work Order Operation"):
+        fields[doctype] = [{
+            "fieldname": "jf_department", "fieldtype": "Link", "label": "生产部门",
+            "options": "Department", "in_list_view": 1,
+            "insert_after": {"Workstation": "workstation_name", "Operation": "workstation",
+                             "Work Order Operation": "workstation"}[doctype],
+            "description": "工单工序可单独指定；未填写时先取工作站，再取工序默认部门。",
+        }]
     fields["Production Plan Item"] = [{
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
         "options": "Jifeng Flow Order", "insert_after": "item_code", "in_list_view": 1,
@@ -68,6 +80,12 @@ def install():
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
     make_property_setter("Production Plan", None, "track_changes", 1, "Check", for_doctype=True)
+    from frappe.permissions import add_permission
+
+    for role in ("Manufacturing User", "Manufacturing Manager"):
+        if not any(row.role == role and (row.get("select") or row.get("read"))
+                   for row in frappe.get_meta("Department").permissions):
+            add_permission("Department", role, ptype="select")
 
 
 _PROCUREMENT_SOURCES = {

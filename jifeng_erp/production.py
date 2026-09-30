@@ -78,6 +78,11 @@ def job_card_progress(filters=None):
     filters, start, end = report_scope(filters, "Job Card")
     if not frappe.has_permission("Work Order", "read"):
         frappe.throw("没有生产工单读取权限", frappe.PermissionError)
+    if filters.department and not frappe.get_list("Department", filters={"name": filters.department,
+                                                  "company": filters.company}, pluck="name", limit_page_length=1):
+        frappe.throw("没有查询该生产部门的权限", frappe.PermissionError)
+    if filters.department and cint(filters.only_unassigned):
+        frappe.throw("指定生产部门和仅未指定部门不能同时选择")
     work_filters = {"company": filters.company, "docstatus": 1}
     if filters.work_order:
         work_filters["name"] = filters.work_order
@@ -93,6 +98,10 @@ def job_card_progress(filters=None):
         for field in ("production_item", "operation", "workstation", "status"):
             if filters.get(field):
                 query[field] = filters[field]
+        if filters.department:
+            query["jf_department"] = filters.department
+        elif cint(filters.only_unassigned):
+            query["jf_department"] = ["is", "not set"]
         if filters.approval == "已提交":
             query["docstatus"] = 1
         elif filters.approval == "草稿":
@@ -100,7 +109,7 @@ def job_card_progress(filters=None):
         elif filters.approval not in (None, "", "全部"):
             frappe.throw("审核状态无效")
         rows = frappe.get_list("Job Card", filters=query, fields=[
-            "name", "work_order", "production_item", "operation", "workstation", "stock_uom",
+            "name", "work_order", "production_item", "operation", "workstation", "stock_uom", "jf_department",
             "posting_date", "for_quantity", "total_completed_qty", "process_loss_qty", "status", "docstatus",
             "total_time_in_mins", "expected_start_date", "expected_end_date", "actual_start_date", "actual_end_date",
         ], order_by="posting_date asc, name asc", limit_page_length=0)
@@ -126,6 +135,7 @@ def job_card_progress(filters=None):
         column("work_order", "生产工单", "Link", "Work Order", 170),
         column("posting_date", "报工日期", "Date"), column("production_item", "商品编号", "Link", "Item", 150),
         column("operation", "工序", "Link", "Operation", 130), column("workstation", "工作站", "Link", "Workstation", 140),
+        column("jf_department", "生产部门", "Link", "Department", 150),
         column("stock_uom", "单位", "Link", "UOM", 80), column("approval", "审核状态", width=95),
         column("status_label", "报工状态", width=130), column("for_quantity", "派工数量", "Float"),
         column("approved_qty", "已审核完成", "Float"), column("draft_qty", "待审核完成", "Float"),
@@ -133,6 +143,39 @@ def job_card_progress(filters=None):
         column("remaining_qty", "尚未报完", "Float"), column("hours", "记录工时", "Float"),
         column("expected_end_date", "计划结束", "Datetime", width=160), column("overdue_days", "逾期天数", "Int"),
     ]
+    return columns, result
+
+
+def department_progress(filters=None):
+    _, rows = job_card_progress(filters)
+    groups = {}
+    numeric = ("for_quantity", "approved_qty", "draft_qty", "approved_loss_qty", "draft_loss_qty", "remaining_qty", "hours")
+    for row in rows:
+        key = (row.get("jf_department") or "", row["operation"], row["stock_uom"])
+        if key not in groups:
+            groups[key] = {"jf_department": key[0], "department_label": key[0] or "未指定部门",
+                           "operation": key[1], "stock_uom": key[2], "work_orders": set(),
+                           "job_card_count": 0, "overdue_count": 0, **dict.fromkeys(numeric, 0)}
+        group = groups[key]
+        group["work_orders"].add(row["work_order"])
+        group["job_card_count"] += 1
+        group["overdue_count"] += int(row["overdue_days"] > 0)
+        for field in numeric:
+            group[field] += flt(row[field])
+    result = []
+    for key in sorted(groups, key=lambda value: tuple(part or "" for part in value)):
+        row = groups[key]
+        row["work_order_count"] = len(row.pop("work_orders"))
+        row["approved_percent"] = min(100, (row["approved_qty"] + row["approved_loss_qty"]) / row["for_quantity"] * 100) if row["for_quantity"] else 0
+        result.append(row)
+    columns = [column("department_label", "生产部门", width=170),
+               column("operation", "工序", "Link", "Operation", 140), column("stock_uom", "单位", "Link", "UOM", 80),
+               column("work_order_count", "工单数", "Int"), column("job_card_count", "报工任务数", "Int"),
+               column("for_quantity", "派工任务数量", "Float", width=140),
+               column("approved_qty", "已审核完成", "Float"), column("approved_loss_qty", "已审核损耗", "Float"),
+               column("draft_qty", "待审核完成", "Float"), column("draft_loss_qty", "待审核损耗", "Float"),
+               column("remaining_qty", "尚未报完", "Float"), column("approved_percent", "审核结清 %", "Percent"),
+               column("hours", "记录工时", "Float"), column("overdue_count", "逾期任务数", "Int", width=135)]
     return columns, result
 
 

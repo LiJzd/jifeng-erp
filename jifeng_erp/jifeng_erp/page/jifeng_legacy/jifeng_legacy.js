@@ -53,9 +53,9 @@ const JIFENG_LEGACY_MODULES = [
 		name: "生产",
 		groups: [
 			{ name: "正式业务", items: ["生产计划单", "生产工单", "工序报工单"] },
-			{ name: "基础资料", items: ["刷卡工序", "工序查询"] },
+			{ name: "基础资料", items: ["刷卡工序", "工序查询", "工作站"] },
 			{ name: "生产操作", items: ["刷单", "生产指令单", "计划", "完成", "反审", "在线订单金额", "计划图片", "入库单", "部门订单", "置顶", "订单逾期", "部门逾期", "工序逾期"] },
-			{ name: "报表分析", items: ["刷卡明细", "刷卡报表", "未投产分析", "计划分析", "完成分析", "前后分析", "生产汇总", "工序损耗", "损耗汇总"] },
+			{ name: "报表分析", items: ["刷卡明细", "刷卡报表", "未投产分析", "计划分析", "完成分析", "前后分析", "生产汇总", "部门进度", "工序损耗", "损耗汇总"] },
 		],
 	},
 	{
@@ -151,7 +151,7 @@ const JIFENG_LIVE_ROUTES = {
 	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card",
 		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation",
-		入库单: "Stock Entry", 反审: "Work Order" },
+		入库单: "Stock Entry", 反审: "Work Order", 工作站: "Workstation" },
 	人事: { 人事档案: "Employee", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
 	工资: { 计薪记录: "Jifeng Wage Entry", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
@@ -233,6 +233,8 @@ const JIFENG_LIVE_REPORTS = {
 		订单逾期: { name: "Jifeng Production Progress", filters: { only_overdue: 1 } },
 		刷卡明细: "Jifeng Job Card Detail", 刷卡报表: "Jifeng Job Card Detail",
 		工序逾期: { name: "Jifeng Job Card Detail", filters: { only_overdue: 1 } },
+		部门订单: "Jifeng Job Card Detail", 部门逾期: { name: "Jifeng Job Card Detail", filters: { only_overdue: 1 } },
+		部门进度: "Jifeng Department Progress", 计划图片: "Jifeng Production Picture",
 		工序损耗: { name: "Jifeng Job Card Detail", filters: { only_loss: 1, approval: "已提交" } },
 		损耗汇总: { name: "Jifeng Production Progress", filters: { only_loss: 1 } } },
 	工资: { 工资分析: "Jifeng Wage Analysis" },
@@ -251,7 +253,10 @@ const JIFENG_LIVE_REPORT_DEFAULTS = {
 	"Jifeng Production Progress": { status: "", only_overdue: 0, only_loss: 0,
 		flow_order: "", sales_order: "", production_item: "" },
 	"Jifeng Job Card Detail": { approval: "全部", only_overdue: 0, only_loss: 0,
-		flow_order: "", work_order: "", production_item: "", operation: "", workstation: "" },
+		flow_order: "", work_order: "", production_item: "", operation: "", workstation: "", department: "", only_unassigned: 0 },
+	"Jifeng Department Progress": { approval: "全部", only_overdue: 0, only_unassigned: 0,
+		flow_order: "", work_order: "", production_item: "", operation: "", department: "" },
+	"Jifeng Production Picture": { status: "", only_overdue: 0, flow_order: "", sales_order: "", production_item: "" },
 };
 
 class JifengLegacyWorkspace {
