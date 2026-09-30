@@ -328,8 +328,16 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             rejected("restricted_same_company_employee_select_denied", build, frappe.PermissionError)
         rejected("restricted_material_item_read_denied", lambda: changed(document, materials=[
             {"item_code": raw.name, "uom": stock_uom, "qty_per_unit": 1, "unit_price": 2}]), frappe.PermissionError)
-        rejected("hidden_related_material_report_denied", lambda: _report(REPORTS[1], company, main.name),
-                 frappe.PermissionError)
+        if frappe.get_doc(document.doctype, document.name).has_permission("read"):
+            rejected("hidden_related_material_report_denied", lambda: _report(REPORTS[1], company, main.name),
+                     frappe.PermissionError)
+            material_visibility = "readable parent; hidden related material rejected with PermissionError"
+        else:
+            # Native User Permissions inspect child links too and can deny the
+            # entire profile. Its report must then expose no recipe rows or cost.
+            assert _report(REPORTS[1], company, main.name) == []
+            checks.append("native_unreadable_parent_material_report_has_zero_rows")
+            material_visibility = "native parent read denied; material report returned zero rows"
         for record in (foreign_profile, foreign_mold, foreign_plate):
             rejected("foreign_catalog_document_read_denied", lambda record=record:
                      frappe.get_doc(record.doctype, record.name).check_permission("read"), frappe.PermissionError)
@@ -371,4 +379,5 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             "roles": {"stock": ["Stock Manager"], "production": ["Manufacturing Manager", "Manufacturing User"]},
             "images": "URL-only metadata; native download permissions verified; no bytes written or fetched",
             "file_metadata_records_tracked": sum(doctype == "File" for doctype, _ in fixtures),
+            "material_visibility": material_visibility,
             "concurrency": "serial rollback experiment; not raced"}
