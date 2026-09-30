@@ -1,7 +1,6 @@
 """Serial rollback-only acceptance of saved analysis and partial native stock issues."""
 
 from decimal import Decimal
-from copy import deepcopy
 
 import frappe
 from frappe.utils import today
@@ -155,7 +154,12 @@ def smoke(company, item_group, stock_uom, foreign_company):
         _denied(lambda: create_issue(flow.name, company, str(flow.modified), warehouses[0].name))
         checks.append("manufacturing_read_only_cannot_create_stock_draft")
         frappe.set_user("Administrator")
-        original_materials = deepcopy([row.as_dict() for row in flow.materials])
+        # These rows are physically deleted by the empty-analysis save. Rebuild
+        # native new children; stale deleted names would silently DB-update
+        # absent rows instead of reinserting them.
+        original_materials = [{key: row.get(key) for key in (
+            "item_code", "item_name", "uom", "qty_per_unit", "unit_price", "supplier", "note",
+        )} for row in flow.materials]
         flow.set("materials", [])
         flow.save()
         historical = detail(flow.name, company)["materials"][0]
