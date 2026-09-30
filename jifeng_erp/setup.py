@@ -91,6 +91,23 @@ def install():
             "allow_on_submit": 1,
             "description": "服务器记录本员工精确原值和工作历史，用于核对后续变更及安全取消。",
         }]
+    fields["Employee Separation"] = [
+        {"fieldname": "jf_exit_section", "fieldtype": "Section Break",
+         "label": "离职办理", "insert_after": "boarding_status"},
+        {"fieldname": "jf_last_working_day", "fieldtype": "Date", "label": "实际最后工作日",
+         "insert_after": "jf_exit_section", "allow_on_submit": 1,
+         "description": "填写员工实际最后工作日，完成交接后点击办理离职。"},
+        {"fieldname": "jf_reason_for_leaving", "fieldtype": "Small Text", "label": "离职原因",
+         "insert_after": "jf_last_working_day", "allow_on_submit": 1},
+        {"fieldname": "jf_exit_status", "fieldtype": "Select", "label": "离职办理状态",
+         "insert_after": "jf_reason_for_leaving", "options": "待办理\n已办理\n已撤销",
+         "default": "待办理", "read_only": 1, "no_copy": 1, "in_list_view": 1,
+         "allow_on_submit": 1},
+        {"fieldname": "jf_exit_snapshot", "fieldtype": "Long Text", "label": "离职办理追溯",
+         "insert_after": "jf_exit_status", "hidden": 1, "read_only": 1, "no_copy": 1,
+         "print_hide": 1, "allow_on_submit": 1,
+         "description": "服务器记录员工原值与办理结果，用于核对后续变更及安全撤销。"},
+    ]
     create_custom_fields(fields, update=True)
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 

@@ -79,7 +79,7 @@
 						return;
 					}
 					const field = response.message;
-					selected = { fieldname, property: field.label, current: field.value };
+					selected = { fieldname, property: __(field.label), current: field.value };
 					dialog.set_value("current", field.value);
 					dialog.replace_field("new_value", {
 						fieldname: "new_value", label: __("New"), fieldtype: field.datatype,

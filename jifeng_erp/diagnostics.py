@@ -123,6 +123,35 @@ def check():
         "personnel_property_read_override_active":
             "jifeng_erp.personnel_ui.get_employee_field_property" in frappe.get_hooks(
                 "override_whitelisted_methods").get("hrms.hr.utils.get_employee_field_property", []),
+        "personnel_separation_fields_installed": all(
+            field and field.allow_on_submit
+            for name in ("jf_last_working_day", "jf_reason_for_leaving", "jf_exit_status", "jf_exit_snapshot")
+            for field in (frappe.get_meta("Employee Separation").get_field(name),)
+        ) and all(
+            field and field.read_only and field.no_copy
+            for name in ("jf_exit_status", "jf_exit_snapshot")
+            for field in (frappe.get_meta("Employee Separation").get_field(name),)
+        ) and bool(
+            (field := frappe.get_meta("Employee Separation").get_field("jf_exit_snapshot"))
+            and field.hidden and field.print_hide and field.fieldtype == "Long Text"
+        ),
+        "personnel_separation_extensions_active": all(
+            path in frappe.get_hooks("extend_doctype_class").get(doctype, [])
+            for doctype, path in (
+                ("Employee Separation", "jifeng_erp.personnel_separation.EmployeeSeparationMixin"),
+                ("Employee", "jifeng_erp.personnel_separation.SeparationEmployeeMixin"),
+                ("Project", "jifeng_erp.personnel_separation.SeparationProjectMixin"),
+            )
+        ),
+        "personnel_separation_read_guards_active": all(
+            path in frappe.get_hooks(hook).get("Employee Separation", [])
+            for hook, path in (
+                ("has_permission", "jifeng_erp.personnel_separation.separation_has_permission"),
+                ("permission_query_conditions", "jifeng_erp.personnel_separation.separation_query_conditions"),
+            )
+        ),
+        "session_csrf_initialization_active":
+            "jifeng_erp.session_init.initialize_csrf" in frappe.get_hooks("before_request"),
         "hrms_installed": "hrms" in frappe.get_installed_apps(),
         "wage_entry_installed": bool(frappe.db.exists("DocType", "Jifeng Wage Entry")),
         "wage_allocation_installed": all(frappe.db.exists("DocType", name) for name in
