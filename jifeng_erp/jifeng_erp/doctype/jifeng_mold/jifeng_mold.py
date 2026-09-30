@@ -2,6 +2,7 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import getdate
 
+from jifeng_erp.catalog_access import check_employee
 from jifeng_erp.costing import CostingError, number
 
 
@@ -13,6 +14,10 @@ class JifengMold(Document):
             frappe.throw("模具号和产品号不能为空")
         if not self.mold_date:
             frappe.throw("请填写建档日期")
+        if self.item_code:
+            item = frappe.get_doc("Item", self.item_code)
+            item.check_permission("read")
+        check_employee(self.maker, self.company, "制作人员")
         try:
             if number(self.quantity, "模具数量") <= 0:
                 frappe.throw("模具数量必须大于零")

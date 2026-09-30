@@ -2,6 +2,7 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import getdate
 
+from jifeng_erp.catalog_access import check_employee
 from jifeng_erp.costing import CostingError, number
 
 
@@ -15,14 +16,8 @@ class JifengPlate(Document):
         if self.item_code:
             item = frappe.get_doc("Item", self.item_code)
             item.check_permission("read")
-        if self.maker:
-            maker = frappe.get_doc("Employee", self.maker)
-            if maker.company != self.company:
-                frappe.throw("制版人员必须属于当前公司")
-        if self.modeler:
-            modeler = frappe.get_doc("Employee", self.modeler)
-            if modeler.company != self.company:
-                frappe.throw("建模人员必须属于当前公司")
+        check_employee(self.maker, self.company, "制版人员")
+        check_employee(self.modeler, self.company, "建模人员")
         try:
             number(self.reference_cost, "参考制作费用")
         except CostingError as exc:
