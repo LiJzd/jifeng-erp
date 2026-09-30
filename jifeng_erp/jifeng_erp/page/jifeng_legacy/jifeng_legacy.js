@@ -1897,7 +1897,7 @@ class JifengLegacyWorkspace {
 	}
 
 	fullscreen() {
-		const shell = this.host.querySelector(".jfe-shell");
+		const shell = this.formalBridge ? this.host.parentElement : this.host.querySelector(".jfe-shell");
 		if (shell && shell.requestFullscreen) shell.requestFullscreen().catch(() => this.toast("浏览器未允许全屏。"));
 	}
 

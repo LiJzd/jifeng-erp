@@ -10,6 +10,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		workspace.host.parentElement.appendChild(this.layer);
 		this.align = this.align.bind(this);
 		window.addEventListener("resize", this.align);
+		document.addEventListener("fullscreenchange", this.align);
 		window.addEventListener("scroll", this.align, true);
 		frappe.router.on("change", this.align);
 		this.observer = new ResizeObserver(this.align);
