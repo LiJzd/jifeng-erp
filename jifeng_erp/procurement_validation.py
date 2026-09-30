@@ -164,7 +164,9 @@ def _source_corruption(receipt, field, value, read):
 def smoke(company, item_group, stock_uom, report_api=True):
     """Verify actual native side effects and permission boundaries, then roll back."""
     frappe.only_for("System Manager")
-    from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
+    from erpnext.buying.doctype.purchase_order.purchase_order import (
+        make_purchase_receipt, update_status as update_purchase_status,
+    )
     from erpnext.stock.doctype.material_request.material_request import update_status
     from jifeng_erp.procurement_reports import purchase_receipt_ledger, purchase_request_ledger
 
@@ -188,8 +190,16 @@ def smoke(company, item_group, stock_uom, report_api=True):
         assert flt(purchase.items[0].stock_qty) == 5
         # Direct receipts cover a different half from the remaining PO promise.
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 5, 5, 0))
+        update_purchase_status("Closed", purchase.name)
+        _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 5, 5, 5))
+        update_purchase_status("Draft", purchase.name)
+        _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 5, 5, 0))
         po_receipt = make_purchase_receipt(purchase.name).insert()
         po_receipt.submit()
+        _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 10, 5, 0))
+        po_return = _return(po_receipt)
+        _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 9, 5, 0))
+        po_return.cancel()
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 10, 5, 0))
         po_receipt.cancel()
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 5, 5, 0))
@@ -239,6 +249,16 @@ def smoke(company, item_group, stock_uom, report_api=True):
         _source_corruption(accepted_return, "purchase_receipt_item", None, read_returns)
         _source_corruption(accepted_return, "purchase_receipt_item", "MISSING-EXACT-SOURCE", read_returns)
 
+        reject_fixture = frappe._dict(fixture)
+        reject_fixture.flow = frappe.get_doc({"doctype": "Jifeng Flow Order", "company": company,
+                                              "item_code": fixture.item.name, "planned_qty": 6}).insert()
+        reject_request = _request(reject_fixture, 6)
+        reject_original = _direct_receipt(reject_fixture, 6, 2, request=reject_request)
+        _return(reject_original, rejected=True)
+        reject_request.reload()
+        assert flt(reject_request.items[0].received_qty) == 5, "Native cache counts reject-return stock_qty"
+        _request_quantities(_request_row(purchase_request_ledger, reject_fixture, reject_request), (6, 0, 6, 6, 0))
+
         for role in ("Purchase User", "Stock User"):
             user = frappe.get_doc({"doctype": "User", "email": f"jf-proc-{role.split()[0].lower()}-{fixture.suffix}@example.invalid",
                                    "first_name": "采购报表验收", "send_welcome_email": 0,
@@ -266,11 +286,14 @@ def smoke(company, item_group, stock_uom, report_api=True):
             "native_direct_receipt_updates_request_stock_received", "native_stop_pending_zero_history_retained",
             "native_reopen_restores_pending", "cancel_direct_receipt_releases_request_qty",
             "direct_receipt_and_remaining_po_are_distinct_coverage", "po_receipt_not_double_counted",
+            "closed_po_releases_only_unreceived_commitment", "reopened_po_restores_unreceived_commitment",
+            "accepted_po_return_retains_order_commitment", "cancel_po_return_restores_request_net_received",
             "cancel_po_receipt_retains_order_commitment", "cancel_po_releases_order_commitment",
             "accepted_and_rejected_returns_same_source", "persistent_child_rejected_return_flag_reload",
             "return_sources_outside_selected_dates", "duplicate_item_rows_exact_source_identity",
             "warehouse_filter_clips_only_own_quantity", "warehouse_filter_keeps_whole_voucher_money",
             "native_transaction_and_company_currency_values", "missing_exact_return_source_denied",
+            "rejected_return_does_not_reduce_request_net_accepted_despite_native_cache",
             "purchase_and_stock_user_report_access", "hidden_return_source_denied",
             "all_ledger_contents_unchanged_by_reads", "guest_denied",
         ] + (["native_report_api_role_access"] if report_api else [])}
