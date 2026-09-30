@@ -90,6 +90,9 @@
  "links": [],
  "roles": [
   {
+   "role": "Manufacturing User"
+  },
+  {
    "role": "Stock Manager"
   },
   {

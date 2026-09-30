@@ -106,6 +106,9 @@ def smoke(company, item_group, stock_uom):
 
         assert len(run("Jifeng Production Progress", filters=filters)["result"]) == 1
         assert len(run("Jifeng Job Card Detail", filters=filters)["result"]) == 2
+        from frappe.desk.page import getpage
+
+        assert getpage("jifeng-legacy")["name"] == "jifeng-legacy"
         frappe.set_user("Guest")
         for report in (work_order_progress, job_card_progress):
             try:
@@ -118,7 +121,8 @@ def smoke(company, item_group, stock_uom):
                 "overdue_work_order", "draft_completed_separation", "submitted_operation_quantities",
                 "operation_is_not_stock_receipt", "native_manufacture", "stock_flow_inheritance",
                 "finished_progress_and_ledger", "manufacturing_user_work_order_isolation",
-                "manufacturing_user_job_card_submit", "report_api_role_access", "loss_reporting", "guest_denied"],
+                "manufacturing_user_job_card_submit", "report_api_role_access", "workspace_role_access",
+                "loss_reporting", "guest_denied"],
                 "business_data": "rolled_back"}
     finally:
         frappe.set_user(original_user)
