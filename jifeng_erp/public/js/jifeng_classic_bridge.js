@@ -83,6 +83,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		const entry = this.mount(host, spec);
 		const hide = dialog.hide.bind(dialog);
 		let disposed = false;
+		let confirming = false;
 		const dispose = () => {
 			if (disposed) return;
 			disposed = true;
@@ -94,8 +95,14 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		};
 		const close = () => { dispose(); hide(); };
 		dialog.hide = () => {
+			if (disposed || confirming) return;
 			const dirty = this.isDirty(entry.iframe);
-			if (dirty) frappe.confirm(__("尚有未保存的修改，关闭并放弃修改？"), close);
+			if (dirty) {
+				confirming = true;
+				frappe.confirm(__("尚有未保存的修改，关闭并放弃修改？"),
+					() => { confirming = false; queueMicrotask(close); },
+					() => { confirming = false; });
+			}
 			else close();
 		};
 		// Bootstrap's X/backdrop/Escape do not call Dialog.hide. Keep the
@@ -139,12 +146,14 @@ window.JifengClassicBridge = class JifengClassicBridge {
 				clearInterval(timer);
 				try {
 					const style = child.document.createElement("style");
-					style.textContent = ".navbar,.layout-side-section{display:none!important}.layout-main-section-wrapper{margin:0!important}.page-container{padding-top:0!important}.page-head{top:0!important}";
+					style.textContent = ".navbar,.layout-side-section{display:none!important}.layout-main-section-wrapper{margin:0!important}.page-container{padding-top:0!important}.page-head{top:0!important}" +
+						(spec.hideCreate ? ".page-head .primary-action{display:none!important}" : "");
 					child.document.head.appendChild(style);
 					if (spec.kind === "list") {
 						const nativeNew = child.frappe.new_doc;
 						child.frappe.new_doc = (doctype, opts, callback) => {
 							if (child.frappe.get_route()[0] === "List" && doctype === spec.doctype && !callback) {
+								if (spec.hideCreate) return Promise.resolve();
 								this.openCreate({ ...spec, title: "新增" + spec.title, kind: "create", values: opts || {} });
 								return Promise.resolve();
 							}

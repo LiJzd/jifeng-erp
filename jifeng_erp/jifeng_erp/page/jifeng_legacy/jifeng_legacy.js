@@ -438,7 +438,8 @@ class JifengLegacyWorkspace {
 			if (this.formalBridge) {
 				frappe.route_options = null;
 				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
-					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {} });
+					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {},
+					hideCreate: moduleName === "人事" && name === "人事浏览" });
 				return;
 			}
 			frappe.set_route("List", liveDoctype);
