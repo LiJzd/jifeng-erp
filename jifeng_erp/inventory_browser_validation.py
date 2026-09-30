@@ -399,17 +399,24 @@ def _near_zero(value):
 def _restored(data):
     rows = _ledger_rows(data)
     assert all(cint(row["is_cancelled"]) for row in rows["stock"]), "验收仍有有效库存流水"
-    ordinary_qty, stock_value, gl_value = defaultdict(Decimal), defaultdict(Decimal), defaultdict(Decimal)
+    assert all(cint(row["is_cancelled"]) for row in rows["gl"]), "验收仍有有效总账分录"
+    ordinary_qty, stock_value, gl_value, voucher_gl_value = (defaultdict(Decimal) for _ in range(4))
     for row in rows["stock"]:
         key = (row["item_code"], row["warehouse"])
         if row["voucher_type"] != "Stock Reconciliation":
             ordinary_qty[key] += Decimal(str(row["actual_qty"] or 0))
         stock_value[key] += Decimal(str(row["stock_value_difference"] or 0))
     for row in rows["gl"]:
-        gl_value[row["account"]] += Decimal(str(row["debit"] or 0)) - Decimal(str(row["credit"] or 0))
+        value = Decimal(str(row["debit"] or 0)) - Decimal(str(row["credit"] or 0))
+        gl_value[row["account"]] += value
+        voucher_gl_value[(row["voucher_type"], row["voucher_no"], row["account"])] += value
     assert all(_near_zero(value) for value in ordinary_qty.values()), "验收普通入出库有未冲销的库存数量"
-    assert all(_near_zero(value) for value in stock_value.values()), "验收库存价值尚未全部冲销"
+    # Native cancellation marks both original and reversing SLE as cancelled.
+    # Its valuation replay excludes them; a reverse SLE can therefore have a
+    # zero value difference rather than the original's negative difference.
+    # Retained cancelled history is not a current stock value calculation.
     assert all(_near_zero(value) for value in gl_value.values()), "验收总账按账户净额尚未归零"
+    assert all(_near_zero(value) for value in voucher_gl_value.values()), "验收某来源凭证的总账按账户尚未归零"
     bins = frappe.get_all("Bin", filters={"item_code": ["in", data["items"]]},
         fields=["item_code", "warehouse", *ZERO_BIN_FIELDS], order_by="item_code, warehouse", limit_page_length=0)
     assert all(row.warehouse in data["warehouses"] for row in bins), "验收商品存在日志外仓库余额"
@@ -421,8 +428,10 @@ def _restored(data):
     data["cancelled_ledger_records"] = rows
     data["ledger_net_checks"] = {
         "ordinary_quantity_by_item_warehouse": [{"item_code": key[0], "warehouse": key[1], "net_qty": str(value)} for key, value in ordinary_qty.items()],
-        "stock_value_by_item_warehouse": [{"item_code": key[0], "warehouse": key[1], "net_value": str(value)} for key, value in stock_value.items()],
+        "retained_cancelled_stock_value_difference_sum": [{"item_code": key[0], "warehouse": key[1], "diagnostic_sum": str(value)} for key, value in stock_value.items()],
         "gl_by_account": [{"account": key, "net_value": str(value)} for key, value in gl_value.items()],
+        "gl_by_voucher_account": [{"voucher_type": key[0], "voucher_no": key[1], "account": key[2], "net_value": str(value)} for key, value in voucher_gl_value.items()],
+        "stock_value_check": "全部SLE已取消，原生估价重算已完成，各仓Bin库存价值归零；取消历史价值差额不作当前余额累加",
         "reconciliation_quantity_check": "原生取消后无有效流水且各仓Bin归零，绝对盘点数量不作actual_qty累加",
     }
 
