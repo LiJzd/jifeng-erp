@@ -52,7 +52,9 @@ class NativeDocument(Record):
         return self.environment.metas[self.doctype]
 
     def has_permission(self, permission):
-        return (self.doctype, permission) not in self.environment.denials
+        return ((self.doctype, permission) not in self.environment.denials
+                and not (permission == "create" and (self.company in self.environment.denied_companies
+                         or self.department in self.environment.denied_departments)))
 
     def check_permission(self, permission):
         if not self.has_permission(permission):
@@ -117,6 +119,8 @@ class TestPersonnelArchive(unittest.TestCase):
     def setUp(self):
         self.documents, self.users, self.user_permissions, self.auth = {}, {}, [], []
         self.denials, self.hidden, self.levels = set(), {}, {}
+        self.denied_companies, self.default_company = set(), None
+        self.denied_departments, self.default_department = set(), None
         self.fail_supplement = self.approver_side_effect = False
         self.user_calls, self.tick = [], 1
         self.metas = {}
@@ -128,6 +132,7 @@ class TestPersonnelArchive(unittest.TestCase):
         self.frappe.whitelist = lambda **kwargs: lambda fn: fn
         self.frappe.share = types.SimpleNamespace(get_shared=lambda *a, **k: [])
         self.frappe.get_meta = lambda doctype: self.metas[doctype]
+        self.frappe.has_permission = lambda doctype, permission: (doctype, permission) not in self.denials
         self.frappe.get_doc, self.frappe.new_doc = Mock(side_effect=self.get_doc), Mock(side_effect=self.new_doc)
         self.frappe.get_all = Mock(side_effect=lambda doctype, **kwargs: deepcopy(self.user_permissions))
         self.snapshots = {}
@@ -207,7 +212,8 @@ class TestPersonnelArchive(unittest.TestCase):
 
     def new_doc(self, doctype):
         return (self.Employee if doctype == "Employee" else NativeDocument)(doctype=doctype, name=None,
-            __islocal=1, status="Active", create_user_permission=1, create_user_automatically=0)
+            __islocal=1, status="Active", company=self.default_company, department=self.default_department,
+            create_user_permission=1, create_user_automatically=0)
 
     def get_value(self, doctype, filters, field):
         if doctype == "File":
@@ -251,6 +257,75 @@ class TestPersonnelArchive(unittest.TestCase):
         self.assertEqual(result["supplement"]["term_type"], "长期")
         self.assertTrue(result["field_meta"]["employee"]["gender"]["reqd"])
         self.assertFalse(result["field_meta"]["histories"]["work_history"]["read_only"])
+
+    def test_new_company_is_resolved_before_native_document_create_permissions(self):
+        self.default_company, self.denied_companies = "OTHER", {"OTHER"}
+        self.assertTrue(self.module.init_archive()["can_write"])
+        explicit = self.module.init_archive("JF")
+        self.assertTrue(explicit["can_write"])
+        self.assertEqual(explicit["employee"]["company"], "JF")
+        with self.assertRaises(PermissionError):
+            self.module.init_archive("OTHER")
+        with self.assertRaises(PermissionError):
+            self.module.save_archive({"employee": {"company": "OTHER", "first_name": "拒绝"}})
+        result = self.module.save_archive({"employee": {"company": "JF", "first_name": "许可公司"}})
+        self.assertEqual(result["employee"]["company"], "JF")
+        self.assertEqual(self.documents[(self.module.SUPPLEMENT, result["supplement_name"])]["company"], "JF")
+
+    def test_empty_init_still_requires_both_create_roles(self):
+        for doctype in ("Employee", self.module.SUPPLEMENT):
+            with self.subTest(doctype=doctype):
+                self.denials = {(doctype, "create")}
+                with self.assertRaises(PermissionError):
+                    self.module.init_archive()
+
+    def test_new_explicit_department_precedes_both_full_document_create_checks(self):
+        self.default_department, self.denied_departments = "FOREIGN", {"FOREIGN"}
+        result = self.module.save_archive({"employee": {"company": "JF", "department": "DEPT", "first_name": "许可部门"}})
+        self.assertEqual(result["employee"]["department"], "DEPT")
+        self.assertEqual(self.documents[(self.module.SUPPLEMENT, result["supplement_name"])]["department"], "DEPT")
+
+    def test_missing_supplement_uses_existing_employee_company_before_create_check(self):
+        del self.documents[(self.module.SUPPLEMENT, "SUPP-OLD-NAME")]
+        self.default_company, self.denied_companies = "OTHER", {"OTHER"}
+        result = self.module.read_archive("EMP-1")
+        self.assertTrue(result["can_write"])
+        self.assertIsNone(result["supplement_name"])
+
+    def test_native_child_oracle_allows_only_parent_matched_modified_fields(self):
+        source = ast.parse((ROOT / "jifeng_erp/personnel_archive_validation.py").read_text(encoding="utf-8"))
+        definition = next(node for node in source.body if isinstance(node, ast.FunctionDef)
+                          and node.name == "_assert_native_history_preserved")
+        namespace = {}
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), "native_child_oracle", "exec"), namespace)
+        verify = namespace["_assert_native_history_preserved"]
+        old = {field: [dict(name="ROW", doctype="Native Child", parent="EMP-1", parenttype="Employee",
+            parentfield=field, idx=1, owner="original-owner", creation="original-time", unknown_business="KEEP",
+            modified="old-time", modified_by="old-actor")] for field in
+            ("education", "external_work_history", "internal_work_history")}
+        second = deepcopy(old["education"][0])
+        second.update(name="ROW-2", idx=2, unknown_business="KEEP-2")
+        old["education"].append(second)
+        new = deepcopy(old)
+        new.update(modified="new-time", modified_by="new-actor")
+        for field in old:
+            for row in new[field]:
+                row.update(modified=new["modified"], modified_by=new["modified_by"])
+        verify(old, new)
+        for fieldname in ("name", "doctype", "parent", "parenttype", "parentfield", "idx", "owner", "creation",
+                          "unknown_business", "modified", "modified_by"):
+            changed = deepcopy(new)
+            changed["education"][0][fieldname] = "CHANGED"
+            with self.subTest(field=fieldname), self.assertRaises(AssertionError):
+                verify(old, changed)
+        removed = deepcopy(new)
+        removed["education"] = []
+        with self.assertRaises(AssertionError):
+            verify(old, removed)
+        reordered = deepcopy(new)
+        reordered["education"].reverse()
+        with self.assertRaises(AssertionError):
+            verify(old, reordered)
 
     def test_old_amounts_and_text_do_not_change_ctc_or_formal_records(self):
         result = self.save(supplement={"legacy_base_salary": "1800.25", "legacy_time_value": "12.5",

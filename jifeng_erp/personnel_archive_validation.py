@@ -21,6 +21,20 @@ from jifeng_erp.personnel_separation_validation import (
 )
 
 
+def _assert_native_history_preserved(before, after):
+    # Document.set_user_and_timestamp updates these two fields in every child
+    # on an ordinary save. All other columns, identities and ordering stay exact.
+    def contents(rows):
+        return [{key: value for key, value in row.items()
+                 if key not in ("modified", "modified_by")} for row in rows]
+
+    for field in ("education", "external_work_history", "internal_work_history"):
+        previous, current = before[field], after[field]
+        assert contents(previous) == contents(current), field + " changed child identity or content"
+        assert all(row["modified"] == after["modified"] and row["modified_by"] == after["modified_by"]
+                   for row in current), field + " audit fields do not match the saved Employee"
+
+
 def _supplements(exclude=None):
     table = "`tabJifeng Employee Supplement`"
     result = {"parent": frappe.db.sql("SELECT * FROM " + table + " ORDER BY name", as_dict=True), "children": {}}
@@ -186,7 +200,12 @@ def smoke(company, other_company):
         assert result["supplement"]["notes"] == "原备注" and result["supplement"]["legacy_account"] == "000001234"
         actual = frappe.get_doc("Employee", employee.name).as_dict()
         assert actual["ctc"] == native_history["ctc"]
-        assert all(actual[field] == native_history[field] for field in ("education", "external_work_history", "internal_work_history"))
+        _assert_native_history_preserved(native_history, actual)
+        evidence["native_employee_history_comparison"] = {
+            "excluded_fields": ["modified", "modified_by"],
+            "audit_fields_match_saved_employee": True,
+            "all_other_columns_ids_and_order_preserved": True,
+        }
         assert _digest(_user_contents()) == protected_users and frappe.db.get_value("User", linked.name, "enabled") == 0
         assert _digest(_employee_contents(name=peer.name)) == protected_peer
         assert _digest(_employee_contents(exclude=employee.name)) == protected_other
@@ -256,14 +275,24 @@ def smoke(company, other_company):
 
         current = "native_new_archive_explicit_required_fields_defaults_and_no_user_creation"
         frappe.set_user(actors["create"])
+        empty = init_archive()
+        assert empty["can_write"] and empty["employee"]["company"] is None
         init = init_archive(company)
+        assert init["can_write"] and init["employee"]["company"] == company
         assert init["supplement"]["term_type"] == "长期" and not init["supplement"]["wage_method"]
+        reject(lambda: init_archive(other_company), frappe.PermissionError)
+        reject(lambda: save_archive({"employee": {"company": other_company, "first_name": prefix + "-denied-company",
+            "gender": "Male", "date_of_birth": "1990-01-01", "date_of_joining": today()}}), frappe.PermissionError)
         reject(lambda: save_archive({"employee": {"company": company, "first_name": prefix + "-missing-birthday"}}),
                frappe.MandatoryError)
         new = native(lambda: save_archive({"employee": {"company": company, "first_name": prefix + "-new",
             "gender": "Male", "date_of_birth": "1990-01-01", "date_of_joining": today()}}))
         records.update((("Employee", new["name"]), (SUPPLEMENT, new["supplement_name"])))
         assert new["employee"]["status"] == "Active" and new["supplement"]["term_type"] == "长期"
+        assert new["employee"]["company"] == company
+        frappe.get_doc(SUPPLEMENT, new["supplement_name"]).check_permission("read")
+        frappe.get_doc(SUPPLEMENT, new["supplement_name"]).check_permission("write")
+        assert frappe.db.get_value(SUPPLEMENT, new["supplement_name"], "company") == company
         assert not frappe.db.get_value("Employee", new["name"], "user_id")
         assert _digest(_user_contents()) == protected_users
         passed(current)

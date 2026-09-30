@@ -90,10 +90,14 @@ def _object(value, label):
     return value
 
 
-def _permission(document, permission):
+def _permission(document, permission, role_only=False):
     if frappe.session.user == "Guest":
         frappe.throw("请登录后操作员工档案", frappe.PermissionError)
-    document.check_permission(permission)
+    if role_only:
+        if not frappe.has_permission(document.doctype, permission):
+            frappe.throw("没有创建该档案的权限", frappe.PermissionError)
+    else:
+        document.check_permission(permission)
 
 
 def _columns(doctype, permission, parenttype=None):
@@ -132,6 +136,7 @@ def _documents(name, lock=False):
     else:
         supplement = frappe.new_doc(SUPPLEMENT)
         supplement.employee = employee.name
+        supplement.company, supplement.department = employee.company, employee.department
         _permission(supplement, "create")
     return employee, supplement
 
@@ -156,7 +161,13 @@ def _field_meta(document, names, writable, existing):
     return fields, values
 
 
-def _pack(employee, supplement):
+def _pack(employee, supplement, unscoped_init=False):
+    def permitted(document, permission):
+        # An empty new form has no Company yet. Its editable state comes from
+        # role creation rights; saving always checks the complete documents.
+        return (frappe.has_permission(document.doctype, permission) if unscoped_init
+                else document.has_permission(permission))
+
     existing = not employee.is_new()
     employee_write = EMPLOYEE_EDIT | ({"company"} if not existing else set())
     employee_meta, employee_values = _field_meta(employee, EMPLOYEE_READ, employee_write, existing)
@@ -173,7 +184,7 @@ def _pack(employee, supplement):
             "read_only": bool(meta.get_field(field).read_only or field not in writable
                               or not _table_allowed(name, "write")),
         } for field in fields if field in readable and meta.get_field(field)}
-        can_save = supplement.has_permission("create" if supplement.is_new() else "write")
+        can_save = permitted(supplement, "create" if supplement.is_new() else "write")
         history_meta[name] = {"read_only": not can_save or not _table_allowed(name, "write"), "fields": columns}
         history_values[name] = [{"name": row.name, **{
             field: _value(row.get(field)) for field in columns}}
@@ -187,23 +198,24 @@ def _pack(employee, supplement):
         "supplement_modified": _value(supplement.get("modified")) if not supplement.is_new() else None,
         "employee": employee_values, "supplement": supplement_values, "histories": history_values,
         "field_meta": {"employee": employee_meta, "supplement": supplement_meta, "histories": history_meta},
-        "can_write": bool(employee.has_permission(employee_permission)
-                          and supplement.has_permission(supplement_permission)),
+        "can_write": bool(permitted(employee, employee_permission)
+                          and permitted(supplement, supplement_permission)),
     }
 
 
 @frappe.whitelist()
 def init_archive(company=None):
     employee, supplement = frappe.new_doc(EMPLOYEE), frappe.new_doc(SUPPLEMENT)
-    _permission(employee, "create")
-    _permission(supplement, "create")
     employee.status, employee.user_id, employee.create_user_automatically = "Active", None, 0
     employee.company = None
+    supplement.employee, supplement.company, supplement.department = None, None, None
     if company:
         _company(company)
-        employee.company = company
+        employee.company = supplement.company = company
+    _permission(employee, "create", role_only=not company)
+    _permission(supplement, "create", role_only=not company)
     supplement.term_type, supplement.wage_method = "长期", None
-    return _pack(employee, supplement)
+    return _pack(employee, supplement, unscoped_init=not company)
 
 
 @frappe.whitelist()
@@ -356,6 +368,7 @@ def save_archive(payload):
     if not set(payload).issubset({"name", "employee_modified", "supplement_modified", "employee", "supplement", "histories"}):
         frappe.throw("旧式档案请求包含不支持的参数")
     existing = bool(payload.get("name"))
+    values = _object(payload.get("employee", {}), "员工字段")
     if existing:
         employee, supplement = _documents(payload["name"], lock=True)
         _permission(employee, "write")
@@ -363,25 +376,33 @@ def save_archive(payload):
         _latest(supplement, payload.get("supplement_modified"), "补充档案")
     else:
         employee, supplement = frappe.new_doc(EMPLOYEE), frappe.new_doc(SUPPLEMENT)
-        _permission(employee, "create")
+        _permission(employee, "create", role_only=True)
+        _permission(supplement, "create", role_only=True)
+        # Native document creation applies User Permissions to Company links.
+        # Resolve the explicit selection before checking either document; an
+        # unrelated native default must not reject an authorized selection.
+        _company(values.get("company"))
+        employee.company = supplement.company = values["company"]
+        supplement.employee = None
+        supplement.department = employee.department
         employee.status, employee.user_id, employee.create_user_automatically = "Active", None, 0
         supplement.term_type, supplement.wage_method = "长期", None
-    _permission(supplement, "create" if supplement.is_new() else "write")
+    if existing:
+        _permission(supplement, "create" if supplement.is_new() else "write")
     protected = {field: _value(employee.get(field)) for field in LIFECYCLE}
     account_before = _accounts(employee)
-    values = _object(payload.get("employee", {}), "员工字段")
     if existing and "company" in values:
         if values["company"] != employee.company:
             frappe.throw("旧式档案不能修改员工公司，请使用正式调岗流程")
         values = {key: value for key, value in values.items() if key != "company"}
-    # Resolve company first so Department checks cannot see the old default.
-    if not existing:
-        _company(values.get("company"))
-        employee.company = values["company"]
     _company(employee.company)
     _updates(employee, values, EMPLOYEE_EDIT | ({"company"} if not existing else set()))
     _updates(supplement, payload.get("supplement", {}), SUPPLEMENT_EDIT)
     _history_updates(supplement, payload.get("histories", {}))
+    if not existing:
+        supplement.company, supplement.department = employee.company, employee.department
+        _permission(employee, "create")
+        _permission(supplement, "create")
     if not isinstance(employee, ClassicPersonnelEmployeeMixin):
         frappe.throw("旧式员工保存保护尚未安装，请联系管理员")
     context = _SAVING.set(employee)

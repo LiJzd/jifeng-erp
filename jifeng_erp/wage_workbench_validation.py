@@ -166,6 +166,7 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
         restored.submit()
         restored.cancel()
         amended = frappe.copy_doc(restored)
+        amended.docstatus = 0
         amended.amended_from = restored.name
         amended.insert()
         created.append(amended.name)
