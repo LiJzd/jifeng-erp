@@ -36,6 +36,10 @@ class TestPersonnelUiPermissions(unittest.TestCase):
         utils.format_datetime = lambda value: "DATETIME:" + str(value)
         changes = types.ModuleType("jifeng_erp.personnel_changes")
         changes.JOB_FIELDS = {"department", "designation", "branch", "grade", "reports_to", "employment_type"}
+        changes.WATCH_FIELDS = {"company", "department", "designation", "branch", "status", "date_of_joining",
+                                "relieving_date", "user_id"}
+        changes._field_permissions = Mock()
+        self.change_fields = changes._field_permissions
         path = Path(__file__).parents[1] / "jifeng_erp/personnel_ui.py"
         with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model,
                                      "frappe.utils": utils, "jifeng_erp.personnel_changes": changes}):
@@ -87,6 +91,15 @@ class TestPersonnelUiPermissions(unittest.TestCase):
             self.module.get_job_properties("EMP-A", "Employee")
         self.assertIsNone(self.module.get_employee_field_property("", "bank_ac_no"))
         self.assertIsNone(self.module.get_employee_field_property("EMP-A", "unknown_field"))
+
+    def test_job_dialog_checks_parent_history_and_watched_fields_before_offering_options(self):
+        self.change_fields.side_effect = PermissionError("native work-history Table denied")
+        with self.assertRaises(PermissionError):
+            self.module.get_job_properties("EMP-A", "Employee Promotion")
+        self.assertIn("ctc", self.change_fields.call_args.args[0])
+        self.change_fields.side_effect = None
+        self.module.get_job_properties("EMP-A", "Employee Transfer")
+        self.assertNotIn("ctc", self.change_fields.call_args.args[0])
 
 
 if __name__ == "__main__":

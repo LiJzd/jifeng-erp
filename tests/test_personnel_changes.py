@@ -39,16 +39,30 @@ class TestPersonnelChanges(unittest.TestCase):
         self.store, self.history_counter, self.native_submits, self.employee_saves = {}, 0, [], []
         self.company_denials, self.employee_denials = {}, {}
         self.field_denials = {"read": set(), "write": set()}
+        self.column_denials = {"read": set(), "write": set()}
+        self.table_denials = {"read": set(), "write": set()}
+        self.table_permlevel = 0
+        self.permlevels = {"read": {0}, "write": {0}}
         self.child_denials = {"read": set(), "write": set()}
         self.fieldnames = {"company", "department", "designation", "branch", "status", "date_of_joining",
                            "relieving_date", "user_id", "ctc", "internal_work_history", "employment_type",
                            "grade", "reports_to", "bank_ac_no", "phone"}
         field = Doc(fieldtype="Long Text", hidden=1, read_only=1, no_copy=1, allow_on_submit=1)
         self.source_meta = types.SimpleNamespace(get_field=lambda name: field if name == "jf_history_snapshot" else None)
-        self.employee_meta = types.SimpleNamespace(get_field=lambda name: Doc(fieldname=name, fieldtype="Data")
-                                                  if name in self.fieldnames else None)
+        self.employee_meta = types.SimpleNamespace(get_field=lambda name:
+            Doc(fieldname=name, fieldtype="Table" if name == "internal_work_history" else "Data",
+                options="Employee Internal Work History" if name == "internal_work_history" else None,
+                permlevel=self.table_permlevel if name == "internal_work_history" else 0)
+            if name in self.fieldnames else None,
+            get_permitted_fieldnames=Mock(side_effect=lambda permission_type, **kwargs:
+                sorted(self.fieldnames - {"internal_work_history"} - self.field_denials[permission_type])),
+            get_permlevel_access=Mock(side_effect=lambda permission_type, **kwargs:
+                sorted(self.permlevels[permission_type] - ({self.table_permlevel}
+                    if "internal_work_history" in self.table_denials[permission_type] | self.field_denials[permission_type]
+                    else set()))))
         frappe = types.ModuleType("frappe")
         frappe.PermissionError = PermissionError
+        frappe.share = types.SimpleNamespace(get_shared=Mock(return_value=[]))
         frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         frappe.get_meta = Mock(return_value=self.employee_meta)
         frappe.db = types.SimpleNamespace(
@@ -57,7 +71,8 @@ class TestPersonnelChanges(unittest.TestCase):
             delete=Mock(side_effect=AssertionError("global delete must never run")))
         model = types.ModuleType("frappe.model")
         model.get_permitted_fields = Mock(side_effect=lambda doctype, permission_type, **kwargs:
-            sorted(self.fieldnames - self.field_denials[permission_type]) if doctype == "Employee" else
+            sorted(self.fieldnames - {"internal_work_history"} - self.field_denials[permission_type]
+                   - self.column_denials[permission_type]) if doctype == "Employee" else
             sorted({"branch", "department", "designation", "from_date", "to_date"}
                    - self.child_denials[permission_type]))
         self.frappe, self.model = frappe, model
@@ -316,6 +331,84 @@ class TestPersonnelChanges(unittest.TestCase):
             self.model.get_permitted_fields.assert_any_call("Employee Internal Work History", parenttype="Employee",
                 permission_type=permission, ignore_virtual=True)
             self.child_denials[permission] = set()
+        self.assertEqual(self.employee_saves, [])
+
+    def test_physical_columns_exclude_table_and_native_table_metadata_allows_safe_chain(self):
+        columns = self.model.get_permitted_fields("Employee", permission_type="read", ignore_virtual=True)
+        self.assertNotIn("internal_work_history", columns)
+        self.assertNotIn("internal_work_history", self.employee_meta.get_permitted_fieldnames(
+            user=None, permission_type="read", with_virtual_fields=False))
+        source = self.submit(self.source())
+        self.assertIs(self.module.personnel_change_has_permission(source, "read", user="reader"), True)
+        self.query_fixtures([source])
+        self.assertIn(source.name, self.module.promotion_query_conditions(user="reader"))
+        self.cancel(source)
+        for permission in ("read", "write"):
+            self.employee_meta.get_permlevel_access.assert_any_call(user=None, permission_type=permission)
+        self.employee_meta.get_permlevel_access.assert_any_call(user="reader", permission_type="read")
+        self.assertEqual(self.employee_saves, ["EMP-A", "EMP-A"])
+
+    def test_parent_table_uses_actual_permlevel_without_granting_other_fields(self):
+        self.table_permlevel = 1
+        source = self.source()
+        with self.assertRaises(PermissionError):
+            self.submit(source)
+        self.permlevels = {"read": {0, 1}, "write": {0, 1}}
+        self.submit(source)
+        self.assertIs(self.module.personnel_change_has_permission(source, "read", user="reader"), True)
+        self.permlevels["read"] = {0}
+        self.assertIs(self.module.personnel_change_has_permission(source, "read", user="reader"), False)
+        self.assertEqual(self.module.promotion_query_conditions(user="reader"), "1=0")
+
+    def test_native_read_share_can_supply_zero_table_level_but_not_full_read_or_write(self):
+        source = self.submit(self.source())
+        self.permlevels["read"] = set()
+        self.frappe.share.get_shared.return_value = ["EMP-A"]
+        self.assertIs(self.module.personnel_change_has_permission(source, "read", user="reader"), True)
+        self.frappe.share.get_shared.assert_called_with("Employee", "reader", rights=["read"], limit=1)
+        self.employee_denials[("EMP-A", "COMPANY")] = ("read",)
+        self.assertIs(self.module.personnel_change_has_permission(source, "read", user="reader"), False)
+        self.employee_denials.clear()
+        self.permlevels["write"] = set()
+        with self.assertRaises(PermissionError):
+            source.before_cancel()
+
+    def test_parent_table_permission_is_separate_from_child_columns(self):
+        for permission in ("read", "write"):
+            self.table_denials[permission] = {"internal_work_history"}
+            source = self.source()
+            with self.subTest(permission=permission), self.assertRaises(PermissionError):
+                self.submit(source)
+            self.assertEqual(source.promotion_details[0].current, "CLIENT-FORGED")
+            self.assertIsNone(source.jf_history_snapshot)
+            self.assertEqual(set(self.model.get_permitted_fields("Employee Internal Work History",
+                parenttype="Employee", permission_type=permission, ignore_virtual=True)),
+                set(self.module.HISTORY_FIELDS))
+            self.table_denials[permission] = set()
+        self.assertEqual(self.employee_saves, [])
+
+    def test_source_reads_and_query_require_parent_table_permission(self):
+        source = self.submit(self.source())
+        self.query_fixtures([source])
+        self.table_denials["read"] = {"internal_work_history"}
+        self.assertIs(self.module.personnel_change_has_permission(source, "read", user="reader"), False)
+        self.assertEqual(self.module.promotion_query_conditions(user="reader"), "1=0")
+        self.assertEqual(self.module.transfer_query_conditions(user="reader"), "1=0")
+        self.assertEqual(self.child_denials["read"], set())
+        self.table_denials["read"] = set()
+        self.table_denials["write"] = {"internal_work_history"}
+        self.assertIs(self.module.personnel_change_has_permission(source, "read", user="reader"), True)
+        with self.assertRaises(PermissionError):
+            source.before_cancel()
+        self.assertEqual(len(self.employee_saves), 1)
+
+    def test_metadata_fields_do_not_grant_a_denied_physical_column(self):
+        self.column_denials["read"] = {"designation"}
+        self.assertIn("designation", self.employee_meta.get_permitted_fieldnames(
+            permission_type="read", user=None, with_virtual_fields=False))
+        with self.assertRaises(PermissionError):
+            self.submit(self.source())
+        self.assertIs(self.module.personnel_change_has_permission(self.source(), "read"), False)
         self.assertEqual(self.employee_saves, [])
 
     def test_private_or_unsupported_employee_properties_never_enter_snapshot(self):

@@ -63,9 +63,26 @@ def _history(employee):
     return result
 
 
+def _permitted_employee_fields(permission, user=None):
+    # Both column/fieldname APIs exclude Table (NO_VALUE_FIELDS). Check the
+    # parent Table's permlevel explicitly against native metadata role levels.
+    permitted = set(get_permitted_fields("Employee", user=user, permission_type=permission, ignore_virtual=True))
+    meta = frappe.get_meta("Employee")
+    field = meta.get_field("internal_work_history")
+    levels = set(meta.get_permlevel_access(permission_type=permission, user=user))
+    # Match native get_permitted_fieldnames' read-sharing level-0 rule. Full
+    # Employee read below still checks this exact document, not just any share.
+    if permission == "read" and 0 not in levels and frappe.share.get_shared("Employee", user, rights=["read"], limit=1):
+        levels.add(0)
+    if (field and field.fieldtype == "Table" and field.options == "Employee Internal Work History"
+            and (field.permlevel or 0) in levels):
+        permitted.add("internal_work_history")
+    return permitted
+
+
 def _field_permissions(names):
     for permission in ("read", "write"):
-        permitted = set(get_permitted_fields("Employee", permission_type=permission, ignore_virtual=True))
+        permitted = _permitted_employee_fields(permission)
         child_fields = set(get_permitted_fields("Employee Internal Work History", parenttype="Employee",
                                                permission_type=permission, ignore_virtual=True))
         if not set(names).issubset(permitted) or not set(HISTORY_FIELDS).issubset(child_fields):
@@ -114,7 +131,7 @@ def _parse_snapshot(raw, doctype, name):
 
 
 def _readable_fields(user):
-    permitted = set(get_permitted_fields("Employee", user=user, permission_type="read", ignore_virtual=True))
+    permitted = _permitted_employee_fields("read", user)
     child = set(get_permitted_fields("Employee Internal Work History", parenttype="Employee", user=user,
                                     permission_type="read", ignore_virtual=True))
     return permitted if set(HISTORY_FIELDS).issubset(child) else set()

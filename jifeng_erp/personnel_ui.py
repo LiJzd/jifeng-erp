@@ -3,7 +3,7 @@ import frappe
 from frappe.model import get_permitted_fields
 from frappe.utils import format_datetime, formatdate
 
-from jifeng_erp.personnel_changes import JOB_FIELDS
+from jifeng_erp.personnel_changes import JOB_FIELDS, WATCH_FIELDS, _field_permissions
 
 
 def _readable_employee(employee):
@@ -40,6 +40,7 @@ def get_job_properties(employee, doctype):
         frappe.throw("没有办理该人事单据的权限", frappe.PermissionError)
     document = _readable_employee(employee)
     document.check_permission("write")
+    _field_permissions(WATCH_FIELDS | ({"ctc"} if doctype == "Employee Promotion" else set()))
     readable = set(get_permitted_fields("Employee", permission_type="read", ignore_virtual=True))
     writable = set(get_permitted_fields("Employee", permission_type="write", ignore_virtual=True))
     return [{"label": frappe._(field.label), "value": field.fieldname}
