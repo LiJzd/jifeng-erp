@@ -175,6 +175,7 @@ const JIFENG_LIVE_CREATE = {
 		出库: { doctype: "Stock Entry", values: { stock_entry_type: "Material Issue" } },
 		调拨: { doctype: "Stock Entry", values: { stock_entry_type: "Material Transfer" } },
 		盘点: { doctype: "Stock Reconciliation", values: {} },
+		差异处理: { doctype: "Stock Reconciliation", values: {} },
 	},
 		材料: {
 			申购: { doctype: "Material Request", values: { material_request_type: "Purchase" } },
@@ -182,6 +183,7 @@ const JIFENG_LIVE_CREATE = {
 		出库: { doctype: "Stock Entry", values: { stock_entry_type: "Material Issue" } },
 		调拨: { doctype: "Stock Entry", values: { stock_entry_type: "Material Transfer" } },
 			盘点: { doctype: "Stock Reconciliation", values: {} },
+			差异处理: { doctype: "Stock Reconciliation", values: {} },
 		},
 	产品: { 报价单: { doctype: "Quotation", values: { quotation_to: "Customer" } } },
 	订单: { 订单录入: { doctype: "Sales Order", values: {} } },
@@ -206,6 +208,7 @@ const JIFENG_LIVE_CREATE = {
 		成品出库: { doctype: "Stock Entry", values: { stock_entry_type: "Material Issue" } },
 		销售调拨: { doctype: "Stock Entry", values: { stock_entry_type: "Material Transfer" } },
 		销售盘点: { doctype: "Stock Reconciliation", values: {} },
+		差异处理: { doctype: "Stock Reconciliation", values: {} },
 		前台开单: { doctype: "POS Invoice", values: {} },
 	},
 	财务: {
@@ -226,8 +229,24 @@ const JIFENG_LIVE_LIST_FILTERS = {
 };
 
 const JIFENG_LIVE_REPORTS = {
-	物料: { 库存: "Stock Balance", 库存明细: "Stock Ledger" },
-	材料: { 库存: "Stock Balance", 库存明细: "Stock Ledger" },
+	物料: { 库存: "Jifeng Historical Stock Balance", 历史库存: "Jifeng Historical Stock Balance", 库存明细: "Stock Ledger",
+		盘点明细: "Jifeng Stock Reconciliation Ledger", 申购报表: "Jifeng Purchase Request Ledger", 申购明细: "Jifeng Purchase Request Ledger",
+		入库报表: "Jifeng Purchase Receipt Ledger", 入库明细: "Jifeng Purchase Receipt Ledger",
+		退回报表: { name: "Jifeng Purchase Receipt Ledger", filters: { only_returns: 1 } },
+		退回明细: { name: "Jifeng Purchase Receipt Ledger", filters: { only_returns: 1 } },
+		出库报表: { name: "Jifeng Stock Entry Ledger", filters: { mode: "issue" } },
+		出库明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "issue" } },
+		调拨报表: { name: "Jifeng Stock Entry Ledger", filters: { mode: "transfer" } },
+		调拨明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "transfer" } } },
+	材料: { 库存: "Jifeng Historical Stock Balance", 历史库存: "Jifeng Historical Stock Balance", 库存明细: "Stock Ledger",
+		盘点明细: "Jifeng Stock Reconciliation Ledger", 申购报表: "Jifeng Purchase Request Ledger", 申购明细: "Jifeng Purchase Request Ledger",
+		入库报表: "Jifeng Purchase Receipt Ledger", 入库明细: "Jifeng Purchase Receipt Ledger",
+		退回报表: { name: "Jifeng Purchase Receipt Ledger", filters: { only_returns: 1 } },
+		退回明细: { name: "Jifeng Purchase Receipt Ledger", filters: { only_returns: 1 } },
+		出库报表: { name: "Jifeng Stock Entry Ledger", filters: { mode: "issue" } },
+		出库明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "issue" } },
+		调拨报表: { name: "Jifeng Stock Entry Ledger", filters: { mode: "transfer" } },
+		调拨明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "transfer" } } },
 	生产: { 计划分析: "Production Plan Summary", 生产汇总: "Jifeng Production Progress",
 		完成分析: "Jifeng Production Progress", 未投产分析: { name: "Jifeng Production Progress", filters: { status: "Not Started" } },
 		订单逾期: { name: "Jifeng Production Progress", filters: { only_overdue: 1 } },
@@ -244,7 +263,10 @@ const JIFENG_LIVE_REPORTS = {
 		外发明细: "Jifeng Subcontracting Progress", 外发报表: "Jifeng Subcontracting Progress",
 		收回明细: "Jifeng Subcontracting Receipt Ledger", 收回报表: "Jifeng Subcontracting Receipt Ledger" },
 	销售: {
-		库存: "Stock Balance", 库存明细: "Stock Ledger", 进销存: "Stock Balance",
+		库存: "Jifeng Historical Stock Balance", 库存明细: "Stock Ledger", 进销存: "Jifeng Historical Stock Balance",
+		历史库存: "Jifeng Historical Stock Balance", 盘点明细: "Jifeng Stock Reconciliation Ledger",
+		入库明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "receipt" } },
+		调拨明细: { name: "Jifeng Stock Entry Ledger", filters: { mode: "transfer" } },
 		销售报表: "Sales Register", 销售分析: "Sales Analytics", 明细成本: "Gross Profit",
 	},
 	财务: {
@@ -255,6 +277,11 @@ const JIFENG_LIVE_REPORTS = {
 };
 
 const JIFENG_LIVE_REPORT_DEFAULTS = {
+	"Jifeng Purchase Request Ledger": { item_code: "", warehouse: "", flow_order: "", only_pending: 0 },
+	"Jifeng Purchase Receipt Ledger": { supplier: "", item_code: "", warehouse: "", flow_order: "", only_returns: 0 },
+	"Jifeng Stock Entry Ledger": { mode: "issue", item_code: "", warehouse: "", flow_order: "" },
+	"Jifeng Historical Stock Balance": { item_code: "", warehouse: "", include_zero: 0 },
+	"Jifeng Stock Reconciliation Ledger": { item_code: "", warehouse: "", only_difference: 0 },
 	"Jifeng Subcontracting Progress": { only_pending: 0, only_overdue: 0, supplier: "",
 		item_code: "", flow_order: "", subcontracting_order: "" },
 	"Jifeng Subcontracting Receipt Ledger": { supplier: "", item_code: "", flow_order: "", subcontracting_order: "" },

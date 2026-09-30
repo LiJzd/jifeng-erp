@@ -24,5 +24,10 @@ Jifeng Job Card Detail,工序报工明细
 Jifeng Department Progress,部门生产进度
 Jifeng Production Picture,图片生产计划
 Jifeng Subcontracting Progress,委外收回进度
+Jifeng Purchase Request Ledger,采购申请台账
+Jifeng Purchase Receipt Ledger,采购收货退回台账
+Jifeng Stock Entry Ledger,库存出入调拨台账
+Jifeng Historical Stock Balance,历史库存余额
+Jifeng Stock Reconciliation Ledger,库存盘点差异台账
 Jifeng Subcontracting Receipt Ledger,委外收回台账
 Jifeng Subcontracting Material Ledger,委外原料发退台账

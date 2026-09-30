@@ -1,0 +1,13 @@
+{
+ "doctype": "Report",
+ "name": "Jifeng Purchase Receipt Ledger",
+ "report_name": "Jifeng Purchase Receipt Ledger",
+ "report_type": "Script Report",
+ "ref_doctype": "Purchase Receipt",
+ "module": "Jifeng ERP",
+ "is_standard": "Yes",
+ "add_total_row": 0,
+ "prepared_report": 0,
+ "disabled": 0,
+ "roles": [{"role": "Stock User"}, {"role": "Stock Manager"}, {"role": "Purchase User"}, {"role": "Purchase Manager"}]
+}

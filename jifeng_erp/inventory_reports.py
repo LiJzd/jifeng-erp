@@ -136,6 +136,12 @@ def historical_stock_balance(filters=None):
     })
     if not entries:
         return columns, []
+    units = {}
+    for entry in entries:
+        if entry.item_code not in units:
+            units[entry.item_code] = frappe.get_cached_value("Item", entry.item_code, "stock_uom")
+        if not units[entry.item_code] or entry.stock_uom != units[entry.item_code]:
+            frappe.throw("历史库存流水与物料库存单位不一致，请先核对账簿")
     opening = _source_metadata(entries, filters.company)
     native_filters = frappe._dict(
         company=filters.company, from_date=start, to_date=end, warehouse=warehouses, item_code=items,

@@ -48,6 +48,10 @@ def check():
                                                ("Jifeng Subcontracting Progress", "Jifeng Subcontracting Receipt Ledger",
                                                 "Jifeng Subcontracting Material Ledger")),
         "subcontracting_order_link_installed": frappe.get_meta("Subcontracting Order Item").has_field("jf_flow_order"),
+        "inventory_reports_installed": all(frappe.db.exists("Report", name) for name in
+                                           ("Jifeng Purchase Request Ledger", "Jifeng Purchase Receipt Ledger",
+                                            "Jifeng Stock Entry Ledger", "Jifeng Historical Stock Balance",
+                                            "Jifeng Stock Reconciliation Ledger")),
         "procurement_links_installed": all(
             frappe.get_meta(doctype).has_field("jf_flow_order")
             for doctype in ("Material Request Item", "Purchase Order Item", "Purchase Receipt Item",
