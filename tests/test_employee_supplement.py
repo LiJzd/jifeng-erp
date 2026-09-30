@@ -1,6 +1,7 @@
 """Verify the employee extension's private attachment boundary."""
 
 import importlib.util
+from datetime import date
 import pathlib
 import sys
 import types
@@ -21,8 +22,14 @@ class TestEmployeeSupplement(unittest.TestCase):
         model = types.ModuleType("frappe.model")
         document = types.ModuleType("frappe.model.document")
         document.Document = type("Document", (), {})
+        utils = types.ModuleType("frappe.utils")
+        utils.getdate = lambda value: date.fromisoformat(str(value))
+        archive = types.ModuleType("jifeng_erp.personnel_archive")
+        archive.is_archive_save = Mock(return_value=False)
+        self.archive = archive
         with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model,
-                                      "frappe.model.document": document}):
+                                      "frappe.model.document": document, "frappe.utils": utils,
+                                      "jifeng_erp.personnel_archive": archive}):
             path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "jifeng_erp" / "doctype" / "jifeng_employee_supplement" / "jifeng_employee_supplement.py"
             spec = importlib.util.spec_from_file_location("employee_supplement_under_test", path)
             module = importlib.util.module_from_spec(spec)
@@ -69,6 +76,20 @@ class TestEmployeeSupplement(unittest.TestCase):
         self.frappe.get_doc.assert_called_once_with("Jifeng Employee Supplement", "OLD-EMPLOYEE-ID")
         self.assertEqual(supplement.company, "新公司")
         supplement.save.assert_called_once_with(ignore_permissions=True)
+
+    def test_classic_api_does_not_use_the_privileged_refresh(self):
+        self.archive.is_archive_save.return_value = True
+        self.frappe.db.get_value = Mock()
+        self.module.refresh_employee_supplement(self.employee)
+        self.frappe.db.get_value.assert_not_called()
+        self.frappe.get_doc.assert_not_called()
+
+    def test_archived_dates_are_checked_without_formal_personnel_actions(self):
+        row = types.SimpleNamespace(from_date="2026-03-02", to_date="2026-03-01")
+        row.get = lambda name: getattr(row, name, None)
+        self.supplement.salary_history = [row]
+        with self.assertRaisesRegex(ValueError, "开始日期"):
+            self.supplement.validate()
 
 
 if __name__ == "__main__":

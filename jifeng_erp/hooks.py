@@ -6,7 +6,7 @@ app_email = "erp@example.invalid"
 app_license = "GPL-3.0-or-later"
 required_apps = ["erpnext", "hrms"]
 app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css"]
-app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js"]
+app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jifeng_erp/js/jifeng_personnel_archive.js"]
 before_request = "jifeng_erp.session_init.initialize_csrf"
 doctype_js = {
     "Sales Order": "public/js/jifeng_sales_order.js",
@@ -35,7 +35,8 @@ extend_doctype_class = {
     "Employee Promotion": ["jifeng_erp.personnel_changes.EmployeePromotionMixin"],
     "Employee Transfer": ["jifeng_erp.personnel_changes.EmployeeTransferMixin"],
     "Employee Separation": ["jifeng_erp.personnel_separation.EmployeeSeparationMixin"],
-    "Employee": ["jifeng_erp.personnel_separation.SeparationEmployeeMixin"],
+    "Employee": ["jifeng_erp.personnel_separation.SeparationEmployeeMixin",
+                 "jifeng_erp.personnel_archive.ClassicPersonnelEmployeeMixin"],
     "Project": ["jifeng_erp.personnel_separation.SeparationProjectMixin"],
 }
 

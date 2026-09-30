@@ -12,7 +12,11 @@
   "employee", "employee_name", "company", "department",
   "identity_section", "identity_number", "identity_image", "ethnicity", "province",
   "work_section", "specialty", "dormitory", "wage_method", "term_type",
-  "education_level", "bank_account_name", "notes"
+  "education_level", "bank_account_name", "notes",
+  "legacy_section", "legacy_title", "legacy_base_salary", "legacy_time_value", "legacy_city",
+  "legacy_account", "legacy_address", "legacy_marital_status", "legacy_seniority",
+  "legacy_introduction", "legacy_notes_text", "legacy_history_section",
+  "work_history", "salary_history", "promotion_history"
  ],
  "fields": [
   {"fieldname": "employee", "fieldtype": "Link", "label": "员工", "options": "Employee", "reqd": 1, "unique": 1, "in_list_view": 1},
@@ -31,7 +35,22 @@
   {"fieldname": "term_type", "fieldtype": "Select", "label": "旧系统人员类型", "options": "\n长期\n临时"},
   {"fieldname": "education_level", "fieldtype": "Data", "label": "文化程度"},
   {"fieldname": "bank_account_name", "fieldtype": "Data", "label": "银行户名", "no_copy": 1},
-  {"fieldname": "notes", "fieldtype": "Small Text", "label": "补充说明"}
+  {"fieldname": "notes", "fieldtype": "Small Text", "label": "补充说明"},
+  {"fieldname": "legacy_section", "fieldtype": "Section Break", "label": "旧式人事档案"},
+  {"fieldname": "legacy_title", "fieldtype": "Data", "label": "旧职称"},
+  {"fieldname": "legacy_base_salary", "fieldtype": "Currency", "label": "旧底薪", "precision": "6", "description": "旧档案金额；不是年度CTC，不自动生成工资结构或工资单。"},
+  {"fieldname": "legacy_time_value", "fieldtype": "Float", "label": "旧计时数值", "precision": "6", "description": "原样保存旧数值；单位待核准，不等同工时或时薪。"},
+  {"fieldname": "legacy_city", "fieldtype": "Data", "label": "城市"},
+  {"fieldname": "legacy_account", "fieldtype": "Data", "label": "旧账号原文", "no_copy": 1, "description": "旧字段原文，不创建或关联登录User。"},
+  {"fieldname": "legacy_address", "fieldtype": "Small Text", "label": "旧地址"},
+  {"fieldname": "legacy_marital_status", "fieldtype": "Data", "label": "旧婚否原文"},
+  {"fieldname": "legacy_seniority", "fieldtype": "Data", "label": "旧工龄原文"},
+  {"fieldname": "legacy_introduction", "fieldtype": "Text", "label": "旧介绍"},
+  {"fieldname": "legacy_notes_text", "fieldtype": "Small Text", "label": "旧备注文本"},
+  {"fieldname": "legacy_history_section", "fieldtype": "Section Break", "label": "旧档案记录", "description": "归档事实；不代替正式晋升、调岗或工资分配。"},
+  {"fieldname": "work_history", "fieldtype": "Table", "label": "工作经历", "options": "Jifeng Legacy Work History", "no_copy": 1},
+  {"fieldname": "salary_history", "fieldtype": "Table", "label": "调薪记录", "options": "Jifeng Legacy Salary History", "no_copy": 1},
+  {"fieldname": "promotion_history", "fieldtype": "Table", "label": "升职记录", "options": "Jifeng Legacy Promotion History", "no_copy": 1}
  ],
  "permissions": [
   {"role": "HR Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "print": 1},

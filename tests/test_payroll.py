@@ -74,7 +74,7 @@ class TestWageJobCardLink(unittest.TestCase):
     def setUp(self):
         frappe = types.ModuleType("frappe")
         frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
-        frappe.whitelist = lambda: (lambda fn: fn)
+        frappe.whitelist = lambda **kwargs: (lambda fn: fn)
         frappe.db = types.SimpleNamespace(sql=Mock(return_value=[]))
         self.employee = types.SimpleNamespace(company="C-1", status="Active", employee_name="员工甲", check_permission=Mock())
         self.card = types.SimpleNamespace(company="C-1", work_order="WO-1", operation="抛光",

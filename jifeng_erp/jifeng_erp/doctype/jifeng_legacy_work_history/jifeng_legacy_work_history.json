@@ -1,0 +1,17 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Legacy Work History",
+ "module": "Jifeng ERP",
+ "istable": 1,
+ "field_order": ["project", "work_content", "reason_for_leaving", "from_date", "to_date", "company_name", "title"],
+ "fields": [
+  {"fieldname": "project", "fieldtype": "Data", "label": "项目", "in_list_view": 1},
+  {"fieldname": "work_content", "fieldtype": "Small Text", "label": "工作内容", "in_list_view": 1},
+  {"fieldname": "reason_for_leaving", "fieldtype": "Small Text", "label": "离职原因"},
+  {"fieldname": "from_date", "fieldtype": "Date", "label": "开始", "in_list_view": 1},
+  {"fieldname": "to_date", "fieldtype": "Date", "label": "结束", "in_list_view": 1},
+  {"fieldname": "company_name", "fieldtype": "Data", "label": "公司"},
+  {"fieldname": "title", "fieldtype": "Data", "label": "职务"}
+ ],
+ "permissions": []
+}

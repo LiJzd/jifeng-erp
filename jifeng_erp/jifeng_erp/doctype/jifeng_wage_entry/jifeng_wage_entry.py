@@ -4,10 +4,15 @@ from frappe.utils import getdate
 
 from jifeng_erp.payroll import active_additional_salary, wage_amounts
 from jifeng_erp.wage_allocation import validate_wage_source
+from jifeng_erp.wage_workbench import authorize_native_restore, guard_request_identity
 
 
 class JifengWageEntry(Document):
+    def before_insert(self):
+        authorize_native_restore(self)
+
     def validate(self):
+        guard_request_identity(self)
         employee = frappe.get_doc("Employee", self.employee)
         employee.check_permission("read")
         if employee.company != self.company or employee.status != "Active":

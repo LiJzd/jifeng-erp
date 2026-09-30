@@ -1,0 +1,16 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Legacy Salary History",
+ "module": "Jifeng ERP",
+ "istable": 1,
+ "field_order": ["project", "content", "from_date", "to_date", "wage", "title"],
+ "fields": [
+  {"fieldname": "project", "fieldtype": "Data", "label": "项目", "in_list_view": 1},
+  {"fieldname": "content", "fieldtype": "Small Text", "label": "内容", "in_list_view": 1},
+  {"fieldname": "from_date", "fieldtype": "Date", "label": "开始", "in_list_view": 1},
+  {"fieldname": "to_date", "fieldtype": "Date", "label": "结束", "in_list_view": 1},
+  {"fieldname": "wage", "fieldtype": "Currency", "label": "薪资", "precision": "6", "in_list_view": 1},
+  {"fieldname": "title", "fieldtype": "Data", "label": "职务"}
+ ],
+ "permissions": []
+}

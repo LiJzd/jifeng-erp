@@ -1,0 +1,13 @@
+{
+ "doctype": "Page",
+ "name": "jifeng-wage-workbench",
+ "page_name": "jifeng-wage-workbench",
+ "title": "工资录入",
+ "module": "Jifeng ERP",
+ "standard": "Yes",
+ "roles": [
+  {"role": "HR User"},
+  {"role": "HR Manager"},
+  {"role": "System Manager"}
+ ]
+}

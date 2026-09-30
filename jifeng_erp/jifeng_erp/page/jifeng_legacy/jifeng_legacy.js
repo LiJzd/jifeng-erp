@@ -165,6 +165,7 @@ const JIFENG_LIVE_ROUTES = {
 };
 
 const JIFENG_LIVE_PAGES = {
+	工资: { 工资录入: "jifeng-wage-workbench" },
 	权限: { 权限管理: "permission-manager" },
 	销售: { 零售开单: "point-of-sale", 前台开单: "point-of-sale" },
 };
@@ -439,6 +440,7 @@ class JifengLegacyWorkspace {
 				frappe.route_options = null;
 				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
 					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {},
+					personnelArchive: moduleName === "人事" && name === "人事档案",
 					hideCreate: moduleName === "人事" && name === "人事浏览" });
 				return;
 			}
@@ -475,6 +477,8 @@ class JifengLegacyWorkspace {
 		if (key === "home") return;
 		const index = this.tabs.findIndex((item) => item.key === key);
 		if (index < 0) return;
+		const block = this.formalBridge?.closeBlock(key);
+		if (block) { frappe.msgprint(__(block)); return; }
 		if (!discard && this.formalBridge && !this.formalBridge.canClose(key)) {
 			frappe.confirm(__("尚有未保存的修改，关闭并放弃修改？"), () => this.closeTab(key, true));
 			return;

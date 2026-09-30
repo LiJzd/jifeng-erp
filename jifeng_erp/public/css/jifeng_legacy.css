@@ -1622,3 +1622,11 @@
 .jfe-formal-iframe.is-ready { visibility: visible; }
 .jfe-formal-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #536273; }
 .jfe-formal-dialog { height: max(420px, calc(100vh - 230px)); position: relative; }
+.jfe-personnel-editor .modal-dialog { max-width: min(1280px, 96vw); }
+.jfe-personnel-editor .modal-body { max-height: calc(100vh - 170px); overflow-y: auto; }
+.jfe-personnel-editor .jfe-personnel-fields .section-body { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 16px; }
+.jfe-personnel-editor .jfe-personnel-fields .form-column { display: contents; }
+.jfe-personnel-editor .jfe-personnel-fields .frappe-control { min-width: 0; }
+.jfe-personnel-editor .jfe-personnel-fields .form-group { margin-bottom: 9px; }
+.jfe-personnel-editor .jfe-employee-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+@media (max-width: 820px) { .jfe-personnel-editor .jfe-personnel-fields .section-body { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
