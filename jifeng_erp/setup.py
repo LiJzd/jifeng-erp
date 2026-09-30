@@ -130,6 +130,7 @@ def install():
 
     _install_wage_source_permissions()
     _install_wage_reversal_permissions()
+    _install_separation_permissions()
 
 
 def _install_wage_source_permissions():
@@ -201,6 +202,46 @@ def _install_wage_reversal_permissions():
         frappe.get_doc("DocType", doctype).add_comment(
             "Info", "集沣工资分配安装：核对原生权限及 HRMS 员工自助选择权限后，默认 HR Manager 补充附加薪资取消和草稿删除权限；原生已提交状态与来源链接校验保留。有实质差异的站点自定义权限不覆盖。",
         )
+
+
+def _install_separation_permissions():
+    """Default HR supervisors use native safe Separation submit/save/cancel."""
+    from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
+    from frappe.permissions import setup_custom_perms
+    from jifeng_erp.separation_permissions import default_separation_permissions
+
+    doctype = "Employee Separation"
+    native = frappe.get_all("DocPerm", filters={"parent": doctype}, fields=["*"], limit_page_length=0)
+    custom = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=["*"], limit_page_length=0)
+    fields = ("role", "permlevel", *[field.fieldname for field in frappe.get_meta("DocPerm").fields
+                                      if field.fieldtype == "Check"])
+    if custom and not default_separation_permissions(native, custom, fields=fields):
+        return  # Explicit site decisions, including partial grants/denials, win.
+    # Enable this default extension only where the complete safe controller chain
+    # is installed; native HRMS cancellation force-deletes project/tasks.
+    hooks = frappe.get_hooks("extend_doctype_class")
+    for target, extension in ((doctype, "EmployeeSeparationMixin"), ("Employee", "SeparationEmployeeMixin"),
+                              ("Project", "SeparationProjectMixin")):
+        installed = hooks.get(target, [])
+        installed = [installed] if isinstance(installed, str) else installed
+        if "jifeng_erp.personnel_separation." + extension not in installed:
+            frappe.throw("离职原生权限安装需要完整的安全员工、来源和交接项目控制器")
+    setup_custom_perms(doctype)  # Native clone preserves every original rule.
+    names = frappe.get_all("Custom DocPerm", filters={
+        "parent": doctype, "role": "HR Manager", "permlevel": 0, "if_owner": 0,
+    }, pluck="name", limit_page_length=0)
+    changed = False
+    for name in names:
+        rule = frappe.get_doc("Custom DocPerm", name)
+        if rule.submit and rule.cancel:
+            continue
+        rule.submit, rule.cancel = 1, 1
+        rule.save(ignore_permissions=True)
+        changed = True
+    validate_permissions_for_doctype(doctype)
+    if changed:
+        frappe.get_doc("DocType", doctype).add_comment("Info",
+            "集沣离职办理安装：核对完整原生权限克隆及安全控制器后，默认 HR Manager 补充正式离职来源的提交、取消权限；不新增删除权限，不改变 HR User、其他角色及站点实质自定义权限。已办理须先撤销，交接项目任务通过原生保存取消并保留。")
 
 
 _PROCUREMENT_SOURCES = {

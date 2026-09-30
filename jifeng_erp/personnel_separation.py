@@ -6,6 +6,7 @@ Native Employee validation/save and native source update hooks remain active.
 """
 
 from datetime import date, datetime
+from copy import deepcopy
 from decimal import Decimal
 from functools import wraps
 import hashlib
@@ -48,27 +49,46 @@ def _atomic(method):
         checkpoint = "jf_exit_" + uuid4().hex
         queues = [(getattr(frappe.db, name), list(getattr(frappe.db, name)._functions))
                   for name in ("before_commit", "after_commit", "before_rollback", "after_rollback")]
+        realtime_exists = hasattr(frappe.local, "_realtime_log")
+        realtime_before = deepcopy(getattr(frappe.local, "_realtime_log", None))
+        # frappe.flags is _dict: its __getattr__ returns None for missing keys,
+        # so hasattr would falsely record a nonexistent saving stack as present.
+        saving_exists = "currently_saving" in frappe.flags
+        saving_before = deepcopy(frappe.flags.get("currently_saving"))
         frappe.db.savepoint(checkpoint)
         try:
             return method(*args, **kwargs)
-        except Exception:
+        except Exception as original:
             # Native savepoint rollback does not handle callbacks. Run only our
             # rollback cleanup and restore every pre-existing queue unchanged.
-            try:
+            failures = []
+            def cleanup(callback, stage):
                 try:
-                    for callback in list(queues[2][0]._functions)[len(queues[2][1]):]:
-                        callback()
-                finally:
-                    try:
-                        frappe.db.rollback(save_point=checkpoint)
-                    finally:
-                        for callback in list(queues[3][0]._functions)[len(queues[3][1]):]:
-                            callback()
+                    callback()
+                except Exception as error:
+                    failures.append(stage + ":" + type(error).__name__)
+
+            try:
+                for callback in list(queues[2][0]._functions)[len(queues[2][1]):]:
+                    cleanup(callback, "before_rollback")
+                cleanup(lambda: frappe.db.rollback(save_point=checkpoint), "database_rollback")
+                for callback in list(queues[3][0]._functions)[len(queues[3][1]):]:
+                    cleanup(callback, "after_rollback")
             finally:
                 for manager, previous in queues:
                     manager.reset()
                     for callback in previous:
                         manager.add(callback)
+                if realtime_exists:
+                    frappe.local._realtime_log = realtime_before
+                elif hasattr(frappe.local, "_realtime_log"):
+                    del frappe.local._realtime_log
+                if saving_exists:
+                    frappe.flags.currently_saving = saving_before
+                else:
+                    frappe.flags.pop("currently_saving", None)
+            if failures:
+                original.add_note("离职局部回滚清理失败（" + ",".join(failures) + "），调用方须完整回滚并核对")
             raise
     return action
 
@@ -314,6 +334,7 @@ def _locked(name):
     source = frappe.get_doc(DOCTYPE, name, for_update=True)
     source.check_permission("read")
     source.check_permission("write")
+    source.check_permission("submit")  # Native update_after_submit also requires this right.
     _source_permissions(source, write_state=True)
     source._guard_exit_fields()
     if source.docstatus != 1:

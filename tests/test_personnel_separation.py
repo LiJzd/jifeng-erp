@@ -49,6 +49,7 @@ class TestPersonnelSeparation(unittest.TestCase):
         self.frappe.whitelist = lambda: lambda function: function
         self.frappe.session = Doc(user="real-role-user")
         self.frappe.local = types.SimpleNamespace()
+        self.frappe.flags = Doc(currently_saving=[])
         self.frappe._ = lambda value: value
         self.frappe.share = types.SimpleNamespace(get_shared=Mock(return_value=[]))
         model, utils = types.ModuleType("frappe.model"), types.ModuleType("frappe.utils")
@@ -76,6 +77,16 @@ class TestPersonnelSeparation(unittest.TestCase):
             self.employee_meta if doctype == "Employee" else self.source_meta if doctype == "Employee Separation"
             else self.activity_meta if doctype == "Employee Boarding Activity" else self.payroll_meta)
 
+        def notify_update(doc):
+            if not hasattr(self.frappe.local, "_realtime_log"):
+                self.frappe.local._realtime_log = []
+                self.frappe.db.after_commit.add(lambda: self.callback_calls.append("flush_realtime_log"))
+                def clear_realtime_log():
+                    if hasattr(self.frappe.local, "_realtime_log"):
+                        del self.frappe.local._realtime_log
+                self.frappe.db.after_rollback.add(clear_realtime_log)
+            self.frappe.local._realtime_log.append(["doc_update", {"doctype": doc.doctype, "name": doc.name}, "room"])
+
         class NativeDoc(Doc):
             def has_permission(self, permission, user=None):
                 return permission not in test.denied.get((self.doctype, self.name), set())
@@ -92,9 +103,13 @@ class TestPersonnelSeparation(unittest.TestCase):
 
             def save(self):
                 self.check_permission("write")
+                test.frappe.flags.setdefault("currently_saving", []).append((self.doctype, self.name))
                 test.clock += 1
                 self.modified = "2026-09-30T12:00:" + str(test.clock).zfill(2)
                 test.store[(self.doctype, self.name)] = Doc(self.as_dict())
+                notify_update(self)
+                if self.doctype != "Employee Separation":
+                    test.frappe.flags.currently_saving.remove((self.doctype, self.name))
                 return self
 
         class NativeEmployee(NativeDoc):
@@ -139,6 +154,8 @@ class TestPersonnelSeparation(unittest.TestCase):
                 self.project = project.name
 
             def save(self):
+                if self.docstatus == 1:
+                    self.check_permission("submit")
                 self.before_validate()
                 if self.docstatus == 1:
                     self.before_update_after_submit()
@@ -150,7 +167,12 @@ class TestPersonnelSeparation(unittest.TestCase):
                 if test.fail_source:
                     for queue in ("before_commit", "after_commit", "before_rollback", "after_rollback"):
                         getattr(test.frappe.db, queue).add(lambda queue=queue: test.callback_calls.append(queue))
+                    def clear_failed_realtime():
+                        if hasattr(test.frappe.local, "_realtime_log"):
+                            del test.frappe.local._realtime_log
+                    test.frappe.db.after_rollback.add(clear_failed_realtime)
                     raise ValueError("native source save failed")
+                test.frappe.flags.currently_saving.remove((self.doctype, self.name))
                 return self
 
             def on_cancel(self):
@@ -397,6 +419,7 @@ class TestPersonnelSeparation(unittest.TestCase):
 
     def test_source_read_write_employee_read_write_and_graph_read_are_required(self):
         for doctype, name, permission in (("Employee Separation", "SOURCE", "read"), ("Employee Separation", "SOURCE", "write"),
+            ("Employee Separation", "SOURCE", "submit"),
             ("Employee", "EMP", "read"), ("Employee", "EMP", "write"), ("Project", "PROJECT", "read"), ("Task", "TASK", "read")):
             self.denied = {(doctype, name): {permission}}
             with self.subTest(doctype=doctype, permission=permission), self.assertRaises(PermissionError):
@@ -567,6 +590,62 @@ class TestPersonnelSeparation(unittest.TestCase):
         self.assertEqual(self.callback_calls, ["before_rollback", "after_rollback"])
         for queue, expected in before.items():
             self.assertEqual(list(getattr(self.frappe.db, queue)._functions), expected)
+
+    def test_rpc_failure_preserves_earlier_realtime_messages_and_saving_stack(self):
+        prior_message = ["doc_update", {"doctype": "Other", "name": "EARLIER"}, "earlier-room"]
+        self.frappe.local._realtime_log = [deepcopy(prior_message)]
+        self.frappe.flags.currently_saving = [("Other", "EARLIER")]
+        old_flush = Mock()
+        self.frappe.db.after_commit.add(old_flush)
+        # Existing rollback watcher can clear the old log. A new native cleanup
+        # that also clears it must still leave the caller's old messages intact.
+        def clear_log():
+            if hasattr(self.frappe.local, "_realtime_log"):
+                del self.frappe.local._realtime_log
+        self.frappe.db.after_rollback.add(clear_log)
+        old_rollback = list(self.frappe.db.after_rollback._functions)
+        self.fail_source = True
+        with self.assertRaisesRegex(ValueError, "native source save failed"):
+            self.finalize()
+        self.assertEqual(self.frappe.local._realtime_log, [prior_message])
+        self.assertEqual(self.frappe.flags.currently_saving, [("Other", "EARLIER")])
+        self.assertEqual(list(self.frappe.db.after_commit._functions), [old_flush])
+        self.assertEqual(list(self.frappe.db.after_rollback._functions), old_rollback)
+        old_flush.assert_not_called()
+
+    def test_rpc_failure_removes_its_log_and_true_missing_dict_get_saving_key(self):
+        self.frappe.flags.pop("currently_saving")
+        self.assertTrue(hasattr(self.frappe.flags, "currently_saving"))
+        self.assertNotIn("currently_saving", self.frappe.flags)
+        self.fail_source = True
+        with self.assertRaisesRegex(ValueError, "native source save failed"):
+            self.finalize()
+        self.assertNotIn("currently_saving", self.frappe.flags)
+        self.assertFalse(hasattr(self.frappe.local, "_realtime_log"))
+        self.assertEqual(list(self.frappe.db.after_commit._functions), [])
+
+    def test_success_keeps_native_realtime_and_callbacks_and_only_removes_finished_saving_rows(self):
+        self.frappe.flags.currently_saving = [("Other", "EARLIER")]
+        self.finalize()
+        self.assertEqual(self.frappe.flags.currently_saving, [("Other", "EARLIER")])
+        self.assertEqual({event[1]["doctype"] for event in self.frappe.local._realtime_log},
+                         {"Employee", "Employee Separation"})
+        self.assertTrue(self.frappe.db.after_commit._functions)
+        self.assertTrue(self.frappe.db.after_rollback._functions)
+
+    def test_cleanup_error_preserves_original_failure_and_still_rolls_back_business(self):
+        @self.module._atomic
+        def fail():
+            self.store[("Employee", "EMP")].status = "Left"
+            def broken_cleanup():
+                raise RuntimeError("cleanup failed")
+            self.frappe.db.before_rollback.add(broken_cleanup)
+            raise ValueError("original business failure")
+        baseline = deepcopy(self.store)
+        with self.assertRaisesRegex(ValueError, "original business failure") as caught:
+            fail()
+        self.assertEqual(self.store, baseline)
+        self.assertIn("before_rollback:RuntimeError", caught.exception.__notes__[0])
 
     def test_source_read_rechecks_employee_and_graph_field_permissions_without_locks(self):
         self.finalize()

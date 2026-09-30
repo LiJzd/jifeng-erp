@@ -4,7 +4,8 @@ frappe.ui.form.on("Employee Separation", {
 		const frozen = Boolean(processed || frm.doc.jf_exit_snapshot);
 		frm.set_df_property("jf_last_working_day", "read_only", frozen ? 1 : 0);
 		frm.set_df_property("jf_reason_for_leaving", "read_only", frozen ? 1 : 0);
-		if (frm.doc.docstatus !== 1 || !(frm.perm || []).some((permission) => permission.write)) return;
+		if (frm.doc.docstatus !== 1 || !(frm.perm || []).some((permission) => permission.write)
+			|| !(frm.perm || []).some((permission) => permission.submit)) return;
 		if (frm.doc.jf_exit_status === "已撤销") return;
 		const method = processed ? "reverse_separation" : "finalize_separation";
 		const label = processed ? __("撤销离职办理") : __("办理离职");
