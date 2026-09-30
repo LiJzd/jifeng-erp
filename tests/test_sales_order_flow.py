@@ -44,6 +44,9 @@ class Record(dict):
     def save(self, **kwargs):
         return self
 
+    def get_items_and_operations_from_bom(self):
+        self.bom_loaded = True
+
 
 class FakeDatabase:
     def __init__(self, flows, requests):
@@ -173,6 +176,7 @@ class TestSalesOrderFlow(unittest.TestCase):
         self.assertEqual((work_order.jf_flow_order, work_order.sales_order, work_order.sales_order_item),
                          (name, "SO-0001", "ROW-1"))
         self.assertEqual((work_order.bom_no, work_order.production_item, work_order.qty), ("BOM-1", "RING", 10))
+        self.assertTrue(work_order.bom_loaded)
 
     def test_wrong_company_bom_cannot_create_work_order(self):
         name = self.workflow.create_sales_order_flows(self.order.name)[0]

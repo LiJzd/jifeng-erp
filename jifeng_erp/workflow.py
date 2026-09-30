@@ -372,9 +372,11 @@ def make_work_order(flow):
     work_order = frappe.get_doc({
         "doctype": "Work Order", "company": flow.company,
         "production_item": flow.item_code, "bom_no": flow.bom,
+        "track_semi_finished_goods": bom.get("track_semi_finished_goods") or 0,
         "qty": flow.planned_qty, "sales_order": flow.sales_order,
         "sales_order_item": flow.sales_order_item, "jf_flow_order": flow.name,
     })
+    work_order.get_items_and_operations_from_bom()
     work_order.insert()
     flow.work_order = work_order.name
     flow.save()

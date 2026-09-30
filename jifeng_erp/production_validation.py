@@ -53,23 +53,32 @@ def smoke(company, item_group, stock_uom):
         work.submit()
         cards = [frappe.get_doc("Job Card", name) for name in frappe.get_all(
             "Job Card", filters={"work_order": work.name}, pluck="name", order_by="operation asc")]
-        assert len(cards) == 2 and all(card.jf_flow_order == flow.name for card in cards)
+        assert len(cards) == 2 and all(card.jf_flow_order == flow.name for card in cards), [
+            (card.name, card.jf_flow_order) for card in cards]
         filters = {"company": company, "from_date": today(), "to_date": today(), "flow_order": flow.name}
         progress = work_order_progress(filters)[1]
         assert len(progress) == 1 and progress[0]["remaining_qty"] == 5 and progress[0]["produced_qty"] == 0
         assert progress[0]["overdue_days"] == 2
+        user = frappe.get_doc({"doctype": "User", "email": f"jf-production-{suffix}@example.invalid",
+                               "first_name": "生产验收", "send_welcome_email": 0,
+                               "roles": [{"role": "Manufacturing User"}]}).insert()
+        frappe.get_doc({"doctype": "User Permission", "user": user.name, "allow": "Company",
+                        "for_value": company, "apply_to_all_doctypes": 1}).insert()
+        frappe.get_doc({"doctype": "User Permission", "user": user.name, "allow": "Work Order",
+                        "for_value": work.name, "apply_to_all_doctypes": 1}).insert()
+        frappe.set_user(user.name)
         for idx, card in enumerate(cards):
             card.append("time_logs", {"from_time": today() + f" {9 + idx}:00:00",
                                       "to_time": today() + f" {9 + idx}:30:00", "completed_qty": 5})
             card.save()
-        detail = job_card_progress(filters)[1]
-        assert len(detail) == 2 and all(row["draft_qty"] == 5 and row["approved_qty"] == 0 for row in detail)
-        for card in cards:
+            row = next(row for row in job_card_progress(filters)[1] if row["name"] == card.name)
+            assert row["draft_qty"] == 5 and row["approved_qty"] == 0
             card.submit()
         detail = job_card_progress(filters)[1]
         assert len(detail) == 2 and all(row["approved_qty"] == 5 and row["draft_qty"] == 0 for row in detail)
         assert all(row["hours"] == 0.5 and row["jf_flow_order"] == flow.name for row in detail)
         assert work_order_progress(filters)[1][0]["produced_qty"] == 0, "Operation completion is not stock receipt"
+        frappe.set_user(original_user)
         manufacture = frappe.get_doc(make_stock_entry(work.name, "Manufacture", 5)).insert()
         manufacture.submit()
         assert all(row.jf_flow_order == flow.name for row in manufacture.items)
@@ -83,18 +92,15 @@ def smoke(company, item_group, stock_uom):
         hidden = frappe.copy_doc(work)
         hidden.jf_flow_order = None
         hidden.insert()
-        user = frappe.get_doc({"doctype": "User", "email": f"jf-production-{suffix}@example.invalid",
-                               "first_name": "生产验收", "send_welcome_email": 0,
-                               "roles": [{"role": "Manufacturing User"}]}).insert()
-        frappe.get_doc({"doctype": "User Permission", "user": user.name, "allow": "Company",
-                        "for_value": company, "apply_to_all_doctypes": 1}).insert()
-        frappe.get_doc({"doctype": "User Permission", "user": user.name, "allow": "Work Order",
-                        "for_value": work.name, "apply_to_all_doctypes": 1}).insert()
         frappe.set_user(user.name)
         visible = work_order_progress({**filters, "flow_order": None})[1]
         assert [row["name"] for row in visible] == [work.name]
         assert len(job_card_progress(filters)[1]) == 2
         assert frappe.has_permission("Jifeng Flow Order", "read", doc=flow)
+        from frappe.desk.query_report import run
+
+        assert len(run("Jifeng Production Progress", filters=filters)["result"]) == 1
+        assert len(run("Jifeng Job Card Detail", filters=filters)["result"]) == 2
         frappe.set_user("Guest")
         for report in (work_order_progress, job_card_progress):
             try:
@@ -106,7 +112,8 @@ def smoke(company, item_group, stock_uom):
         return {"passed": True, "checks": ["native_two_operation_work_order", "job_card_flow_inheritance",
                 "overdue_work_order", "draft_completed_separation", "submitted_operation_quantities",
                 "operation_is_not_stock_receipt", "native_manufacture", "stock_flow_inheritance",
-                "finished_progress_and_ledger", "manufacturing_user_work_order_isolation", "guest_denied"],
+                "finished_progress_and_ledger", "manufacturing_user_work_order_isolation",
+                "manufacturing_user_job_card_submit", "report_api_role_access", "guest_denied"],
                 "business_data": "rolled_back"}
     finally:
         frappe.set_user(original_user)
