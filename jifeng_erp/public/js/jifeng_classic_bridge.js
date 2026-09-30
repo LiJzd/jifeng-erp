@@ -92,7 +92,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 			entry.stop();
 			entry.iframe.remove();
 			for (const cached of this.frames.values()) {
-				try { cached.iframe.contentWindow?.frappe?.list_view?.refresh(); } catch { /* page may still be loading */ }
+				try { cached.iframe.contentWindow?.cur_list?.refresh(); } catch { /* page may still be loading */ }
 			}
 		};
 		const close = () => { dispose(); hide(); };
@@ -171,7 +171,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 							const list = await new Promise((resolve, reject) => {
 								let tries = 0;
 								timer = setInterval(() => {
-									const view = child.frappe.list_view;
+										const view = child.cur_list;
 									if (stopped) { clearInterval(timer); resolve(null); }
 									else if (view?.doctype === spec.doctype && view.filter_area) { clearInterval(timer); resolve(view); }
 									else if (++tries >= 300) { clearInterval(timer); reject(new Error("List not ready")); }
