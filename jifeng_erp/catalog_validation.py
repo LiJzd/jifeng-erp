@@ -84,7 +84,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
     prefix = "JF-QA-CATALOG-" + suffix
     point = "jf_catalog_" + suffix
     original_user, original_test = frappe.session.user, frappe.in_test
-    checks, users, fixtures = [], [], []
+    checks, users, fixtures, image_urls = [], [], [], []
     before = _ledger_snapshot()
     _begin_rollback_only(point)
     try:
@@ -146,6 +146,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         # bytes for these URLs. Download permission is still the native guard.
         own_url = "https://" + prefix.lower() + ".example.invalid/own.png"
         foreign_url = "https://" + prefix.lower() + ".example.invalid/foreign.png"
+        image_urls.extend((own_url, foreign_url))
         own_file = insert("File", file_name="own.png", file_url=own_url, is_private=1,
                           attached_to_doctype=document.doctype, attached_to_name=document.name)
         insert("File", file_name="foreign.png", file_url=foreign_url, is_private=1,
@@ -257,10 +258,26 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             checks.append(kind + "_native_create_update_versions_select_only_and_report_api")
             frappe.set_user("Administrator")
 
+        # Native Attach Image saves can create several File records for one URL.
+        # Keep those aliases, but make this exact synthetic negative fixture
+        # private and attach every alias to the unreadable foreign catalog.
+        foreign_files = frappe.get_all("File", filters={"file_url": foreign_url}, pluck="name")
+        assert foreign_files
+        for name in foreign_files:
+            attachment = frappe.get_doc("File", name)
+            attachment.update({"is_private": 1, "attached_to_doctype": foreign_profile.doctype,
+                               "attached_to_name": foreign_profile.name, "attached_to_field": None})
+            attachment.save()
+
         frappe.set_user(stock_user.name)
         product_rows = _report(REPORTS[0], company, main.name)
         assert len(product_rows) == 1 and product_rows[0]["document"] == document.name
-        assert product_rows[0]["image_url"] == own_file.unique_url and product_rows[0]["image_status"] == "已上传"
+        assert own_file.is_downloadable()
+        own_files = [frappe.get_doc("File", name) for name in
+                     frappe.get_all("File", filters={"file_url": own_url}, pluck="name")]
+        allowed_images = {attachment.unique_url for attachment in own_files if attachment.is_downloadable()}
+        assert product_rows[0]["image_url"] in allowed_images and product_rows[0]["image_status"] == "已上传"
+        assert all(not frappe.get_doc("File", name).is_downloadable() for name in foreign_files)
         material_rows = _report(REPORTS[1], company, main.name)
         assert len(material_rows) == 2
         expected_rows = {row.name: (row.uom, Decimal(str(row.qty_per_unit)), Decimal(str(row.unit_price)))
@@ -332,17 +349,26 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
     finally:
         frappe.set_user(original_user)
         try:
-            _end_rollback_only(point)
+            # Include aliases created by native Item/catalog/BOM attachment hooks,
+            # including ones created by later edits or before a failed gate.
+            if image_urls:
+                fixtures.extend(("File", name) for name in frappe.get_all(
+                    "File", filters={"file_url": ["in", image_urls]}, pluck="name")
+                    if ("File", name) not in fixtures)
         finally:
-            frappe.in_test = original_test
-            for user in users:
-                frappe.clear_cache(user=user)
-            for doctype, name in fixtures:
-                frappe.clear_document_cache(doctype, name)
+            try:
+                _end_rollback_only(point)
+            finally:
+                frappe.in_test = original_test
+                for user in users:
+                    frappe.clear_cache(user=user)
+                for doctype, name in fixtures:
+                    frappe.clear_document_cache(doctype, name)
     assert all(not frappe.db.exists(doctype, name) for doctype, name in fixtures), "回滚后存在验收档案或主数据"
     assert not frappe.db.exists("Version", {"docname": ["in", [name for _, name in fixtures]]}), "回滚后存在验收 Version"
     assert _ledger_snapshot() == before, "回滚后 GL/SLE 有差异"
     return {"passed": True, "checks": checks, "business_data": "rolled_back", "report_api_verified": True,
             "roles": {"stock": ["Stock Manager"], "production": ["Manufacturing Manager", "Manufacturing User"]},
             "images": "URL-only metadata; native download permissions verified; no bytes written or fetched",
+            "file_metadata_records_tracked": sum(doctype == "File" for doctype, _ in fixtures),
             "concurrency": "serial rollback experiment; not raced"}
