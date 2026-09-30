@@ -405,6 +405,7 @@ def smoke_receipt_batches(company, item_group, stock_uom):
             assert "净回货数量已变化" in str(exc)
         else:
             raise AssertionError("Stale linked batch must be reconciled before save")
+        preview.reload()
         preview.batches[0].received_qty = 3
         preview.batches[0].pending_qty = 2
         preview.save()
