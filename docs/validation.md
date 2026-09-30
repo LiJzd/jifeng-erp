@@ -198,3 +198,15 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs 
 同批前端完整 `bench build` 在8c160c1退出0；33份JS语法、43份JSON解析通过。测试站点验证不等于生产部署。
 
 2026-09-30：正式7be0b706默认 `catalog_validation.smoke` 原生57项通过（29种检查标签，含循环覆盖），report_api_verified=true。Stock Manager、Manufacturing Manager+Manufacturing User实际保存和修改三档案，核对原生Version、复制来源/BOM有效性、停用与报废、Company/Item/Employee User Permission、员工仅select无HR.read及四报表API。重复材料保留各行Nos/Kg单位且不混合汇总；隐藏材料在当前原生User Permission语义下使整个父档案不可读，材料报表严格零行，不泄露配方或成本。图片验收跟踪10条原生File元数据别名并调用原生下载权限；未写入、请求或下载图片字节，不能代表实际图片浏览器/上传已验收。全部来源、Version和File元数据在保存点回滚；独立只读审计十类夹具全零，完整GL/SLE hash与运行前一致。三档案及图片实际浏览器仍待完成。
+
+2026-09-30追加零售浏览器准备：`sales_browser_validation.prepare` 在正式5fc7df92成功提交隔离夹具JF-SALES-BROWSER-43cb85c867c1，后置独立verify通过：6条原始业务交易本币净80.96、4张已过账SI本币净60.72、14条GL、0条SLE，原生自动ItemPrice1条；差额20.24为未合并POS净交易。POS/Selling4项设置恢复准备前精确值，verify前后整表GL/SLE hash相同。首轮时间早于销售、动态非schema属性误入快照、原生User权限审计及自动ItemPrice支持记录在准备过程中逐次修复；每轮失败及诊断均独立确认完整回滚，不盲目重复未知提交。持久操作使用bench env独立Python进程单次调用，避免bench execute异常后eval再次调用同一目标。价格历史和权限日志按精确原生来源保留，不关闭全局自动价格，也不手改账簿。当前夹具仍为已提交QA业务，须浏览器结束后精确撤销。
+
+同批工作台首次管理员浏览器返回500，安全trace定位为配置Redis cache13000未运行；按现有配置恢复cache13000/queue11000并独立PING后页面恢复。复验经典零售开单/前台开单均进入原生point-of-sale，POS设置发票模式为Sales Invoice，未更改设置或创建班次；开/结班、零售单和合并日志及两报表路线已只读打开。Admin路线不是业务角色UI验收；首次渲染/undefined的404仍保留，后续路线没有HTTP错误、pageerror=0。实际交易行和工资UI尚待完成。
+
+追加实际销售浏览器结果：管理员只读核对营业台账全部6行及本币净80.96、已过账台账全部4行及净60.72。两份报表逐行来源、日期、方向、中文状态、退款来源、合并/过账标记、支付/找零与原币/本币字段匹配；原始POS和合并SI各在自己的台账只出现一次，未合并POS净20.24是两报表差额。贷项SI的持久时间与query_report原始数据均为17:47:49.527159，原生Time网格显示17:47:49，未改业务时间。经典日报实际默认当天5行，销售单查询默认当月6行，已过账台账默认当月4行，均清空旧客户/收银配置/人员/来源类型/仅退货筛选。最终成功核验pageerror=0、HTTP错误0；先前一次带筛选URL直达500未取得安全异常栈，再用同一URL与UI筛选都成功，保留该历史故障而不宣称已定位。证据为output/playwright/retail-sales-ui-summary-r2.json、retail-ledger-ui-verification-r2.json与retail-direct-query-diagnostic-r3-summary.json；不代替收银角色操作验收。
+
+销售夹具JF-SALES-BROWSER-43cb85c867c1已按原生依赖精确取消、停用6个独立主档。独立新连接verify通过：phase/durable_state均cancelled_history_retained，两报表0行，总账原14条及反向14条按每凭证/科目净额均0，无有效GL与SLE，0条库存记录，开班不再Open，原POS/Selling设置一致；原生ItemPrice、Contact、权限审计及取消历史保留。未手改账簿或强删历史。随后持久工资浏览器来源夹具JF-WAGE-BROWSER-c2570f10e0db创建成功，独立inspect来源错误/外部引用/未登记UI均为空、whole GL/SLE hash不变；当前仅准备正常完成5件的两人来源卡，实际UI分阶段验收与原生撤销尚待完成。
+
+新增正式发货/发票来源字段与before_validate钩子，按精确SO/DN/SI子行继承流程单，退货按原始明细，不按商品猜测。1370490迁移后诊断字段/Hook均true。原生首轮发现Frappe新建单据会把单一User Permission作为只读Link默认值，no_copy不阻止该默认值；首轮保存点和全部辅助记录/GL/SLE均回滚。f48f732保留真实默认值输入并优先核对不可读来源流程权限，增加回归测试；原生完整链路复验尚待完成。
+
+新增产品八维度分析和人事花名册，经典九个入口及六份档案报表文本转义通过隔离Node检查；当前363入口中214有直接正式路由，149其他（13总经理导航/136预览说明），这不是模块验收比例。产品类别保留两键、空值不与真实“未填写”混合，展开只读来源不重复计数；花名册只展示当前可读Employee，补充字段依权限显示，长期/临时称旧人员类型，未冒称合同分类。b30c29e全套435单测通过，原生角色/API及实际浏览器尚待验收。
