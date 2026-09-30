@@ -175,6 +175,17 @@ class TestFlowStockEntry(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "来源明细与委外订单不一致"):
             self.setup.validate_flow_links(entry)
 
+    def test_subcontract_return_cannot_copy_original_positive_loss(self):
+        row = Record(item_code="RING", jf_flow_order=None, subcontracting_receipt_item="SCR-ROW",
+                     process_loss_qty=1)
+        doc = Record(doctype="Subcontracting Receipt", company="JF", is_return=1,
+                     return_against="SCR-1", items=[row])
+        with self.assertRaisesRegex(ValueError, "工艺损耗须为 0"):
+            self.setup.validate_flow_links(doc)
+        row.process_loss_qty = 0
+        self.setup.validate_flow_links(doc)
+        self.assertEqual(row.jf_flow_order, "FLOW-1")
+
 
 if __name__ == "__main__":
     unittest.main()

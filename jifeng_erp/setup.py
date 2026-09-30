@@ -158,6 +158,10 @@ def validate_flow_links(doc, method=None):
     for row in doc.get("items") or []:
         if not row.get("jf_flow_order"):
             continue
+        if (doc.doctype == "Subcontracting Receipt" and doc.get("is_return")
+                and float(row.get("process_loss_qty") or 0) != 0):
+            frappe.throw("关联流程单的委外退货只能退回实物，工艺损耗须为 0；原收货损耗保留。"
+                         "若需冲回损耗，请先处理或更正原收货凭证。")
         flow = work_flow if work_flow and row.jf_flow_order == work_flow.name else frappe.get_doc(
             "Jifeng Flow Order", row.jf_flow_order
         )

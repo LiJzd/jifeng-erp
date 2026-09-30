@@ -388,6 +388,15 @@ def smoke_receipt_batches(company, item_group, stock_uom):
                                    "received_qty": 5, "pending_qty": 4, "lost_qty": 1})
         preview.save()
 
+        copied_loss = make_subcontract_return(receipt.name)
+        assert copied_loss.items[0].process_loss_qty == 1
+        try:
+            copied_loss.insert()
+        except frappe.ValidationError as exc:
+            assert "工艺损耗须为 0" in str(exc)
+        else:
+            raise AssertionError("Native return must not post the copied positive process loss")
+
         def return_goods(qty):
             returned = make_subcontract_return(receipt.name)
             returned.items[0].qty = -qty
@@ -424,7 +433,7 @@ def smoke_receipt_batches(company, item_group, stock_uom):
         candidate = receipt_batch_candidates(flow.name)[0]
         assert (candidate["qty"], candidate["lost_qty"], candidate["returned_qty"]) == (1, 1, 4)
         return {"passed": True, "checks": ["native_subcontract_chain", "accepted_rejected_loss_total",
-                "source_flow_inheritance", "partial_return_net", "confirmed_loss_preserved",
+                "source_flow_inheritance", "copied_return_loss_guard", "partial_return_net", "confirmed_loss_preserved",
                 "stale_batch_save_guard", "reconciled_preview_save", "cancel_return_restores_quantity",
                 "accepted_and_rejected_returns_keep_loss"],
                 "business_data": "rolled_back"}
