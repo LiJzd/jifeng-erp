@@ -414,6 +414,63 @@ def disable_retained_masters(data):
         frappe.set_user(original_user)
 
 
+def finish_retained_reposts(data):
+    """Finish only this cancelled QA fixture's native valuation jobs, with a journal."""
+    frappe.only_for("System Manager")
+    data = _load(data)
+    if not data.get("business_cancelled") or not data.get("settings_restored"):
+        frappe.throw("只能核对已撤销并恢复设置的委外QA夹具重算任务")
+    from erpnext.stock.doctype.repost_item_valuation.repost_item_valuation import repost
+
+    original_user = frappe.session.user
+    frappe.set_user("Administrator")
+    try:
+        _validate(data)
+        owned_sources = {(record["doctype"], record["name"]) for record in data["records"]}
+        owned_items, owned_warehouses = set(data["items"]), set(data["warehouses"])
+        jobs = frappe.get_all("Repost Item Valuation", filters={
+            "company": data["company"], "docstatus": 1, "status": ["in", ["Queued", "In Progress"]],
+        }, fields=["name", "based_on", "item_code", "warehouse", "voucher_type", "voucher_no", "status"],
+            order_by="posting_date, posting_time, creation", limit_page_length=0)
+        selected = [job for job in jobs if (
+            (job.based_on == "Item and Warehouse" and job.item_code in owned_items and job.warehouse in owned_warehouses)
+            or (job.based_on == "Transaction" and (job.voucher_type, job.voucher_no) in owned_sources))]
+        # Unique QA masters must not have acquired unrelated business movements.
+        history = frappe.get_all("Stock Ledger Entry", filters={"item_code": ["in", list(owned_items)]},
+                                 fields=["voucher_type", "voucher_no", "warehouse"], limit_page_length=0)
+        assert all((row.voucher_type, row.voucher_no) in owned_sources and row.warehouse in owned_warehouses for row in history)
+        data["valuation_reposts"] = [{"name": job.name, "before_status": job.status} for job in selected]
+        data["valuation_reposts_started_at"] = now()
+        _journal(data)
+        point = "jf_sub_reposts_" + data["prefix"].rsplit("-", 1)[-1]
+        _begin_rollback_only(point)
+        try:
+            for job in selected:
+                document = frappe.get_doc("Repost Item Valuation", job.name)
+                if document.status in ("Queued", "In Progress"):
+                    repost(document)
+                status = frappe.db.get_value("Repost Item Valuation", job.name, "status")
+                if status not in ("Completed", "Skipped"):
+                    frappe.throw("委外QA库存重算未完成，请核对原生重算任务")
+            _restored(data)
+        except Exception as exc:
+            _end_rollback_only(point)
+            data["valuation_reposts_error"] = str(exc)
+            _journal(data)
+            raise
+        _commit(data, "finish_reposts")
+        for job in data["valuation_reposts"]:
+            job["after_status"] = frappe.db.get_value("Repost Item Valuation", job["name"], "status")
+        data["valuation_reposts_completed"] = True
+        data["valuation_reposts_completed_at"] = now()
+        _classify_history(data)
+        _journal(data)
+        return {"passed": True, "completed_jobs": len(selected), "stock_restored": data["stock_restored"],
+                "gl_restored": data["gl_restored"], "journal": data["artifact_path"]}
+    finally:
+        frappe.set_user(original_user)
+
+
 def cleanup(data):
     frappe.only_for("System Manager")
     data = _load(data)
