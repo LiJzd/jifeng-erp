@@ -1467,7 +1467,8 @@ class JifengLegacyWorkspace {
 	refreshContent() {
 		const active = this.activeTab();
 		const content = this.host.querySelector(".jfe-content");
-		if (content) content.innerHTML = this.renderActive(active);
+		if (content) content.innerHTML = this.renderBreadcrumb(active) + this.renderActive(active);
+		this.formalBridge?.sync();
 	}
 
 	openEditor(record) {
