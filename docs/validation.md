@@ -228,3 +228,7 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs 
 正式dff0f8d产品/人员默认原生验收15门通过：Stock Manager、Manufacturing Manager+User实际QueryReport八维度树及唯一商品档案、状态/空值/真实“未填写”/类别两键、公司与Item范围；HR User/Manager实际花名册四状态、空编号/部门/职位、原生可读字段、补充档案独立权限与隐藏/缺失一致、Employee/Company范围、选择权限和Guest拒绝。原生报告列所需字段当前均permlevel0，未改元数据或故意抬高字段等级；不冒充已验证现场自定义字段等级。所有主档/子行/Version/File元数据及事务表计数恢复，whole GL/SLE hash相同；独立新连接六类前缀对象均零。图片只为元数据，未验实际字节/上传。
 
 最初两轮的末尾计数断言仅 Error Log +8，业务门全部走完；原生 query_report.run 对八次预期权限拒绝记录日志，已核验实际Error Log表engine=MyISAM，保存点不能回滚。修正验收仅允许逐拒绝登记且验证标题/异常类型/精确ID的原生日志，保留先前及本轮记录，不删日志、不屏蔽logger、不改权限；其他全表差异继续拒绝。最终仍明确 Error Log 54→62，业务数据回滚，不宣称全站无任何新日志。新销售排行报告在268b6fb迁移与完整build退出0，36份JS/46份JSON解析通过。
+
+正式b3ef2f7 `fulfillment_validation.delta_smoke` 原生17门通过：两精确同商品SO行Flow A/B与显式UserPermission默认B，新DN/SI空来源默认清除，SO A映射DN/直SI、DN→SI、SI部分贷项、DN实物退回及其贷项全部从实际默认B继承精确A；Desk最终字典重建后保持原生库存/财务数量和价格。保存历史B/blank不清除、晚建隐藏SO Flow不回填历史空DN、非默认伪造/保存后改来源/隐藏Flow及DN祖先均拒。所有跟踪对象和原生tab*计数恢复，whole GL/SLE hash不变，未新增错误日志；原57门源码hash保持，未用重复跑旧门替代默认值差异检查。
+
+正式e7cc771商品排行默认原生12门通过：两真实不同库存单位Item、重复商品精确行、多张已提交SI、行/整单折扣后存储净额、精确原行负数贷项、草稿/取消/跨记账日排除；未合并POS不计、明确小批原生结班的合并SI只计一次。Accounts User/Manager+Purchase User实际QueryReport各4来源发票/6子行，完整Item读取与公司隔离；共享可读发票但隐藏Item拒绝部分排行，Manager无Item.read及Guest拒绝。汇总与子行数量/金额分列、来源行号/单位/方向/是否更新库存匹配。初轮夹具显式rate与行折扣冲突被原生按rate清除折扣，未改业务report；让原生计算折后rate后通过。两次失败及最终业务均完全回滚，Settings与whole GL/SLE相同；只保留7条精确预期PermissionError MyISAM日志（62→69），旧日志hash不变。全部其他tab*计数恢复，独立新连接两批13个来源ID均不存在、ledger一致。未构造同Item冲突库存单位，未覆盖至少10单后台结班队列；实际排行有数据的浏览器仍待完成。
