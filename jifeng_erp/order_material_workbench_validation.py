@@ -104,6 +104,12 @@ def smoke(company, item_group, stock_uom, foreign_company):
                        "allow": "Company", "for_value": company, "apply_to_all_doctypes": 1}).insert()
         frappe.set_user(stock_user.name)
         assert len(query(filters)["materials"]) == 2
+        _denied(lambda: detail(flow.name, company))
+        checks.append("stock_manager_without_native_warehouse_read_is_denied")
+        frappe.set_user("Administrator")
+        stock_user.append("roles", {"role": "Stock User"})
+        stock_user.save()
+        frappe.set_user(stock_user.name)
         current = detail(flow.name, company)
         assert current["materials"][0]["remaining"] == 9
         assert create_issue(flow.name, company, str(flow.modified), warehouses[0].name)["name"] == third.name
