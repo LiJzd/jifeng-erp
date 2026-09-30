@@ -29,14 +29,17 @@ class TestMaterialIssue(unittest.TestCase):
     def setUp(self):
         self.flow = Record(
             doctype="Jifeng Flow Order", name="FLOW-1", company="JF", planned_qty=5,
-            materials=[Record(item_code="SILVER", uom="Kg", qty_per_unit=0.2)],
+            materials=[Record(item_code="SILVER", uom="Kg", qty_per_unit=0.2)], flags=Record(),
         )
+        self.current_flow = None
         self.warehouse = Record(company="JF", is_group=0, disabled=0)
         self.history = []
         frappe = types.ModuleType("frappe")
+        frappe.QueryTimeoutError = type("QueryTimeoutError", (Exception,), {})
+        frappe.QueryDeadlockError = type("QueryDeadlockError", (Exception,), {})
         frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
-        frappe.get_doc = lambda doctype, name: {
-            ("Jifeng Flow Order", "FLOW-1"): self.flow,
+        frappe.get_doc = lambda doctype, name, **kwargs: {
+            ("Jifeng Flow Order", "FLOW-1"): (self.current_flow or self.flow) if kwargs.get("for_update") else self.flow,
             ("Warehouse", "MAIN - JF"): self.warehouse,
         }[(doctype, name)]
         frappe.get_all = lambda doctype, **kwargs: self.history if doctype == "Stock Entry Detail" else []
@@ -116,11 +119,18 @@ class TestMaterialIssue(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "全部关联本流程单"):
             self.issue.validate_material_issue(entry)
 
-    def test_flow_is_reloaded_after_lock_before_quantity_guard(self):
+    def test_validator_loads_current_locked_flow_instead_of_old_document(self):
         self.flow.planned_qty = 6
-        self.flow.reload = lambda: self.flow.update(planned_qty=5)
+        self.current_flow = Record(self.flow)
+        self.current_flow.planned_qty = 5
         with self.assertRaisesRegex(ValueError, "累计领料数量超过"):
             self.issue.validate_material_issue(self.entry(1100))
+
+    def test_busy_submitted_history_is_rejected_instead_of_treated_as_empty(self):
+        self.issue.frappe.db.sql = lambda *args, **kwargs: (_ for _ in ()).throw(
+            self.issue.frappe.QueryTimeoutError("native lock conflict"))
+        with self.assertRaisesRegex(ValueError, "正在被核对"):
+            self.issue.validate_material_issue(self.entry(100))
 
 
 if __name__ == "__main__":

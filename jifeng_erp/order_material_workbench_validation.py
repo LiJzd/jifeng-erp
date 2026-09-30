@@ -1,6 +1,7 @@
 """Serial rollback-only acceptance of saved analysis and partial native stock issues."""
 
 from decimal import Decimal
+from copy import deepcopy
 
 import frappe
 from frappe.utils import today
@@ -90,6 +91,18 @@ def smoke(company, item_group, stock_uom, foreign_company):
         _invalid(third.save)
         third.reload()
         checks.append("native_cancel_restores_remaining_and_foreign_detail_denied")
+        third.jf_material_issue_flow = ""
+        _invalid(third.save)
+        third.reload()
+        third.jf_material_issue_flow = flow.name + "-changed"
+        _invalid(third.save)
+        third.reload()
+        manual = frappe.get_doc({"doctype": "Stock Entry", "company": company,
+            "stock_entry_type": "Material Issue", "items": [{"item_code": raw.name,
+                "qty": 1, "s_warehouse": warehouses[0].name, "jf_flow_order": flow.name}]}).insert()
+        manual.jf_material_issue_flow = flow.name
+        _invalid(manual.save)
+        checks.append("persisted_issue_header_cannot_be_cleared_replaced_or_rebound")
         flow.source_changed = 1
         flow.save()
         _invalid(lambda: create_issue(flow.name, company, str(flow.modified), warehouses[0].name))
@@ -121,8 +134,16 @@ def smoke(company, item_group, stock_uom, foreign_company):
                        "for_value": receipt.name, "apply_to_all_doctypes": 0, "applicable_for": "Stock Entry"}).insert()
         frappe.set_user(stock_user.name)
         assert query(filters)["materials"]  # Analysis does not depend on stock voucher visibility.
-        _denied(lambda: detail(flow.name, company))
-        _denied(lambda: create_issue(flow.name, company, str(flow.modified), warehouses[0].name))
+        for denied_call in (
+            lambda: detail(flow.name, company),
+            lambda: create_issue(flow.name, company, str(flow.modified), warehouses[0].name),
+        ):
+            try:
+                denied_call()
+            except frappe.PermissionError as error:
+                assert all(name not in str(error) for name in (draft.name, second.name, third.name))
+            else:
+                raise AssertionError("Hidden linked vouchers must deny the complete balance")
         checks.append("hidden_voucher_blocks_complete_balance_and_creation")
         frappe.set_user("Administrator")
         manufacturing_user = frappe.get_doc({"doctype": "User", "email": f"jf-om-read-{suffix}@example.invalid",
@@ -134,6 +155,16 @@ def smoke(company, item_group, stock_uom, foreign_company):
         _denied(lambda: create_issue(flow.name, company, str(flow.modified), warehouses[0].name))
         checks.append("manufacturing_read_only_cannot_create_stock_draft")
         frappe.set_user("Administrator")
+        original_materials = deepcopy([row.as_dict() for row in flow.materials])
+        flow.set("materials", [])
+        flow.save()
+        historical = detail(flow.name, company)["materials"][0]
+        assert historical["item_code"] == raw.name and historical["required"] == 0
+        assert historical["issued"] == 6 and historical["remaining"] == -6
+        _invalid(lambda: create_issue(flow.name, company, str(flow.modified), warehouses[0].name))
+        flow.set("materials", original_materials)
+        flow.save()
+        checks.append("removed_analysis_material_preserves_posted_issue_visibility")
         draft.reload()
         draft.cancel()
         # Cancelled vouchers stay visible, and their quantities are excluded.

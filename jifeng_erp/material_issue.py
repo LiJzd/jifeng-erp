@@ -60,11 +60,14 @@ def _submitted_stock(flow_name, exclude=None):
     """Include manual Material Issue rows linked to this flow, not just generated ones."""
     # A caller may have opened a repeatable-read snapshot before waiting for
     # the flow lock. Quantity caps must use the current submitted vouchers.
-    rows = frappe.db.sql("""SELECT detail.parent, detail.item_code, detail.transfer_qty
-        FROM `tabStock Entry Detail` detail JOIN `tabStock Entry` entry ON entry.name=detail.parent
-        WHERE detail.jf_flow_order=%s AND detail.parenttype='Stock Entry'
-        AND entry.docstatus=1 AND entry.stock_entry_type='Material Issue' FOR UPDATE""",
-                         (flow_name,), as_dict=True)
+    try:
+        rows = frappe.db.sql("""SELECT detail.parent, detail.item_code, detail.transfer_qty
+            FROM `tabStock Entry Detail` detail JOIN `tabStock Entry` entry ON entry.name=detail.parent
+            WHERE detail.jf_flow_order=%s AND detail.parenttype='Stock Entry'
+            AND entry.docstatus=1 AND entry.stock_entry_type='Material Issue' FOR UPDATE NOWAIT""",
+                             (flow_name,), as_dict=True)
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
+        frappe.throw("相关领料凭证正在被核对，请稍后重新查询")
     issued = defaultdict(Decimal)
     for row in rows:
         if row.parent == exclude:
@@ -88,6 +91,9 @@ def make_material_issue(flow, warehouse):
     flow.check_permission("write")
     frappe.has_permission("Stock Entry", "create", throw=True)
     frappe.db.get_value(flow.doctype, flow.name, "name", for_update=True)
+    # Native reload preserves flags.for_update. A prior non-locking Flow
+    # document would otherwise reload from an older repeatable snapshot.
+    flow.flags.for_update = True
     flow.reload()
     validate_flow_source(flow)
     _source_warehouse(warehouse, flow.company)
@@ -129,10 +135,8 @@ def make_material_issue(flow, warehouse):
 
 def validate_material_issue(doc):
     """Reject cross-flow edits and accidental over-issue on save and submit."""
-    flow = frappe.get_doc("Jifeng Flow Order", doc.jf_material_issue_flow)
+    flow = frappe.get_doc("Jifeng Flow Order", doc.jf_material_issue_flow, for_update=True)
     flow.check_permission("read")
-    frappe.db.get_value(flow.doctype, flow.name, "name", for_update=True)
-    flow.reload()
     validate_flow_source(flow)
     if doc.company != flow.company or doc.stock_entry_type != "Material Issue":
         frappe.throw("按单配料单必须为本公司物料出库凭证")

@@ -229,13 +229,25 @@ def _issues(flow):
     # Displaying only accessible vouchers as the total would invite over-issue.
     # Current reads remain valid after waiting for a concurrent creator's flow
     # lock, even when an earlier permission lookup opened a repeatable snapshot.
-    parents = {row[0] for row in frappe.db.sql("""SELECT parent FROM `tabStock Entry Detail`
-        WHERE jf_flow_order=%s AND parenttype='Stock Entry' FOR UPDATE""", (flow.name,))}
-    parents.update(row[0] for row in frappe.db.sql("""SELECT name FROM `tabStock Entry`
-        WHERE jf_material_issue_flow=%s FOR UPDATE""", (flow.name,)))
+    try:
+        parents = {row[0] for row in frappe.db.sql("""SELECT parent FROM `tabStock Entry Detail`
+            WHERE jf_flow_order=%s AND parenttype='Stock Entry' FOR UPDATE NOWAIT""", (flow.name,))}
+        parents.update(row[0] for row in frappe.db.sql("""SELECT name FROM `tabStock Entry`
+            WHERE jf_material_issue_flow=%s FOR UPDATE NOWAIT""", (flow.name,)))
+        # A manual voucher may contain rows from several flows. Discovery
+        # holds child locks; never wait for its parent while another reader
+        # holds that parent and is about to read these same children.
+        for name in sorted(parents):
+            frappe.db.get_value("Stock Entry", name, "name", for_update=True, wait=False)
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
+        # Reject the whole read. Skipping busy vouchers would report a false
+        # remaining quantity and could allow a second material issue.
+        frappe.throw("相关领料凭证正在被核对，请稍后重新查询", frappe.ValidationError)
     quantities, vouchers = defaultdict(Decimal), []
     for name in sorted(parents):
         doc = frappe.get_doc("Stock Entry", name, for_update=True)
+        if not doc.has_permission("read"):
+            frappe.throw("无法完整读取相关领料凭证，请核对来源读取权限", frappe.PermissionError)
         doc.check_permission("read")
         _fields(doc, ("company", "stock_entry_type", "jf_material_issue_flow"))
         _table(doc, "items", "Stock Entry Detail",
@@ -265,7 +277,10 @@ def detail(flow_order, company):
     _material_rows(flow, {}, "")
     _conversion_sources(flow)
     issued, vouchers = _issues(flow)
-    required, units = _required_stock(flow)
+    required, units = _required_stock(flow) if flow.materials else ({}, {})
+    for code in set(issued) - set(required):
+        required[code] = Decimal(0)
+        units[code] = _read("Item", code, ("stock_uom",)).stock_uom
     return {"flow_order": flow.name, "flow_modified": str(flow.modified), "vouchers": vouchers,
             "materials": [{"item_code": code, "stock_uom": units[code], "required": qty,
                            "issued": issued[code], "remaining": qty - issued[code]}
