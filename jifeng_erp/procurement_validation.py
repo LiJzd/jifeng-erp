@@ -194,7 +194,9 @@ def smoke(company, item_group, stock_uom, report_api=True):
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 5, 5, 5))
         update_purchase_status("Draft", purchase.name)
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 5, 5, 0))
-        po_receipt = make_purchase_receipt(purchase.name).insert()
+        po_receipt = make_purchase_receipt(purchase.name)
+        po_receipt.posting_date, po_receipt.posting_time, po_receipt.set_posting_time = today(), "10:00:00", 1
+        po_receipt.insert()
         po_receipt.submit()
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 10, 5, 0))
         po_return = _return(po_receipt)
@@ -203,6 +205,7 @@ def smoke(company, item_group, stock_uom, report_api=True):
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 10, 5, 0))
         po_receipt.cancel()
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 5, 5, 5, 0))
+        purchase.reload()
         purchase.cancel()
         _request_quantities(_request_row(purchase_request_ledger, fixture, request), (10, 0, 5, 10, 5))
 
@@ -275,9 +278,17 @@ def smoke(company, item_group, stock_uom, report_api=True):
             permission = frappe.get_doc({"doctype": "User Permission", "user": user.name,
                 "allow": "Purchase Receipt", "for_value": accepted_return.name,
                 "apply_to_all_doctypes": 0, "applicable_for": "Purchase Receipt"}).insert()
+            # Native sharing keeps this return list-visible/readable while its
+            # unshared original is excluded by the exact document restriction.
+            share = frappe.share.add("Purchase Receipt", accepted_return.name, user=user.name, read=1, notify=0)
             frappe.set_user(user.name)
+            assert frappe.get_doc("Purchase Receipt", accepted_return.name).has_permission("read")
+            assert not frappe.get_doc("Purchase Receipt", original.name).has_permission("read")
+            assert accepted_return.name in frappe.get_list("Purchase Receipt", filters={
+                "name": accepted_return.name, "docstatus": 1, "is_return": 1}, pluck="name")
             _denied(read_returns)
             frappe.set_user(original_user)
+            share.delete()
             permission.delete()
         frappe.set_user("Guest")
         _denied(lambda: _read(purchase_request_ledger, _filters(fixture)))
