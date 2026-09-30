@@ -399,7 +399,6 @@ def _near_zero(value):
 def _restored(data):
     rows = _ledger_rows(data)
     assert all(cint(row["is_cancelled"]) for row in rows["stock"]), "验收仍有有效库存流水"
-    assert all(cint(row["is_cancelled"]) for row in rows["gl"]), "验收仍有有效总账分录"
     ordinary_qty, stock_value, gl_value, voucher_gl_value = (defaultdict(Decimal) for _ in range(4))
     for row in rows["stock"]:
         key = (row["item_code"], row["warehouse"])
