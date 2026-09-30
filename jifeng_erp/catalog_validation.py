@@ -136,7 +136,8 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         for record, field, value in ((document, "list_price", 12), (main_mold, "amount", 14),
                                      (main_plate, "reference_cost", 18)):
             record.set(field, value)
-            record.save()
+            # Frappe test mode skips Versions unless explicitly requested.
+            record.save(ignore_version=False)
             assert _version_has(record, field), "缺少档案参考值修改历史"
             assert record.docstatus == 0
         checks.append("three_native_catalogs_save_update_and_version")
@@ -151,11 +152,11 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
                attached_to_doctype=foreign_profile.doctype, attached_to_name=foreign_profile.name)
         main.image = own_url
         main.save()
-        document.save()
+        document.save(ignore_version=False)
         main_mold.image = foreign_url
-        main_mold.save()
+        main_mold.save(ignore_version=False)
         main_plate.image = foreign_url
-        main_plate.save()
+        main_plate.save(ignore_version=False)
 
         copies = []
         for source in (document, main_mold, main_plate):
@@ -180,7 +181,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         def changed(record, **values):
             current = frappe.get_doc(record.doctype, record.name)
             current.update(values)
-            return current.save()
+            return current.save(ignore_version=False)
 
         rejected("mold_copy_cycle_denied", lambda: changed(main_mold, copy_from=copies[1].name))
         rejected("mold_foreign_copy_source_denied", lambda: changed(main_mold, copy_from=foreign_mold.name))
@@ -234,13 +235,13 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             else:
                 role_profile.supplier = supplier.name
             role_profile.notes = "真实角色修改"
-            role_profile.save()
+            role_profile.save(ignore_version=False)
             role_mold = mold(code, own_employee.name)
             role_plate = plate(code, own_employee.name, own_employee.name)
             assert _version_has(role_profile, "notes")
             for record, field in ((role_mold, "remark"), (role_plate, "notes")):
                 record.set(field, "真实角色修改")
-                record.save()
+                record.save(ignore_version=False)
                 assert _version_has(record, field)
             for report in REPORTS:
                 rows = _report(report, company, code)
