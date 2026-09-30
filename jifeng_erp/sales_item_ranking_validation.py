@@ -236,7 +236,10 @@ def smoke(company, item_group, stock_uom, second_stock_uom="Kg"):
             "posting_time": "08:30:00", "set_posting_time": 1, "update_stock": 0,
             "ignore_pricing_rule": 1, "disable_rounded_total": 1, "apply_discount_on": "Net Total",
             "additional_discount_percentage": discount,
-            "items": [{"item_code": item.name, "qty": qty, "price_list_rate": rate, "rate": rate,
+            # Native calculate_item_rate prefers an explicit rate over a
+            # conflicting percentage. Leave discounted rates for native math.
+            "items": [{"item_code": item.name, "qty": qty, "price_list_rate": rate,
+                "rate": 0 if line_discount else rate,
                 "discount_percentage": line_discount, "warehouse": fixture.warehouse.name,
                 "income_account": fixture.accounts.income, "expense_account": fixture.accounts.expense,
                 "cost_center": fixture.cost_center} for item, qty, rate, line_discount in lines]}))
@@ -268,7 +271,7 @@ def smoke(company, item_group, stock_uom, second_stock_uom="Kg"):
                             (second_item, quantity_b, 20, 0)], discount=10)
         additional = invoice([(fixture.item, 3, 9.5, 0)], discount=5)
         assert ordinary.additional_discount_percentage and ordinary.discount_amount > 0
-        assert ordinary.items[0].discount_percentage and ordinary.items[1].discount_percentage
+        assert ordinary.items[0].discount_percentage and ordinary.items[1].discount_percentage, "原生行折扣未保留"
         assert any(_number(row.base_net_amount) != _number(row.qty) * _number(row.price_list_rate)
                    for row in ordinary.items)
         assert {row.stock_uom for row in ordinary.items} == {stock_uom, second_stock_uom}
