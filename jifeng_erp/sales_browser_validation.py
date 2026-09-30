@@ -20,7 +20,7 @@ from jifeng_erp.sales_validation import _cancel_closing, _closing, _invoice, _mo
 
 KINDS = {
     "items": "Item", "customers": "Customer", "payments": "Mode of Payment",
-    "price_lists": "Price List", "users": "User", "profiles": "POS Profile",
+    "price_lists": "Price List", "item_prices": "Item Price", "users": "User", "profiles": "POS Profile",
     "contacts": "Contact", "user_shares": "DocShare",
     "invoices": "Sales Invoice", "pos_invoices": "POS Invoice",
     "openings": "POS Opening Entry", "merge_logs": "POS Invoice Merge Log",
@@ -45,6 +45,8 @@ PARENT_FIELDS = {
     "Customer": ("customer_name", "customer_type", "customer_group", "territory"),
     "Mode of Payment": ("mode_of_payment", "type"),
     "Price List": ("price_list_name", "currency", "selling", "buying"),
+    "Item Price": ("item_code", "price_list", "currency", "uom", "price_list_rate", "customer", "supplier",
+        "valid_from", "valid_upto", "packing_unit", "batch_no", "selling", "buying"),
     # A User identity never includes passwords, API keys, tokens or sessions.
     "User": ("email", "first_name", "user_type", "send_welcome_email", "role_profile_name", "module_profile"),
     "Contact": ("first_name", "last_name", "user", "email_id", "company_name"),
@@ -262,6 +264,14 @@ def _ledger(data):
     return {"stock": [], "gl": list(current.values())}
 
 
+def _track_item_prices(data):
+    """Record only native prices for the exact QA Item and QA Price List."""
+    prices = frappe.get_all("Item Price", filters={"item_code": ["in", data["items"]],
+        "price_list": ["in", data["price_lists"]]}, pluck="name", order_by="creation, name", limit_page_length=0)
+    for name in prices:
+        _track(data, frappe.get_doc("Item Price", name))
+
+
 def _references(data):
     """Reject native Link/Dynamic Link uses outside exact owned parent records."""
     owned = {(record["doctype"], record["name"]) for record in data["records"]}
@@ -329,6 +339,10 @@ def _validate(data):
             assert doc.company == data["company"], "销售验收来源公司不一致"
         if doc.doctype in ("Sales Invoice", "POS Invoice"):
             assert not cint(doc.update_stock), "销售夹具禁止更新库存"
+        if doc.doctype == "Item Price":
+            assert (doc.item_code in data["items"] and doc.price_list in data["price_lists"]
+                    and (not doc.get("customer") or doc.customer in data["customers"])
+                    and not doc.get("supplier")), "原生价格记录包含日志外商品、价格表或往来方"
         docs[key] = doc
     suffix = data["prefix"].rsplit("-", 1)[-1]
     assert data["items"] == ["JF-SALES-BROWSER-ITEM-" + suffix]
@@ -495,6 +509,7 @@ def prepare(company, item_group, stock_uom):
             "customer": fixture.customer.name, "pos_profile": fixture.profile.name, "cashier": fixture.cashier.name}
         filters = {"company": company, "from_date": add_days(today(), -1), "to_date": today(), "customer": fixture.customer.name}
         data["report_filters"] = {name: dict(filters) for name in ("Jifeng Sales Transaction Ledger", "Jifeng Posted Sales Ledger")}
+        _track_item_prices(data)
         frappe.set_user(original_user)
         _restore_settings(data)
         docs = _validate(data)

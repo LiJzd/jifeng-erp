@@ -120,6 +120,23 @@ class TestSalesBrowserValidation(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "权限审计"):
                     self.module._references(self.data)
 
+    def test_owned_native_item_price_does_not_allow_foreign_item_or_price_list_usage(self):
+        self.data["items"], self.data["price_lists"], self.data["item_prices"] = ["QA-ITEM"], ["QA-LIST"], ["QA-PRICE"]
+        self.data["records"] = [{"doctype": "Item", "name": "QA-ITEM"},
+                                {"doctype": "Price List", "name": "QA-LIST"},
+                                {"doctype": "Item Price", "name": "QA-PRICE"}]
+        for target, fieldname in (("Item", "item_code"), ("Price List", "price_list")):
+            with self.subTest(target=target):
+                field = Record(doctype="Item Price", fieldname=fieldname, fieldtype="Link", options=target)
+                meta = Record(name="Item Price", istable=False, issingle=False, is_virtual=False)
+                meta.get_field = lambda name: field
+                self.frappe.get_meta.return_value = meta
+                self.frappe.get_all.side_effect = [[field], [], [Record(name="QA-PRICE")]]
+                self.module._references(self.data)
+                self.frappe.get_all.side_effect = [[field], [], [Record(name="FOREIGN-PRICE")]]
+                with self.assertRaisesRegex(AssertionError, "日志外单据"):
+                    self.module._references(self.data)
+
     def test_immutable_native_ledger_requires_owned_voucher(self):
         self.data["customers"] = ["QA-CUSTOMER"]
         self.data["records"] = [{"doctype": "Customer", "name": "QA-CUSTOMER"},
