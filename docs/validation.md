@@ -210,3 +210,9 @@ bench --site YOUR_SITE execute jifeng_erp.diagnostics.smoke_wage_entry --kwargs 
 新增正式发货/发票来源字段与before_validate钩子，按精确SO/DN/SI子行继承流程单，退货按原始明细，不按商品猜测。1370490迁移后诊断字段/Hook均true。原生首轮发现Frappe新建单据会把单一User Permission作为只读Link默认值，no_copy不阻止该默认值；首轮保存点和全部辅助记录/GL/SLE均回滚。f48f732保留真实默认值输入并优先核对不可读来源流程权限，增加回归测试；原生完整链路复验尚待完成。
 
 新增产品八维度分析和人事花名册，经典九个入口及六份档案报表文本转义通过隔离Node检查；当前363入口中214有直接正式路由，149其他（13总经理导航/136预览说明），这不是模块验收比例。产品类别保留两键、空值不与真实“未填写”混合，展开只读来源不重复计数；花名册只展示当前可读Employee，补充字段依权限显示，长期/临时称旧人员类型，未冒称合同分类。b30c29e全套435单测通过，原生角色/API及实际浏览器尚待验收。
+
+正式bbca324默认 `fulfillment_validation.smoke` 原生57项（43种标签，取消循环重复标签）通过：2张SO、7张DN、8张SI、3张Flow、1张StockEntry全部保存点回滚。重复商品两订单行各自Flow、分批2+2及3、DN→SI不重复库存、SI精确原行部分退款、DN实物退回及其生成无SI.return_against的贷项发票、晚建Flow不追改历史空Flow、错公司/商品/子行/冲突/歧义和隐藏来源拒绝、原生上游依赖及逆序取消均通过；每单原生价格和数量保持，取消后源订单已发/已开金额归零、来源变化提示仍保留。原生新建Link默认值真实保留并测试隐藏源，未改全局默认或放宽权限。Mapper得到的空控制器随后改变is_return时不重建DN原生status_updater，验收现与Desk savedocs一致，从最终字典重新构造控制器后保存，SO退回数量1及开票金额34都正确；此前断言失败也全部回滚，未误报原生业务故障。
+
+同批实际角色：追溯链Sales User+Stock Manager+Accounts Manager；纯Sales User可提交无Flow SO/DN，纯Accounts User可开无Flow SI；Accounts Manager+Purchase User+Projects User+Delivery User有SO.select而无SO.read，仍能从历史无Flow DN开SI。Manager不自动含User角色，AccountsUser本身拥有SO.read，故不冒充选择-only来源验收；最后组合依本地原生权限确认，未修改DocPerm。核验8项本夹具原生库存重算、所有主档/子行/辅助表计数及whole GL/SLE hash完全恢复。此项尚未实际发货浏览器，不等同旧成品出库MaterialIssue语义已确认。
+
+2a966e2花名册修复字段级权限边界：Frappe get_list会删除不可读字段，full get_doc仅用于来源与完整read核对，输出保留原生许可行字段，不从全文档补回隐藏值；21项专项模型测试通过。两新报表与字段完成隔离站点迁移，完整 `bench build` 退出0，35份JS语法和45份JSON解析通过。工资浏览器首阶段Admin实际选择来源卡后自动带入公司、工单、Flow、工序、商品、完成量5和两人工时各1；个人份额1/3工价3/4保存草稿JF-WALLOC-2026-00010合计4/总15，审核原生拒绝“各人计件份额合计必须等于来源报工单的已完成数量”，无本次Wage。私有journal已登记under_total_rejected，独立inspect全部来源/账簿/无外部引用通过。提交拒绝HTTP417符合预期；首次保存空白第三员工行被必填校验拦截后清掉空行保存成功，另/undefined404留存，pageerror=0。纠正/审核及工资提交仍待下一阶段。
