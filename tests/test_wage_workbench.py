@@ -236,6 +236,48 @@ class TestWageWorkbench(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "所需字段"):
             self.module.get_entry_source("JC-1", "C-1", "E-1")
 
+    def source_field_permissions(self):
+        self.frappe.session.user = "HR-TEST"
+        self.frappe.share = Doc(get_shared=Mock(return_value=[]))
+        columns = {"Employee": ("company", "status", "employee_name"),
+                   "Job Card": self.module.SOURCE_FIELDS,
+                   "Work Order": ("company", "jf_flow_order"),
+                   "Jifeng Flow Order": ("company",)}
+        for (doctype, _), doc in self.docs.items():
+            doc.doctype = doctype
+            tables = {name: Doc(fieldtype="Table", options=child, permlevel=0)
+                      for (parent, name), child in self.module.SOURCE_TABLES.items() if parent == doctype}
+            doc.meta = Doc(get_permitted_fieldnames=Mock(return_value=columns.get(doctype, ())),
+                           get_permlevel_access=Mock(return_value=[0]),
+                           get_field=Mock(side_effect=tables.get))
+        children = {"Job Card Time Log": Doc(get_permitted_fieldnames=Mock(return_value=["employee"])),
+                    "Work Order Operation": Doc(get_permitted_fieldnames=Mock(return_value=["operation"]))}
+        self.frappe.get_meta = Mock(side_effect=children.__getitem__)
+
+    def test_source_tables_do_not_need_to_appear_in_native_permitted_value_fields(self):
+        self.source_field_permissions()
+        source = self.module.get_entry_source("JC-1", "C-1", "E-1")
+        self.assertEqual(source["stock_uom"], "Nos")
+        self.assertNotIn("time_logs", self.module.SOURCE_FIELDS)
+        self.frappe.get_meta.assert_any_call("Job Card Time Log")
+        self.frappe.get_meta.assert_any_call("Work Order Operation")
+
+    def test_parent_source_table_permission_level_is_required(self):
+        self.source_field_permissions()
+        for doctype, name, table in (("Job Card", "JC-1", "time_logs"), ("Work Order", "WO-1", "operations")):
+            field = self.docs[(doctype, name)].meta.get_field(table)
+            field.permlevel = 1
+            with self.assertRaisesRegex(ValueError, "来源明细"):
+                self.module.get_entry_source("JC-1", "C-1", "E-1")
+            field.permlevel = 0
+
+    def test_native_read_share_retains_level_zero_source_table_access(self):
+        self.source_field_permissions()
+        self.docs[("Job Card", "JC-1")].meta.get_permlevel_access.return_value = []
+        self.frappe.share.get_shared.return_value = [Doc(name="JC-1")]
+        self.module.get_entry_source("JC-1", "C-1", "E-1")
+        self.frappe.share.get_shared.assert_called_once_with("Job Card", "HR-TEST", rights=["read"], limit=1)
+
     def test_hidden_saved_rows_never_become_an_absent_batch(self):
         self.module.save_drafts(self.payload)
         self.frappe.get_list.side_effect = lambda *args, **kwargs: []
@@ -293,7 +335,10 @@ class TestWageWorkbench(unittest.TestCase):
 
     def test_child_employee_and_work_operation_field_access_is_required(self):
         self.frappe.session.user = "HR-TEST"
-        parent = Doc(doctype="Job Card", meta=Doc(get_field=lambda field: Doc(options="Job Card Time Log")))
+        parent = Doc(doctype="Job Card", meta=Doc(
+            get_field=lambda field: Doc(fieldtype="Table", permlevel=0,
+                                       options=self.module.SOURCE_TABLES[(parent.doctype, field)]),
+            get_permlevel_access=lambda **kwargs: [0]))
         self.frappe.get_meta = Mock(return_value=Doc(get_permitted_fieldnames=lambda **kwargs: []))
         with self.assertRaisesRegex(ValueError, "来源明细"):
             self.module._child_fields(parent, "time_logs", ("employee",))

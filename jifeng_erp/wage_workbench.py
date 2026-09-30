@@ -17,7 +17,9 @@ ROW_FIELDS = {"work_date", "operation", "job_card", "source_modified", "work_ord
               "quantity", "stock_uom", "piece_rate", "hours", "hourly_rate", "extra_amount", "notes"}
 EDIT_FIELDS = ("company", "employee", "operation", "work_date", "payroll_date", "salary_component",
                "quantity", "stock_uom", "piece_rate", "hours", "hourly_rate", "extra_amount", "notes")
-SOURCE_FIELDS = ("company", "operation", "operation_id", "work_order", "stock_uom", "posting_date", "time_logs", "is_corrective_job_card")
+SOURCE_FIELDS = ("company", "operation", "operation_id", "work_order", "stock_uom", "posting_date", "is_corrective_job_card")
+SOURCE_TABLES = {("Job Card", "time_logs"): "Job Card Time Log",
+                 ("Work Order", "operations"): "Work Order Operation"}
 
 
 def _request_id(value):
@@ -41,7 +43,18 @@ def _fields(document, names, permission="read"):
 def _child_fields(document, table, names):
     if frappe.session.user == "Administrator":
         return
-    child = frappe.get_meta(document.meta.get_field(table).options)
+    # Native permitted value fields omit Table. Check the parent Table's
+    # actual permission level separately, then retain child field checks.
+    field = document.meta.get_field(table)
+    levels = set(document.meta.get_permlevel_access(permission_type="read"))
+    if 0 not in levels and frappe.share.get_shared(
+            document.doctype, frappe.session.user, rights=["read"], limit=1):
+        levels.add(0)
+    if not (field and field.fieldtype == "Table"
+            and field.options == SOURCE_TABLES.get((document.doctype, table))
+            and (field.permlevel or 0) in levels):
+        frappe.throw("没有读取本次工序来源明细的权限", frappe.PermissionError)
+    child = frappe.get_meta(field.options)
     permitted = set(child.get_permitted_fieldnames(parenttype=document.doctype, permission_type="read"))
     if not set(names).issubset(permitted):
         frappe.throw("没有读取本次工序来源明细的权限", frappe.PermissionError)
@@ -72,7 +85,7 @@ def _source(job_card, company, employee, *, lock=False):
     if card.work_order:
         work = frappe.get_doc("Work Order", card.work_order, for_update=lock)
         work.check_permission("read")
-        _fields(work, ("company", "operations", "jf_flow_order"))
+        _fields(work, ("company", "jf_flow_order"))
         _child_fields(work, "operations", ("operation",))
         if work.company != company or work.docstatus != 1:
             frappe.throw("来源生产工单必须是当前公司已提交的单据")
