@@ -8,6 +8,7 @@ records every created ID and lifecycle phase; cleanup removes only these objects
 import json
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import frappe
 from frappe.utils import add_days, flt, now, today
@@ -43,37 +44,80 @@ def _track(data, kind, doc):
     return doc
 
 
+def _collect_files(data, objects=None):
+    """Track native image clones sharing this fixture's unique content and URL."""
+    candidates = list(objects or [])
+    records = {row["name"]: row for row in data.get("file_records", [])}
+    seeds = {(row["content_hash"], row["file_url"]) for row in records.values()}
+    for file in candidates:
+        if file.content_hash and file.file_url and file.file_name.startswith(data["prefix"] + "-"):
+            seeds.add((file.content_hash, file.file_url))
+    allowed = {("Item", name) for name in data["items"]} | {
+        ("Jifeng Flow Order", name) for name in data["flows"]}
+    known = {file.name for file in candidates if file.name}
+    for digest, url in seeds:
+        names = frappe.get_all("File", filters={"content_hash": digest, "file_url": url}, pluck="name")
+        for name in names:
+            file = frappe.get_doc("File", name)
+            if not file.file_name.startswith(data["prefix"] + "-") or (
+                file.attached_to_doctype, file.attached_to_name
+            ) not in allowed:
+                continue
+            assert file.is_private and file.file_url.startswith("/private/files/" + data["prefix"] + "-")
+            if name not in known:
+                candidates.append(file)
+                known.add(name)
+            if name not in data["files"]:
+                data["files"].append(name)
+            record = records.setdefault(name, {"name": name, "native_clone": True})
+            record.update({"file_name": file.file_name, "file_url": file.file_url,
+                           "physical_path": file.get_full_path(), "content_hash": file.content_hash,
+                           "attached_to_doctype": file.attached_to_doctype, "attached_to_name": file.attached_to_name})
+    data["file_records"] = list(records.values())
+    _journal(data)
+    if objects is not None:
+        objects[:] = candidates
+    return candidates
+
+
 def _remove_files(data, objects=None):
     """Use native File deletion; a failed/missing-record physical cleanup is an error."""
     errors = []
+    candidates = _collect_files(data, objects)
     records = {row["name"]: row for row in data.get("file_records", [])}
-    candidates = objects if objects is not None else [
-        frappe.get_doc("File", name) for name in data["files"] if frappe.db.exists("File", name)
-    ]
     for file in reversed(candidates):
         try:
             if file.file_name and not file.file_name.startswith(data["prefix"] + "-"):
                 raise AssertionError("拒绝清理其他附件")
             if file.name and frappe.db.exists("File", file.name):
                 file.delete(ignore_permissions=True)
-            if file.file_url and file.exists_on_disk():
-                raise AssertionError("原生File.delete后QA实物仍存在: " + file.file_name)
-            if file.name and frappe.db.exists("File", file.name):
-                raise AssertionError("原生File.delete后QA记录仍存在: " + file.name)
         except Exception as exc:
             errors.append(exc)
-    # A row might have disappeared before cleanup while its blob was left over.
-    # Don't silently claim success or delete a path supplied by the caller.
+    # Several File records may share one blob. Check only after every tracked
+    # reference has been removed through the native lifecycle.
+    paths = set()
     for name, row in records.items():
         try:
             expected = Path(frappe.get_site_path("private", "files", row["file_url"].rsplit("/", 1)[-1])).resolve()
             if Path(row["physical_path"]).resolve() != expected or not row["file_url"].startswith(
                 "/private/files/" + data["prefix"] + "-"):
                 raise AssertionError("QA文件路径不属于当前夹具")
-            if not frappe.db.exists("File", name) and expected.exists():
-                raise AssertionError("QA附件记录缺失但实物仍存在，需核对后处理: " + row["file_url"])
+            if frappe.db.exists("File", name):
+                raise AssertionError("原生File.delete后QA记录仍存在: " + name)
+            paths.add(expected)
         except Exception as exc:
             errors.append(exc)
+    for file in candidates:
+        try:
+            if file.name and frappe.db.exists("File", file.name):
+                raise AssertionError("原生File.delete后QA记录仍存在: " + file.name)
+            if file.file_url:
+                paths.add(Path(file.get_full_path()).resolve())
+        except Exception as exc:
+            errors.append(exc)
+    for path in paths:
+        if path.exists():
+            errors.append(AssertionError("删除所有QA附件引用后实物仍存在，需核对后处理: " + str(path)))
     if errors:
         raise ExceptionGroup("QA私有图片清理失败，不能视作已清理", errors)
 
@@ -135,10 +179,12 @@ def create(company, item_group, stock_uom):
         assert image.content_hash == digest and image.file_name.startswith(prefix + "-")
         assert image.exists_on_disk() and image.get_content() == payload
         data["file_records"].append({"name": image.name, "file_name": image.file_name, "file_url": image.file_url,
-                                     "physical_path": image.get_full_path(), "content_hash": image.content_hash})
+                                     "physical_path": image.get_full_path(), "content_hash": image.content_hash,
+                                     "native_clone": False, "attached_to_doctype": "Item", "attached_to_name": finished.name})
         _journal(data)
         finished.image = image.file_url
         finished.save()
+        _collect_files(data, files)
         bom = _track(data, "boms", frappe.get_doc({
             "doctype": "BOM", "company": company, "item": finished.name, "quantity": 1,
             "with_operations": 1, "transfer_material_against": "Work Order",
@@ -151,6 +197,7 @@ def create(company, item_group, stock_uom):
             "doctype": "Jifeng Flow Order", "company": company, "item_code": finished.name,
             "planned_qty": 5, "bom": bom.name,
         }).insert())
+        _collect_files(data, files)
         work = _track(data, "work_orders", frappe.get_doc("Work Order", flow.make_work_order()))
         work.source_warehouse, work.fg_warehouse, work.skip_transfer = warehouse, warehouse, 1
         work.planned_start_date = add_days(today(), -4) + " 08:00:00"
@@ -175,7 +222,11 @@ def create(company, item_group, stock_uom):
         overdue = department_progress({**data["filters"], "only_overdue": 1})[1]
         assert len(overdue) == 1 and overdue[0]["remaining_qty"] == 4 and overdue[0]["overdue_count"] == 1
         picture = production_picture(data["filters"])[1]
-        assert len(picture) == 1 and picture[0]["image_url"] == image.unique_url
+        _collect_files(data, files)
+        assert len(picture) == 1
+        picture_url = urlsplit(picture[0]["image_url"])
+        fids = parse_qs(picture_url.query).get("fid", [])
+        assert picture_url.path == image.file_url and len(fids) == 1 and fids[0] in data["files"], (picture, data["files"])
         assert not frappe.db.exists("Stock Ledger Entry", {"item_code": ["in", data["items"]]})
         settings.reload()
         settings.disable_capacity_planning = data["original_disable_capacity_planning"]
@@ -183,13 +234,14 @@ def create(company, item_group, stock_uom):
         frappe.clear_document_cache("Manufacturing Settings", "Manufacturing Settings")
         data["settings_restored"] = True
         data["expected"] = {"department_percents": [100, 20], "overdue_remaining_qty": 4,
-                            "overdue_days": 4, "produced_qty": 0, "image_url": image.unique_url}
+                            "overdue_days": 4, "produced_qty": 0, "image_url": picture[0]["image_url"]}
         data["phase"] = "commit_pending"
         _journal(data)
     except Exception as original_error:
         errors = [original_error]
         try:
             frappe.set_user("Administrator")
+            _collect_files(data, files)
             _remove_files(data, files)
         except Exception as exc:
             errors.append(exc)
@@ -251,7 +303,8 @@ def _validate_objects(data):
     for file in docs["files"]:
         meta = next(row for row in data["file_records"] if row["name"] == file.name)
         assert file.file_name.startswith(prefix + "-") and file.content_hash == meta["content_hash"] and file.is_private
-        assert file.file_url == meta["file_url"] and file.attached_to_doctype == "Item" and file.attached_to_name in data["items"]
+        assert file.file_url == meta["file_url"] and (file.attached_to_doctype, file.attached_to_name) in (
+            {("Item", name) for name in data["items"]} | {("Jifeng Flow Order", name) for name in data["flows"]})
     assert not frappe.db.exists("Stock Ledger Entry", {"item_code": ["in", data["items"]]})
     assert not frappe.db.exists("Stock Entry", {"work_order": ["in", data["work_orders"]]})
     return docs
@@ -267,6 +320,7 @@ def cleanup(data):
     original_user = frappe.session.user
     frappe.set_user("Administrator")
     try:
+        _collect_files(data)
         docs = _validate_objects(data)
         data["phase"] = "cleaning"
         _journal(data)
