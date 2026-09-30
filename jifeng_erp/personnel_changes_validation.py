@@ -3,12 +3,12 @@
 After migration, run once in an exclusive business-write window. Do not use
 ``bench execute``: its exception fallback can invoke a failing helper twice::
 
-    cd /home/jifengtest/jifeng-dev/bench
-    ./env/bin/python - <<'PY'
+    cd /home/jifengtest/jifeng-dev/bench/sites
+    /home/jifengtest/jifeng-dev/bench/env/bin/python - <<'PY'
     import json
     import frappe
     from jifeng_erp.personnel_changes_validation import smoke
-    frappe.init(site="jifeng.localhost", sites_path="sites")
+    frappe.init(site="jifeng.localhost", sites_path="/home/jifengtest/jifeng-dev/bench/sites")
     frappe.connect()
     frappe.set_user("Administrator")
     try:
