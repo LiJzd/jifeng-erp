@@ -30,7 +30,7 @@ def check():
         doctype: flow_hook in doc_events.get(doctype, {}).get("validate", [])
         for doctype in (
             "Material Request", "Purchase Order", "Purchase Receipt", "Purchase Invoice",
-            "Subcontracting Order", "Subcontracting Receipt", "Stock Entry", "Work Order",
+            "Subcontracting Order", "Subcontracting Receipt", "Stock Entry", "Work Order", "Job Card",
         )
     }
     return {
@@ -54,6 +54,9 @@ def check():
                                              for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
                                                            "jf_requirements_attachment")),
         "work_order_link_installed": frappe.get_meta("Work Order").has_field("jf_flow_order"),
+        "job_card_link_installed": frappe.get_meta("Job Card").has_field("jf_flow_order"),
+        "production_reports_installed": all(frappe.db.exists("Report", name) for name in
+                                            ("Jifeng Production Progress", "Jifeng Job Card Detail")),
         "material_issue_link_installed": frappe.get_meta("Stock Entry").has_field("jf_material_issue_flow"),
         "employee_supplement_installed": bool(frappe.db.exists("DocType", "Jifeng Employee Supplement")),
         "hrms_installed": "hrms" in frappe.get_installed_apps(),
