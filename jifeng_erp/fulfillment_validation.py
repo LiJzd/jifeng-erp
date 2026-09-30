@@ -41,10 +41,10 @@ ROLES = {
     "sales": ("Sales User",),
     "accounts": ("Accounts User",),
     # Native Delivery User reads DN; Projects User selects SO without reading
-    # it. Accounts Manager creates/submits SI, Accounts User reads its Item.
+    # it. Accounts Manager creates/submits SI, Purchase User reads its Item.
     # Native Manager roles do not implicitly include their User counterparts.
     # No role here reads a Flow or the full SO.
-    "selector": ("Accounts Manager", "Accounts User", "Projects User", "Delivery User"),
+    "selector": ("Accounts Manager", "Purchase User", "Projects User", "Delivery User"),
 }
 AUDIT_TYPES = (
     "Item", "Item Default", "UOM Conversion Detail", "Warehouse", "Customer",
