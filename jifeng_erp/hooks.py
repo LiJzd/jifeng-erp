@@ -36,6 +36,8 @@ doc_events = {
         "on_update_after_submit": "jifeng_erp.workflow.refresh_sales_order_flows",
         "on_cancel": "jifeng_erp.workflow.refresh_sales_order_flows",
     },
+    "Delivery Note": {"before_validate": "jifeng_erp.fulfillment.validate_fulfillment_flow"},
+    "Sales Invoice": {"before_validate": "jifeng_erp.fulfillment.validate_fulfillment_flow"},
     # Native Production Plan creates Work Orders with ignore_validate=True.
     # before_validate still runs and must preserve flow identity and quantity limits.
     "Work Order": {"before_validate": ["jifeng_erp.setup.validate_flow_links",

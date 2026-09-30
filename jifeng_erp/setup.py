@@ -20,6 +20,12 @@ def install():
         {"fieldname": "jf_requirements_attachment", "fieldtype": "Attach", "label": "集沣要求附件",
          "insert_after": "jf_packaging", "allow_on_submit": 1},
     ]
+    for doctype in ("Delivery Note Item", "Sales Invoice Item"):
+        fields[doctype] = [{
+            "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
+            "options": "Jifeng Flow Order", "insert_after": "so_detail", "read_only": 1, "no_copy": 1,
+            "description": "由精确销售来源明细继承，不改变原生价格、数量或库存估价。",
+        }]
     fields["Work Order"] = [{
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
         "options": "Jifeng Flow Order", "insert_after": "sales_order", "in_list_view": 1,

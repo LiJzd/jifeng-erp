@@ -61,6 +61,15 @@ def check():
         "sales_order_fields_installed": all(frappe.get_meta("Sales Order Item").has_field(field)
                                              for field in ("jf_make_flow", "jf_requirements", "jf_packaging",
                                                            "jf_requirements_attachment")),
+        "fulfillment_flow_fields_installed": all(
+            frappe.get_meta(doctype).has_field("jf_flow_order")
+            for doctype in ("Delivery Note Item", "Sales Invoice Item")
+        ),
+        "fulfillment_flow_hooks_active": all(
+            "jifeng_erp.fulfillment.validate_fulfillment_flow" in
+            doc_events.get(doctype, {}).get("before_validate", [])
+            for doctype in ("Delivery Note", "Sales Invoice")
+        ),
         "work_order_link_installed": frappe.get_meta("Work Order").has_field("jf_flow_order"),
         "production_plan_link_installed": frappe.get_meta("Production Plan Item").has_field("jf_flow_order"),
         "production_instruction_print_installed": bool(frappe.db.exists("Print Format", "Jifeng Production Instruction")),
