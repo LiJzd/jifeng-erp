@@ -98,6 +98,31 @@ def check():
         "material_issue_link_installed": frappe.get_meta("Stock Entry").has_field("jf_material_issue_flow"),
         "employee_supplement_installed": bool(frappe.db.exists("DocType", "Jifeng Employee Supplement")),
         "personnel_roster_installed": bool(frappe.db.exists("Report", "Jifeng Personnel Roster")),
+        "personnel_change_snapshots_installed": all(
+            field and field.fieldtype == "Long Text" and field.hidden and field.read_only
+            and field.no_copy and field.print_hide and field.allow_on_submit
+            for doctype in ("Employee Promotion", "Employee Transfer")
+            for field in (frappe.get_meta(doctype).get_field("jf_history_snapshot"),)
+        ),
+        "personnel_change_extensions_active": all(
+            path in frappe.get_hooks("extend_doctype_class").get(doctype, [])
+            for doctype, path in (
+                ("Employee Promotion", "jifeng_erp.personnel_changes.EmployeePromotionMixin"),
+                ("Employee Transfer", "jifeng_erp.personnel_changes.EmployeeTransferMixin"),
+            )
+        ),
+        "personnel_change_read_guards_active": all(
+            path in frappe.get_hooks(hook).get(doctype, [])
+            for hook, doctype, path in (
+                ("has_permission", "Employee Promotion", "jifeng_erp.personnel_changes.personnel_change_has_permission"),
+                ("has_permission", "Employee Transfer", "jifeng_erp.personnel_changes.personnel_change_has_permission"),
+                ("permission_query_conditions", "Employee Promotion", "jifeng_erp.personnel_changes.promotion_query_conditions"),
+                ("permission_query_conditions", "Employee Transfer", "jifeng_erp.personnel_changes.transfer_query_conditions"),
+            )
+        ),
+        "personnel_property_read_override_active":
+            "jifeng_erp.personnel_ui.get_employee_field_property" in frappe.get_hooks(
+                "override_whitelisted_methods").get("hrms.hr.utils.get_employee_field_property", []),
         "hrms_installed": "hrms" in frappe.get_installed_apps(),
         "wage_entry_installed": bool(frappe.db.exists("DocType", "Jifeng Wage Entry")),
         "wage_allocation_installed": all(frappe.db.exists("DocType", name) for name in

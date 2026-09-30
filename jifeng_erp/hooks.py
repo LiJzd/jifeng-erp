@@ -10,10 +10,25 @@ doctype_js = {
     "Sales Order": "public/js/jifeng_sales_order.js",
     "Production Plan": "public/js/jifeng_production_instruction.js",
     "Work Order": "public/js/jifeng_work_order.js",
+    "Employee Promotion": "public/js/jifeng_personnel_change.js",
+    "Employee Transfer": "public/js/jifeng_personnel_change.js",
+}
+override_whitelisted_methods = {
+    "hrms.hr.utils.get_employee_field_property": "jifeng_erp.personnel_ui.get_employee_field_property",
+}
+has_permission = {
+    "Employee Promotion": "jifeng_erp.personnel_changes.personnel_change_has_permission",
+    "Employee Transfer": "jifeng_erp.personnel_changes.personnel_change_has_permission",
+}
+permission_query_conditions = {
+    "Employee Promotion": "jifeng_erp.personnel_changes.promotion_query_conditions",
+    "Employee Transfer": "jifeng_erp.personnel_changes.transfer_query_conditions",
 }
 extend_doctype_class = {
     "Production Plan": ["jifeng_erp.production_instruction.ProductionInstructionMixin"],
     "Purchase Receipt": ["jifeng_erp.purchase_returns.PurchaseReceiptMixin"],
+    "Employee Promotion": ["jifeng_erp.personnel_changes.EmployeePromotionMixin"],
+    "Employee Transfer": ["jifeng_erp.personnel_changes.EmployeeTransferMixin"],
 }
 
 after_install = "jifeng_erp.setup.install"

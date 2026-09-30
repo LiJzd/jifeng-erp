@@ -82,6 +82,15 @@ def install():
         "options": "Jifeng Expense Voucher", "insert_after": "user_remark",
         "read_only": 1, "no_copy": 1, "unique": 1,
     }]
+    for doctype, details in (("Employee Promotion", "promotion_details"),
+                              ("Employee Transfer", "transfer_details")):
+        fields[doctype] = [{
+            "fieldname": "jf_history_snapshot", "fieldtype": "Long Text",
+            "label": "集沣人事变更追溯", "insert_after": details,
+            "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1,
+            "allow_on_submit": 1,
+            "description": "服务器记录本员工精确原值和工作历史，用于核对后续变更及安全取消。",
+        }]
     create_custom_fields(fields, update=True)
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
