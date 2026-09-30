@@ -228,7 +228,18 @@ def smoke(company, item_group, stock_uom):
     def dn(source, child, qty, clock="08:00:00"):
         document = make_delivery_note(source.name, kwargs={"filtered_children": [child]})
         assert len(document.items) == 1 and document.items[0].so_detail == child
-        assert not document.items[0].jf_flow_order, "no_copy 字段不能由 mapper 直接复制"
+        # SO Item has no Flow field to copy. Native new_doc can still populate
+        # a Link from a sole User Permission, including readonly/no_copy Links.
+        # Preserve that actual input: the source guard must reject a hidden
+        # ancestor rather than silently replacing an unrelated default.
+        mapped_flow = document.items[0].jf_flow_order
+        if mapped_flow:
+            assert frappe.db.exists("User Permission", {
+                "user": frappe.session.user, "allow": FLOW, "for_value": mapped_flow,
+            }), "映射草稿的流程默认值不是本次原生用户权限默认值"
+            evidence.setdefault("native_mapped_link_defaults", []).append({
+                "source": source.name, "source_child": child, "default_flow": mapped_flow,
+            })
         document.flags.qa_native_mapped_qty = flt(document.items[0].qty)
         document.items[0].qty = qty
         return _stamp(document, clock)

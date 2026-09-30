@@ -131,6 +131,13 @@ class TestFulfillment(unittest.TestCase):
             self.assertNotIn("FLOW-1", str(error.exception))
             denied.readable = True
 
+    def test_hidden_source_flow_rejects_even_when_native_link_default_is_other_flow(self):
+        self.flow.readable = False
+        with self.assertRaises(PermissionError) as error:
+            self.validate(self.target(against_sales_order="SO", so_detail="SO-1", jf_flow_order="FLOW-2"))
+        self.assertNotIn("FLOW-1", str(error.exception))
+        self.assertNotIn("FLOW-2", str(error.exception))
+
     def test_cancelled_source_or_other_company_customer_item_is_rejected(self):
         for field, value in (("docstatus", 2), ("company", "OTHER"), ("customer", "OTHER")):
             previous = self.order[field]

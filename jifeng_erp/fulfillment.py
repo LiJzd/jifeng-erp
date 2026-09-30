@@ -185,13 +185,15 @@ def validate_fulfillment_flow(document, method=None):
         else:
             flow_name = None
 
-        if row.get("jf_flow_order") and row.jf_flow_order != flow_name:
-            frappe.throw("销售明细流程单与精确来源不一致")
         if not flow_name:
+            if row.get("jf_flow_order"):
+                frappe.throw("销售明细流程单与精确来源不一致")
             row.jf_flow_order = None
             continue
 
         flow = _read_document(FLOW, flow_name, cache)
+        if row.get("jf_flow_order") and row.jf_flow_order != flow_name:
+            frappe.throw("销售明细流程单与精确来源不一致")
         if flow.company != document.company or flow.item_code != row.item_code:
             frappe.throw("销售明细与流程单的公司、商品不一致")
         seen = set()
