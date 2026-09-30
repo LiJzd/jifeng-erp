@@ -17,7 +17,10 @@ doc_events = {
         "validate": "jifeng_erp.accounting.validate_expense_journal_entry",
         "before_cancel": "jifeng_erp.accounting.validate_expense_journal_entry_cancel",
     },
-    "Job Card": {"before_cancel": "jifeng_erp.payroll.validate_job_card_cancel"},
+    "Job Card": {
+        "validate": "jifeng_erp.setup.validate_flow_links",
+        "before_cancel": "jifeng_erp.payroll.validate_job_card_cancel",
+    },
     "Employee": {"on_update": "jifeng_erp.jifeng_erp.doctype.jifeng_employee_supplement.jifeng_employee_supplement.refresh_employee_supplement"},
     "Sales Order": {
         "on_update_after_submit": "jifeng_erp.workflow.refresh_sales_order_flows",

@@ -6,6 +6,12 @@
  "editable_grid": 1,
  "permissions": [
   {
+   "role": "Manufacturing User",
+   "read": 1,
+   "report": 1,
+   "print": 1
+  },
+  {
    "role": "System Manager",
    "read": 1,
    "write": 1,

@@ -186,6 +186,18 @@ class TestFlowStockEntry(unittest.TestCase):
         self.setup.validate_flow_links(doc)
         self.assertEqual(row.jf_flow_order, "FLOW-1")
 
+    def test_job_card_inherits_and_protects_work_order_flow(self):
+        doc = Record(doctype="Job Card", work_order="WO-1", company="JF", production_item="RING", jf_flow_order=None)
+        self.setup.validate_flow_links(doc)
+        self.assertEqual(doc.jf_flow_order, "FLOW-1")
+        doc.jf_flow_order = "OTHER"
+        with self.assertRaisesRegex(ValueError, "来源不一致"):
+            self.setup.validate_flow_links(doc)
+        doc.jf_flow_order = "FLOW-1"
+        doc.company = "OTHER"
+        with self.assertRaisesRegex(ValueError, "公司、商品不一致"):
+            self.setup.validate_flow_links(doc)
+
 
 if __name__ == "__main__":
     unittest.main()

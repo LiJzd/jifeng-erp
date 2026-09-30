@@ -24,6 +24,11 @@ def install():
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
         "options": "Jifeng Flow Order", "insert_after": "sales_order", "in_list_view": 1,
     }]
+    fields["Job Card"] = [{
+        "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
+        "options": "Jifeng Flow Order", "insert_after": "work_order", "read_only": 1,
+        "no_copy": 1, "in_list_view": 1,
+    }]
     fields["Stock Entry"] = [{
         "fieldname": "jf_material_issue_flow", "fieldtype": "Link", "label": "按单配料流程单",
         "options": "Jifeng Flow Order", "insert_after": "work_order", "read_only": 1,
@@ -121,6 +126,21 @@ def _propagate_subcontracting_stock_flow(doc):
 
 
 def validate_flow_links(doc, method=None):
+    if doc.doctype == "Job Card":
+        work_order = frappe.get_doc("Work Order", doc.work_order)
+        work_order.check_permission("read")
+        source_flow = work_order.get("jf_flow_order")
+        if doc.get("jf_flow_order") and doc.jf_flow_order != source_flow:
+            frappe.throw("报工单流程单与生产工单来源不一致")
+        if work_order.company != doc.company or work_order.production_item != doc.production_item:
+            frappe.throw("报工单与生产工单的公司、商品不一致")
+        if source_flow:
+            flow = frappe.get_doc("Jifeng Flow Order", source_flow)
+            flow.check_permission("read")
+            if flow.company != doc.company or flow.item_code != doc.production_item:
+                frappe.throw("报工单与流程单的公司、商品不一致")
+        doc.jf_flow_order = source_flow
+        return
     if doc.doctype in _PROCUREMENT_SOURCES:
         _propagate_procurement_flow(doc)
     if doc.doctype == "Stock Entry":
