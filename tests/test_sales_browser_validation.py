@@ -66,6 +66,27 @@ class TestSalesBrowserValidation(unittest.TestCase):
         self.module._path(self.data)
         self.assertFalse(missing.exists())
 
+    def test_snapshot_uses_persistent_schema_and_keeps_real_parent_and_child_fields(self):
+        payment = Record(name="PAY-ROW", parent="QA-PROFILE", parenttype="POS Profile",
+                         mode_of_payment="QA-CASH", default=1)
+        payment.meta = types.SimpleNamespace(has_field=lambda field: field == "mode_of_payment")
+        profile = Record(doctype="POS Profile", company="QA", income_account="QA-INCOME",
+                         customer_group="Government", territory="Rest Of The World",
+                         payments=[payment], applicable_for_users=[])
+        profile.meta = types.SimpleNamespace(has_field=lambda field: field in {"company", "income_account", "payments"})
+        initial = self.module._snapshot(profile)
+        profile["customer_group"], profile["territory"], payment["default"] = None, None, None
+        self.assertEqual(self.module._snapshot(profile), initial)
+        self.assertNotIn("customer_group", initial)
+        self.assertNotIn("territory", initial)
+        self.assertNotIn("applicable_for_users", initial)
+        self.assertNotIn("default", initial["payments"][0])
+        profile["income_account"] = "OTHER-INCOME"
+        self.assertNotEqual(self.module._snapshot(profile), initial)
+        profile["income_account"] = "QA-INCOME"
+        payment["mode_of_payment"] = "OTHER-CASH"
+        self.assertNotEqual(self.module._snapshot(profile), initial)
+
     def test_foreign_customer_reference_without_fixture_item_is_rejected(self):
         self.data["customers"] = ["QA-CUSTOMER"]
         self.data["records"] = [{"doctype": "Customer", "name": "QA-CUSTOMER"}]

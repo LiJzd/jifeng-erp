@@ -119,10 +119,12 @@ def _load(data):
 
 
 def _snapshot(doc):
-    result = {field: doc.get(field) for field in PARENT_FIELDS[doc.doctype]}
+    result = {field: doc.get(field) for field in PARENT_FIELDS[doc.doctype] if doc.meta.has_field(field)}
     for table, fields in CHILD_FIELDS.get(doc.doctype, {}).items():
+        if not doc.meta.has_field(table):
+            continue
         result[table] = [{"name": row.name, "parent": row.parent, "parenttype": row.parenttype,
-                          **{field: row.get(field) for field in fields}} for row in doc.get(table) or []]
+                          **{field: row.get(field) for field in fields if row.meta.has_field(field)}} for row in doc.get(table) or []]
     return json.loads(json.dumps(result, default=str))
 
 
@@ -220,7 +222,7 @@ def _masters(data):
     for name in shares:
         _track(data, frappe.get_doc("DocShare", name))
     profile = insert("POS Profile", name="JF-SALES-BROWSER-PROFILE-" + suffix,
-        company=company.name, customer=customer.name, customer_group=customer_group, territory=territory,
+        company=company.name, customer=customer.name,
         currency=company.default_currency, selling_price_list=price_list.name, warehouse=warehouse,
         income_account=accounts["income"], expense_account=accounts["expense"], cost_center=cost_center,
         write_off_account=accounts["expense"], write_off_cost_center=cost_center,
