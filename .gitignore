@@ -9,3 +9,6 @@ dist/
 site_config.json
 *.pem
 *.key
+
+# Local validation evidence and login helpers contain private data.
+/output/
