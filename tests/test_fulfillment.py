@@ -13,14 +13,19 @@ class Doc(dict):
     def has_permission(self, permission):
         return self.get("readable", True)
 
+    def is_new(self):
+        return bool(self.get("__islocal"))
+
 
 class TestFulfillment(unittest.TestCase):
     def setUp(self):
-        self.documents, self.order_flows = {}, {}
+        self.documents, self.order_flows, self.native_defaults = {}, {}, {}
         frappe = types.ModuleType("frappe")
         frappe.PermissionError = PermissionError
         frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         frappe.get_doc = Mock(side_effect=lambda doctype, name: self.documents[(doctype, name)])
+        frappe.new_doc = Mock(side_effect=lambda doctype, **kwargs: Doc(
+            doctype=doctype, __islocal=1, jf_flow_order=self.native_defaults.get(doctype)))
         def flow_names(doctype, filters, **kwargs):
             return [name for (parent, child), names in self.order_flows.items()
                     if parent == filters.get("sales_order") and (
@@ -64,9 +69,11 @@ class TestFulfillment(unittest.TestCase):
         return document
 
     def target(self, doctype="Delivery Note", **values):
-        row = Doc(item_code="ITEM", qty=7, rate=29, stock_qty=14, conversion_factor=2,
+        row = Doc(doctype=doctype + " Item", __islocal=1, flags=Doc(),
+                  item_code="ITEM", qty=7, rate=29, stock_qty=14, conversion_factor=2,
                   base_rate=58, amount=203, warehouse="WAREHOUSE", **values)
-        return Doc(doctype=doctype, name="TARGET", company="COMPANY", customer="CUSTOMER", items=[row])
+        return Doc(doctype=doctype, name="TARGET", __islocal=1,
+                   company="COMPANY", customer="CUSTOMER", items=[row])
 
     def validate(self, document):
         self.module.validate_fulfillment_flow(document)
@@ -118,6 +125,100 @@ class TestFulfillment(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "精确来源"):
             self.validate(self.target(jf_flow_order="FLOW-1"))
 
+    def test_new_standalone_sales_clear_only_actual_native_flow_default(self):
+        for doctype in ("Delivery Note", "Sales Invoice"):
+            with self.subTest(doctype=doctype):
+                self.native_defaults[doctype + " Item"] = "FLOW-2"
+                document = self.target(doctype, jf_flow_order="FLOW-2")
+                original = dict(document["items"][0])
+                row = self.validate(document)
+                self.assertIsNone(row.jf_flow_order)
+                self.assertEqual({key: row[key] for key in original if key != "jf_flow_order"},
+                                 {key: value for key, value in original.items() if key != "jf_flow_order"})
+                self.frappe.new_doc.assert_any_call(doctype + " Item", parent_doc=document, parentfield="items")
+        self.frappe.get_doc.assert_not_called()
+        self.frappe.get_all.assert_not_called()
+
+    def test_new_untracked_selector_only_source_remains_native_with_flow_default(self):
+        self.native_defaults["Sales Invoice Item"] = "FLOW-2"
+        self.order_flows[("SO", "SO-1")] = []
+        self.order.readable = False
+        document = self.target("Sales Invoice", sales_order="SO", so_detail="SO-1", jf_flow_order="FLOW-2")
+        document.customer = "DIFFERENT-NATIVE-PENDING-VALIDATION"
+        self.assertIsNone(self.validate(document).jf_flow_order)
+        self.frappe.get_doc.assert_not_called()
+
+    def test_native_default_other_flow_does_not_conflict_with_exact_order_source(self):
+        for doctype, parent_field in (("Delivery Note", "against_sales_order"), ("Sales Invoice", "sales_order")):
+            with self.subTest(doctype=doctype):
+                self.native_defaults[doctype + " Item"] = "FLOW-2"
+                document = self.target(doctype, **{parent_field: "SO"}, so_detail="SO-1", jf_flow_order="FLOW-2")
+                self.assertEqual(self.validate(document).jf_flow_order, "FLOW-1")
+
+    def test_client_boolean_flag_cannot_impersonate_server_inherited_state(self):
+        self.native_defaults["Delivery Note Item"] = "FLOW-2"
+        document = self.target(against_sales_order="SO", so_detail="SO-1", jf_flow_order="FLOW-2")
+        document["items"][0].flags.jf_fulfillment_inherited_flow = True
+        self.assertEqual(self.validate(document).jf_flow_order, "FLOW-1")
+
+    def test_native_default_never_exempts_hidden_source_or_ancestor(self):
+        self.native_defaults["Sales Invoice Item"] = "FLOW-2"
+        self.delivery()
+        for denied in (self.order, self.flow):
+            denied.readable = False
+            with self.subTest(doctype=denied.doctype), self.assertRaises(PermissionError) as error:
+                self.validate(self.target("Sales Invoice", delivery_note="DN", dn_detail="DN-1",
+                                          jf_flow_order="FLOW-2"))
+            self.assertNotIn("FLOW-1", str(error.exception))
+            self.assertNotIn("FLOW-2", str(error.exception))
+            denied.readable = True
+
+    def test_nondefault_forged_flow_remains_rejected_with_native_default(self):
+        self.native_defaults["Delivery Note Item"] = "FLOW-2"
+        for values in ({}, {"against_sales_order": "SO", "so_detail": "SO-2"}):
+            with self.subTest(values=values), self.assertRaisesRegex(ValueError, "精确来源"):
+                self.validate(self.target(**values, jf_flow_order="FLOW-1"))
+
+    def test_saved_rows_and_existing_children_never_clear_flow_as_native_default(self):
+        self.native_defaults["Delivery Note Item"] = "FLOW-2"
+        for saved_parent in (True, False):
+            document = self.target(against_sales_order="SO", so_detail="SO-1", jf_flow_order="FLOW-2")
+            if saved_parent:
+                document["__islocal"] = 0
+            else:
+                document["items"][0]["__islocal"] = 0
+            with self.subTest(saved_parent=saved_parent), self.assertRaisesRegex(ValueError, "精确来源"):
+                self.validate(document)
+            self.assertEqual(document["items"][0].jf_flow_order, "FLOW-2")
+        self.frappe.new_doc.assert_not_called()
+
+    def test_inherited_flow_matching_default_survives_repeat_and_rejects_changed_source(self):
+        self.native_defaults["Delivery Note Item"] = "FLOW-1"
+        document = self.target(against_sales_order="SO", so_detail="SO-1", jf_flow_order="FLOW-1")
+        row = self.validate(document)
+        self.assertEqual(self.validate(document).jf_flow_order, "FLOW-1")
+        row.so_detail = "SO-2"
+        with self.assertRaisesRegex(ValueError, "精确来源"):
+            self.validate(document)
+        self.assertEqual(row.jf_flow_order, "FLOW-1")
+        row.so_detail = "SO-1"
+        self.order_flows[("SO", "SO-1")] = []
+        with self.assertRaisesRegex(ValueError, "精确来源"):
+            self.validate(document)
+        self.assertEqual(row.jf_flow_order, "FLOW-1")
+
+    def test_saved_untracked_history_and_traced_history_keep_authoritative_flow(self):
+        self.native_defaults["Sales Invoice Item"] = "FLOW-2"
+        for source_flow in (None, "FLOW-1"):
+            self.delivery(flow=source_flow, readable=bool(source_flow))
+            with self.subTest(source_flow=source_flow):
+                document = self.target("Sales Invoice", delivery_note="DN", dn_detail="DN-1",
+                                       sales_order="SO", so_detail="SO-1", jf_flow_order="FLOW-2")
+                self.assertEqual(self.validate(document).jf_flow_order, source_flow)
+        saved = self.target("Sales Invoice", delivery_note="DN", dn_detail="DN-1", jf_flow_order="FLOW-1")
+        saved["__islocal"] = 0
+        self.assertEqual(self.validate(saved).jf_flow_order, "FLOW-1")
+
     def test_missing_or_wrong_order_child_is_rejected(self):
         for child in (None, "OTHER-ORDER-ROW"):
             with self.subTest(child=child), self.assertRaises(ValueError):
@@ -132,6 +233,7 @@ class TestFulfillment(unittest.TestCase):
             denied.readable = True
 
     def test_hidden_source_flow_rejects_even_when_native_link_default_is_other_flow(self):
+        self.native_defaults["Delivery Note Item"] = "FLOW-2"
         self.flow.readable = False
         with self.assertRaises(PermissionError) as error:
             self.validate(self.target(against_sales_order="SO", so_detail="SO-1", jf_flow_order="FLOW-2"))

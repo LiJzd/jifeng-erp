@@ -11,6 +11,22 @@ SOURCES = {
                       ("Delivery Note", "delivery_note", "dn_detail")),
 }
 RETURN_CHILD = {"Delivery Note": "dn_detail", "Sales Invoice": "sales_invoice_item"}
+_INHERITED_FLOW = object()
+
+
+def _clear_native_new_row_default(document, row, cache):
+    # Native create_new also fills read_only/no_copy Link fields from User
+    # Permissions. The mapper starts children with those defaults, so they are
+    # not provenance. Only normalize the exact default on an unsaved new row.
+    if (not row.get("jf_flow_order") or not document.is_new() or not row.is_new()
+            or row.flags.get("jf_fulfillment_inherited_flow") is _INHERITED_FLOW):
+        return
+    key = ("native_new_row_flow_default", document.doctype)
+    if key not in cache:
+        cache[key] = frappe.new_doc(document.doctype + " Item", parent_doc=document,
+                                    parentfield="items").get("jf_flow_order")
+    if cache[key] and row.jf_flow_order == cache[key]:
+        row.jf_flow_order = None
 
 
 def _probe_row(doctype, child_name, cache):
@@ -155,6 +171,7 @@ def validate_fulfillment_flow(document, method=None):
         return
     cache = {}
     for row in document.get("items") or []:
+        _clear_native_new_row_default(document, row, cache)
         if not _has_flow_context(document, row, cache):
             continue
         references = {}
@@ -202,3 +219,6 @@ def validate_fulfillment_flow(document, method=None):
         if returned and returned[1]:
             _validate_chain(document, row, document.doctype, *returned, flow, cache, seen)
         row.jf_flow_order = flow.name
+        # Revalidation on this server object must not mistake an inherited Flow
+        # for a default when its precise source is subsequently changed.
+        row.flags.jf_fulfillment_inherited_flow = _INHERITED_FLOW
