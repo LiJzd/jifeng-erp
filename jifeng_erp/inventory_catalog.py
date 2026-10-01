@@ -1,12 +1,13 @@
 """Read-only inventory archives with exact native Profile and Item sources.
 
 Archive units, reference prices and limits remain their saved values. This API
-does not calculate inventory, convert units or grant a write action. It is not
-an assertion about the still-unverified old inventory browse screens.
+does not calculate inventory, convert units or grant a write action. The
+bounded pagination counts only fully checked, readable Profile/Item sources.
 """
 
 from datetime import date, datetime
 from decimal import Decimal
+import re
 
 import frappe
 from frappe.model import get_permitted_fields
@@ -32,6 +33,7 @@ SEARCH_FIELDS = {"legacy_number", "legacy_code", "old_number", "display_name", "
 FILE_REQUIRED = {"name", "file_url", "is_private", "attached_to_doctype", "attached_to_name",
                  "attached_to_field"}
 LIMIT = 100
+CANDIDATE_LIMIT = 1000
 
 
 def _value(value):
@@ -234,9 +236,7 @@ def _verify_output(packed, kind, company):
     return [view for view, _guard in packed]
 
 
-@frappe.whitelist()
-def list_archives(kind, company, search="", status="在用"):
-    """Return permitted records only, without totals or inferred stock values."""
+def _candidate_rows(kind, company, search, status, limit):
     _scope(kind, company)
     if not isinstance(status, str) or status not in STATUSES:
         frappe.throw("请选择在用、停用或全部档案")
@@ -252,9 +252,15 @@ def list_archives(kind, company, search="", status="在用"):
     options = {"or_filters": [[field, "like", "%" + search + "%"]
                               for field in sorted(search_fields)]} if search else {}
     rows = frappe.get_list(PROFILE, filters=filters, fields=fields, order_by="name asc",
-                           limit_page_length=LIMIT + 1, **options)
-    if len(rows) > LIMIT:
+                           limit_page_length=limit + 1, **options)
+    if len(rows) > limit:
         frappe.throw("库存档案较多，请输入关键词缩小查询范围")
+    if len({row.get("name") for row in rows}) != len(rows):
+        frappe.throw("库存档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
+    return rows
+
+
+def _checked_views(rows, kind, company, status):
     packed = []
     for row in rows:
         loaded = _load(row, kind, company, status)
@@ -262,6 +268,47 @@ def list_archives(kind, company, search="", status="在用"):
             profile, item, item_row = loaded
             packed.append(_pack(profile, item, row, item_row, kind, company))
     return _verify_output(packed, kind, company)
+
+
+@frappe.whitelist()
+def list_archives(kind, company, search="", status="在用"):
+    """Keep the existing <=100 array contract without inferred stock values."""
+    rows = _candidate_rows(kind, company, search, status, LIMIT)
+    return _checked_views(rows, kind, company, status)
+
+
+def _page_integer(value, label, maximum):
+    # HTTP form arguments may be decimal text. Do not coerce bools/floats,
+    # whitespace, signed values, scientific notation or a truncated number.
+    if isinstance(value, str):
+        if not re.fullmatch(r"[1-9][0-9]{0,3}", value):
+            frappe.throw(f"请输入有效{label}")
+        value = int(value)
+    if type(value) is not int or not 1 <= value <= maximum:
+        frappe.throw(f"请输入有效{label}")
+    return value
+
+
+@frappe.whitelist()
+def query_archives(kind, company, search="", status="在用", page=1, page_size=LIMIT):
+    """Count all checked visible sources, then slice; never count raw rows.
+
+    The full bounded readable candidate set is loaded and guarded even when
+    only one page is returned. This is a request-local check, not an atomic
+    database snapshot. Sources unreadable at query time never enter totals.
+    """
+    page = _page_integer(page, "页码", CANDIDATE_LIMIT)
+    page_size = _page_integer(page_size, "每页条数", LIMIT)
+    rows = _candidate_rows(kind, company, search, status, CANDIDATE_LIMIT)
+    views = _checked_views(rows, kind, company, status)
+    total = len(views)
+    total_pages = (total + page_size - 1) // page_size
+    if page > max(1, total_pages):
+        frappe.throw("页码超过查询结果范围，请输入合法页码或重新查询")
+    start = (page - 1) * page_size
+    return {"kind": kind, "company": company, "search": search, "status": status,
+            "page": page, "page_size": page_size, "total": total, "total_pages": total_pages,
+            "rows": views[start:start + page_size], "readonly": True, "can_write": False}
 
 
 @frappe.whitelist()

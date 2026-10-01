@@ -1,0 +1,28 @@
+.jfe-inventory-catalog { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 5px; background: #fff; color: #555; }
+.jfe-inventory-catalog-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 14px 4px; }
+.jfe-inventory-catalog-toolbar > input { width: 390px; max-width: 100%; border: 1px solid #d8d8d8; border-radius: 4px; padding: 10px 12px; text-align: center; font-size: 16px; }
+.jfe-inventory-catalog-toolbar > input::placeholder { color: #a3a7ad; }
+.jfe-inventory-catalog-button { border: 0; background: transparent; padding: 5px 7px; color: #62666d; font-size: 15px; }
+.jfe-inventory-catalog-button.primary { background: #1989fa; color: #fff; border-radius: 5px; padding: 10px 20px; font-size: 17px; }
+.jfe-inventory-catalog-button:disabled { color: #a9adb6; cursor: default; }
+.jfe-inventory-catalog-company { margin-left: auto; min-width: 180px; max-width: 250px; }
+.jfe-inventory-catalog-company .form-group { margin: 0; }
+.jfe-inventory-catalog-status { margin: 0 5px 5px; min-height: 18px; font-size: 12px; }
+.jfe-inventory-catalog-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid #ccc; }
+.jfe-inventory-catalog-table { border-spacing: 0; border-collapse: separate; width: max-content; min-width: 100%; font-size: 14px; }
+.jfe-inventory-catalog-table th { position: sticky; top: 0; z-index: 1; background: #fff; color: #818181; font-weight: normal; text-align: center; white-space: nowrap; }
+.jfe-inventory-catalog-table th:first-child { color: #111; }
+.jfe-inventory-catalog-table th, .jfe-inventory-catalog-table td { border-right: 1px solid #ccc; border-bottom: 1px solid #ddd; padding: 6px 9px; min-width: 100px; }
+.jfe-inventory-catalog-table td { vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 260px; }
+.jfe-inventory-catalog-table tr[tabindex]:focus, .jfe-inventory-catalog-table tbody tr:hover { outline: 1px solid #1989fa; outline-offset: -1px; background: #eef7ff; }
+.jfe-inventory-catalog-table img { width: 65px; height: 60px; object-fit: contain; }
+.jfe-inventory-catalog-pager { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 12px 4px 4px; }
+.jfe-inventory-catalog-current { color: #1989fa; font-size: 16px; font-weight: bold; padding: 0 8px; }
+.jfe-inventory-catalog-pager input { width: 80px; text-align: center; padding: 8px; border: 1px solid #d7dce4; border-radius: 4px; }
+.jfe-inventory-catalog-count { margin-left: auto; padding-right: 8px; }
+.jfe-inventory-catalog-detail .modal-body { max-height: calc(100vh - 160px); overflow: auto; }
+.jfe-inventory-catalog-detail-fields { display: grid; grid-template-columns: minmax(90px, 140px) minmax(120px, 1fr); gap: 0; }
+.jfe-inventory-catalog-detail-fields dt, .jfe-inventory-catalog-detail-fields dd { margin: 0; padding: 8px; border-bottom: 1px solid #ddd; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jfe-inventory-catalog-detail-fields dt { font-weight: normal; background: #f7f8fa; }
+.jfe-inventory-catalog-detail-fields img { max-width: 250px; max-height: 180px; object-fit: contain; }
+@media (max-width: 700px) { .jfe-inventory-catalog-toolbar > input { width: 100%; } .jfe-inventory-catalog-company { margin-left: 0; } }

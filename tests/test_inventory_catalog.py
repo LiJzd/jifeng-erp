@@ -181,6 +181,130 @@ class TestInventoryCatalog(unittest.TestCase):
     def query(self, **kwargs):
         return self.module.list_archives("物料", "JF", **kwargs)
 
+    def page(self, **kwargs):
+        return self.module.query_archives("物料", "JF", **kwargs)
+
+    def add_archives(self, count):
+        for index in range(count):
+            suffix = f"{index:04d}"
+            self.add("Item", "ITEM-" + suffix, item_code="ITEM-" + suffix, stock_uom="Nos", image=None)
+            self.add(PROFILE, "PROFILE-" + suffix, company="JF", archive_kind="物料",
+                     item_code="ITEM-" + suffix, display_name="分页商品", inactive=0, list_price=0)
+
+    def test_pagination_counts_only_exact_readable_sources_and_preserves_saved_values(self):
+        self.second_archive()
+        self.add_archives(4)
+        self.list_denials.add((PROFILE, "PROFILE-0000"))
+        self.list_denials.add(("Item", "ITEM-0001"))
+        self.doc_denials.add((PROFILE, "PROFILE-0002", "read"))
+        del self.documents["Item", "ITEM-0003"]
+        self.doc_denials.add(("Company", "JF", "read"))
+        before = deepcopy(self.documents)
+        first, second = self.page(page_size="1"), self.page(page="2", page_size=1)
+        self.assertEqual((first["total"], first["total_pages"], first["page_size"]), (2, 2, 1))
+        self.assertEqual((first["rows"][0]["name"], second["rows"][0]["name"]), ("PROFILE-A", "PROFILE-B"))
+        self.assertEqual(first["rows"][0]["profile"]["list_price"], "17.50")
+        self.assertTrue(first["readonly"])
+        self.assertFalse(first["can_write"])
+        self.assertEqual(self.documents, before)
+        self.assertTrue(all(call.args[0] == "File" for call in self.frappe.get_all.call_args_list))
+        for function in (self.frappe.db.sql, self.frappe.db.commit, self.frappe.db.set_value,
+                         self.frappe.new_doc, self.frappe.delete_doc):
+            function.assert_not_called()
+
+    def test_true_pages_above_compatibility_limit_and_bounded_candidates(self):
+        self.add_archives(101)
+        with self.assertRaisesRegex(ValueError, "缩小查询范围"):
+            self.query()
+        result = self.page(page=2)
+        self.assertEqual((result["total"], result["total_pages"], result["page"]), (102, 2, 2))
+        self.assertEqual([row["name"] for row in result["rows"]], ["PROFILE-0100", "PROFILE-A"])
+        self.assertEqual(self.frappe.get_list.call_args_list[1].kwargs["limit_page_length"], 1001)
+        self.forced_rows[PROFILE] = [Record(name="OVERFLOW")] * 1001
+        self.frappe.get_doc.reset_mock()
+        with self.assertRaisesRegex(ValueError, "缩小查询范围"):
+            self.page()
+        self.assertEqual([call.args[0] for call in self.frappe.get_doc.call_args_list], ["Company"])
+
+    def test_page_numbers_are_strict_and_outside_visible_range_is_not_silently_clamped(self):
+        invalid = [True, False, 0, -1, 1.0, Decimal("1"), None, [], "", " 1", "1 ", "01", "+1", "1.0", "1e0", "1001"]
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.page(page=value)
+        for value in invalid + [101, "101"]:
+            with self.subTest(size=value), self.assertRaises(ValueError):
+                self.page(page_size=value)
+        self.frappe.get_list.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "超过查询结果范围"):
+            self.page(page=2)
+        empty = self.page(search="无此原文")
+        self.assertEqual((empty["page"], empty["total"], empty["total_pages"], empty["rows"]), (1, 0, 0, []))
+        with self.assertRaisesRegex(ValueError, "超过查询结果范围"):
+            self.page(search="无此原文", page=2)
+
+    def test_total_and_rows_use_same_company_kind_status_and_authorized_keyword_projection(self):
+        self.second_archive()
+        self.documents[PROFILE, "PROFILE-B"].inactive = 1
+        self.add(PROFILE, "OTHER-KIND", company="JF", archive_kind="材料", item_code="ITEM-A", inactive=0)
+        self.add(PROFILE, "OTHER-COMPANY", company="OTHER", archive_kind="物料", item_code="ITEM-A", inactive=0)
+        self.assertEqual(self.page()["total"], 1)
+        self.assertEqual(self.page(status="全部")["total"], 2)
+        result = self.page(status="停用", search="旧名称")
+        self.assertEqual((result["status"], result["search"], result["rows"][0]["name"]), ("停用", "旧名称", "PROFILE-B"))
+        self.hidden[PROFILE] = self.module.SEARCH_FIELDS
+        with self.assertRaises(PermissionError):
+            self.page(search="旧名称")
+
+    def test_off_page_source_field_and_image_changes_reject_the_whole_page_and_total(self):
+        self.file()
+        self.second_archive()
+        initial_documents, initial_meta = deepcopy(self.documents), deepcopy(self.metas)
+        actions = {
+            "permission": lambda: self.doc_denials.add((PROFILE, "PROFILE-B", "read")),
+            "version": lambda: self.documents[PROFILE, "PROFILE-B"].update(modified=datetime(2026, 10, 2)),
+            "projection": lambda: self.documents[PROFILE, "PROFILE-B"].update(list_price=Decimal("6")),
+            "mask": lambda: self.metas[PROFILE]["list_price"].update(mask=1),
+            "off_page_image": lambda: self.download_denials.add("EXACT"),
+        }
+        for label, change in actions.items():
+            self.documents, self.metas = deepcopy(initial_documents), deepcopy(initial_meta)
+            self.doc_denials.clear()
+            self.download_denials.clear()
+            loads = []
+
+            def mutate_after_full_load(name):
+                if name == "ITEM-A":
+                    loads.append(name)
+                    if len(loads) == 2:
+                        change()
+
+            self.doc_hooks["Item"] = mutate_after_full_load
+            with self.subTest(change=label), self.assertRaises(PermissionError):
+                # page two does not project A or its image, but both authorize total.
+                self.page(page=2, page_size=1)
+            self.assertEqual(loads, ["ITEM-A", "ITEM-A"])
+
+    def test_paged_optional_projection_omissions_never_fall_back_to_full_documents(self):
+        self.projection_omissions[PROFILE] = {"display_name", "display_uom", "list_price"}
+        self.hidden["Item"] = {"stock_uom"}
+        row = self.page()["rows"][0]
+        self.assertEqual(self.page()["total"], 1)
+        for field in self.projection_omissions[PROFILE]:
+            self.assertNotIn(field, row["profile"])
+            self.assertNotIn(field, row["field_meta"]["profile"])
+        self.assertNotIn("stock_uom", row["item"])
+
+    def test_empty_page_still_checks_current_scope_and_duplicate_candidates_cannot_inflate_total(self):
+        self.list_hooks[PROFILE] = lambda: self.doc_denials.add(("Company", "JF", "select"))
+        with self.assertRaises(PermissionError):
+            self.page(search="空结果")
+        self.list_hooks.clear()
+        self.doc_denials.clear()
+        row = Record({field: self.profile.get(field) for field in self.module.PROFILE_FIELDS | self.module.PROFILE_REQUIRED})
+        self.forced_rows[PROFILE] = [row, deepcopy(row)]
+        with self.assertRaises(PermissionError):
+            self.page()
+
     def test_reader_without_create_or_write_can_query_and_read_immutable_saved_values(self):
         self.role_denials.update({(PROFILE, "create"), (PROFILE, "write"), ("Item", "create"), ("Item", "write")})
         before = deepcopy(self.documents)

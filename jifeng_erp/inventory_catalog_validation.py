@@ -16,7 +16,7 @@ from jifeng_erp.catalog_validation import (
 )
 from jifeng_erp.diagnostics import _begin_rollback_only
 from jifeng_erp.inventory_archive import save_archive
-from jifeng_erp.inventory_catalog import PROFILE, list_archives, read_archive
+from jifeng_erp.inventory_catalog import PROFILE, list_archives, query_archives, read_archive
 from jifeng_erp.inventory_validation import _ledger_snapshot
 from jifeng_erp.personnel_changes_validation import _callbacks, _tab_counts
 from jifeng_erp.personnel_separation_validation import _local_context
@@ -103,8 +103,18 @@ def smoke(company, other_company, item_group, stock_uom):
         assert result["readonly"] and not result["can_write"]
         return result
 
+    def paginated(kind="物料", owner_company=company, **options):
+        state, callbacks, context, ledger = _contents(), _callbacks(), _local_context(), _ledger_snapshot()
+        result = native(lambda: query_archives(kind, owner_company, search=prefix, **options))
+        assert _contents() == state and _callbacks() == callbacks and _local_context() == context
+        assert _ledger_snapshot() == ledger
+        assert result["readonly"] and not result["can_write"]
+        assert result["kind"] == kind and result["company"] == owner_company and result["search"] == prefix
+        assert all(row["readonly"] and not row["can_write"] for row in result["rows"])
+        return result
+
     def rejected(action, error=frappe.PermissionError):
-        state, callbacks, context = _contents(), _callbacks(), _local_context()
+        state, callbacks, context, ledger = _contents(), _callbacks(), _local_context(), _ledger_snapshot()
         try:
             native(action)
         except error:
@@ -112,6 +122,7 @@ def smoke(company, other_company, item_group, stock_uom):
         else:
             raise AssertionError("库存浏览接受了应拒绝的读取请求")
         assert _contents() == state and _callbacks() == callbacks and _local_context() == context
+        assert _ledger_snapshot() == ledger
 
     _begin_rollback_only(point)
     try:
@@ -151,6 +162,20 @@ def smoke(company, other_company, item_group, stock_uom):
         assert all(meta["read_only"] for group in view["field_meta"].values() for meta in group.values())
         passed("real_stock_user_company_select_and_projected_raw_values")
 
+        current = "real_stock_user_complete_visible_total_and_exact_pages"
+        full = paginated()
+        assert (full["page"], full["page_size"], full["total"], full["total_pages"]) == (1, 100, 2, 1)
+        assert {row["name"] for row in full["rows"]} == {first["name"], second["name"]}
+        expected = sorted((first, second), key=lambda view: view["name"])
+        page_one = paginated(page=1, page_size=1)
+        page_two = paginated(page="2", page_size="1")
+        for index, result in enumerate((page_one, page_two)):
+            assert (result["page"], result["page_size"], result["total"], result["total_pages"]) == (index + 1, 1, 2, 2)
+            assert len(result["rows"]) == 1
+            assert result["rows"][0]["name"] == expected[index]["name"]
+            assert result["rows"][0]["item_code"] == expected[index]["item_code"]
+        passed("real_stock_user_checked_total_two_exact_pages_and_http_integer_text")
+
         current = "separate_kinds_and_explicit_profile_status"
         assert [row["name"] for row in query("材料")] == [material["name"]]
         assert [row["name"] for row in query("材料", status="停用")] == [stopped["name"]]
@@ -169,6 +194,7 @@ def smoke(company, other_company, item_group, stock_uom):
         for user, hidden_company, hidden in ((clerk, other_company, foreign), (outsider, company, first)):
             frappe.set_user(user)
             rejected(lambda: list_archives("物料", hidden_company, prefix))
+            rejected(lambda: query_archives("物料", hidden_company, prefix))
             rejected(lambda: read_archive(hidden["name"], "物料", hidden_company))
         passed("real_company_user_permission_guards_query_and_read_without_hidden_source_names")
 
@@ -180,19 +206,39 @@ def smoke(company, other_company, item_group, stock_uom):
         assert query("材料", status="全部") == []
         passed("real_item_user_permission_applies_to_native_profile_and_item_projections")
 
+        current = "item_user_permission_restricts_pagination_total"
+        limited = paginated(page="1", page_size="1")
+        assert (limited["page"], limited["page_size"], limited["total"], limited["total_pages"]) == (1, 1, 1, 1)
+        assert [row["name"] for row in limited["rows"]] == [first["name"]]
+        rejected(lambda: query_archives("物料", company, prefix, page=2, page_size=1), frappe.ValidationError)
+        passed("real_item_user_permission_total_one_and_outside_visible_page_denied")
+
         current = "profile_user_permission_identity"
         frappe.set_user(profile_reader)
         assert [row["name"] for row in query()] == [first["name"]]
         rejected(lambda: read_archive(second["name"], "物料", company))
         passed("real_profile_user_permission_hides_other_records_even_when_item_is_readable")
 
+        current = "profile_user_permission_restricts_pagination_total"
+        limited = paginated(page=1, page_size=1)
+        assert (limited["total"], limited["total_pages"]) == (1, 1)
+        assert [row["name"] for row in limited["rows"]] == [first["name"]]
+        rejected(lambda: query_archives("物料", company, prefix, page=2, page_size=1), frappe.ValidationError)
+        passed("real_profile_user_permission_total_one_and_outside_visible_page_denied")
+
         current = "guest_and_invalid_query"
         frappe.set_user("Guest")
         rejected(lambda: list_archives("物料", company, prefix))
+        rejected(lambda: query_archives("物料", company, prefix))
         rejected(lambda: read_archive(first["name"], "物料", company))
         frappe.set_user(clerk)
         rejected(lambda: list_archives("物料", company, prefix, "未知"), frappe.ValidationError)
         passed("guest_and_invalid_status_denied_without_write_side_effects")
+
+        current = "strict_page_arguments_remain_pure_reads"
+        for options in ({"page": True}, {"page": 1.0}, {"page": " 1"}, {"page": 0}, {"page_size": 101}):
+            rejected(lambda options=options: query_archives("物料", company, prefix, **options), frappe.ValidationError)
+        passed("real_strict_bool_float_whitespace_zero_and_large_page_size_denied_without_sql_or_ledger_changes")
     except Exception as error:
         primary = error
         error.add_note("库存浏览原生验收失败门槛：" + current)
@@ -224,5 +270,5 @@ def smoke(company, other_company, item_group, stock_uom):
             "actual_roles": roles, "contents_before": before, "contents_after": _contents(),
             "table_counts_before": counts_before, "table_counts_after": _tab_counts(tables)[1],
             "whole_ledger_before": ledger_before, "whole_ledger_after": _ledger_snapshot(),
-            "gui_verified": False, "remaining": ["旧物料/材料浏览操作与UI", "实际Item图片HTTP/下载",
+            "gui_verified": False, "remaining": ["旧物料/材料浏览真实GUI与未核实的行双击习惯", "实际Item图片HTTP/下载",
                 "Company只有select的真实岗位", "原生字段read/mask撤权", "双连接并发权限或来源变化"]}
