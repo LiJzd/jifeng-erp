@@ -1,5 +1,7 @@
 # 验证记录
 
+本地隔离route探针已由Luna实测：实际按钮一次，匹配POST暂停时服务器计数0，root明确放行同一个route后计数1，原正文与UUID一致；任务浏览器/服务器精确关闭。只证Playwright CLI跨调用持有原请求，不是ERP保存通过。新版ignored GUI夹具v2的18无DB模型已由root独立复核；冻结默认日期/期望、原生Version格式及严格nullable元数据、精确actor/session活动与实际请求登记，仍待真实GUI/nativecleanup。r3准备阶段误用r2前缀覆盖旧before文件，已将新基线移为唯一r3_before并令before路径存在时拒绝覆盖；原r2_after的已完成审计及内容hash保留，原r2_before无法复原，不能重新作r2对照。
+
 ## 2026-10-01 物料与材料只读来源及末尾撤权守门
 
 56c8acc新增物料/材料浏览API（list/read），要求明确公司、种类、关键词及档案在用/停用；原生Profile→Item的真实投影，旧单位/参考价/换算原文分别保存，不计算库存或自行换算。浏览始终只读，包括具有写权限的岗位。Item.disabled仅可读展示，不能代替Profile.inactive控制列表。图片只用标明来源的关联Item/image精确私有File，并核read/mask/download及唯一URL；没有独立档案图片或新增UI。
