@@ -1,7 +1,8 @@
 """Explicit outsource factory archives; never infer Supplier classification.
 
 Legacy contact and bank text belongs to this company archive. It neither
-updates the shared Supplier nor creates bank accounts or financial vouchers.
+updates an existing Supplier nor creates bank accounts or financial vouchers.
+New factories can create their normal native Supplier in the same transaction.
 """
 
 from contextvars import ContextVar
@@ -9,7 +10,7 @@ from datetime import date, datetime
 import hashlib
 import json
 import re
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import frappe
 from frappe.model import get_permitted_fields
@@ -25,6 +26,7 @@ EDIT_FIELDS = {"legacy_number", "display_name", "owner_name", "mobile", "recepti
 IDENTITY_FIELDS = {"company", "archive_kind", "supplier"}
 REQUIRED_READ = IDENTITY_FIELDS | {"legacy_number", "display_name", "inactive"}
 PROTECTED_FIELDS = IDENTITY_FIELDS | {"request_id", "request_digest"}
+SUPPLIER_CREATE = {"supplier_group", "supplier_type", "naming_series"}
 _CREATING = ContextVar("jifeng_partner_creation", default=None)
 
 
@@ -71,6 +73,19 @@ def _object(value):
 
 def _value(value):
     return value.isoformat() if isinstance(value, (date, datetime)) else value
+
+
+def _timestamp(value):
+    # Only known native timestamp fields use this conversion. Do not parse
+    # bank/contact/legacy text that happens to resemble a date.
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            frappe.throw("工厂档案来源时间不完整")
+    if not isinstance(value, datetime) or value.tzinfo is not None:
+        frappe.throw("工厂档案来源时间不完整")
+    return value.isoformat()
 
 
 def _freeze(value):
@@ -143,6 +158,8 @@ def _projection(document, existing, writable):
 
 
 def _pack(document, supplier=None, *, listing=False):
+    if supplier and not {"name", "disabled"}.issubset(_columns("Supplier", "read")):
+        _deny()
     existing = not document.is_new()
     permission = "write" if existing else "create"
     writable = bool(document.has_permission(permission)) and not listing
@@ -151,14 +168,76 @@ def _pack(document, supplier=None, *, listing=False):
         for field in fields.values():
             field["read_only"] = True
     readable = _columns(PROFILE, "read")
-    return {"name": document.name if existing else None, "kind": document.archive_kind,
+    result = {"name": document.name if existing else None, "kind": document.archive_kind,
             "company": document.company, "supplier": supplier.name if supplier else None,
-            "profile_version": _value(document.modified) if existing else None,
-            "supplier_version": _value(supplier.modified) if supplier else None,
+            "profile_version": _timestamp(document.modified) if existing else None,
+            "supplier_version": _timestamp(supplier.modified) if supplier else None,
             "supplier_disabled": bool(supplier.disabled) if supplier else None,
             "profile": values, "field_meta": fields, "can_write": writable,
-            "creation": _value(document.creation) if existing and "creation" in readable else None,
+            "creation": _timestamp(document.creation) if existing and "creation" in readable else None,
             "modified_by": document.modified_by if existing and "modified_by" in readable else None}
+    if not existing:
+        result.update(_supplier_controls(document))
+    return result
+
+
+def _supplier_controls(profile):
+    document = frappe.new_doc("Supplier")
+    readable, writable = _columns("Supplier", "read"), _columns("Supplier", "write")
+    can_create = bool(profile.has_permission("create") and document.has_permission("create") and
+                      {"supplier_name", "name", "disabled"}.issubset(readable) and "supplier_name" in writable)
+    can_link = bool(profile.has_permission("create") and frappe.has_permission("Supplier", "read") and
+                    {"name", "disabled"}.issubset(readable))
+    fields, defaults = {}, {}
+    for name in sorted(SUPPLIER_CREATE & readable):
+        field = document.meta.get_field(name)
+        if not field:
+            continue
+        defaults[name] = document.get(name)
+        if field.fieldtype == "Link" and defaults[name]:
+            frappe.get_doc(field.options, defaults[name]).check_permission("select")
+        fields[name] = {"fieldtype": field.fieldtype, "options": field.options or "",
+                        "reqd": bool(field.reqd), "read_only": bool(not can_create or field.read_only or name not in writable)}
+    return {"can_create_supplier": can_create, "can_link_supplier": can_link,
+            "supplier_defaults": defaults, "supplier_field_meta": fields}
+
+
+def _supplier_values(values):
+    values = _object(values)
+    if not set(values).issubset(SUPPLIER_CREATE):
+        frappe.throw("原生供应商新建参数包含不支持的字段")
+    meta = frappe.get_meta("Supplier")
+    normalized = {}
+    for name, value in values.items():
+        field = meta.get_field(name)
+        if not field or value is not None and (not isinstance(value, str) or len(value) > int(field.length or 140)):
+            frappe.throw("请输入有效原生供应商字段")
+        if name not in _columns("Supplier", "read") & _columns("Supplier", "write") or field.read_only:
+            _deny()
+        if field.fieldtype == "Link" and value:
+            linked = frappe.get_doc(field.options, value)
+            linked.check_permission("select")
+            if name == "supplier_group" and linked.get("is_group"):
+                frappe.throw("请选择具体供应商分组，不能选择汇总分组")
+        if field.fieldtype == "Select" and value not in (None, "") and value not in (field.options or "").split("\n"):
+            frappe.throw("请选择有效原生供应商选项")
+        normalized[name] = value
+    return normalized
+
+
+def _create_supplier(profile, values):
+    supplier = frappe.new_doc("Supplier")
+    supplier.check_permission("create")
+    if not {"supplier_name", "name", "disabled"}.issubset(_columns("Supplier", "read")) or "supplier_name" not in _columns("Supplier", "write"):
+        _deny()
+    for name, value in _supplier_values(values).items():
+        supplier.set(name, value)
+    # Use a fresh native save under the configured Supplier Name/Series rule.
+    # A duplicate name fails atomically; it never selects an existing party.
+    supplier.supplier_name = profile.display_name
+    supplier.disabled = 0
+    supplier.save()
+    return supplier
 
 
 def _guard(document, supplier, view):
@@ -217,6 +296,9 @@ def init_archive(kind, company):
     company_document = _scope(kind, company)
     document = frappe.new_doc(PROFILE)
     document.company, document.archive_kind, document.inactive = company, kind, 0
+    # Preserve the observed auto-filled editable number habit without claiming
+    # the unverified old sequence or consuming native Series on a read request.
+    document.legacy_number = "WF-" + str(uuid4())
     document.check_permission("create")
     view = _pack(document)
     company_document.check_permission("select")
@@ -244,7 +326,7 @@ def read_supplier(name, kind, company):
     current.check_permission("select")
     if not {"name", "disabled"}.issubset(_columns("Supplier", "read")):
         _deny()
-    return {"name": supplier.name, "version": _value(supplier.modified),
+    return {"name": supplier.name, "version": _timestamp(supplier.modified),
             "disabled": bool(supplier.disabled), "company": company, "kind": kind}
 
 
@@ -307,6 +389,8 @@ def query_archives(kind, company, search="", status="在用", page=1, page_size=
         supplier.check_permission("select")
         if not set(view["profile"]).issubset(_columns(PROFILE, "read")):
             _deny()
+        if view != _pack(document, supplier, listing=True):
+            frappe.throw("工厂档案字段或权限已改变，请重新查询")
     total = len(checked)
     total_pages = (total + page_size - 1) // page_size
     if page > max(1, total_pages):
@@ -331,13 +415,13 @@ def resolve_creation(request_id, kind, company):
 @_atomic
 def save_archive(payload):
     payload = _object(payload)
-    if not set(payload).issubset({"kind", "company", "name", "profile_version", "supplier_version", "request_id", "profile"}):
+    if not set(payload).issubset({"kind", "company", "name", "profile_version", "supplier_version", "request_id", "profile", "supplier_create"}):
         frappe.throw("工厂档案请求包含不支持的参数")
     kind, company = payload.get("kind"), payload.get("company")
     _scope(kind, company)
     values = _object(payload.get("profile", {}))
     if payload.get("name"):
-        if payload.get("request_id"):
+        if payload.get("request_id") or "supplier_create" in payload:
             frappe.throw("已有工厂档案不能改写新建请求身份")
         document, supplier = _load(payload["name"], kind, company, lock=True)
         document.check_permission("write")
@@ -350,7 +434,16 @@ def save_archive(payload):
             frappe.throw("新档案不能携带已有档案版本")
         request_id = _uuid(payload.get("request_id"))
         normalized = _normalize(values, EDIT_FIELDS | {"supplier"})
-        digest = hashlib.sha256(json.dumps([kind, company, normalized], sort_keys=True,
+        linked = bool(normalized.get("supplier"))
+        if linked and "supplier_create" in payload:
+            frappe.throw("关联已有供应商不能同时新建供应商")
+        supplier_values = None if linked else _supplier_values(payload.get("supplier_create", {}))
+        if not linked and payload.get("supplier_version"):
+            frappe.throw("新建供应商不能携带已有供应商版本")
+        body = [kind, company, normalized]
+        if not linked:
+            body.append({"supplier_create": supplier_values})
+        digest = hashlib.sha256(json.dumps(body, sort_keys=True,
                                  ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
         name = frappe.db.get_value(PROFILE, {"request_id": request_id}, "name")
         if name:
@@ -362,16 +455,26 @@ def save_archive(payload):
             document.company, document.archive_kind, document.inactive = company, kind, 0
             document.check_permission("create")
             _updates(document, normalized, EDIT_FIELDS | {"supplier"})
-            supplier = _supplier(document.supplier, lock=True)
-            if supplier.disabled:
-                frappe.throw("停用供应商不能关联新工厂档案")
-            _latest(supplier, payload.get("supplier_version"))
+            if linked:
+                supplier = _supplier(document.supplier, lock=True)
+                if supplier.disabled:
+                    frappe.throw("停用供应商不能关联新工厂档案")
+                _latest(supplier, payload.get("supplier_version"))
+            else:
+                supplier = _create_supplier(document, supplier_values)
+                if "supplier" not in _columns(PROFILE, "read") & _columns(PROFILE, "write"):
+                    _deny()
+                document.supplier = supplier.name
             document.request_id, document.request_digest = request_id, digest
             context = _CREATING.set(document)
             try:
                 document.save()
             finally:
                 _CREATING.reset(context)
+    # Native save timestamps are strings; fresh database fields are datetimes.
+    # Build the response and full source guard from persisted native objects,
+    # retaining every stored field instead of ignoring the time columns.
+    document, supplier = _load(document.name, kind, company)
     view = _pack(document, supplier)
     _guard(document, supplier, view)
     return view

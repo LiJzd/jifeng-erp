@@ -11,7 +11,7 @@
   {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
   {"fieldname": "archive_kind", "fieldtype": "Select", "label": "档案种类", "options": "外发工厂", "reqd": 1, "set_only_once": 1},
   {"fieldname": "supplier", "fieldtype": "Link", "label": "关联供应商", "options": "Supplier", "reqd": 1, "set_only_once": 1, "description": "显式选择正式业务供应商。工厂原文不改写共享供应商或银行账户。"},
-  {"fieldname": "legacy_number", "fieldtype": "Data", "label": "编号", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "legacy_number", "fieldtype": "Data", "label": "编号", "reqd": 1, "in_list_view": 1, "description": "新编号由本系统生成，可改为原编号。"},
   {"fieldname": "display_name", "fieldtype": "Data", "label": "名称", "reqd": 1, "in_list_view": 1},
   {"fieldname": "owner_name", "fieldtype": "Data", "label": "负责"},
   {"fieldname": "mobile", "fieldtype": "Data", "label": "手机"},

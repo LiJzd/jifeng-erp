@@ -2,6 +2,7 @@
 
 import ast
 from copy import deepcopy
+from datetime import datetime
 from functools import wraps
 import importlib.util
 import json
@@ -70,17 +71,24 @@ class Document(Record):
     def save(self):
         env = self.environment
         self.check_permission("create" if self.is_new() else "write")
-        env.module.validate_profile(self)
-        if env.fail_save:
+        if self.doctype == env.module.PROFILE:
+            env.module.validate_profile(self)
+        else:
+            if not self.supplier_name or not self.supplier_type:
+                raise ValueError("native supplier mandatory")
+        if env.fail_save and self.doctype == env.module.PROFILE:
             env.frappe.db.after_commit.add(env.new_callback)
             env.frappe.local._realtime_log = ["native-event"]
             env.frappe.flags.currently_saving = ["native-save"]
             raise ValueError("native save failure")
         if self.is_new():
-            if any(doctype == env.module.PROFILE and row.get("request_id") == self.request_id
+            if self.doctype == env.module.PROFILE and any(doctype == env.module.PROFILE and row.get("request_id") == self.request_id
                    for (doctype, _), row in env.records.items()):
                 raise ValueError("unique request constraint")
-            self.name = "PROFILE-" + str(env.tick)
+            self.name = ("PROFILE-" + str(env.tick) if self.doctype == env.module.PROFILE else
+                         self.supplier_name if env.supplier_naming == "Supplier Name" else "SUP-" + str(env.tick))
+            if (self.doctype, self.name) in env.records:
+                raise ValueError("native duplicate supplier name")
             self.creation = "2026-10-02T00:00:00.000001"
         env.tick += 1
         self.modified = "2026-10-02T00:00:" + str(env.tick).zfill(2) + ".123456"
@@ -97,6 +105,7 @@ class TestPartnerArchive(unittest.TestCase):
         self.denials, self.hidden_names = set(), set()
         self.hidden_fields = {}
         self.saves, self.tick, self.fail_save = [], 1, False
+        self.supplier_naming, self.datetime_fresh = "Supplier Name", False
         self.hook = None
         self.frappe = types.ModuleType("frappe")
         self.frappe.PermissionError, self.frappe.TimestampMismatchError = PermissionError, RuntimeError
@@ -105,7 +114,7 @@ class TestPartnerArchive(unittest.TestCase):
         self.frappe.whitelist = lambda **kwargs: lambda function: function
         self.frappe.throw = lambda text, error=ValueError: (_ for _ in ()).throw(error(text))
         self.frappe.get_doc = Mock(side_effect=self.get_doc)
-        self.frappe.new_doc = lambda doctype: Document(doctype=doctype, __islocal=1)
+        self.frappe.new_doc = self.new_doc
         self.frappe.get_meta = lambda doctype: self.metas[doctype]
         self.frappe.has_permission = lambda doctype, permission: (doctype, permission) not in self.denials
         self.frappe.get_list = Mock(side_effect=self.get_list)
@@ -131,7 +140,11 @@ class TestPartnerArchive(unittest.TestCase):
         Document.environment = self
         definition = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_partner_profile/jifeng_partner_profile.json").read_text())
         self.metas[self.module.PROFILE] = Meta(definition["fields"] + [{"fieldname": name} for name in ("creation", "modified_by")])
-        self.metas["Supplier"] = Meta([{"fieldname": name} for name in ("name", "disabled")])
+        self.metas["Supplier"] = Meta([{"fieldname": "name"}, {"fieldname": "disabled"},
+            {"fieldname": "supplier_name", "fieldtype": "Data"},
+            {"fieldname": "supplier_type", "fieldtype": "Select", "options": "Company\nIndividual\nPartnership", "default": "Company", "reqd": 1},
+            {"fieldname": "supplier_group", "fieldtype": "Link", "options": "Supplier Group"},
+            {"fieldname": "naming_series", "fieldtype": "Select", "options": "SUP-.YYYY.-"}])
         self.metas["Company"] = Meta([])
         self.records[("Company", "Company A")] = {"doctype": "Company", "name": "Company A"}
         self.records[("Company", "Company B")] = {"doctype": "Company", "name": "Company B"}
@@ -143,9 +156,19 @@ class TestPartnerArchive(unittest.TestCase):
 
     def get_doc(self, doctype, name, **kwargs):
         result = Document(deepcopy(self.records[(doctype, name)]))
+        if self.datetime_fresh:
+            for field in ("creation", "modified"):
+                if isinstance(result.get(field), str):
+                    result[field] = datetime.fromisoformat(result[field])
         if self.hook:
             self.hook(doctype, name)
         return result
+
+    def new_doc(self, doctype):
+        document = Document(doctype=doctype, __islocal=1)
+        if doctype == "Supplier":
+            document.supplier_type, document.naming_series, document.disabled = "Company", "SUP-.YYYY.-", 0
+        return document
 
     def get_value(self, doctype, filters, field, **kwargs):
         return next((row.get(field) for (kind, _), row in self.records.items() if kind == doctype
@@ -182,6 +205,13 @@ class TestPartnerArchive(unittest.TestCase):
     def create(self):
         return self.module.save_archive(self.payload())
 
+    def create_supplier_payload(self, **changes):
+        payload = self.payload()
+        payload.pop("supplier_version")
+        payload["profile"].pop("supplier")
+        payload.update(changes)
+        return payload
+
     def edit(self, row, **values):
         return {"kind": self.module.KIND, "company": row["company"], "name": row["name"],
                 "profile_version": row["profile_version"], "supplier_version": row["supplier_version"], "profile": values}
@@ -207,6 +237,134 @@ class TestPartnerArchive(unittest.TestCase):
         self.assertIsNone(row["profile"]["display_name"])
         self.assertEqual(row["profile"]["inactive"], 0)
         self.assertEqual(self.records, before)
+
+    def test_init_default_number_is_new_editable_and_does_not_save_series(self):
+        first = self.module.init_archive(self.module.KIND, "Company A")
+        second = self.module.init_archive(self.module.KIND, "Company A")
+        self.assertRegex(first["profile"]["legacy_number"], r"^WF-[0-9a-f-]{36}$")
+        self.assertNotEqual(first["profile"]["legacy_number"], second["profile"]["legacy_number"])
+        self.assertFalse(first["field_meta"]["legacy_number"]["read_only"])
+        self.assertEqual(self.saves, [])
+
+    def test_supplier_default_create_matches_native_defaults(self):
+        result = self.module.init_archive(self.module.KIND, "Company A")
+        self.assertTrue(result["can_create_supplier"])
+        self.assertTrue(result["can_link_supplier"])
+        self.assertEqual(result["supplier_defaults"]["supplier_type"], "Company")
+        self.assertIsNone(result["supplier_defaults"]["supplier_group"])
+        self.assertEqual(result["supplier_defaults"]["naming_series"], "SUP-.YYYY.-")
+
+    def test_joint_new_supplier_and_profile_native_name_and_idempotency(self):
+        payload = self.create_supplier_payload()
+        before_shared = deepcopy(self.records[("Supplier", "SUP-A")])
+        first = self.module.save_archive(payload)
+        supplier = self.records[("Supplier", first["supplier"])]
+        self.assertEqual(supplier["supplier_name"], payload["profile"]["display_name"])
+        self.assertEqual(supplier["supplier_type"], "Company")
+        self.assertNotIn("bank_account", supplier)
+        self.assertNotIn("company", supplier)
+        self.assertEqual(self.saves, ["Supplier", self.module.PROFILE])
+        second = self.module.save_archive(payload)
+        self.assertEqual(first, second)
+        self.assertEqual(self.saves, ["Supplier", self.module.PROFILE])
+        self.assertEqual(self.records[("Supplier", "SUP-A")], before_shared)
+
+    def test_new_supplier_respects_native_series_and_no_name_matching(self):
+        self.supplier_naming = "Naming Series"
+        result = self.module.save_archive(self.create_supplier_payload(supplier_create={"supplier_type": "Individual"}))
+        self.assertTrue(result["supplier"].startswith("SUP-"))
+        self.assertEqual(self.records[("Supplier", result["supplier"])]["supplier_type"], "Individual")
+
+    def test_supplier_group_selection_permissions_and_leaf_scope(self):
+        self.records[("Supplier Group", "GROUP-A")] = {"doctype": "Supplier Group", "name": "GROUP-A", "is_group": 0}
+        self.records[("Supplier Group", "GROUP-TREE")] = {"doctype": "Supplier Group", "name": "GROUP-TREE", "is_group": 1}
+        self.hidden_names.add("GROUP-A")
+        with self.assertRaises(PermissionError):
+            self.module.save_archive(self.create_supplier_payload(supplier_create={"supplier_group": "GROUP-A"}))
+        self.hidden_names.clear()
+        with self.assertRaises(ValueError):
+            self.module.save_archive(self.create_supplier_payload(supplier_create={"supplier_group": "GROUP-TREE"}))
+        result = self.module.save_archive(self.create_supplier_payload(supplier_create={"supplier_group": "GROUP-A"}))
+        self.assertEqual(self.records[("Supplier", result["supplier"])]["supplier_group"], "GROUP-A")
+
+    def test_supplier_type_and_series_fields_obey_read_write_and_options(self):
+        for field in ("supplier_type", "naming_series"):
+            with self.subTest(field=field):
+                self.hidden_fields[("Supplier", "write")] = {field}
+                with self.assertRaises(PermissionError):
+                    self.module.save_archive(self.create_supplier_payload(supplier_create={field: "Company" if field == "supplier_type" else "SUP-.YYYY.-"}))
+        self.hidden_fields.clear()
+        with self.assertRaises(ValueError):
+            self.module.save_archive(self.create_supplier_payload(supplier_create={"supplier_type": "unsupported"}))
+
+    def test_duplicate_supplier_fails_without_auto_binding(self):
+        payload = self.create_supplier_payload()
+        self.module.save_archive(payload)
+        before = deepcopy(self.records)
+        second = deepcopy(payload)
+        second["request_id"] = str(uuid4())
+        with self.assertRaises(ValueError):
+            self.module.save_archive(second)
+        self.assertEqual(self.records, before)
+
+    def test_joint_failure_rolls_new_supplier_back(self):
+        self.fail_save = True
+        before = deepcopy(self.records)
+        with self.assertRaises(ValueError):
+            self.module.save_archive(self.create_supplier_payload())
+        self.assertEqual(self.records, before)
+        self.assertEqual(self.saves, [])
+
+    def test_no_supplier_create_permission_retains_existing_link(self):
+        self.denials.add(("Supplier", "create"))
+        result = self.module.init_archive(self.module.KIND, "Company A")
+        self.assertFalse(result["can_create_supplier"])
+        self.assertTrue(result["can_link_supplier"])
+        with self.assertRaises(PermissionError):
+            self.module.save_archive(self.create_supplier_payload())
+        self.assertEqual(self.create()["supplier"], "SUP-A")
+
+    def test_source_modes_cannot_mix_or_edit_shared_supplier(self):
+        with self.assertRaises(ValueError):
+            self.module.save_archive(self.payload(supplier_create={}))
+        row = self.create()
+        payload = self.edit(row, notes="new")
+        payload["supplier_create"] = {"supplier_type": "Individual"}
+        with self.assertRaises(ValueError):
+            self.module.save_archive(payload)
+        with self.assertRaises(ValueError):
+            self.module.save_archive(self.create_supplier_payload(supplier_create={"supplier_name": "bad"}))
+
+    def test_saved_string_timestamps_fresh_datetime_preserve_microseconds(self):
+        self.datetime_fresh = True
+        row = self.create()
+        self.assertEqual(row["profile_version"], "2026-10-02T00:00:02.123456")
+        self.assertEqual(row["supplier_version"], "2026-10-02T00:00:00.123456")
+        edited = self.module.save_archive(self.edit(row, bank_account="2026-10-02 00:00:00.123456"))
+        self.assertEqual(edited["profile"]["bank_account"], "2026-10-02 00:00:00.123456")
+        self.assertEqual(edited["profile_version"], "2026-10-02T00:00:03.123456")
+        self.assertEqual(self.query()["rows"][0]["profile_version"], edited["profile_version"])
+
+    def test_joint_new_supplier_saved_strings_fresh_datetime(self):
+        self.datetime_fresh = True
+        result = self.module.save_archive(self.create_supplier_payload())
+        self.assertEqual(result["supplier_version"], "2026-10-02T00:00:02.123456")
+        self.assertEqual(result["profile_version"], "2026-10-02T00:00:03.123456")
+
+    def test_final_projection_rechecks_supplier_and_metadata_fields(self):
+        self.create()
+        original = self.module._guard
+        def guard(*args):
+            original(*args)
+            self.hidden_fields[("Supplier", "read")] = {"disabled"}
+        with patch.object(self.module, "_guard", side_effect=guard), self.assertRaises(PermissionError):
+            self.query()
+        self.hidden_fields.clear()
+        def metadata_guard(*args):
+            original(*args)
+            self.hidden_fields[(self.module.PROFILE, "read")] = {"creation", "modified_by"}
+        with patch.object(self.module, "_guard", side_effect=metadata_guard), self.assertRaises(ValueError):
+            self.query()
 
     def test_supplier_selection_is_explicit_and_read_only(self):
         row = self.module.read_supplier("SUP-A", self.module.KIND, "Company A")
