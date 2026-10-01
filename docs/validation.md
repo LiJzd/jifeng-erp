@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-01 模具、版种原生及单列弹窗续验
+
+`bd2e109` 将模具/版种报表图片收紧到当前已保存档案及 image 字段的精确私有 File.read/download，其他父记录的同 URL alias 不能授权。原验收夹具改用五张本地小 PNG，并保留原权限、来源、原文、复制、状态与报告入口门禁。root 独立全1003模型、Ruff及Tool客户端协议通过。
+
+Tool r2 的纯 Manufacturing Manager 夹具带了其无权读取的 Item，原生拒绝正确；r3 保留这项负例，正例使用可选关联为空的原生录入，13门通过。`5bc32b2` 的新 plate init 仅给可写字段提供本系统 UUID4 业务编号，不读写 Series；旧编号原文、显式业务号、原生主键各自独立。root全1006模型与客户端协议通过，r4 原生15门通过：追加重复 init 全SQL/计数/队列/上下文无写、默认号保存、显式改号及旧请求回执不覆盖当前值。两批回滚后的独立连接均确认完整Tool及原生子表、权限/账户、员工、Series/Version、账簿恢复，全表计数无变化。证据 `classic-tool_archive-native-result-r3.json`、`-r4.json`；默认号实际GUI续验待，原生表单仍要求业务号，不能将经典页默认号扩大为所有录入渠道已验收。
+
+单列CSS `ad9ec15` 已build及实际经典菜单复验。模具/版种/建模维持旧11/10/8主字段顺序、左标签右输入、右图片栏及底部新增/保存/关闭；稳定态普通输入可编辑，编号与日期只读。版种类型草稿 X→否保留→X→是弃置，建模单价 X→否保留→Escape→是弃置，最终 editor/modal=0；无浏览器保存、上传或打印。此前两列阶段建模X未闭合且CLI会话消失的事实保留，不计关闭通过。r2首次本地500查证Redis未运行，恢复已有服务后一次刷新成功；未收集全量console日志。独立 `tool_archive_vertical_gui_fresh_after.json` 保护全内容及账簿一致，仅Admin.last_active/last_login及原生登录Sessions/Activity各+1，不声称所有计数为0。报告 `tool-archive-empty-gui-20261001.md`。
+
+整套 catalog_full r1 通过前61个业务/权限检查，最终因ErrorLog变化失败：业务、账户、员工、完整档案及账簿独立审计一致，Error Log 69→78。已核原生该表为MyISAM，不能随事务回滚；8条来自预期跨公司 report PermissionError，另1条为合成Product Profile的原生附图 PermissionError，仍在只读归因。原日志保留，尚未修复或复跑，不能计为整套档案报告续验通过。证据 `classic-catalog_full-native-result-r1.json` 与只读日志归因记录。
+
+旧站本批授权登录一次仍停在登录表单，没有可见错误或业务菜单，也没有该请求响应证据。任务tab已确认关闭；未重复登录或操作业务。两类对账、财务四账、销售跟踪及库存浏览的新增旧页证据未取得，继续保留缺口。
+
 ## 2026-10-01 产品档案已保存界面复验及版种建模后台
 
 续验：产品来源切换R3在异步完成后，新建模式三个Item控件实际可见、enabled、df.read_only=false；切已有模式但不选Item时隐藏并禁用，切回后恢复可键入。逐控件合成文本输入后即清空，Link搜索/校验200、freeze_count=0，最终弹层0且公司/关键词保持。R2的即时disabled观察不能计为稳定态缺陷，也未据此修改后台权限。`product_archive_source_gui_fresh_after.json` 人员、账号权限、补充档案、词典原生内容及账簿保护通过、全表计数变化为空，仅管理员last_active变化；本次源切换审计没有另含产品全行集合，产品全行及磁盘恢复证据仍为前述已保存夹具的独立审计。
