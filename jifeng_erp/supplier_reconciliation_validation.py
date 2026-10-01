@@ -169,12 +169,14 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
 
     def invoice(party, account=payable, invoice_currency=None, rate=20):
         document = insert("Purchase Invoice", company=company, supplier=party.name,
-            posting_date=invoice_date, due_date=add_days(invoice_date, 30), bill_no=prefix,
+            posting_date=invoice_date, set_posting_time=1, posting_time="00:00:00",
+            due_date=add_days(invoice_date, 30), bill_no=prefix,
             currency=invoice_currency or currency, conversion_rate=2 if invoice_currency else 1,
             credit_to=account, update_stock=0, disable_rounded_total=1,
             items=[{"item_code": item.name, "qty": 6, "rate": rate, "uom": stock_uom,
                     "conversion_factor": 1, "expense_account": expense, "cost_center": center}])
         native(document.submit)
+        assert str(getdate(document.posting_date)) == invoice_date, "原生发票未保留显式验收记账日"
         return track(document)
 
     def payment(source, value, date):
@@ -184,6 +186,7 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
         document.posting_date, document.reference_no, document.reference_date = date, prefix, date
         native(document.insert)
         native(document.submit)
+        assert str(getdate(document.posting_date)) == date, "原生付款未保留显式验收记账日"
         return track(document)
 
     def clear_fixture_cache():
@@ -281,11 +284,13 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
         returned = native(lambda: make_debit_note(pi.name))
         objects.append(returned)
         returned.posting_date = add_days(today(), -2)
+        returned.set_posting_time, returned.posting_time = 1, "00:00:00"
         returned.set("items", [returned.items[0]])
         returned.items[0].qty = -1
         returned.disable_rounded_total = 1
         native(returned.insert)
         native(returned.submit)
+        assert str(getdate(returned.posting_date)) == add_days(today(), -2)
         track(returned)
         foreign_pi = invoice(foreign_supplier, foreign_account.name, foreign_currency, rate=10)
         source = insert(SOURCE, company=company, posting_date=invoice_date, cost_center=center,
