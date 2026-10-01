@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-10-01 版种默认编号r3及销售履行后台
+
+Luna离线CLI独立session完成r3：实际classic版种录入，两次init HTTP200、两个canonical UUID4默认业务号不同且响应均匹配DOM，上方编号只读、编号原文可编辑；最终modal0、公司/关键词/空列表保留。无保存或上传。独立r3 fresh audit保护业务/权限/员工/账簿hash全一致，仅Admin.last_active/last_login及登录Sessions/Activity各+1。socket.io:9000有4次连接拒绝；初始导航未单独监听pageerror，不能称所有console/页面错误为0。v2 GUI夹具prepare先因运行cwd、后因SQL TIME驱动timedelta类型失败，均未创建业务或manifest；以bench/sites运行并精确保存带符号微秒后prepare成功，仅本地3张小PNG与manifest，19无DB夹具模型通过。实际Save/Upload及原生清理仍在执行，不计通过。
+
+8ab7574新增独立销售履行query/read来源树：同公司订单的native明细/Flow/工单制造入库、精确DN/SI交叉行与退货原明细、原生发票状态及付款账簿凭证闭包。无跨凭证发货净数/工序成品/币种余额重算。独立审查修复无Flow工单商品错行、Flow/工单parent与row双向漏查、无PLE付款和JE反向来源/重过账，以及后期钩子更改来源而未更新modified的返回缺口；跨客户批次现代码本来已有context重置，增隔离回归没有因此改生产。40模型、root全1123模型、Ruff与差异检查通过，本地提交，无菜单/GUI/native通过。当前仅工单制造链，独立无WO制造入库、真实制造/多币种、请求前已陈旧的权限缓存与双连接仍待验证；PLE.amount为公司本币、amount_in_account_currency为明确科目币，UI必须保留两者口径，不能混作同币种。
+
 本地隔离route探针已由Luna实测：实际按钮一次，匹配POST暂停时服务器计数0，root明确放行同一个route后计数1，原正文与UUID一致；任务浏览器/服务器精确关闭。只证Playwright CLI跨调用持有原请求，不是ERP保存通过。新版ignored GUI夹具v2的18无DB模型已由root独立复核；冻结默认日期/期望、原生Version格式及严格nullable元数据、精确actor/session活动与实际请求登记，仍待真实GUI/nativecleanup。r3准备阶段误用r2前缀覆盖旧before文件，已将新基线移为唯一r3_before并令before路径存在时拒绝覆盖；原r2_after的已完成审计及内容hash保留，原r2_before无法复原，不能重新作r2对照。
 
 ## 2026-10-01 物料与材料只读来源及末尾撤权守门
