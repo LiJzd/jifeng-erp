@@ -7,6 +7,7 @@ import uuid
 import frappe
 from frappe.utils import getdate
 from jifeng_erp.payroll import nonnegative
+from jifeng_erp.piece_workers import require_piece_worker
 
 
 WAGE = "Jifeng Wage Entry"
@@ -230,6 +231,8 @@ def save_drafts(payload):
             frappe.throw("计件录入必须明确选择已提交的工序报工单")
         elif row["source_modified"] or row["work_order_modified"]:
             frappe.throw("没有报工单的计时录入不能携带来源核对信息")
+        if nonnegative(row["quantity"], "计件数量") or nonnegative(row["piece_rate"], "计件工价"):
+            require_piece_worker(payload["company"], payload["employee"])
         doc = frappe.get_doc({"doctype": WAGE, **values,
                               "workbench_request_key": request_id + f":{index:03d}",
                               "workbench_request_fingerprint": fingerprint})

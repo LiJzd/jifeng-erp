@@ -41,6 +41,9 @@ def smoke(company, item_group, stock_uom, foreign_company=None):
         employees = [frappe.get_doc({"doctype": "Employee", "first_name": f"JF-WWB-{index}-{suffix}",
             "company": company, "gender": gender, "date_of_birth": "1990-01-01",
             "date_of_joining": today(), "status": "Active"}).insert() for index in range(2)]
+        for employee in employees:
+            frappe.get_doc({"doctype": "Jifeng Employee Supplement", "employee": employee.name,
+                            "wage_method": "计件"}).insert()
         component = frappe.get_doc({"doctype": "Salary Component", "salary_component": "JF-WWB-PAY-" + suffix,
             "salary_component_abbr": "WB" + suffix, "type": "Earning", "depends_on_payment_days": 0,
             "is_tax_applicable": 0}).insert()

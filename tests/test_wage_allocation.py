@@ -32,7 +32,13 @@ class TestWageAllocation(unittest.TestCase):
         frappe.throw = lambda message, *args: (_ for _ in ()).throw(ValueError(message))
         frappe.whitelist = lambda: (lambda function: function)
         frappe.only_for = Mock()
+        frappe.session = types.SimpleNamespace(user="Administrator")
+        frappe.has_permission = Mock(return_value=True)
+        frappe.PermissionError = PermissionError
         frappe.db = types.SimpleNamespace(sql=Mock(return_value=[]), get_value=Mock(return_value="CNY"))
+        frappe.db.get_value.side_effect = lambda doctype, *args, **kwargs: (
+            Doc(name="SUP-1", wage_method="计件", modified="2026-10-01 08:00:00")
+            if doctype == "Jifeng Employee Supplement" else self.db.get_value.return_value)
         self.db = frappe.db
         utils = types.ModuleType("frappe.utils")
         utils.getdate = lambda value: datetime.date.fromisoformat(str(value))
@@ -43,6 +49,10 @@ class TestWageAllocation(unittest.TestCase):
         payroll_scope = patch.dict(sys.modules, {"jifeng_erp.payroll": payroll})
         payroll_scope.start()
         self.addCleanup(payroll_scope.stop)
+        pieces = load_module("allocation_piece_workers", ROOT / "piece_workers.py")
+        pieces_scope = patch.dict(sys.modules, {"jifeng_erp.piece_workers": pieces})
+        pieces_scope.start()
+        self.addCleanup(pieces_scope.stop)
         self.module = load_module("allocation_test_module", ROOT / "wage_allocation.py")
         self.card = Doc(name="JC-1", company="C-1", work_order="WO-1", operation="OP-1",
                         operation_id="WO-OP-1", production_item="ITEM-1", stock_uom="Nos",
@@ -56,12 +66,14 @@ class TestWageAllocation(unittest.TestCase):
         self.work = Doc(name="WO-1", company="C-1", docstatus=1, jf_flow_order="FLOW-1",
                         operations=[Doc(name="WO-OP-1", operation="OP-1")])
         self.docs = {("Job Card", "JC-1"): self.card, ("Work Order", "WO-1"): self.work,
+                     ("Company", "C-1"): Doc(),
                      ("Jifeng Flow Order", "FLOW-1"): Doc(company="C-1"),
                      ("Item", "ITEM-1"): Doc(stock_uom="Nos"),
                      ("Salary Component", "PIECE"): Doc(type="Earning", disabled=0),
                      ("Employee", "E-1"): Doc(company="C-1", status="Active", employee_name="甲"),
                      ("Employee", "E-2"): Doc(company="C-1", status="Active", employee_name="乙")}
-        self.get_doc = Mock(side_effect=lambda doctype, name, **kwargs: self.docs[(doctype, name)])
+        self.get_doc = Mock(side_effect=lambda doctype, name=None, **kwargs:
+                            Doc(**doctype) if isinstance(doctype, dict) else self.docs[(doctype, name)])
         frappe.get_doc = self.get_doc
         self.frappe = frappe
         self.allocation = Doc(name="A-1", job_card="JC-1", docstatus=0,

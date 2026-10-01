@@ -137,7 +137,7 @@ def install():
 
 
 def _install_wage_source_permissions():
-    """Allow HR supervisors to verify wage sources without production edits."""
+    """Allow wage clerks and supervisors to verify native wage sources."""
     from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
     from frappe.permissions import setup_custom_perms
 
@@ -145,22 +145,25 @@ def _install_wage_source_permissions():
         ("Job Card", True), ("Work Order", True), ("Item", True),
         ("Jifeng Flow Order", True), ("Operation", False), ("UOM", False),
     ):
-        rules = frappe.get_meta(doctype).permissions
-        # A site's explicit HR rule takes precedence, including an intentional
-        # denial. Existing shared read/select rules need no extra permission.
-        if any(row.role == "HR Manager" for row in rules):
-            continue
-        if any(row.role == "All" and (row.read if readable else row.read or row.select) for row in rules):
-            continue
-        setup_custom_perms(doctype)
-        frappe.get_doc({
-            "doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
-            "parentfield": "permissions", "role": "HR Manager", "permlevel": 0,
-            "if_owner": 0, "read": int(readable), "select": 1,
-            "write": 0, "create": 0, "delete": 0, "submit": 0, "cancel": 0,
-            "amend": 0, "report": 0, "export": 0, "share": 0, "print": 0,
-        }).insert(ignore_permissions=True)
-        validate_permissions_for_doctype(doctype)
+        for role in ("HR Manager", "HR User"):
+            rules = frappe.get_meta(doctype).permissions
+            # A site's explicit HR rule takes precedence, including an intentional
+            # denial. Existing shared read/select rules need no extra permission.
+            if any(row.role == role for row in rules):
+                continue
+            if any(row.role == "All" and (row.read if readable else row.read or row.select) for row in rules):
+                continue
+            setup_custom_perms(doctype)
+            frappe.get_doc({
+                "doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
+                "parentfield": "permissions", "role": role, "permlevel": 0,
+                "if_owner": 0, "read": int(readable), "select": 1,
+                "write": 0, "create": 0, "delete": 0, "submit": 0, "cancel": 0,
+                "amend": 0, "report": 0, "export": 0, "share": 0, "print": 0,
+            }).insert(ignore_permissions=True)
+            validate_permissions_for_doctype(doctype)
+            frappe.get_doc("DocType", doctype).add_comment("Info",
+                "集沣计件工资来源安装：" + role + "补充原生来源读取/选择权限以核对工资；不授予生产修改、审核、取消、导出权限，具体文档及公司/员工 User Permission 继续生效。")
 
 
 def _install_wage_reversal_permissions():

@@ -44,6 +44,9 @@ def smoke(company, item_group, stock_uom, payroll=True):
                                      "company": company, "gender": gender,
                                      "date_of_birth": "1990-01-01", "date_of_joining": first,
                                      "status": "Active"}).insert() for idx in range(3)]
+        for employee in employees:
+            frappe.get_doc({"doctype": "Jifeng Employee Supplement", "employee": employee.name,
+                            "wage_method": "计件"}).insert()
         component = frappe.get_doc({"doctype": "Salary Component", "salary_component": "JF-PIECE-" + suffix,
                                     "salary_component_abbr": "JFP" + suffix, "type": "Earning",
                                     "depends_on_payment_days": 0, "is_tax_applicable": 0}).insert()
@@ -105,6 +108,8 @@ def smoke(company, item_group, stock_uom, payroll=True):
                                            "company": other_company.name, "gender": gender,
                                            "date_of_birth": "1990-01-01", "date_of_joining": first,
                                            "status": "Active"}).insert()
+        frappe.get_doc({"doctype": "Jifeng Employee Supplement", "employee": foreign_employee.name,
+                        "wage_method": "计件"}).insert()
         foreign_warehouse = frappe.db.get_value("Warehouse", {"company": other_company.name,
                                                               "is_group": 0, "disabled": 0}, "name")
         foreign_card = native_card(7, [foreign_employee], qty=1, company_name=other_company.name,

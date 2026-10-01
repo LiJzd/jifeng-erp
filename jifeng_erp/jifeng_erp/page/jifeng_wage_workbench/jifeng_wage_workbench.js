@@ -2,12 +2,15 @@ frappe.pages["jifeng-wage-workbench"].on_page_load = function (wrapper) {
     wrapper.jifeng_wages = new JifengWageWorkbench(wrapper);
     window.jifeng_wage_workbench = wrapper.jifeng_wages;
 };
+frappe.pages["jifeng-wage-workbench"].on_page_show = function (wrapper) {
+    wrapper.jifeng_wages?.applyPieceWorker();
+};
 
 class JifengWageWorkbench {
     constructor(wrapper) {
         this.page = frappe.ui.make_app_page({ parent: wrapper, title: "工资录入", single_column: true });
         this.rows = [];
-        this.requestId = crypto.randomUUID();
+        this.requestId = this.requestID();
         this.busy = false;
         this.frozen = false;
         this.storageKey = "jifeng_wage_pending:" + frappe.session.user;
@@ -30,7 +33,7 @@ class JifengWageWorkbench {
                 <label><input type="checkbox" data-wage-multi> 多人操作</label>
                 <label><input type="checkbox" data-wage-multi-operation> 多工序</label>
             </div>
-            <p class="jf-wage-hint">双击姓名进入计时；勾选多人操作后双击姓名，填写同一道工序的员工份额；勾选多工序后双击工序，为同一员工逐道录入。</p>
+            <p class="jf-wage-hint">双击姓名进入计时；勾选多人操作后双击姓名，填写同一道工序的员工份额；勾选多工序后双击工序，为同一员工逐道录入。计件须核实人员档案工资方式为计件；纯计时继续按现有规则录入。</p>
             <div class="jf-wage-actions">
                 <button class="btn btn-default btn-sm" data-wage-add>新增计件</button>
                 <button class="btn btn-primary btn-sm" data-wage-save>保存草稿</button>
@@ -90,8 +93,43 @@ class JifengWageWorkbench {
     }
 
     value(field) { return this.controls[field].get_value(); }
+    requestID() {
+        if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+        return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    async applyPieceWorker() {
+        const company = frappe.route_options?.piece_worker_company;
+        const employee = frappe.route_options?.piece_worker_employee;
+        if (!company && !employee) return;
+        delete frappe.route_options.piece_worker_company;
+        delete frappe.route_options.piece_worker_employee;
+        return this.choosePieceWorker(company, employee);
+    }
+    async choosePieceWorker(company, employee) {
+        if (this.selectionBusy || this.is_dirty()) { frappe.msgprint("请先保存或核对当前工资草稿，再选择计件人员。"); return false; }
+        const previous = { company: this.value("company"), employee: this.value("employee") };
+        this.selectionBusy = true;
+        try {
+            const result = await frappe.call({ method: "jifeng_erp.piece_workers.select_piece_worker", args: { company, employee } });
+            if (!result.message?.eligible || result.message.company !== company || result.message.employee !== employee) throw new Error("人员选择结果不匹配");
+            if (this.is_dirty()) { frappe.msgprint("当前已有工资草稿，请先保存或核对。"); return false; }
+            if (previous.company !== this.value("company") || previous.employee !== this.value("employee")) {
+                frappe.msgprint("公司或姓名已变化，请重新选择计件人员。");
+                return false;
+            }
+            await this.controls.company.set_value(company);
+            await this.controls.employee.set_value(employee);
+            return true;
+        } catch (error) { frappe.msgprint("计件人员资格核对失败，请回到计件人员重新查询。"); return false; }
+        finally { this.selectionBusy = false; }
+    }
     is_dirty() { return this.rows.length > 0 || this.frozen || this.busy || Boolean(this.activeDialog && this.activeDialog.is_visible); }
     get_close_block() {
+        if (this.selectionBusy) return "正在核对计件人员，请稍后关闭。";
         if (this.busy) return "正在保存，请稍后关闭。";
         if (this.frozen) return "保存结果尚未核实，请先核对保存结果再关闭。";
         return "";
@@ -126,7 +164,10 @@ class JifengWageWorkbench {
         this.pending = null;
     }
     async guard(action) {
-        try { await action(); }
+        try {
+            if (this.selectionBusy) throw new Error("正在核对计件人员，请稍后操作。");
+            await action();
+        }
         catch (error) { if (!error?._server_messages) frappe.msgprint(error.message || "工资操作未完成，请核对提示后重试。"); }
     }
     requirePerson() {
@@ -134,6 +175,7 @@ class JifengWageWorkbench {
         if (!this.value("work_date") || !this.value("payroll_date")) throw new Error("请填写日期和计薪日期。");
     }
     editable() {
+        if (this.selectionBusy) throw new Error("正在核对计件人员，请稍后操作。");
         if (this.busy || this.frozen) throw new Error("请先核对当前保存结果，再继续录入。");
         if (this.rows.length && (this.batchPerson.employee !== this.value("employee") || this.batchPerson.company !== this.value("company"))) {
             throw new Error("请先保存当前员工的录入，再更换公司或姓名。");
@@ -292,6 +334,7 @@ class JifengWageWorkbench {
             rows: this.rows.map(({ flow_order, ...row }) => row) };
     }
     async save() {
+        if (this.selectionBusy) throw new Error("正在核对计件人员，请稍后保存。");
         if (this.busy) return;
         if (this.frozen) return this.checkResult();
         if (!this.rows.length) throw new Error("请先双击姓名或工序，加入工资明细。");
@@ -319,7 +362,7 @@ class JifengWageWorkbench {
             else if (!wages.length) {
                 this.clearPending();
                 this.lock(false);
-                this.requestId = crypto.randomUUID();
+                this.requestId = this.requestID();
                 this.sentPayload = null;
                 frappe.msgprint("已核对本次请求未保存，明细保留。请修正提示中的问题后重新保存。");
             } else frappe.msgprint("本次请求结果需要核对，请保留当前页面和明细。");
@@ -332,7 +375,7 @@ class JifengWageWorkbench {
         this.rows = [];
         this.sentPayload = null;
         this.clearPending();
-        this.requestId = crypto.randomUUID();
+        this.requestId = this.requestID();
         this.lock(false);
     }
 }

@@ -25,7 +25,7 @@ from jifeng_erp.wage_allocation import (
 
 
 KINDS = {
-    "employees": "Employee", "salary_components": "Salary Component", "items": "Item",
+    "employees": "Employee", "supplements": "Jifeng Employee Supplement", "salary_components": "Salary Component", "items": "Item",
     "workstations": "Workstation", "operations": "Operation", "boms": "BOM",
     "flows": "Jifeng Flow Order", "work_orders": "Work Order", "job_cards": "Job Card",
     "allocations": "Jifeng Wage Allocation", "wages": "Jifeng Wage Entry",
@@ -34,6 +34,7 @@ UI_TYPES = {"Jifeng Wage Allocation", "Jifeng Wage Entry"}
 SOURCE_KINDS = tuple(kind for kind, doctype in KINDS.items() if doctype not in UI_TYPES)
 PARENT_FIELDS = {
     "Employee": ("first_name", "employee_name", "company", "gender", "date_of_birth", "date_of_joining", "user_id"),
+    "Jifeng Employee Supplement": ("employee", "company", "wage_method"),
     "Salary Component": ("salary_component", "salary_component_abbr", "type", "depends_on_payment_days", "is_tax_applicable"),
     "Item": ("item_code", "item_name", "item_group", "stock_uom", "is_stock_item", "valuation_method"),
     "Workstation": ("workstation_name", "production_capacity", "holiday_list"),
@@ -104,6 +105,7 @@ def _load(data):
                   "bin_records", *SOURCE_KINDS):
         if data.get(field) != canonical.get(field):
             raise ValueError("调用参数与私有日志中的工资夹具身份或准备来源集合不一致")
+    canonical.setdefault("supplements", [])
     return canonical
 
 
@@ -339,6 +341,9 @@ def prepare(company, item_group, stock_uom, browser_user="Administrator"):
         employees = [_track(data, frappe.get_doc({"doctype": "Employee", "first_name": prefix + f"-E{idx}",
             "company": company, "gender": gender, "date_of_birth": "1990-01-01",
             "date_of_joining": str(get_first_day(today())), "status": "Active"}).insert()) for idx in (1, 2)]
+        for employee in employees:
+            _track(data, frappe.get_doc({"doctype": "Jifeng Employee Supplement", "employee": employee.name,
+                                        "wage_method": "计件"}).insert())
         component = _track(data, frappe.get_doc({"doctype": "Salary Component", "salary_component": prefix + "-PIECE",
             "salary_component_abbr": "JFWB" + suffix, "type": "Earning", "depends_on_payment_days": 0,
             "is_tax_applicable": 0}).insert())
@@ -558,7 +563,7 @@ def cleanup(data):
                                      "previous_value": previous, "value": value, "changed_at": now()})
         retained.extend({"doctype": KINDS[kind], "name": name,
                          "reason": "保留唯一前缀的原生工序或非审核流程来源，私有日志可追溯"}
-                        for kind in ("operations", "flows") for name in data[kind])
+                        for kind in ("operations", "flows", "supplements") for name in data[kind])
         assert all(frappe.db.get_value(KINDS[kind], name, "docstatus") == 2 for kind in
                    ("job_cards", "work_orders", "boms") for name in data[kind])
         assert all(not frappe.db.exists(KINDS[kind], name) or frappe.db.get_value(KINDS[kind], name, "docstatus") == 2

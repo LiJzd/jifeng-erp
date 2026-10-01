@@ -6,7 +6,7 @@
  "editable_grid": 1,
  "track_changes": 0,
  "permissions": [],
- "field_order": ["employee", "employee_name", "quantity", "piece_rate", "piece_amount", "hours", "source_hours_complete", "include_time_pay", "wage_hours", "hourly_rate", "time_amount", "extra_amount", "total_amount", "wage_entry"],
+ "field_order": ["employee", "employee_name", "quantity", "piece_rate", "piece_amount", "hours", "source_hours_complete", "include_time_pay", "wage_hours", "hourly_rate", "time_amount", "extra_amount", "total_amount", "piece_worker_qualified", "piece_worker_qualification_status", "piece_worker_qualification_source", "piece_worker_qualification_version", "wage_entry"],
  "fields": [
   {"fieldname": "employee", "fieldtype": "Link", "label": "员工", "options": "Employee", "reqd": 1, "in_list_view": 1},
   {"fieldname": "employee_name", "fieldtype": "Data", "label": "姓名", "read_only": 1},
@@ -21,6 +21,10 @@
   {"fieldname": "time_amount", "fieldtype": "Currency", "label": "计时金额", "options": "currency", "read_only": 1},
   {"fieldname": "extra_amount", "fieldtype": "Currency", "label": "附加费", "options": "currency", "default": "0"},
   {"fieldname": "total_amount", "fieldtype": "Currency", "label": "计薪合计", "options": "currency", "read_only": 1, "in_list_view": 1},
+  {"fieldname": "piece_worker_qualified", "fieldtype": "Check", "label": "计件资格已核实", "read_only": 1, "hidden": 1, "no_copy": 1},
+  {"fieldname": "piece_worker_qualification_status", "fieldtype": "Select", "label": "计件资格核实状态", "options": "\n已核实\n历史未记录\n不适用", "read_only": 1, "no_copy": 1},
+  {"fieldname": "piece_worker_qualification_source", "fieldtype": "Data", "label": "计件资格来源摘要", "read_only": 1, "hidden": 1, "no_copy": 1, "permlevel": 1},
+  {"fieldname": "piece_worker_qualification_version", "fieldtype": "Data", "label": "计件资格版本摘要", "read_only": 1, "hidden": 1, "no_copy": 1, "permlevel": 1},
   {"fieldname": "wage_entry", "fieldtype": "Data", "label": "计薪记录编号", "read_only": 1, "no_copy": 1}
  ]
 }

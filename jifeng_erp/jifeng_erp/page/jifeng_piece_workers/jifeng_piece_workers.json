@@ -1,0 +1,9 @@
+{
+ "doctype": "Page",
+ "name": "jifeng-piece-workers",
+ "page_name": "jifeng-piece-workers",
+ "title": "工资计件人员",
+ "module": "Jifeng ERP",
+ "standard": "Yes",
+ "roles": [{"role": "HR User"}, {"role": "HR Manager"}, {"role": "System Manager"}]
+}

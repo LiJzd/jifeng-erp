@@ -75,7 +75,12 @@ class TestWageJobCardLink(unittest.TestCase):
         frappe = types.ModuleType("frappe")
         frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
         frappe.whitelist = lambda **kwargs: (lambda fn: fn)
-        frappe.db = types.SimpleNamespace(sql=Mock(return_value=[]))
+        frappe.session = types.SimpleNamespace(user="Administrator")
+        frappe.has_permission = Mock(return_value=True)
+        frappe.PermissionError = PermissionError
+        frappe.db = types.SimpleNamespace(sql=Mock(return_value=[]), get_value=Mock(return_value=
+            types.SimpleNamespace(name="SUP-1", wage_method="计件", modified="2026-10-01 08:00:00")))
+        self.frappe = frappe
         self.employee = types.SimpleNamespace(company="C-1", status="Active", employee_name="员工甲", check_permission=Mock())
         self.card = types.SimpleNamespace(company="C-1", work_order="WO-1", operation="抛光",
                                           name="JC-1", stock_uom="Nos", total_completed_qty=5,
@@ -85,8 +90,10 @@ class TestWageJobCardLink(unittest.TestCase):
         self.flow = types.SimpleNamespace(company="C-1", check_permission=Mock())
         component = types.SimpleNamespace(type="Earning", disabled=0, check_permission=Mock())
         docs = {"Employee": self.employee, "Job Card": self.card, "Work Order": self.work,
+                "Company": types.SimpleNamespace(check_permission=Mock()),
                 "Jifeng Flow Order": self.flow, "Salary Component": component}
-        frappe.get_doc = lambda doctype, name, **kwargs: docs[doctype]
+        frappe.get_doc = lambda doctype, name=None, **kwargs: (types.SimpleNamespace(check_permission=Mock(), **doctype)
+            if isinstance(doctype, dict) else docs[doctype])
         model = types.ModuleType("frappe.model")
         document = types.ModuleType("frappe.model.document")
         document.Document = type("Document", (), {})
@@ -101,6 +108,13 @@ class TestWageJobCardLink(unittest.TestCase):
         with patch.dict(sys.modules, {"frappe": frappe, "frappe.model": model,
                                       "frappe.model.document": document, "frappe.utils": utils,
                                       "jifeng_erp.payroll": payroll}):
+            piece_path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "piece_workers.py"
+            piece_spec = importlib.util.spec_from_file_location("payroll_piece_workers", piece_path)
+            pieces = importlib.util.module_from_spec(piece_spec)
+            piece_spec.loader.exec_module(pieces)
+            piece_scope = patch.dict(sys.modules, {"jifeng_erp.piece_workers": pieces})
+            piece_scope.start()
+            self.addCleanup(piece_scope.stop)
             allocation_path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "wage_allocation.py"
             allocation_spec = importlib.util.spec_from_file_location("allocation_under_test", allocation_path)
             allocation = importlib.util.module_from_spec(allocation_spec)
@@ -110,6 +124,7 @@ class TestWageJobCardLink(unittest.TestCase):
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
         self.wage = module.JifengWageEntry()
+        self.module = module
         self.wage.employee, self.wage.company = "E-1", "C-1"
         self.wage.operation, self.wage.flow_order, self.wage.work_order = "抛光", None, None
         self.wage.job_card, self.wage.salary_component = "JC-1", "Piece"
@@ -138,6 +153,14 @@ class TestWageJobCardLink(unittest.TestCase):
         self.wage.operation = "电镀"
         with self.assertRaisesRegex(ValueError, "工序"):
             self.wage.validate()
+
+    def test_approved_allocation_snapshot_does_not_bypass_current_draft_or_submission_qualification(self):
+        self.wage.wage_allocation, self.wage.wage_allocation_employee = "A-1", "R-1"
+        self.frappe.db.get_value.return_value.wage_method = "计时"
+        for status in (0, 1):
+            self.wage.docstatus = status
+            with self.subTest(docstatus=status), patch.object(self.module, "validate_wage_source"), self.assertRaisesRegex(ValueError, "工资方式必须为计件"):
+                self.wage.validate()
 
 
 if __name__ == "__main__":

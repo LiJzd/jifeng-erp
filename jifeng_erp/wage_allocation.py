@@ -8,6 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import frappe
 
 from jifeng_erp.payroll import nonnegative, wage_amounts
+from jifeng_erp.piece_workers import bind_piece_worker
 
 
 ALLOCATION = "Jifeng Wage Allocation"
@@ -165,7 +166,7 @@ def _bind_source(allocation, snapshot):
         setattr(allocation, field, expected)
 
 
-def validate_allocation(allocation):
+def validate_allocation(allocation, *, approved_history=None):
     _, _, snapshot, people = load_source(allocation.job_card, lock=True)
     _bind_source(allocation, snapshot)
     if _active_allocations(allocation.job_card, _get(allocation, "name")):
@@ -181,6 +182,11 @@ def validate_allocation(allocation):
     component.check_permission("read")
     if component.type != "Earning" or component.disabled:
         frappe.throw("请选择启用的收入类工资项目")
+    before = getattr(allocation, "get_doc_before_save", lambda: None)()
+    history = approved_history or before
+    approved_rows = {row.name: row for row in history.employees} if (
+        history and history.docstatus == 1 and allocation.docstatus == 1
+        and history.company == allocation.company) else {}
     seen, total_qty, total_amount = set(), Decimal(0), Decimal(0)
     for row in allocation.employees or []:
         if not row.employee or row.employee in seen:
@@ -197,6 +203,12 @@ def validate_allocation(allocation):
         if row.quantity and _get(row, "piece_rate") in (None, ""):
             frappe.throw("有计件份额的员工需要由主管填写计件工价")
         row.piece_rate = _decimal(_get(row, "piece_rate"), "计件工价")
+        prior = approved_rows.get(row.name)
+        approved_row = prior if (prior and prior.employee == row.employee
+                                 and _decimal(prior.quantity) == row.quantity
+                                 and _decimal(prior.piece_rate) == row.piece_rate) else None
+        bind_piece_worker(row, allocation.company, row.employee, row.quantity, row.piece_rate,
+                          historical=approved_row)
         person = people[row.employee]
         row.hours = person["hours"]
         row.source_hours_complete = int(person["complete"] and not person["overlapping"])
@@ -308,7 +320,11 @@ def generate_wages(allocation):
     allocation.check_permission("read")
     if allocation.docstatus != 1:
         frappe.throw("请先审核工资分配")
-    validate_allocation(allocation)
+    approved = frappe.get_doc(ALLOCATION, allocation.name, for_update=True)
+    approved.check_permission("read")
+    if approved.docstatus != 1:
+        frappe.throw("请先审核工资分配")
+    validate_allocation(allocation, approved_history=approved)
     names = []
     for row in allocation.employees:
         if _decimal(row.total_amount) <= 0:

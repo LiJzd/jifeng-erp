@@ -37,6 +37,11 @@ function workbench() {
 async function main() {
     let checks = 0;
     const check = (condition, message) => { assert.ok(condition, message); checks++; };
+    let randomCalls = 0;
+    context.crypto = { getRandomValues: bytes => { randomCalls += 1; bytes.fill(255); return bytes; } };
+    check(workbench().requestID() === "ffffffff-ffff-4fff-bfff-ffffffffffff" && randomCalls === 1,
+        "LAN HTTP fallback uses real secure bytes and sets UUID4 version and variant");
+    context.crypto = crypto;
     const dirty = workbench();
     check(!dirty.is_dirty(), "empty page is clean");
     dirty.rows = [{}]; check(dirty.is_dirty(), "unsaved rows are dirty");
@@ -56,6 +61,25 @@ async function main() {
     gestures.root.querySelector("[data-wage-multi]").checked = true;
     gestures.root.querySelector("[data-wage-multi-operation]").checked = true;
     gestures.nameDoubleClick(); check(action === "allocation", "name selects allocation even with both independent modes enabled");
+
+    const selection = workbench();
+    let finishSelection;
+    frappe.call = () => new Promise(resolve => { finishSelection = resolve; });
+    const choosing = selection.choosePieceWorker("C-2", "E-2");
+    check(selection.selectionBusy && selection.get_close_block().includes("正在核对"), "pending qualification blocks closing");
+    let entryCalls = 0;
+    await selection.guard(() => { entryCalls += 1; });
+    check(entryCalls === 0, "pending qualification blocks add and double-click business actions");
+    await assert.rejects(selection.save(), /正在核对/);
+    checks += 1;
+    selection.controls.employee.set_value("MANUALLY-CHANGED");
+    finishSelection({ message: { company: "C-2", employee: "E-2", eligible: true } });
+    check(await choosing === false && selection.value("employee") === "MANUALLY-CHANGED" && selection.value("company") === "C-1",
+        "changing employee during delayed RPC prevents overwrite or save");
+    check(!selection.selectionBusy, "failed selection releases its pending guard");
+    frappe.call = async () => ({ message: { company: "C-2", employee: "E-2", eligible: true } });
+    check(await selection.choosePieceWorker("C-2", "E-2") && selection.value("company") === "C-2" && selection.value("employee") === "E-2",
+        "verified clean selection pre-fills exact company and employee");
 
     const unknown = workbench();
     unknown.rows = [{ quantity: 0, hours: 1, hourly_rate: 10, flow_order: "", job_card: "" }];

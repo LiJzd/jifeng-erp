@@ -148,6 +148,29 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		return this.inventoryEditor.open(kind, name).catch(() => {});
 	}
 
+	async selectPieceWorker(company, employee) {
+		if (this.selectingPieceWorker) return false;
+		this.selectingPieceWorker = true;
+		try {
+			const key = "formal:工资:工资录入";
+			let entry = this.frames.get(key);
+			const blocked = () => entry && (this.frameCloseBlock(entry.iframe) || this.isDirty(entry.iframe));
+			if (blocked()) {
+				frappe.msgprint(__("请先保存或核对工资录入中的草稿，再选择计件人员。")); return false;
+			}
+			// Reuse the actual classic wage tab; a workers iframe must not create a second workbench.
+			this.open({ title: "工资录入", module: "工资", kind: "page", route: ["jifeng-wage-workbench"] });
+			entry = this.frames.get(key);
+			if (!entry || await entry.ready === false) return false;
+			if (this.frames.get(key) !== entry || entry.iframe.isConnected === false) return false;
+			if (blocked()) { frappe.msgprint(__("工资录入已有未保存的内容，请先处理。")); return false; }
+			const child = entry.iframe.contentWindow;
+			await child.frappe.set_route("jifeng-wage-workbench");
+			if (this.frames.get(key) !== entry || entry.iframe.isConnected === false) return false;
+			return !!await child.jifeng_wage_workbench?.choosePieceWorker(company, employee);
+		} finally { this.selectingPieceWorker = false; }
+	}
+
 	mount(host, spec) {
 		const iframe = document.createElement("iframe");
 		iframe.className = "jfe-formal-iframe";
@@ -159,7 +182,9 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		host.append(loading, iframe);
 		let timer;
 		let stopped = false;
-		const stop = () => { stopped = true; clearInterval(timer); };
+		let settleReady;
+		const ready = new Promise((resolve) => { settleReady = resolve; });
+		const stop = () => { stopped = true; clearInterval(timer); settleReady(false); };
 		iframe.addEventListener("load", () => {
 			if (stopped) return;
 			clearInterval(timer);
@@ -180,6 +205,9 @@ window.JifengClassicBridge = class JifengClassicBridge {
 					style.textContent = ".navbar,.layout-side-section{display:none!important}.layout-main-section-wrapper{margin:0!important}.page-container{padding-top:0!important}.page-head{top:0!important}" +
 						(spec.hideCreate ? ".page-head .primary-action{display:none!important}" : "");
 					child.document.head.appendChild(style);
+					if (spec.kind === "page" && spec.route?.[0] === "jifeng-piece-workers") {
+						child.jifeng_classic_select_piece_worker = (company, employee) => this.selectPieceWorker(company, employee);
+					}
 					if (spec.kind === "list") {
 						if (spec.inventoryArchive && window.JifengInventoryArchive) {
 							child.document.addEventListener("click", (event) => {
@@ -217,6 +245,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 						await new Promise((resolve) => child.frappe.model.with_doctype(spec.doctype, resolve));
 						if (!child.frappe.model.can_create(spec.doctype)) {
 							loading.textContent = __("没有新建此单据的权限。");
+							settleReady(false);
 							return;
 						}
 						await child.frappe.new_doc(spec.doctype, { ...spec.values });
@@ -244,11 +273,13 @@ window.JifengClassicBridge = class JifengClassicBridge {
 					}
 					loading.remove();
 					iframe.classList.add("is-ready");
+					settleReady(true);
 				} catch {
 					loading.textContent = __("页面未能打开，请关闭后重新打开。");
+					settleReady(false);
 				}
 			}, 100);
 		});
-		return { iframe, stop };
+		return { iframe, stop, ready };
 	}
 };

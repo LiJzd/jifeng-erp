@@ -12,7 +12,7 @@
   "employee", "employee_name", "company", "operation", "work_date", "payroll_date",
   "flow_order", "work_order", "job_card", "wage_allocation", "wage_allocation_employee", "salary_component", "calculation_section",
   "quantity", "stock_uom", "piece_rate", "piece_amount", "hours", "hourly_rate",
-  "time_amount", "extra_amount", "total_amount", "notes", "amended_from", "workbench_request_key", "workbench_request_fingerprint"
+  "time_amount", "extra_amount", "total_amount", "notes", "piece_worker_qualified", "piece_worker_qualification_status", "piece_worker_qualification_source", "piece_worker_qualification_version", "amended_from", "workbench_request_key", "workbench_request_fingerprint"
  ],
  "fields": [
   {"fieldname": "employee", "fieldtype": "Link", "label": "员工", "options": "Employee", "reqd": 1, "in_list_view": 1},
@@ -38,6 +38,10 @@
   {"fieldname": "extra_amount", "fieldtype": "Currency", "label": "附加费", "options": "Company:company:default_currency", "default": "0"},
   {"fieldname": "total_amount", "fieldtype": "Currency", "label": "计薪合计", "options": "Company:company:default_currency", "read_only": 1, "in_list_view": 1},
   {"fieldname": "notes", "fieldtype": "Small Text", "label": "备注"},
+  {"fieldname": "piece_worker_qualified", "fieldtype": "Check", "label": "计件资格已核实", "read_only": 1, "hidden": 1, "no_copy": 1},
+  {"fieldname": "piece_worker_qualification_status", "fieldtype": "Select", "label": "计件资格核实状态", "options": "\n已核实\n历史未记录\n不适用", "description": "审核前按当前人员档案核实；早期已审核记录没有资格快照时保留为历史未记录，不推定当时工资方式。", "read_only": 1, "no_copy": 1},
+  {"fieldname": "piece_worker_qualification_source", "fieldtype": "Data", "label": "计件资格来源摘要", "read_only": 1, "hidden": 1, "no_copy": 1, "permlevel": 1},
+  {"fieldname": "piece_worker_qualification_version", "fieldtype": "Data", "label": "计件资格版本摘要", "read_only": 1, "hidden": 1, "no_copy": 1, "permlevel": 1},
   {"fieldname": "amended_from", "fieldtype": "Link", "label": "修改自", "options": "Jifeng Wage Entry", "read_only": 1, "no_copy": 1, "print_hide": 1},
   {"fieldname": "workbench_request_key", "fieldtype": "Data", "label": "工资录入请求", "read_only": 1, "hidden": 1, "unique": 1, "no_copy": 1},
   {"fieldname": "workbench_request_fingerprint", "fieldtype": "Data", "label": "工资录入请求内容", "read_only": 1, "hidden": 1, "no_copy": 1}
@@ -45,6 +49,7 @@
  "permissions": [
   {"role": "HR User", "read": 1, "write": 1, "create": 1, "report": 1, "print": 1},
   {"role": "HR Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1},
-  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1}
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "cancel": 1, "amend": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "System Manager", "permlevel": 1, "read": 1}
  ]
 }

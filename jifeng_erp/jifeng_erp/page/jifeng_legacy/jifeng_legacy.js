@@ -165,7 +165,7 @@ const JIFENG_LIVE_ROUTES = {
 };
 
 const JIFENG_LIVE_PAGES = {
-	工资: { 工资录入: "jifeng-wage-workbench" },
+	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers" },
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
 		算料汇总: { name: "jifeng-order-material-workbench", mode: "summary" } },
 	权限: { 权限管理: "permission-manager" },

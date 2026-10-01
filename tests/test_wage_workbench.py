@@ -36,7 +36,8 @@ class TestWageWorkbench(unittest.TestCase):
         frappe.PermissionError = PermissionError
         frappe.db = types.SimpleNamespace(savepoint=Mock(side_effect=self.savepoint),
                                          rollback=Mock(side_effect=self.rollback), commit=Mock(),
-                                         sql=Mock(side_effect=self.current_read))
+                                         sql=Mock(side_effect=self.current_read),
+                                         get_value=Mock(return_value=Doc(name="SUP-1", wage_method="计件", modified="2026-10-01 08:00:00")))
         utils = types.ModuleType("frappe.utils")
         utils.getdate = lambda value: datetime.date.fromisoformat(str(value))
         scope = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils})
@@ -48,6 +49,12 @@ class TestWageWorkbench(unittest.TestCase):
         payroll_scope = patch.dict(sys.modules, {"jifeng_erp.payroll": payroll})
         payroll_scope.start()
         self.addCleanup(payroll_scope.stop)
+        spec = importlib.util.spec_from_file_location("workbench_piece_workers", ROOT / "piece_workers.py")
+        self.piece_workers = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.piece_workers)
+        piece_scope = patch.dict(sys.modules, {"jifeng_erp.piece_workers": self.piece_workers})
+        piece_scope.start()
+        self.addCleanup(piece_scope.stop)
         spec = importlib.util.spec_from_file_location("wage_workbench_under_test", ROOT / "wage_workbench.py")
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)

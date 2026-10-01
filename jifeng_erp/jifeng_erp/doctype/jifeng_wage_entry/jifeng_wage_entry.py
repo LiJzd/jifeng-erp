@@ -3,6 +3,7 @@ from frappe.model.document import Document
 from frappe.utils import getdate
 
 from jifeng_erp.payroll import active_additional_salary, wage_amounts
+from jifeng_erp.piece_workers import bind_piece_worker
 from jifeng_erp.wage_allocation import validate_wage_source
 from jifeng_erp.wage_workbench import authorize_native_restore, guard_request_identity, prepare_wage_amendment
 
@@ -65,6 +66,11 @@ class JifengWageEntry(Document):
         if self.quantity and not getattr(self, "stock_uom", None):
             frappe.throw("请填写计件数量的单位")
         validate_wage_source(self)
+        before = getattr(self, "get_doc_before_save", lambda: None)()
+        historical = before if (before and before.docstatus == 1 and getattr(self, "docstatus", 0) == 1
+                                and before.company == self.company and before.employee == self.employee
+                                and before.quantity == self.quantity and before.piece_rate == self.piece_rate) else None
+        bind_piece_worker(self, historical=historical)
 
     def before_submit(self):
         if not self.job_card:

@@ -153,7 +153,11 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 	}
 
 	async save(state) {
-		if (state.saving || state.linking || state.unresolved || !state.dialog.get_values()) return;
+		if (state.saving || state.linking || state.unresolved) return;
+		if (!state.archive.name && !state.archive.existing_item && !state.archive.can_create_item) {
+			frappe.msgprint(__("请先关联已有业务物料。")); return;
+		}
+		if (!state.dialog.get_values()) return;
 		state.saving = true;
 		state.candidate = structuredClone(this.payload(state));
 		state.dialog.get_primary_btn().prop("disabled", true);
