@@ -1,0 +1,20 @@
+.jfe-product-dictionary { height: 100%; display: flex; flex-direction: column; padding: 12px; color: #263d50; }
+.jfe-product-dictionary-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-bottom: 1px solid #b7d0e4; padding-bottom: 10px; }
+.jfe-product-dictionary-company { min-width: 220px; }
+.jfe-product-dictionary-company .form-group { margin-bottom: 0; }
+.jfe-product-dictionary-toolbar > input { border: 1px solid #9ab8cd; border-radius: 3px; padding: 6px 8px; min-width: 170px; }
+.jfe-product-dictionary-inactive { display: flex; align-items: center; gap: 4px; margin: 0; }
+.jfe-product-dictionary-limits { font-size: 12px; color: #5d6873; margin: 10px 0 4px; }
+.jfe-product-dictionary-status { margin: 4px 0 8px; min-height: 20px; }
+.jfe-product-dictionary-scroll { overflow: auto; flex: 1; min-height: 0; border: 1px solid #a8c5db; }
+.jfe-product-dictionary-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1120px; font-size: 13px; }
+.jfe-product-dictionary-table th { background: #dcecf7; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+.jfe-product-dictionary-table th, .jfe-product-dictionary-table td { border-right: 1px solid #bbd1e2; border-bottom: 1px solid #bbd1e2; padding: 7px; vertical-align: top; }
+.jfe-product-dictionary-table td { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 320px; }
+.jfe-product-dictionary-table tbody tr:nth-child(even) { background: #f3f8fc; }
+.jfe-product-dictionary-table small { display: block; margin-top: 4px; color: #5d6873; }
+.jfe-product-dictionary-dialog-scope { border-bottom: 1px solid #d4dce2; padding-bottom: 8px; }
+.jfe-product-dictionary-review { overflow-x: auto; }
+.jfe-product-dictionary-review:empty { display: none; }
+.jfe-product-dictionary-review table { border-collapse: collapse; width: 100%; }
+.jfe-product-dictionary-review th, .jfe-product-dictionary-review td { border: 1px solid #ccd6de; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }

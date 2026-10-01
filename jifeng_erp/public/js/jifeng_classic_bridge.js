@@ -63,12 +63,13 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	canClose(key) {
-		const frame = this.frames.get(key)?.iframe;
-		return !this.isDirty(frame);
+		const entry = this.frames.get(key);
+		return entry?.workbench ? !entry.workbench.isDirty() : !this.isDirty(entry?.iframe);
 	}
 
 	closeBlock(key) {
-		return this.frameCloseBlock(this.frames.get(key)?.iframe);
+		const entry = this.frames.get(key);
+		return entry?.workbench ? entry.workbench.getCloseBlock() : this.frameCloseBlock(entry?.iframe);
 	}
 
 	frameCloseBlock(frame) {
@@ -111,7 +112,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 			entry.stop();
 			entry.iframe.remove();
 			for (const cached of this.frames.values()) {
-				try { cached.iframe.contentWindow?.cur_list?.refresh(); } catch { /* page may still be loading */ }
+				try { cached.iframe?.contentWindow?.cur_list?.refresh(); } catch { /* page may still be loading */ }
 			}
 		};
 		const close = () => { dispose(); hide(); };
@@ -180,6 +181,10 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	mount(host, spec) {
+		if (spec.productDictionary) {
+			const workbench = new window.JifengProductDictionary(host, spec.productDictionary);
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		const iframe = document.createElement("iframe");
 		iframe.className = "jfe-formal-iframe";
 		iframe.title = spec.title;

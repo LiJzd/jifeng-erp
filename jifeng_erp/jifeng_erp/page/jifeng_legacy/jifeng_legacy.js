@@ -147,7 +147,8 @@ const JIFENG_LEGACY_MODULES = [
 const JIFENG_LIVE_ROUTES = {
 	物料: { 物料类别: "Jifeng Inventory Dictionary", 物料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
 	材料: { 材料类别: "Jifeng Inventory Dictionary", 形状: "Jifeng Inventory Dictionary", 颜色: "Jifeng Inventory Dictionary", 材料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
-	产品: { 产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation" },
+	产品: { 产品风格: "Jifeng Product Dictionary", 产品来源: "Jifeng Product Dictionary", 产品品牌: "Jifeng Product Dictionary",
+		产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation" },
 	订单: { 客户: "Customer", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card",
 		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation",
@@ -439,7 +440,9 @@ class JifengLegacyWorkspace {
 			let filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
 			const inventoryArchive = liveDoctype === "Jifeng Inventory Profile" ? moduleName : null;
 			const hrDictionary = liveDoctype === "Jifeng HR Dictionary" ? name.replace(/^人事/, "") : null;
+			const productDictionary = liveDoctype === "Jifeng Product Dictionary" ? name.replace(/^产品/, "") : null;
 			if (hrDictionary) filters = { dictionary_type: hrDictionary };
+			if (productDictionary) filters = { dictionary_type: productDictionary };
 			if (inventoryArchive) filters = { archive_kind: moduleName };
 			if (liveDoctype === "Jifeng Inventory Dictionary") filters = { archive_kind: moduleName,
 				...(name === "形状" || name === "颜色" ? { dictionary_type: name } : {}) };
@@ -451,6 +454,7 @@ class JifengLegacyWorkspace {
 					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {},
 					inventoryArchive,
 					hrDictionary,
+					productDictionary,
 					dictionaryArchive: liveDoctype === "Jifeng Inventory Dictionary",
 					personnelArchive: moduleName === "人事" && name === "人事档案",
 					hideCreate: moduleName === "人事" && name === "人事浏览" });
