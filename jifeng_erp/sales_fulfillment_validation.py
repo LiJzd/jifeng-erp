@@ -48,13 +48,63 @@ def _repost_protocol_state(insert, voucher, status):
     return job
 
 
+def _assert_native_manufacturing_sources(result, order, raw_item, sources):
+    """Require every owned WO/batch and only its exact finished source rows."""
+    details = {row.name: row for row in order.items}
+    expected = {work.name: (flow, work, entries) for flow, work, entries in sources}
+    assert len(expected) == len(sources) == len(details), "同商品订单行必须分别保留流程单和生产工单"
+    assert {work.sales_order_item for _, work, _ in sources} == set(details)
+    actual = {row["document"]["name"]: row for row in result["work_orders"]}
+    assert len(actual) == len(result["work_orders"]) and set(actual) == set(expected), "制造来源缺少或混入工单"
+    for name, (flow, work, entries) in expected.items():
+        detail = details[work.sales_order_item]
+        assert (flow.company, flow.sales_order, flow.sales_order_item, flow.item_code) == (
+            order.company, order.name, detail.name, detail.item_code)
+        assert flow.work_order == work.name and flt(flow.planned_qty) == flt(detail.qty)
+        assert (work.company, work.sales_order, work.production_item, work.jf_flow_order) == (
+            order.company, order.name, detail.item_code, flow.name)
+        assert work.docstatus == 1 and not work.operations, "本夹具须用已提交的无工序原生工单"
+        assert flt(work.qty) == flt(detail.qty) and flt(work.produced_qty) == len(entries)
+        projected = actual[name]["document"]
+        for field in ("name", "company", "sales_order", "sales_order_item", "production_item", "jf_flow_order",
+                      "docstatus", "status", "stock_uom"):
+            assert projected[field] == work.get(field), "工单投影与准确原生来源不同"
+        for field in ("qty", "produced_qty", "process_loss_qty"):
+            assert flt(projected[field]) == flt(work.get(field)), "工单数量不能替代逐批成品来源"
+        batches = actual[name]["manufacture_entries"]
+        projected_batches = {row["document"]["name"]: row for row in batches}
+        assert len(projected_batches) == len(batches) == len(entries)
+        assert set(projected_batches) == {entry.name for entry in entries}, "制造批次不能遗漏或串到另一订单行"
+        for entry in entries:
+            assert (entry.company, entry.work_order, entry.purpose, entry.docstatus) == (
+                order.company, work.name, "Manufacture", 1)
+            source_finished = [row for row in entry.items if row.is_finished_item]
+            source_raw = [row for row in entry.items if not row.is_finished_item]
+            assert len(source_finished) == len(source_raw) == 1
+            assert source_raw[0].item_code == raw_item and source_raw[0].jf_flow_order == flow.name
+            assert source_finished[0].item_code == detail.item_code
+            assert source_finished[0].jf_flow_order == flow.name and flt(source_finished[0].transfer_qty) == 1
+            batch = projected_batches[entry.name]
+            for field in ("name", "company", "work_order", "purpose", "docstatus"):
+                assert batch["document"][field] == entry.get(field)
+            assert flt(batch["document"]["fg_completed_qty"]) == flt(entry.fg_completed_qty) == 1
+            assert len(batch["finished_items"]) == 1, "原料消耗行不能当作成品入库行"
+            finished = batch["finished_items"][0]
+            for field in ("name", "parent", "parenttype", "parentfield", "item_code", "is_finished_item", "jf_flow_order",
+                          "uom", "stock_uom"):
+                assert finished[field] == source_finished[0].get(field), "成品明细必须保留准确父项、商品与流程单"
+            for field in ("qty", "transfer_qty"):
+                assert flt(finished[field]) == flt(source_finished[0].get(field)) == 1
+
+
 def _contents():
     result = _native_contents()
     doctypes = set(PARENTS) | {value[1] for value in TABLES.values()} | {
         "Company", "Warehouse", "Price List", "Customer", "Bin", "Repost Item Valuation",
         "Repost Payment Ledger", "Repost Accounting Ledger", "Stock Ledger Entry", "GL Entry",
         "DocType", "DocPerm", "Custom DocPerm", "Custom Field", "Property Setter", "Error Log",
-        "Communication", "Email Queue", "Notification Log", "Activity Log",
+        "Communication", "Email Queue", "Notification Log", "Activity Log", "BOM", "Job Card",
+        "Stock Reservation Entry",
     }
     doctypes = {doctype for doctype in doctypes if frappe.db.exists("DocType", doctype)}
     for doctype in tuple(doctypes):
@@ -66,10 +116,11 @@ def _contents():
 
 
 def smoke(company, other_company, item_group, stock_uom):
-    """Same-item rows, batch DN/SI, stock SI, returns, payments and isolation."""
+    """Same-item rows, manufacture/DN/SI batches, returns, payments and isolation."""
     from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
     from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
     from erpnext.controllers.sales_and_purchase_return import make_return_doc
+    from erpnext.manufacturing.doctype.work_order.work_order import make_stock_entry
     from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note, make_sales_invoice
     from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_invoice as invoice_from_delivery
 
@@ -125,7 +176,7 @@ def smoke(company, other_company, item_group, stock_uom):
         return document
 
     def completed_reposts():
-        _finish_fixture_reposts(company, {fixture.item.name}, {fixture.warehouse.name}, vouchers)
+        _finish_fixture_reposts(company, {fixture.item.name, fixture.raw.name}, {fixture.warehouse.name}, vouchers)
 
     def read(action=None):
         state, queued, local = _contents(), _callbacks(), _local_context()
@@ -200,6 +251,10 @@ def smoke(company, other_company, item_group, stock_uom):
                 "company": company, "default_warehouse": fixture.warehouse.name,
                 "income_account": fixture.accounts.income, "expense_account": fixture.accounts.expense,
                 "buying_cost_center": fixture.cost_center, "selling_cost_center": fixture.cost_center}])
+        fixture.raw = insert("Item", item_code=prefix + "-raw", item_group=item_group, stock_uom=stock_uom,
+            is_stock_item=1, valuation_method="Moving Average", item_defaults=[{
+                "company": company, "default_warehouse": fixture.warehouse.name,
+                "expense_account": fixture.accounts.expense, "buying_cost_center": fixture.cost_center}])
         fixture.customer = insert("Customer", customer_name=prefix, customer_type="Company",
             customer_group=fixture.customer_group, territory=fixture.territory)
         fixture.price_list = insert("Price List", price_list_name=prefix, currency=fixture.currency, selling=1, enabled=1)
@@ -218,10 +273,10 @@ def smoke(company, other_company, item_group, stock_uom):
         seed = post(frappe.get_doc({"doctype": "Stock Entry", "company": company,
             "stock_entry_type": "Material Receipt", "posting_date": add_days(today(), -1),
             "posting_time": "06:00:00", "set_posting_time": 1,
-            "items": [{"item_code": fixture.item.name, "qty": 30, "basic_rate": 2,
+            "items": [{"item_code": item.name, "qty": qty, "basic_rate": 2,
                        "t_warehouse": fixture.warehouse.name, "expense_account": fixture.accounts.expense,
-                       "cost_center": fixture.cost_center}]}))
-        assert seed.docstatus == 1
+                       "cost_center": fixture.cost_center} for item, qty in ((fixture.item, 30), (fixture.raw, 10))]}))
+        assert seed.docstatus == 1 and len(seed.items) == 2
         order = post(frappe.get_doc({"doctype": "Sales Order", "company": company,
             "customer": fixture.customer.name, "transaction_date": batch_date, "delivery_date": add_days(today(), 7),
             "selling_price_list": fixture.price_list.name, "price_list_currency": fixture.currency,
@@ -266,6 +321,69 @@ def smoke(company, other_company, item_group, stock_uom):
         assert baseline["work_orders"] == []
         assert [row["sales_order"]["name"] for row in read(lambda: query_orders(company, batch_date, batch_date, order.name))] == [order.name]
         passed("real_reader_native_batches_dn_si_and_stock_invoice_are_distinct_sources_without_net_totals")
+
+        current = "native_exact_work_order_and_manufacture_batches"
+        frappe.set_user(actors["writer"])
+        bom = post(frappe.get_doc({"doctype": "BOM", "company": company, "item": fixture.item.name,
+            "quantity": 1, "is_default": 0, "with_operations": 0, "currency": fixture.currency,
+            "items": [{"item_code": fixture.raw.name, "qty": 1, "rate": 2}]}))
+        assert bom.docstatus == 1 and not bom.operations
+        manufacturing_sources = []
+        for detail in order.items:
+            flow = remember(frappe.get_doc(FLOW, next(name for name in flows
+                if frappe.db.get_value(FLOW, name, "sales_order_item") == detail.name)))
+            flow.bom = bom.name
+            flow.materials = []
+            flow.append("materials", {"item_code": fixture.raw.name, "uom": stock_uom,
+                                      "qty_per_unit": 1, "unit_price": 2})
+            native(flow, "save")
+            work = remember(frappe.get_doc("Work Order", flow.make_work_order()))
+            records.add((work.doctype, work.name))
+            work.source_warehouse, work.fg_warehouse = fixture.warehouse.name, fixture.warehouse.name
+            work.skip_transfer, work.planned_start_date = 1, today() + " 06:00:00"
+            native(work, "save")
+            native(work, "submit")
+            work.reload()
+            assert work.docstatus == 1 and not work.operations and flt(work.produced_qty) == 0
+            assert work.sales_order_item == detail.name and flt(work.qty) == flt(detail.qty)
+            manufacturing_sources.append((flow, work, []))
+        # Every stock row is generated from this fixture's native receipt/BOM;
+        # no existing user stock, job-card quantity or direct ledger writes.
+        assert flt(frappe.db.get_value("Bin", {"item_code": fixture.item.name,
+            "warehouse": fixture.warehouse.name}, "actual_qty")) == 25
+        assert flt(frappe.db.get_value("Bin", {"item_code": fixture.raw.name,
+            "warehouse": fixture.warehouse.name}, "actual_qty")) == 10
+        for index, (flow, work, entries) in enumerate(manufacturing_sources):
+            for batch in range(2 if work.sales_order_item == first else 1):
+                entry = post(_stamp(frappe.get_doc(make_stock_entry(work.name, "Manufacture", 1)),
+                                    f"07:{index * 20 + batch * 10:02d}:00"))
+                entries.append(entry)
+                assert len(entry.items) == 2 and all(row.jf_flow_order == flow.name for row in entry.items)
+                finished = next(row for row in entry.items if row.is_finished_item)
+                raw = next(row for row in entry.items if not row.is_finished_item)
+                ledger = frappe.get_all("Stock Ledger Entry", filters={"voucher_type": "Stock Entry",
+                    "voucher_no": entry.name, "is_cancelled": 0},
+                    fields=["voucher_detail_no", "item_code", "warehouse", "actual_qty"])
+                assert len(ledger) == 2 and {(row.voucher_detail_no, row.item_code, row.warehouse, flt(row.actual_qty))
+                    for row in ledger} == {(finished.name, fixture.item.name, fixture.warehouse.name, 1),
+                                          (raw.name, fixture.raw.name, fixture.warehouse.name, -1)}
+            work.reload()
+            assert flt(work.produced_qty) == len(entries) and flt(work.process_loss_qty) == 0
+        completed_reposts()
+        assert flt(frappe.db.get_value("Bin", {"item_code": fixture.item.name,
+            "warehouse": fixture.warehouse.name}, "actual_qty")) == 28
+        assert flt(frappe.db.get_value("Bin", {"item_code": fixture.raw.name,
+            "warehouse": fixture.warehouse.name}, "actual_qty")) == 7
+        frappe.set_user(actors["reader"])
+        manufactured = read()
+        _assert_native_manufacturing_sources(manufactured, order, fixture.raw.name, manufacturing_sources)
+        passed("native_same_item_two_exact_so_flows_work_orders_three_batches_preserve_finished_sources_and_real_stock")
+        nested_gate("native_hidden_work_order_rejects_same_item_other_so_line_complete_view",
+                    lambda: restriction("Work Order", manufacturing_sources[0][1].name),
+                    hidden=(manufacturing_sources[1][1].name,))
+        nested_gate("native_hidden_manufacture_entry_rejects_complete_view",
+                    lambda: restriction("Stock Entry", seed.name),
+                    hidden=tuple(entry.name for _, _, entries in manufacturing_sources for entry in entries))
 
         current = "native_exact_returns_and_receipt"
         frappe.set_user(actors["writer"])
@@ -451,8 +569,10 @@ def smoke(company, other_company, item_group, stock_uom):
             "table_counts_before": counts, "table_counts_after": _tab_counts(tables)[1],
             "gui_verified": False, "concurrency_verified": False,
             "no_ple_vouchers": "normal native draft PE/JE; not submitted rebuilds",
+            "manufacturing_verification": "native no-operation BOM, two exact SO-line WOs, three Manufacture batches",
             "repost_verification": "persisted RPL protocol fixtures only; no submit/enqueue/worker",
-            "remaining": ["旧销售跟踪操作/UI", "原生工单制造入库链", "原生字段read/mask撤权",
+            "remaining": ["旧销售跟踪操作/UI", "独立无Work Order制造入库来源", "原生字段read/mask撤权",
+                          "含工序或取消的制造来源",
                           "Company仅select的真实岗位", "多币种专项", "真实重过账worker",
                           "Repost Accounting Ledger 原生状态专项", "已提交PE/JE重建期间暂缺PLE",
                           "双连接并发来源或权限变化"]}

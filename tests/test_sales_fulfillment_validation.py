@@ -1,6 +1,7 @@
-"""Persisted repost read-gate fixtures must never run a worker or touch ledgers."""
+"""Guard native fixture source checks and worker-free repost protocol writes."""
 
 import ast
+from copy import deepcopy
 from pathlib import Path
 import types
 import unittest
@@ -81,6 +82,113 @@ class TestSalesRepostProtocolFixture(unittest.TestCase):
         self.insert.assert_called_once()
         self.frappe.db.set_value.assert_not_called()
         self.assert_no_worker_or_voucher_write()
+
+
+class NativeRow(dict):
+    def __getattribute__(self, field):
+        if dict.__contains__(self, field):
+            return dict.__getitem__(self, field)
+        return dict.__getattribute__(self, field)
+
+
+class TestNativeManufacturingSourceGate(unittest.TestCase):
+    """A native verifier must fail on omitted batches, raw rows or crossed SO lines."""
+
+    def setUp(self):
+        path = ROOT / "jifeng_erp/sales_fulfillment_validation.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name == "_assert_native_manufacturing_sources"]
+        namespace = {"flt": lambda value: float(value or 0)}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), namespace)
+        self.verify = namespace["_assert_native_manufacturing_sources"]
+        self.order = NativeRow(name="SO", company="QA", items=[
+            NativeRow(name="SO-ROW-A", item_code="SAME-FG", qty=6),
+            NativeRow(name="SO-ROW-B", item_code="SAME-FG", qty=4)])
+        self.sources, self.result = [], {"work_orders": []}
+        for index, detail in enumerate(self.order.items):
+            count = 2 if index == 0 else 1
+            flow = NativeRow(name="FLOW-" + str(index), company="QA", sales_order="SO",
+                sales_order_item=detail.name, item_code="SAME-FG", work_order="WO-" + str(index), planned_qty=detail.qty)
+            work = NativeRow(name="WO-" + str(index), company="QA", sales_order="SO", sales_order_item=detail.name,
+                production_item="SAME-FG", jf_flow_order=flow.name, docstatus=1, operations=[],
+                status="In Process", stock_uom="Nos", qty=detail.qty, produced_qty=count, process_loss_qty=0)
+            entries, batches = [], []
+            for batch in range(count):
+                name = "STE-" + str(index) + "-" + str(batch)
+                finished = NativeRow(name=name + "-FG", parent=name, parenttype="Stock Entry", parentfield="items",
+                    item_code="SAME-FG", is_finished_item=1, jf_flow_order=flow.name, uom="Nos", stock_uom="Nos",
+                    qty=1, transfer_qty=1)
+                raw = NativeRow(name=name + "-RAW", item_code="RAW", is_finished_item=0,
+                                jf_flow_order=flow.name, transfer_qty=1)
+                entry = NativeRow(name=name, company="QA", work_order=work.name, purpose="Manufacture",
+                                  docstatus=1, fg_completed_qty=1, items=[raw, finished])
+                entries.append(entry)
+                batches.append({"document": {field: entry[field] for field in (
+                    "name", "company", "work_order", "purpose", "docstatus", "fg_completed_qty")},
+                    "finished_items": [dict(finished)]})
+            self.sources.append((flow, work, entries))
+            self.result["work_orders"].append({"document": {key: value for key, value in work.items()
+                                                            if key != "operations"}, "manufacture_entries": batches})
+
+    def verify_fixture(self):
+        self.verify(self.result, self.order, "RAW", self.sources)
+
+    def test_same_item_two_order_lines_keep_two_work_orders_and_all_three_native_batches(self):
+        self.verify_fixture()
+
+    def test_omitted_second_batch_is_rejected_even_if_work_order_produced_quantity_is_correct(self):
+        self.result["work_orders"][0]["manufacture_entries"].pop()
+        with self.assertRaises(AssertionError):
+            self.verify_fixture()
+
+    def test_same_item_does_not_allow_crossing_exact_sales_order_detail_or_flow(self):
+        for field, wrong in (("sales_order_item", "SO-ROW-B"), ("jf_flow_order", "FLOW-1")):
+            with self.subTest(field=field):
+                result = deepcopy(self.result)
+                result["work_orders"][0]["document"][field] = wrong
+                with self.assertRaises(AssertionError):
+                    self.verify(result, self.order, "RAW", self.sources)
+
+    def test_native_flow_reverse_binding_or_other_so_detail_cannot_be_adopted_as_expectation(self):
+        for field, wrong in (("work_order", "WO-1"), ("sales_order_item", "SO-ROW-B")):
+            with self.subTest(field=field):
+                sources = list(self.sources)
+                flow, work, entries = sources[0]
+                sources[0] = (NativeRow(dict(flow)), work, entries)
+                sources[0][0][field] = wrong
+                with self.assertRaises(AssertionError):
+                    self.verify(self.result, self.order, "RAW", sources)
+
+    def test_raw_material_cannot_replace_finished_row_despite_same_quantity(self):
+        entry = self.sources[0][2][0]
+        self.result["work_orders"][0]["manufacture_entries"][0]["finished_items"] = [dict(entry.items[0])]
+        with self.assertRaises(AssertionError):
+            self.verify_fixture()
+
+    def test_same_item_finished_row_from_other_batch_is_rejected(self):
+        batch = self.result["work_orders"][0]["manufacture_entries"][0]
+        batch["finished_items"] = deepcopy(self.result["work_orders"][0]["manufacture_entries"][1]["finished_items"])
+        with self.assertRaises(AssertionError):
+            self.verify_fixture()
+
+    def test_planned_work_order_quantity_cannot_replace_native_batch_quantity(self):
+        batch = self.result["work_orders"][0]["manufacture_entries"][0]
+        batch["finished_items"][0]["qty"] = 6
+        with self.assertRaises(AssertionError):
+            self.verify_fixture()
+
+    def test_foreign_work_order_or_duplicate_native_batch_is_rejected(self):
+        for field, wrong in (("company", "OTHER"), ("work_order", "WO-1")):
+            with self.subTest(field=field):
+                result = deepcopy(self.result)
+                result["work_orders"][0]["manufacture_entries"][0]["document"][field] = wrong
+                with self.assertRaises(AssertionError):
+                    self.verify(result, self.order, "RAW", self.sources)
+        self.result["work_orders"][0]["manufacture_entries"][1] = deepcopy(
+            self.result["work_orders"][0]["manufacture_entries"][0])
+        with self.assertRaises(AssertionError):
+            self.verify_fixture()
 
 
 if __name__ == "__main__":
