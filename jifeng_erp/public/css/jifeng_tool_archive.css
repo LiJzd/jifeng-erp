@@ -1,0 +1,44 @@
+.jfe-tool-archive { height: 100%; display: flex; flex-direction: column; padding: 12px; color: #263d50; }
+.jfe-tool-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-bottom: 1px solid #b7d0e4; padding-bottom: 10px; }
+.jfe-tool-toolbar .form-group { margin-bottom: 0; min-width: 190px; }
+.jfe-tool-toolbar > input { border: 1px solid #9ab8cd; border-radius: 3px; padding: 6px 8px; }
+.jfe-tool-toolbar > label { display: flex; align-items: center; gap: 4px; margin: 0; }
+.jfe-tool-status { margin: 8px 0; }
+.jfe-tool-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid #a8c5db; }
+.jfe-tool-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1100px; font-size: 13px; }
+.jfe-tool-table th { background: #dcecf7; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+.jfe-tool-table th, .jfe-tool-table td { border-right: 1px solid #bbd1e2; border-bottom: 1px solid #bbd1e2; padding: 7px; vertical-align: top; }
+.jfe-tool-table td { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 250px; }
+.jfe-tool-table img { width: 70px; height: 65px; object-fit: contain; }
+.jfe-tool-editor .modal-dialog { width: calc(100vw - 60px); max-width: 1100px; }
+.jfe-tool-editor .modal-body { max-height: calc(100vh - 160px); overflow: auto; }
+.jfe-tool-message { min-height: 18px; font-size: 12px; color: #5d6873; }
+.jfe-tool-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, 260px); gap: 18px; }
+.jfe-tool-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+.jfe-tool-field label, .jfe-tool-image > label { display: block; margin-bottom: 4px; font-size: 13px; }
+.jfe-tool-field input[type=text] { width: 100%; padding: 6px; border: 1px solid #9ab8cd; border-radius: 3px; }
+.jfe-tool-field input:disabled { color: #526579; background: #edf2f5; }
+.jfe-tool-field .form-group { margin-bottom: 0; }
+.jfe-tool-preview { min-height: 200px; height: 235px; border: 1px solid #b7cbd9; background: #f7fafd; display: flex; align-items: center; justify-content: center; color: #677785; }
+.jfe-tool-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.jfe-tool-image p { font-size: 12px; margin: 5px 0; }
+.jfe-tool-image button { margin: 0 5px 5px 0; }
+.jfe-tool-extra { border-top: 1px solid #d4dce2; margin-top: 12px; padding-top: 10px; }
+.jfe-tool-extra p { font-size: 12px; margin: 6px 0; }
+.jfe-tool-extra-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.jfe-tool-extra-grid .form-group { margin-bottom: 0; }
+.jfe-tool-footer { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; border-top: 1px solid #d4dce2; padding-top: 10px; }
+.jfe-tool-footer > button { min-width: 95px; }
+.jfe-tool-review { overflow: auto; max-height: 240px; margin-top: 8px; }
+.jfe-tool-review table { border-collapse: collapse; width: 100%; }
+.jfe-tool-review th, .jfe-tool-review td { border: 1px solid #ccd6de; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jfe-tool-candidates > div { border-top: 1px solid #d4dce2; padding: 5px; }
+.jfe-tool-candidates img { width: 70px; height: 65px; object-fit: contain; }
+.jfe-tool-candidates span, .jfe-tool-candidates small { display: block; overflow-wrap: anywhere; }
+.jfe-tool-editor [hidden] { display: none !important; }
+@media (max-width: 800px) {
+  .jfe-tool-editor .modal-dialog { width: calc(100vw - 24px); }
+  .jfe-tool-layout { grid-template-columns: minmax(0, 1fr); }
+  .jfe-tool-extra-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .jfe-tool-preview { height: 180px; min-height: 150px; }
+}

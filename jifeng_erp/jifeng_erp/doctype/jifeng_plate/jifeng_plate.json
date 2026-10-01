@@ -6,15 +6,16 @@
  "title_field": "plate_no",
  "search_fields": "legacy_number,plate_type,product_code,plate_no,item_code,location,maker,modeler",
  "track_changes": 1,
+ "allow_rename": 0,
  "allow_import": 1,
  "field_order": [
   "company", "legacy_number", "plate_type", "product_code", "assessment_score", "maker",
   "quantity", "notes", "location", "retired", "legacy_copy", "copy_from",
   "plate_no", "item_code", "image", "plate_date", "modeler", "reference_cost",
-  "retired_date", "retired_reason"
+  "retired_date", "retired_reason", "request_id", "request_digest"
  ],
  "fields": [
-  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "in_list_view": 1, "set_only_once": 1},
   {"fieldname": "legacy_number", "fieldtype": "Data", "label": "编号原文", "description": "单独保存历史录入编号，不从版种编号或系统主键带入，也不自动生成旧编号。"},
   {"fieldname": "plate_type", "fieldtype": "Data", "label": "类型原文", "description": "保留类型文字，不推定旧选择词典或映射为版种编号。"},
   {"fieldname": "product_code", "fieldtype": "Data", "label": "产品编号原文", "description": "与关联商品编码独立保存，不自动匹配商品。"},
@@ -24,7 +25,7 @@
   {"fieldname": "copy_from", "fieldtype": "Link", "label": "复制来源版种", "options": "Jifeng Plate", "description": "只记录同公司可读的来源版种，不自动复制字段或生成记录。"},
   {"fieldname": "plate_no", "fieldtype": "Data", "label": "版种编号", "reqd": 1, "unique": 1, "in_list_view": 1, "description": "本系统既有唯一身份；与历史编号、类型及产品编号分别保存，不相互回填。"},
   {"fieldname": "item_code", "fieldtype": "Link", "label": "关联商品", "options": "Item", "in_list_view": 1},
-  {"fieldname": "image", "fieldtype": "Attach Image", "label": "版种图片"},
+  {"fieldname": "image", "fieldtype": "Attach Image", "label": "档案图片"},
   {"fieldname": "plate_date", "fieldtype": "Date", "label": "建档日期", "reqd": 1, "default": "Today", "in_list_view": 1},
   {"fieldname": "maker", "fieldtype": "Link", "label": "制版人", "options": "Employee"},
   {"fieldname": "modeler", "fieldtype": "Link", "label": "建模人", "options": "Employee"},
@@ -33,7 +34,9 @@
   {"fieldname": "retired", "fieldtype": "Check", "label": "已停用", "in_list_view": 1},
   {"fieldname": "retired_date", "fieldtype": "Date", "label": "停用日期", "depends_on": "eval:doc.retired==1", "mandatory_depends_on": "eval:doc.retired==1"},
   {"fieldname": "retired_reason", "fieldtype": "Small Text", "label": "停用原因", "depends_on": "eval:doc.retired==1"},
-  {"fieldname": "notes", "fieldtype": "Small Text", "label": "说明"}
+  {"fieldname": "notes", "fieldtype": "Small Text", "label": "说明"},
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "创建请求身份", "hidden": 1, "read_only": 1, "no_copy": 1, "set_only_once": 1, "unique": 1, "print_hide": 1},
+  {"fieldname": "request_digest", "fieldtype": "Data", "label": "创建请求摘要", "hidden": 1, "read_only": 1, "no_copy": 1, "set_only_once": 1, "print_hide": 1}
  ],
  "permissions": [
   {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "print": 1},

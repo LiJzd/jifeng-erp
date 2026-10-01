@@ -12,6 +12,14 @@ class JifengPlate(Document):
         # the observed initial value only to new records, retaining explicit "".
         if self.get("assessment_score") is None:
             self.assessment_score = "1"
+        from jifeng_erp.tool_archive import before_insert_record
+
+        before_insert_record(self)
+
+    def before_rename(self, old, new, merge=False):
+        from jifeng_erp.tool_archive import prevent_rename
+
+        prevent_rename(self, old, new, merge)
 
     def validate(self):
         self.plate_no = (self.plate_no or "").strip()
@@ -47,3 +55,7 @@ class JifengPlate(Document):
         else:
             self.retired_date = None
             self.retired_reason = None
+
+        from jifeng_erp.tool_archive import validate_record
+
+        validate_record(self)

@@ -78,6 +78,15 @@ class TestCatalogProfiles(unittest.TestCase):
                                                "jifeng_erp.product_archive": product_archive})
         archive_patch.start()
         self.addCleanup(archive_patch.stop)
+        # This suite isolates pre-existing costing/reference behavior. Actual
+        # archive permissions/receipts/images are exercised in test_tool_archive.
+        tools = types.ModuleType("jifeng_erp.tool_archive")
+        tools.before_insert_record = Mock()
+        tools.validate_record = Mock()
+        tools.prevent_rename = Mock()
+        tool_patch = patch.dict(sys.modules, {"jifeng_erp.tool_archive": tools})
+        tool_patch.start()
+        self.addCleanup(tool_patch.stop)
         self.access = access
         self.item = self.reference("Item", "ITEM", image="/files/item.png")
         self.employee = self.reference("Employee", "EMP", company="COMPANY", bank_ac_no="private")

@@ -7,6 +7,16 @@ from jifeng_erp.costing import CostingError, number
 
 
 class JifengMold(Document):
+    def before_insert(self):
+        from jifeng_erp.tool_archive import before_insert_record
+
+        before_insert_record(self)
+
+    def before_rename(self, old, new, merge=False):
+        from jifeng_erp.tool_archive import prevent_rename
+
+        prevent_rename(self, old, new, merge)
+
     def validate(self):
         self.mold_no = (self.mold_no or "").strip()
         self.product_code = (self.product_code or "").strip()
@@ -46,3 +56,7 @@ class JifengMold(Document):
                 if original.company != self.company:
                     frappe.throw("复制来源模具必须属于同一公司")
                 source = original.copy_from
+
+        from jifeng_erp.tool_archive import validate_record
+
+        validate_record(self)

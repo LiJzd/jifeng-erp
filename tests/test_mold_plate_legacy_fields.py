@@ -38,6 +38,15 @@ def schema(kind):
 class TestToolLegacyFields(unittest.TestCase):
     def setUp(self):
         self.references = {}
+        # Keep the original raw-field/business guards isolated; the new
+        # transaction and authorization boundary has its own actual-code suite.
+        tools = types.ModuleType("jifeng_erp.tool_archive")
+        tools.before_insert_record = Mock()
+        tools.validate_record = Mock()
+        tools.prevent_rename = Mock()
+        tool_patch = patch.dict(sys.modules, {"jifeng_erp.tool_archive": tools})
+        tool_patch.start()
+        self.addCleanup(tool_patch.stop)
         self.frappe = types.ModuleType("frappe")
         self.frappe.get_doc = Mock(side_effect=lambda doctype, name: self.references[doctype, name])
         self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))

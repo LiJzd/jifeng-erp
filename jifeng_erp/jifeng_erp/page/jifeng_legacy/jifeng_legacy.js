@@ -90,8 +90,8 @@ const JIFENG_LEGACY_MODULES = [
 		groups: [
 			{ name: "正式业务", items: ["版种档案"] },
 			{ name: "基础资料", items: ["制版人"] },
-			{ name: "版种管理", items: ["版种录入", "建模"] },
-			{ name: "报表查询", items: ["版种查询", "版种报表", "建模查询"] },
+			{ name: "版种管理", items: ["版种录入", "版种建模"] },
+			{ name: "报表查询", items: ["版种查询", "版种报表", "版种建模查询"] },
 		],
 	},
 	{
@@ -157,7 +157,7 @@ const JIFENG_LIVE_ROUTES = {
 	人事: { 人事专长: "Jifeng HR Dictionary", 人事文化: "Jifeng HR Dictionary", 人事民族: "Jifeng HR Dictionary", 人事档案: "Employee", 人事浏览: "Employee", 人事部门: "Department", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
 	工资: { 计薪记录: "Jifeng Wage Entry", 分配审核: "Jifeng Wage Allocation", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
-	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
+	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate", 版种建模: "Jifeng Plate Modeling", 建模: "Jifeng Plate Modeling" },
 	发镀: { 委外采购单: "Purchase Order", 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
 	外发: { 委外采购单: "Purchase Order", 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
 	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售单记录: "POS Invoice", 零售开班: "POS Opening Entry", 零售结班: "POS Closing Entry", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
@@ -246,7 +246,7 @@ const JIFENG_LIVE_REPORTS = {
 		建模分析: { name: "Jifeng Product Analysis", filters: { dimension: "建模" } },
 		风格分析: { name: "Jifeng Product Analysis", filters: { dimension: "风格" } } },
 	模具: { 模具报表: "Jifeng Mold Catalog" },
-	版种: { 版种报表: "Jifeng Plate Catalog" },
+	版种: { 版种报表: "Jifeng Plate Catalog", 版种建模查询: "Jifeng Plate Modeling Catalog", 建模查询: "Jifeng Plate Modeling Catalog" },
 	物料: { 库存: "Jifeng Historical Stock Balance", 历史库存: "Jifeng Historical Stock Balance", 库存明细: "Stock Ledger",
 		盘点明细: "Jifeng Stock Reconciliation Ledger", 申购报表: "Jifeng Purchase Request Ledger", 申购明细: "Jifeng Purchase Request Ledger",
 		入库报表: "Jifeng Purchase Receipt Ledger", 入库明细: "Jifeng Purchase Receipt Ledger",
@@ -458,6 +458,9 @@ class JifengLegacyWorkspace {
 					productDictionary,
 					productCategory: moduleName === "产品" && name === "类别" && liveDoctype === "Jifeng Product Category",
 					productArchive: moduleName === "产品" && name === "产品档案" && liveDoctype === "Jifeng Product Profile",
+					toolArchive: moduleName === "模具" && name === "模具录入" && liveDoctype === "Jifeng Mold" ? "mold" :
+						moduleName === "版种" && name === "版种录入" && liveDoctype === "Jifeng Plate" ? "plate" :
+						moduleName === "版种" && ["版种建模", "建模"].includes(name) && liveDoctype === "Jifeng Plate Modeling" ? "modeling" : null,
 					dictionaryArchive: liveDoctype === "Jifeng Inventory Dictionary",
 					personnelArchive: moduleName === "人事" && name === "人事档案",
 					hideCreate: moduleName === "人事" && name === "人事浏览" });
