@@ -11,10 +11,12 @@
 .jfe-partner-scroll tbody tr:nth-child(even) { background: #fafafa; }
 .jfe-partner-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .jfe-partner-pager input { width: 60px; padding: 4px; border: 1px solid #ccc; }
+.jfe-partner-dialog .modal-dialog { width: calc(100vw - 32px); max-width: 1120px; }
 .jfe-partner-dialog .modal-body { max-height: calc(100vh - 180px); overflow: auto; }
 .jfe-partner-editor-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; }
 .jfe-partner-wide-field { grid-column: 1 / -1; }
 .jfe-partner-editor-fields .frappe-control { margin-bottom: 4px; }
+.jfe-partner-editor-fields textarea.form-control { height: 36px; min-height: 36px; resize: vertical; }
 .jfe-partner-link { margin-top: 14px; padding-top: 10px; border-top: 1px solid #ccc; }
 .jfe-partner-footer { position: sticky; bottom: 0; display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 0 4px; background: white; }
 .jfe-partner-review { margin-top: 8px; overflow-x: auto; }
