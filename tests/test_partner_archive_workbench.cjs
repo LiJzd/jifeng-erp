@@ -30,12 +30,23 @@ const frappe = { ui: { Dialog, form: { make_control({ df }) {
 	confirm(message, yes, no) { confirms.push({ message, yes, no }); }, msgprint(message) { messages.push(message); } };
 const window = { addEventListener() {}, removeEventListener() {} }, document = { createElement: (tag) => new Element(tag) }, crypto = { randomUUID: () => "11111111-1111-4111-8111-111111111111" };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_partner_archive.js"), "utf8"), { window, document, frappe, crypto, structuredClone, __: (value) => value });
+const css = fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/css/jifeng_partner_archive.css"), "utf8");
+function fixedTail(value) {
+	assert.equal(value.scroller.descendants("table")[0].className, "jfe-partner-table");
+	const headers = value.host.descendants("th");
+	assert.equal(headers.at(-2).className, "jfe-partner-action jfe-partner-modify");
+	assert.equal(headers.at(-1).className, "jfe-partner-action jfe-partner-delete");
+	for (const row of value.tbody.children) {
+		assert.equal(row.children.at(-2).className, headers.at(-2).className);
+		assert.equal(row.children.at(-1).className, headers.at(-1).className);
+	}
+}
 const fields = ["legacy_number", "display_name", "owner_name", "mobile", "reception", "phone", "address", "notes", "bank_name", "account_name", "bank_account", "inactive", "company", "archive_kind", "supplier"];
-function archive(name = "PROFILE-A", company = "Company A", writable = true) {
-	return { name, kind: "外发工厂", company, supplier: name ? "SUP-A" : null, supplier_disabled: name ? false : null,
+function archive(name = "PROFILE-A", company = "Company A", writable = true, kind = "外发工厂") {
+	return { name, kind, company, ...(kind === "电镀厂" ? { owner: "synthetic-creator@example.invalid" } : {}), supplier: name ? "SUP-A" : null, supplier_disabled: name ? false : null,
 		profile_version: name ? "2026-10-02T00:00:00.123456" : null, supplier_version: name ? "2026-10-02T00:00:01.123456" : null,
 		creation: name ? "2026-10-02T00:00:00.000001" : null, modified_by: name ? "synthetic-user@example.invalid" : null, can_write: writable,
-		profile: { company, archive_kind: "外发工厂", supplier: name ? "SUP-A" : null, legacy_number: " 0007 ", display_name: '<b onclick="alert(1)">合成工厂</b>',
+		profile: { company, archive_kind: kind, supplier: name ? "SUP-A" : null, legacy_number: " 0007 ", display_name: '<b onclick="alert(1)">合成工厂</b>',
 			owner_name: "合成负责人", mobile: "000000", reception: "合成接货人", phone: "0000", address: "合成地址\n原文", notes: "  合成备注  ",
 			bank_name: "开户原文", account_name: "户名原文", bank_account: "0000123", inactive: 0 },
 		can_create_supplier: !name && writable, can_link_supplier: !name && writable,
@@ -46,28 +57,64 @@ function archive(name = "PROFILE-A", company = "Company A", writable = true) {
 			options: "", reqd: ["legacy_number", "display_name", "company", "supplier"].includes(field), read_only: !writable || ["company", "archive_kind"].includes(field) || field === "supplier" && name !== null }])) };
 }
 function page(call, rows) { return { ...call.options.args, rows, total: rows.length, total_pages: Math.ceil(rows.length / call.options.args.page_size), readonly: true }; }
-async function bench() { const value = new window.JifengPartnerArchive(new Element()); await value.ready; await value.companyControl.set_value("Company A"); return value; }
-async function list(value, rows = [archive("PROFILE-A", "Company A", false)]) { const pending = value.query(), call = calls.at(-1); call.resolve(page(call, rows)); await pending; }
-async function existing(value, row = archive()) { await list(value); const pending = value.openExisting("PROFILE-A"); calls.at(-1).resolve(row); await pending; return value.editor; }
-async function create(value) { const pending = value.openNew(); calls.at(-1).resolve(archive(null)); await pending; return value.editor; }
+async function bench(kind = "外发工厂") { const value = new window.JifengPartnerArchive(new Element(), kind); await value.ready; await value.companyControl.set_value("Company A"); return value; }
+async function list(value, rows = [archive("PROFILE-A", "Company A", false, value.kind)]) { const pending = value.query(), call = calls.at(-1); call.resolve(page(call, rows)); await pending; }
+async function existing(value, row = archive("PROFILE-A", "Company A", true, value.kind)) { await list(value); const pending = value.openExisting("PROFILE-A"); calls.at(-1).resolve(row); await pending; return value.editor; }
+async function create(value) { const pending = value.openNew(); calls.at(-1).resolve(archive(null, "Company A", true, value.kind)); await pending; return value.editor; }
 async function selectSupplier(value, state, name = "SUP-A", version = "2026-10-02T00:00:01.123456") {
 	await state.modeControl.set_value("关联已有供应商");
-	const pending = state.supplierControl.set_value(name); calls.at(-1).resolve({ name, version, disabled: false, company: "Company A", kind: "外发工厂" }); await pending;
+	const pending = state.supplierControl.set_value(name); calls.at(-1).resolve({ name, version, disabled: false, company: "Company A", kind: value.kind }); await pending;
 }
 async function changed(state, field, value) { await state.controls[field].set_value(value); }
 async function tick() { await new Promise(setImmediate); }
 
 async function main() {
-	assert.throws(() => new window.JifengPartnerArchive(new Element(), "电镀厂"));
+	// Every tail style remains scoped to this table; both cells share the right offset width.
+	const styles = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, selector]) => /jfe-partner-(?:table|action|modify|delete)/.test(selector));
+	assert.equal(styles.length, 7);
+	assert.ok(styles.every(([, selector]) => selector.trim().startsWith(".jfe-partner-scroll .jfe-partner-table")));
+	const rule = (selector) => styles.find(([_, key]) => key.trim() === selector)?.[2] || "";
+	const scope = ".jfe-partner-scroll .jfe-partner-table";
+	assert.match(rule(scope), /--jfe-partner-action-width:\s*72px/);
+	const actions = rule(scope + " .jfe-partner-action");
+	assert.match(actions, /position:\s*sticky/); assert.match(actions, /box-sizing:\s*border-box/);
+	for (const property of ["width", "min-width", "max-width"]) assert.match(actions, new RegExp("(?:^|;)\\s*" + property + ":\\s*var\\(--jfe-partner-action-width\\)"));
+	assert.match(rule(scope + " .jfe-partner-delete"), /right:\s*0/);
+	assert.match(rule(scope + " .jfe-partner-modify"), /right:\s*var\(--jfe-partner-action-width\)/);
+	assert.match(rule(scope + " td.jfe-partner-action"), /z-index:\s*2;\s*background:\s*#fff/);
+	assert.match(rule(scope + " th.jfe-partner-action"), /z-index:\s*3;\s*background:\s*#eee/);
+	assert.match(rule(scope + " tbody tr:nth-child(even) td.jfe-partner-action"), /background:\s*#fafafa/);
+	assert.throws(() => new window.JifengPartnerArchive(new Element(), "发镀"));
 	const value = await bench();
-	assert.equal(value.host.descendants("th").map((node) => node.textContent).join("/"), "编号/名称/负责/手机/接货/电话/地址/备注/开户/户名/账号/停用/操作/日期/修改人/修改日期");
+	// Independent runtime evidence supersedes the earlier 16-column assumption.
+	// Separate desktop Canvas header strip confirms every visible label.
+	assert.equal(value.host.descendants("th").length, 13);
+	assert.equal(value.host.descendants("th").map((node) => node.textContent).join("/"), "编号/名称/负责/手机/接货/电话/地址/备注/开户/户名/账号/修改/删除");
+	assert.deepEqual(Array.from(value.listFields, ([field]) => field), fields.slice(0, 11));
+	assert.match(value.scopeNotice.textContent, /部分可用/);
 	assert.deepEqual(value.host.descendants("button").map((node) => node.textContent), ["新增", "查询", "上页", "下页", "前往"]);
 	assert.equal(value.search.placeholder, "输入查询的关键字"); assert.equal(value.statusFilter, "在用");
 	const beforeNoScope = calls.length, empty = new window.JifengPartnerArchive(new Element()); await empty.ready; await empty.query(); assert.equal(calls.length, beforeNoScope);
 	await list(value);
 	assert.equal(calls.at(-1).options.method, "jifeng_erp.partner_archive.query_archives"); assert.equal(calls.at(-1).options.type, "GET");
 	assert.equal(value.tbody.children[0].children[1].textContent, '<b onclick="alert(1)">合成工厂</b>'); assert.equal(value.host.descendants("b").length, 0);
-	assert.equal(value.tbody.children[0].children[10].textContent, "0000123"); assert.equal(value.tbody.children[0].children[11].textContent, "0");
+	assert.equal(value.tbody.children[0].children[10].textContent, "0000123");
+	assert.equal(value.tbody.children[0].children.length, 13); fixedTail(value);
+	assert.equal(value.tbody.children[0].children[11].children[0].textContent, "修改");
+	const externalDelete = value.tbody.children[0].children[12].children[0];
+	assert.equal(externalDelete.textContent, "删除"); assert.equal(externalDelete.disabled, true); assert.equal(externalDelete.events.size, 0);
+	assert.equal(value.rows[0].profile.inactive, 0);
+	assert.equal(value.rows[0].creation, "2026-10-02T00:00:00.000001");
+	assert.equal(value.rows[0].modified_by, "synthetic-user@example.invalid");
+	assert.equal(value.scroller.textContent.includes("synthetic-user@example.invalid"), false);
+	const externalEdit = value.tbody.children[0].children[11].children[0].events.get("click")(), externalRead = calls.at(-1);
+	assert.equal(externalRead.options.method, "jifeng_erp.partner_archive.read_archive");
+	assert.equal(externalRead.options.args.kind, "外发工厂");
+	externalRead.resolve(archive()); await externalEdit;
+	assert.equal(value.editor.controls.inactive.get_value(), 0);
+	assert.equal(value.editor.controls.bank_account.get_value(), "0000123");
+	assert.equal(value.editor.archive.creation, "2026-10-02T00:00:00.000001");
+	await value.editor.dialog.hide();
 	const noBank = archive("PROFILE-A", "Company A", false); delete noBank.profile.bank_account; delete noBank.field_meta.bank_account;
 	await list(value, [noBank]); assert.equal(value.tbody.children[0].children[10].textContent, "");
 	value.scroller.scrollLeft = 440; value.scroller.scrollTop = 32; await list(value); assert.equal(value.scroller.scrollLeft, 440); assert.equal(value.scroller.scrollTop, 32);
@@ -216,6 +263,57 @@ async function main() {
 	assert.equal(joint.host.textContent.includes("UUID"), false); assert.equal(jointState.dialog.fields_dict.partner_editor.$wrapper.get().textContent.includes("UUID"), false);
 	joint.destroy();
 	validation.destroy(); reader.destroy(); empty.destroy();
+	const plating = await bench("电镀厂");
+	assert.deepEqual(plating.host.descendants("th").map((node) => node.textContent),
+		["", "编号", "名称", "负责", "手机", "接货", "电话", "地址", "备注", "户行", "户名", "账号", "停用", "操作", "日期", "修改人", "修改日期", "修改", "删除"]);
+	assert.match(plating.scopeNotice.textContent, /部分可用/); assert.match(plating.scopeNotice.textContent, /删除.*尚未开放/);
+	await list(plating); assert.equal(calls.at(-1).options.args.kind, "电镀厂");
+	assert.equal(plating.tbody.children[0].children.length, 19); fixedTail(plating);
+	assert.equal(plating.tbody.children[0].children[0].textContent, "");
+	assert.equal(plating.tbody.children[0].children[11].textContent, "0000123");
+	assert.equal(plating.tbody.children[0].children[13].textContent, "synthetic-creator@example.invalid");
+	assert.equal(plating.tbody.children[0].children[13].descendants("button").length, 0);
+	assert.notEqual(plating.tbody.children[0].children[13].textContent, plating.rows[0].modified_by);
+	const maskedCreator = archive("PROFILE-A", "Company A", false, "电镀厂"); maskedCreator.owner = null;
+	await list(plating, [maskedCreator]);
+	assert.equal(plating.tbody.children[0].children[13].textContent, "");
+	await list(plating);
+	const deleteButton = plating.tbody.children[0].children[18].children[0];
+	assert.equal(deleteButton.textContent, "删除"); assert.equal(deleteButton.disabled, true);
+	assert.equal(deleteButton.events.size, 0); assert.match(deleteButton.title, /尚未开放/);
+	const platingNew = await create(plating);
+	assert.equal(platingNew.controls.bank_name.df.label, "户行");
+	assert.notEqual(platingNew.cells.bank_account.className, "jfe-partner-wide-field");
+	assert.notEqual(platingNew.cells.inactive.className, "jfe-partner-wide-field");
+	assert.equal(plating.payload(platingNew).kind, "电镀厂"); await platingNew.dialog.hide();
+	const wrongKindOpen = plating.openNew(); calls.at(-1).resolve(archive(null)); await wrongKindOpen;
+	assert.equal(plating.editor, null);
+	const wrongKindQuery = plating.query(), wrongKindCall = calls.at(-1);
+	wrongKindCall.resolve(page(wrongKindCall, [archive("PROFILE-A", "Company A", false)])); await wrongKindQuery;
+	assert.equal(plating.total, null); assert.equal(plating.rows.length, 0);
+	await list(plating);
+	const modifyButton = plating.tbody.children[0].children[17].children[0];
+	assert.equal(modifyButton.textContent, "修改");
+	const rightModify = modifyButton.events.get("click")(), modifyCall = calls.at(-1);
+	assert.equal(modifyCall.options.method, "jifeng_erp.partner_archive.read_archive");
+	assert.equal(modifyCall.options.args.kind, "电镀厂");
+	modifyCall.resolve(archive("PROFILE-A", "Company A", true, "电镀厂")); await rightModify;
+	const platingEdit = plating.editor;
+	assert.equal(platingEdit.newButton.textContent, "修改"); assert.equal(platingEdit.newButton.disabled, true);
+	assert.match(platingEdit.newButton.title, /尚未开放.*保存/);
+	const beforeUnknownFooter = calls.length; platingEdit.newButton.events.get("click")(); await tick();
+	assert.equal(calls.length, beforeUnknownFooter); assert.equal(plating.editor, platingEdit);
+	await changed(platingEdit, "notes", "电镀合成独立备注");
+	const platingSave = plating.save(platingEdit), platingWrite = calls.at(-1);
+	assert.equal(platingWrite.options.args.payload.kind, "电镀厂");
+	assert.deepEqual(platingWrite.options.args.payload.profile, { notes: "电镀合成独立备注" });
+	const savedPlating = archive("PROFILE-A", "Company A", true, "电镀厂");
+	savedPlating.profile.notes = "电镀合成独立备注"; savedPlating.profile_version = "2026-10-02T00:00:09.123456";
+	platingWrite.resolve(savedPlating); await platingSave;
+	assert.equal(platingEdit.unknown, false); assert.equal(platingEdit.archive.kind, "电镀厂");
+	await platingEdit.dialog.hide(); plating.destroy();
+	assert.equal(calls.filter((call) => /delete|trash|unlink/.test(call.options.method)).length, 0);
+
 	console.log("partner archive client protocol models: PASS");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

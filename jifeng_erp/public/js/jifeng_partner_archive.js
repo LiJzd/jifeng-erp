@@ -1,13 +1,16 @@
 /* Combined native Supplier creation or explicit links; old factory text stays separate. */
 window.JifengPartnerArchive = class JifengPartnerArchive {
 	constructor(host, kind = "外发工厂") {
-		if (kind !== "外发工厂") throw new Error("Unsupported partner archive");
-		this.host = host; this.kind = kind; this.companyScope = null; this.page = 1; this.pageSize = 100;
+		if (!["外发工厂", "电镀厂"].includes(kind)) throw new Error("不支持的工厂档案种类");
+		this.host = host; this.kind = kind; this.plating = kind === "电镀厂"; this.companyScope = null; this.page = 1; this.pageSize = 100;
 		this.total = null; this.totalPages = null; this.rows = []; this.revision = 0; this.openRevision = 0;
 		this.disposed = false; this.opening = false; this.editor = null; this.statusFilter = "在用";
 		this.fields = [["legacy_number", "编号"], ["display_name", "名称"], ["owner_name", "负责"], ["mobile", "手机"],
 			["reception", "接货"], ["phone", "电话"], ["address", "地址"], ["notes", "备注"],
-			["bank_name", "开户"], ["account_name", "户名"], ["bank_account", "账号"], ["inactive", "停用"]];
+			["bank_name", this.plating ? "户行" : "开户"], ["account_name", "户名"], ["bank_account", "账号"], ["inactive", "停用"]];
+		// Runtime WF_GC has 11 bound visible fields and right edit/delete icons.
+		// Keep all editor/source fields, including inactive and protected audit data.
+		this.listFields = this.plating ? this.fields : this.fields.filter(([field]) => field !== "inactive");
 		this.labels = Object.fromEntries(this.fields);
 		this.beforeUnload = (event) => { if (this.isDirty() || this.getCloseBlock()) { event.preventDefault(); event.returnValue = ""; } };
 		window.addEventListener?.("beforeunload", this.beforeUnload);
@@ -31,8 +34,9 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		this.search.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.query(1); } });
 		this.queryButton = this.button("查询", () => this.query(1)); toolbar.append(company, this.newButton, this.search, this.queryButton);
 		this.status = this.element("p", __("请选择公司后查询。"), "jfe-partner-status");
-		this.scroller = this.element("div", undefined, "jfe-partner-scroll"); const table = this.element("table"), thead = this.element("thead"), heading = this.element("tr");
-		for (const label of [...this.fields.map((field) => field[1]), "操作", "日期", "修改人", "修改日期"]) heading.append(this.element("th", __(label)));
+		this.scroller = this.element("div", undefined, "jfe-partner-scroll"); const table = this.element("table", undefined, "jfe-partner-table"), thead = this.element("thead"), heading = this.element("tr");
+		for (const label of [...(this.plating ? [""] : []), ...this.listFields.map((field) => field[1]), ...(this.plating ? ["操作", "日期", "修改人", "修改日期"] : [])]) heading.append(this.element("th", __(label)));
+		heading.append(this.element("th", __("修改"), "jfe-partner-action jfe-partner-modify"), this.element("th", __("删除"), "jfe-partner-action jfe-partner-delete"));
 		thead.append(heading); this.tbody = this.element("tbody"); table.append(thead, this.tbody); this.scroller.append(table);
 		const pager = this.element("div", undefined, "jfe-partner-pager"); this.previous = this.button("上页", () => this.query(this.page - 1));
 		this.next = this.button("下页", () => this.query(this.page + 1)); this.pageLabel = this.element("span", "—");
@@ -40,7 +44,8 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		this.goto.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.query(this.goto.value); } });
 		this.goButton = this.button("前往", () => this.query(this.goto.value)); this.count = this.element("span", __("尚未查询"));
 		pager.append(this.previous, this.pageLabel, this.next, this.goto, this.goButton, this.count);
-		this.host.append(toolbar, this.status, this.scroller, pager); this.renderPager();
+		this.scopeNotice = this.element("p", __("部分可用：可新增、查询、修改和停用；删除、导入、导出、更新简拼及打印尚未开放。"), "jfe-partner-status");
+		this.host.append(toolbar, this.scopeNotice, this.status, this.scroller, pager); this.renderPager();
 	}
 	async changeCompany() {
 		if (this.settingCompany || this.disposed) return;
@@ -80,6 +85,7 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 			row.profile.company !== company || row.profile.archive_kind !== this.kind || ![0, 1, false, true].includes(row.profile.inactive) ||
 			!["company", "archive_kind", "supplier", "legacy_number", "display_name", "inactive"].every((field) => row.field_meta[field]) ||
 			(name !== undefined && row.name !== name)) return false;
+		if (this.plating && row.owner !== null && typeof row.owner !== "string") return false;
 		if (row.name !== null && (typeof row.name !== "string" || !row.name || typeof row.profile_version !== "string" || !row.profile_version ||
 			typeof row.supplier_version !== "string" || !row.supplier_version || typeof row.supplier !== "string" || !row.supplier ||
 			row.profile.supplier !== row.supplier || typeof row.supplier_disabled !== "boolean")) return false;
@@ -104,9 +110,13 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 	renderRows() {
 		this.tbody.replaceChildren();
 		for (const row of this.rows) { const tr = this.element("tr");
-			for (const [field] of this.fields) tr.append(this.element("td", row.profile[field] ?? ""));
-			const action = this.element("td"); action.append(this.button("查看 / 修改", () => this.openExisting(row.name))); tr.append(action);
-			tr.append(this.element("td", row.creation ?? ""), this.element("td", row.modified_by ?? ""), this.element("td", row.profile_version));
+			if (this.plating) tr.append(this.element("td", ""));
+			for (const [field] of this.listFields) tr.append(this.element("td", row.profile[field] ?? ""));
+			if (this.plating) tr.append(this.element("td", row.owner ?? ""), this.element("td", row.creation ?? ""), this.element("td", row.modified_by ?? ""), this.element("td", row.profile_version));
+			const modify = this.element("td", undefined, "jfe-partner-action jfe-partner-modify"), deletion = this.element("td", undefined, "jfe-partner-action jfe-partner-delete"), disabledDelete = this.element("button", __("删除"), "jfe-button");
+			modify.append(this.button("修改", () => this.openExisting(row.name)));
+			disabledDelete.type = "button"; disabledDelete.disabled = true; disabledDelete.title = __("删除尚未开放，可在档案中正常停用。");
+			deletion.append(disabledDelete); tr.append(modify, deletion);
 			this.tbody.append(tr);
 		}
 	}
@@ -132,7 +142,7 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		const body = dialog.fields_dict.partner_editor.$wrapper.get(0), scope = this.element("p", __("公司") + "：" + state.company);
 		state.message = this.element("p"); const form = this.element("div", undefined, "jfe-partner-editor-fields");
 		for (const [field, label] of this.fields) { const cell = this.element("div"); state.cells[field] = cell; form.append(cell);
-			if (field === "bank_account" || field === "inactive") cell.className = "jfe-partner-wide-field";
+			if (!this.plating && (field === "bank_account" || field === "inactive")) cell.className = "jfe-partner-wide-field";
 			const metadata = archive.field_meta[field]; state.controls[field] = this.control(cell, field, field === "bank_name" ? "户行" : label, metadata?.fieldtype || "Data", "", () => this.freeze(state)); }
 		const link = this.element("section", undefined, "jfe-partner-link"); link.append(this.element("p", __("业务供应商随新工厂一起保存，或明确关联已有供应商。银行原文保留在工厂档案。")));
 		const options = [archive.can_create_supplier ? "新建业务供应商" : null, archive.can_link_supplier || archive.name ? "关联已有供应商" : null].filter(Boolean).join("\n");
@@ -145,7 +155,7 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		state.supplierControl = this.control(link, "supplier", "关联供应商", "Link", "Supplier", () => this.changeSupplier(state));
 		state.supplierStatus = this.element("p"); link.append(state.supplierStatus, this.element("p", __("新编号由本系统生成，可改为原编号。")));
 		state.review = this.element("div", undefined, "jfe-partner-review"); const footer = this.element("div", undefined, "jfe-partner-footer");
-		state.newButton = this.button("新增", () => this.discardFor(async () => { this.closeEditor(); await this.openNew(); }, state));
+		state.newButton = this.button("新增", () => { if (this.plating && state.archive.name) return; return this.discardFor(async () => { this.closeEditor(); await this.openNew(); }, state); });
 		state.saveButton = this.button("保存", () => this.save(state)); state.closeButton = this.button("关闭", () => dialog.hide());
 		state.resolveButton = this.button("核对保存结果", () => this.resolve(state)); state.adoptButton = this.button("采用已核对当前值", () => this.adopt(state));
 		footer.append(state.newButton, state.saveButton, state.closeButton, state.resolveButton, state.adoptButton); body.append(scope, state.message, form, link, state.review, footer);
@@ -214,7 +224,10 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		this.flags(state.supplierControl, { hidden: !state.archive.name && state.sourceMode === "create", read_only: !!(locked || state.archive.name || !state.archive.can_write || !supplier || supplier.read_only), reqd: state.sourceMode === "existing" });
 		state.saveButton.disabled = !!(locked || !state.archive.can_write || (state.archive.name || state.sourceMode === "existing") && !state.supplierVersion ||
 			!state.archive.name && state.sourceMode === "create" && !state.archive.can_create_supplier);
-		state.newButton.disabled = state.closeButton.disabled = !!locked;
+		state.newButton.disabled = !!(locked || this.plating && state.archive.name);
+		state.newButton.textContent = __(this.plating && state.archive.name ? "修改" : "新增");
+		state.newButton.title = this.plating && state.archive.name ? __("此按钮尚未开放；修改字段后请点保存。") : "";
+		state.closeButton.disabled = !!locked;
 		state.resolveButton.hidden = !state.unknown; state.resolveButton.disabled = !!(state.busy || state.confirming);
 		state.adoptButton.hidden = !state.unknown || !state.conflict; state.adoptButton.disabled = !!(state.busy || state.confirming);
 	}

@@ -21,6 +21,8 @@ from jifeng_erp.personnel_separation import _atomic
 
 PROFILE = "Jifeng Partner Profile"
 KIND = "外发工厂"
+KINDS = (KIND, "电镀厂")
+NUMBER_PREFIX = {KIND: "WF-", "电镀厂": "PL-"}
 EDIT_FIELDS = {"legacy_number", "display_name", "owner_name", "mobile", "reception",
                "phone", "address", "notes", "bank_name", "account_name", "bank_account", "inactive"}
 IDENTITY_FIELDS = {"company", "archive_kind", "supplier"}
@@ -41,8 +43,8 @@ def _login():
 
 def _scope(kind, company):
     _login()
-    if kind != KIND:
-        frappe.throw("请选择外发工厂档案")
+    if kind not in KINDS:
+        frappe.throw("请选择有效工厂档案种类")
     if not isinstance(company, str) or not company.strip() or company != company.strip():
         frappe.throw("请选择有效公司")
     document = frappe.get_doc("Company", company)
@@ -176,6 +178,8 @@ def _pack(document, supplier=None, *, listing=False):
             "profile": values, "field_meta": fields, "can_write": writable,
             "creation": _timestamp(document.creation) if existing and "creation" in readable else None,
             "modified_by": document.modified_by if existing and "modified_by" in readable else None}
+    if document.archive_kind == "电镀厂":
+        result["owner"] = document.owner if "owner" in readable else None
     if not existing:
         result.update(_supplier_controls(document))
     return result
@@ -305,7 +309,7 @@ def init_archive(kind, company):
     document.company, document.archive_kind, document.inactive = company, kind, 0
     # Preserve the observed auto-filled editable number habit without claiming
     # the unverified old sequence or consuming native Series on a read request.
-    document.legacy_number = "WF-" + str(uuid4())
+    document.legacy_number = NUMBER_PREFIX[kind] + str(uuid4())
     document.check_permission("create")
     view = _pack(document)
     company_document.check_permission("select")
@@ -491,7 +495,7 @@ def validate_profile(document):
     _scope(document.archive_kind, document.company)
     if document.is_new():
         if _CREATING.get() is not document:
-            frappe.throw("请从外发工厂专用入口关联供应商后新建")
+            frappe.throw("请从工厂专用入口关联供应商后新建")
         _uuid(document.request_id)
         if not isinstance(document.request_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", document.request_digest):
             frappe.throw("工厂档案新建请求身份不完整")

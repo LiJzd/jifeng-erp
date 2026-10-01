@@ -9,6 +9,13 @@
 .jfe-partner-scroll th, .jfe-partner-scroll td { min-width: 100px; padding: 6px 8px; border: 1px solid #ddd; white-space: pre-wrap; vertical-align: top; }
 .jfe-partner-scroll th { position: sticky; top: 0; z-index: 1; background: #eee; font-weight: normal; white-space: nowrap; }
 .jfe-partner-scroll tbody tr:nth-child(even) { background: #fafafa; }
+.jfe-partner-scroll .jfe-partner-table { --jfe-partner-action-width: 72px; }
+.jfe-partner-scroll .jfe-partner-table .jfe-partner-action { position: sticky; box-sizing: border-box; width: var(--jfe-partner-action-width); min-width: var(--jfe-partner-action-width); max-width: var(--jfe-partner-action-width); white-space: nowrap; }
+.jfe-partner-scroll .jfe-partner-table .jfe-partner-modify { right: var(--jfe-partner-action-width); }
+.jfe-partner-scroll .jfe-partner-table .jfe-partner-delete { right: 0; }
+.jfe-partner-scroll .jfe-partner-table td.jfe-partner-action { z-index: 2; background: #fff; }
+.jfe-partner-scroll .jfe-partner-table tbody tr:nth-child(even) td.jfe-partner-action { background: #fafafa; }
+.jfe-partner-scroll .jfe-partner-table th.jfe-partner-action { z-index: 3; background: #eee; }
 .jfe-partner-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .jfe-partner-pager input { width: 60px; padding: 4px; border: 1px solid #ccc; }
 .jfe-partner-dialog .modal-dialog { width: calc(100vw - 32px); max-width: 1120px; }

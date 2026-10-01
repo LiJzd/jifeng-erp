@@ -94,6 +94,7 @@ class Document(Record):
             if (self.doctype, self.name) in env.records:
                 raise env.frappe.DuplicateEntryError(self.doctype, self.name, ValueError("native duplicate name"))
             self.creation = "2026-10-02T00:00:00.000001"
+            self.owner = env.frappe.session.user
         env.tick += 1
         self.modified = "2026-10-02T00:00:" + str(env.tick).zfill(2) + ".123456"
         self.modified_by = env.frappe.session.user
@@ -144,7 +145,7 @@ class TestPartnerArchive(unittest.TestCase):
         spec.loader.exec_module(self.module)
         Document.environment = self
         definition = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_partner_profile/jifeng_partner_profile.json").read_text())
-        self.metas[self.module.PROFILE] = Meta(definition["fields"] + [{"fieldname": name} for name in ("creation", "modified_by")])
+        self.metas[self.module.PROFILE] = Meta(definition["fields"] + [{"fieldname": name} for name in ("creation", "modified_by", "owner")])
         self.metas["Supplier"] = Meta([{"fieldname": "name"}, {"fieldname": "disabled"},
             {"fieldname": "supplier_name", "fieldtype": "Data"},
             {"fieldname": "supplier_type", "fieldtype": "Select", "options": "Company\nIndividual\nPartnership", "default": "Company", "reqd": 1},
@@ -218,7 +219,7 @@ class TestPartnerArchive(unittest.TestCase):
         return payload
 
     def edit(self, row, **values):
-        return {"kind": self.module.KIND, "company": row["company"], "name": row["name"],
+        return {"kind": row["kind"], "company": row["company"], "name": row["name"],
                 "profile_version": row["profile_version"], "supplier_version": row["supplier_version"], "profile": values}
 
     def query(self, **kwargs):
@@ -674,6 +675,137 @@ class TestPartnerArchive(unittest.TestCase):
         document.supplier = "OTHER"
         with self.assertRaises(ValueError):
             document.save()
+
+    def test_factory_kind_whitelist_and_two_independent_initial_defaults(self):
+        self.assertEqual(self.module.KINDS, ("外发工厂", "电镀厂"))
+        before = deepcopy(self.records)
+        for kind, prefix in (("外发工厂", "WF-"), ("电镀厂", "PL-")):
+            initial = self.module.init_archive(kind, "Company A")
+            self.assertEqual(initial["kind"], kind)
+            self.assertEqual(initial["profile"]["archive_kind"], kind)
+            self.assertTrue(initial["profile"]["legacy_number"].startswith(prefix))
+            self.assertIsNone(initial["supplier"])
+            self.assertTrue(initial["can_link_supplier"])
+        for kind in ("发镀", "外发", "", None, []):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.module.init_archive(kind, "Company A")
+        self.assertEqual(self.records, before)
+
+    def test_same_supplier_across_two_kinds_and_companies_has_four_isolated_profiles(self):
+        self.records[("Company", "Company B")] = {"doctype": "Company", "name": "Company B"}
+        shared = deepcopy(self.records[("Supplier", "SUP-A")])
+        created = {}
+        for company in ("Company A", "Company B"):
+            for kind in self.module.KINDS:
+                request = self.payload(kind=kind, company=company)
+                created[(company, kind)] = self.module.save_archive(request)
+        self.assertEqual(len({row["name"] for row in created.values()}), 4)
+        for (company, kind), row in created.items():
+            result = self.module.query_archives(kind, company)
+            self.assertEqual([value["name"] for value in result["rows"]], [row["name"]])
+            self.assertEqual(result["total"], 1)
+            self.assertEqual(result["rows"][0]["kind"], kind)
+            self.assertEqual(result["rows"][0]["profile"]["archive_kind"], kind)
+        self.assertEqual(self.records[("Supplier", "SUP-A")], shared)
+
+    def test_cross_kind_read_edit_and_uuid_resolution_do_not_expose_or_write(self):
+        request = self.payload()
+        row = self.module.save_archive(request)
+        crossed = deepcopy(request)
+        crossed["kind"] = "电镀厂"
+        crossed_edit = self.edit(row, notes="wrong-kind-write")
+        crossed_edit["kind"] = "电镀厂"
+        before = deepcopy((self.records, self.saves))
+        for action in (lambda: self.module.read_archive(row["name"], "电镀厂", "Company A"),
+                       lambda: self.module.save_archive(crossed_edit),
+                       lambda: self.module.save_archive(crossed),
+                       lambda: self.module.resolve_creation(request["request_id"], "电镀厂", "Company A")):
+            with self.assertRaises(PermissionError):
+                action()
+        self.assertEqual((self.records, self.saves), before)
+        self.assertEqual(self.module.resolve_creation(request["request_id"], "外发工厂", "Company A")
+                         ["archive"]["name"], row["name"])
+
+    def test_plating_idempotency_edit_and_native_kind_identity_preserve_supplier(self):
+        request = self.payload(kind="电镀厂")
+        row = self.module.save_archive(request)
+        before = deepcopy(self.records)
+        self.assertEqual(self.module.save_archive(request)["name"], row["name"])
+        self.assertEqual(self.records, before)
+        changed = self.module.save_archive(self.edit(row, notes="电镀原文", inactive=1))
+        self.assertEqual(changed["profile"]["notes"], "电镀原文")
+        self.assertEqual(changed["profile"]["inactive"], 1)
+        self.assertEqual(self.records[("Supplier", "SUP-A")], before[("Supplier", "SUP-A")])
+        document = self.get_doc(self.module.PROFILE, row["name"])
+        document.archive_kind = "外发工厂"
+        with self.assertRaises(ValueError):
+            document.save()
+
+    def test_plating_joint_supplier_creation_and_name_collision_never_infer_kind(self):
+        request = self.create_supplier_payload(kind="电镀厂")
+        first = self.module.save_archive(request)
+        self.assertEqual(first["kind"], "电镀厂")
+        self.assertEqual(first["profile"]["bank_account"], "0000123")
+        repeated = self.module.save_archive(request)
+        self.assertEqual(repeated["name"], first["name"])
+        crossed_new = deepcopy(request)
+        crossed_new["kind"], crossed_new["request_id"] = "外发工厂", str(uuid4())
+        before = deepcopy((self.records, self.saves))
+        with self.assertRaisesRegex(ValueError, "同名业务供应商已存在"):
+            self.module.save_archive(crossed_new)
+        self.assertEqual((self.records, self.saves), before)
+        # Explicit association is legitimate; neither name nor Supplier group supplies kind.
+        explicit = self.payload(kind="外发工厂")
+        explicit["profile"]["supplier"] = first["supplier"]
+        explicit["supplier_version"] = first["supplier_version"]
+        second = self.module.save_archive(explicit)
+        self.assertEqual(second["supplier"], first["supplier"])
+        self.assertNotEqual(second["name"], first["name"])
+
+    def test_plating_permissions_and_hidden_kind_are_not_backfilled(self):
+        request = self.payload(kind="电镀厂")
+        row = self.module.save_archive(request)
+        self.hidden_fields[(self.module.PROFILE, "read")] = {"archive_kind"}
+        with self.assertRaises(PermissionError):
+            self.module.query_archives("电镀厂", "Company A")
+        self.hidden_fields.clear()
+        self.denials.add((self.module.PROFILE, "write"))
+        self.assertFalse(self.module.read_archive(row["name"], "电镀厂", "Company A")["can_write"])
+        with self.assertRaises(PermissionError):
+            self.module.save_archive(self.edit(row, notes="forbidden"))
+
+    def test_plating_creator_projection_masks_owner_and_never_uses_modifier(self):
+        row = self.module.save_archive(self.payload(kind="电镀厂"))
+        self.records[(self.module.PROFILE, row["name"])]["modified_by"] = "different-modifier@example.invalid"
+        readable = self.module.read_archive(row["name"], "电镀厂", "Company A")
+        self.assertEqual(readable["owner"], "purchase-manager@example.invalid")
+        self.assertNotEqual(readable["owner"], readable["modified_by"])
+        self.hidden_fields[(self.module.PROFILE, "read")] = {"owner"}
+        hidden = self.module.read_archive(row["name"], "电镀厂", "Company A")
+        self.assertIsNone(hidden["owner"])
+        self.assertEqual(hidden["modified_by"], "different-modifier@example.invalid")
+        self.assertIsNone(self.module.query_archives("电镀厂", "Company A")["rows"][0]["owner"])
+
+    def test_plating_late_creator_field_revocation_refreshes_or_rejects_not_leaks(self):
+        row = self.module.save_archive(self.payload(kind="电镀厂"))
+        original_get_doc = self.get_doc
+        calls = 0
+
+        def revoke(doctype, name, **kwargs):
+            nonlocal calls
+            calls += 1
+            result = original_get_doc(doctype, name, **kwargs)
+            if calls >= 4:
+                self.hidden_fields[(self.module.PROFILE, "read")] = {"owner"}
+            return result
+
+        self.frappe.get_doc.side_effect = revoke
+        try:
+            result = self.module.read_archive(row["name"], "电镀厂", "Company A")
+        except (PermissionError, ValueError):
+            pass
+        else:
+            self.assertIsNone(result["owner"])
 
     def test_native_new_doc_requires_service_creation(self):
         document = Document(doctype=self.module.PROFILE, __islocal=1, company="Company A", archive_kind=self.module.KIND)

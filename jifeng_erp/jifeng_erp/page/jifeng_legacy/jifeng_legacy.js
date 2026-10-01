@@ -158,13 +158,16 @@ const JIFENG_LIVE_ROUTES = {
 	工资: { 计薪记录: "Jifeng Wage Entry", 分配审核: "Jifeng Wage Allocation", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate", 版种建模: "Jifeng Plate Modeling", 建模: "Jifeng Plate Modeling" },
-	发镀: { 委外采购单: "Purchase Order", 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
+	发镀: { 电镀厂: "Jifeng Partner Profile", 委外采购单: "Purchase Order", 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
 	外发: { 外发工厂: "Jifeng Partner Profile", 委外采购单: "Purchase Order", 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
 	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售单记录: "POS Invoice", 零售开班: "POS Opening Entry", 零售结班: "POS Closing Entry", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 费用登记单: "Jifeng Expense Voucher", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry", 费用登记查询: "Jifeng Expense Voucher" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
 	日志: { 服务器操作日志: "Activity Log", 操作日志: "Activity Log" },
 };
+
+// Server-backed entry whose available operations remain explicitly limited.
+const JIFENG_PARTIAL_ROUTES = { 发镀: { 电镀厂: true }, 外发: { 外发工厂: true } };
 
 const JIFENG_LIVE_CATALOGS = {
 	物料: { 浏览: "物料" },
@@ -460,7 +463,7 @@ class JifengLegacyWorkspace {
 					return;
 				}
 				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
-					doctype: liveDoctype, partnerArchive: name });
+					doctype: liveDoctype, partnerArchive: name, availability: JIFENG_PARTIAL_ROUTES[moduleName]?.[name] ? "partial" : "formal" });
 				return;
 			}
 			let filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
@@ -654,12 +657,12 @@ class JifengLegacyWorkspace {
 		}
 		const module = this.module(moduleName);
 		if (!module) return this.renderHome();
-		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>带“正式”标记的入口连接业务单据与报表</p></div></div>' +
+		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>“正式”和“部分可用”入口连接业务单据与报表，操作范围见页面说明</p></div></div>' +
 			module.groups.map((group) =>
 				'<section class="jfe-group"><header><b>' + this.esc(group.name) + '</b><span>' + group.items.length + " 项</span></header><div class=\"jfe-function-grid\">" +
 				group.items.map((name) => '<button class="jfe-function-card' + (JIFENG_LIVE_CATALOGS[moduleName]?.[name] || JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_PAGES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? ' is-live' : '') + '" data-action="open-page" data-module="' + this.esc(moduleName) + '" data-page="' + this.esc(name) + '">' +
 					'<span class="jfe-function-mark">' + this.esc(name.slice(0, 1)) + "</span><span>" + this.esc(name) + "</span>" +
-					(JIFENG_LIVE_CATALOGS[moduleName]?.[name] || JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_PAGES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? '<em class="jfe-live-tag">正式</em>' : "") + '<i>›</i></button>').join("") +
+					(JIFENG_LIVE_CATALOGS[moduleName]?.[name] || JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_PAGES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? '<em class="jfe-live-tag">' + (JIFENG_PARTIAL_ROUTES[moduleName]?.[name] ? "部分可用" : "正式") + "</em>" : "") + '<i>›</i></button>').join("") +
 				"</div></section>"
 			).join("") + "</section>";
 	}

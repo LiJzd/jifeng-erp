@@ -63,9 +63,9 @@ def smoke(company, other_company):
         records.add((doctype, document.name))
         return document
 
-    def payload(label, supplier, owner_company=company):
-        return {"kind": KIND, "company": owner_company, "request_id": str(uuid4()),
-                "supplier_version": read_supplier(supplier.name, KIND, owner_company)["version"],
+    def payload(label, supplier, owner_company=company, kind=KIND):
+        return {"kind": kind, "company": owner_company, "request_id": str(uuid4()),
+                "supplier_version": read_supplier(supplier.name, kind, owner_company)["version"],
                 "profile": {"supplier": supplier.name, "legacy_number": prefix + "-" + label,
                     "display_name": " 合成 <b>工厂</b> " + label, "owner_name": "合成负责",
                     "mobile": "合成手机原文", "reception": "合成接货原文", "phone": "合成电话原文",
@@ -78,7 +78,7 @@ def smoke(company, other_company):
         return result
 
     def edit(view, values):
-        return {"kind": KIND, "company": view["company"], "name": view["name"],
+        return {"kind": view["kind"], "company": view["company"], "name": view["name"],
                 "profile_version": view["profile_version"], "supplier_version": view["supplier_version"],
                 "profile": values}
 
@@ -167,6 +167,33 @@ def smoke(company, other_company):
         assert not frappe.db.exists(PROFILE, {"request_id": invalid["request_id"]})
         passed("native_required_field_failure_has_no_archive_version_series_or_caller_side_effect")
 
+        current = "native_plating_shared_supplier_company_kind_and_uuid_isolation"
+        assert meta.get_field("archive_kind").options.split("\n") == [KIND, "电镀厂"]
+        plating_request = payload("电镀档案", first_supplier, kind="电镀厂")
+        plating = create(plating_request)
+        foreign_plating = create(payload("异公司电镀", first_supplier, other_company, kind="电镀厂"))
+        assert plating["supplier"] == first["supplier"] == foreign_plating["supplier"]
+        assert _document_snapshot("Supplier", first_supplier.name) == supplier_before
+        assert create(plating_request)["name"] == plating["name"]
+        same_company_plating = pure(lambda: query_archives("电镀厂", company, prefix))
+        assert [row["name"] for row in same_company_plating["rows"]] == [plating["name"]]
+        for action in (lambda: read_archive(first["name"], "电镀厂", company),
+                       lambda: read_archive(plating["name"], KIND, company),
+                       lambda: resolve_creation(first_request["request_id"], "电镀厂", company),
+                       lambda: resolve_creation(plating_request["request_id"], KIND, company),
+                       lambda: read_archive(plating["name"], "电镀厂", other_company)):
+            rejected(action)
+        crossed = deepcopy(first_request)
+        crossed["kind"] = "电镀厂"
+        rejected(lambda: save_archive(crossed))
+        crossed_edit = edit(plating, {"notes": "跨种类错误修改"})
+        crossed_edit["kind"] = KIND
+        rejected(lambda: save_archive(crossed_edit))
+        plating = native(lambda: save_archive(edit(plating, {"notes": "只改电镀原文"})))
+        assert plating["profile"]["notes"] == "只改电镀原文"
+        assert _document_snapshot("Supplier", first_supplier.name) == supplier_before
+        passed("native_plating_and_outsource_share_explicit_supplier_but_company_kind_reads_writes_and_uuid_retries_are_isolated")
+
         current = "actual_roles_and_company_supplier_profile_permissions"
         manager = actor("manager", "Purchase Manager")
         reader = actor("reader", "Purchase User")
@@ -178,6 +205,11 @@ def smoke(company, other_company):
         third = create(payload("实际主管", first_supplier))
         third = native(lambda: save_archive(edit(third, {"notes": "实际采购主管保存"})))
         assert third["can_write"] and _document_snapshot("Supplier", first_supplier.name) == supplier_before
+        plating_owner = plating["owner"]
+        plating = native(lambda: save_archive(edit(plating, {"notes": "采购主管修改电镀原文"})))
+        assert plating["owner"] == plating_owner == "Administrator"
+        assert plating["modified_by"] == manager and plating["owner"] != plating["modified_by"]
+        assert _document_snapshot("Supplier", first_supplier.name) == supplier_before
         passed("actual_purchase_manager_creates_and_updates_profile_without_system_manager_and_supplier_mutation")
 
         current = "actual_purchase_manager_has_no_native_supplier_create_permission"
@@ -264,6 +296,23 @@ def smoke(company, other_company):
         joint = native(lambda: save_archive(edit(joint, {"notes": "只改联合新建后的档案原文"})))
         assert _document_snapshot("Supplier", joint["supplier"]) == joint_supplier_before
         passed("actual_purchase_manager_with_purchase_master_manager_one_save_native_supplier_factory_idempotence_and_no_shared_supplier_edit")
+
+        current = "one_save_native_plating_supplier_and_profile_with_master_data_role"
+        plating_defaults = pure(lambda: init_archive("电镀厂", company))
+        assert plating_defaults["kind"] == "电镀厂" and plating_defaults["can_create_supplier"]
+        plating_joint_request = deepcopy(joint_request)
+        plating_joint_request.update(kind="电镀厂", request_id=str(uuid4()))
+        plating_joint_request["profile"].update(legacy_number=prefix + "-电镀一次新建",
+                                                display_name=prefix + "-合成电镀联合供应商")
+        plating_joint = create(plating_joint_request)
+        records.add(("Supplier", plating_joint["supplier"]))
+        assert plating_joint["supplier"] != joint["supplier"]
+        assert plating_joint["kind"] == "电镀厂" and plating_joint["profile"]["bank_account"] == "0000567800"
+        assert create(plating_joint_request)["name"] == plating_joint["name"]
+        assert _document_snapshot("Supplier", joint["supplier"]) == joint_supplier_before
+        assert pure(lambda: resolve_creation(plating_joint_request["request_id"], "电镀厂", company))["archive"]["name"] == plating_joint["name"]
+        rejected(lambda: resolve_creation(plating_joint_request["request_id"], KIND, company))
+        passed("actual_purchase_manager_master_role_one_save_plating_supplier_profile_idempotence_and_cross_kind_resolution_guard")
 
         current = "native_supplier_name_duplicate_is_correctable_and_fully_rolled_back"
         assert frappe.defaults.get_global_default("supp_master_name") == "Supplier Name", \
