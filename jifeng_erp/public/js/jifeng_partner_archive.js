@@ -17,7 +17,9 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 	button(label, action) { const value = this.element("button", __(label), "jfe-button"); value.type = "button"; value.addEventListener("click", action); return value; }
 	call(method, args, write = false) { return frappe.call({ method: "jifeng_erp.partner_archive." + method, args, type: write ? "POST" : "GET", freeze: false }); }
 	control(host, fieldname, label, fieldtype, options, onchange) { const cell = this.element("div"); host.append(cell);
-		return frappe.ui.form.make_control({ parent: cell, render_input: true, df: { fieldname, label: __(label), fieldtype, options, onchange } }); }
+		const control = frappe.ui.form.make_control({ parent: cell, render_input: true, df: { fieldname, label: __(label), fieldtype, options, onchange } });
+		if (fieldtype === "Small Text") control.$input?.css?.("height", "36px");
+		return control; }
 	flags(control, flags) { let changed = false; for (const [field, value] of Object.entries(flags)) if (control.df[field] !== value) { control.df[field] = value; changed = true; } if (changed) control.refresh?.(); }
 	async render() {
 		this.host.classList.add("jfe-partner-archive"); this.host.replaceChildren();
