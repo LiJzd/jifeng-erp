@@ -261,7 +261,9 @@ def smoke(company, other_company, item_group, stock_uom):
         assert document.numbering_mode == AUTO_MODE and document.legacy_number == direct.legacy_number
         assert _version_has(document, "value") and _version_has(document, "abbreviation")
         source_before = _document_snapshot(DOCTYPE, document.name)
-        copied = remember(frappe.copy_doc(frappe.get_doc(DOCTYPE, document.name)))
+        # Python defaults ignore_no_copy=True; ordinary Desk duplicates honor
+        # df.no_copy. Request that ordinary-copy contract explicitly here.
+        copied = remember(frappe.copy_doc(frappe.get_doc(DOCTYPE, document.name), ignore_no_copy=False))
         assert all(copied.get(field) in (None, "") for field in ("legacy_number", "numbering_mode", *REQUEST_FIELDS))
         native(copied.insert)
         assert copied.numbering_mode == AUTO_MODE and copied.legacy_number != document.legacy_number
