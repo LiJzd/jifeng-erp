@@ -1,12 +1,20 @@
 # 验证记录
 
+## 2026-10-01 物料与材料只读来源及末尾撤权守门
+
+56c8acc新增物料/材料浏览API（list/read），要求明确公司、种类、关键词及档案在用/停用；原生Profile→Item的真实投影，旧单位/参考价/换算原文分别保存，不计算库存或自行换算。浏览始终只读，包括具有写权限的岗位。Item.disabled仅可读展示，不能代替Profile.inactive控制列表。图片只用标明来源的关联Item/image精确私有File，并核read/mask/download及唯一URL；没有独立档案图片或新增UI。
+
+独立审查复现File加载时对Profile价格撤销mask仍带出价格，已改为先解析图片、整批source重载后统一核对已输出字段权限/标量/version及准确File，任何末尾变化整体拒绝，不补隐藏字段或返回部分DTO。31项库存模型通过，root独立全1083模型、Ruff及差异检查通过。
+
+原生r1因验收误认为Stock User没有Company.read失败；实际标准角色有read，2d15ab2修正证据预期，未改业务权限。r2共9门通过：真实Stock User/Manager只读、相同旧代码不同业务商品、两种档案和停用历史、已disabled商品仍按档案状态可查、公司/Item/Profile User Permission、Guest/非法筛选以及全批回滚。独立连接确认指定档案/商品/所有子表/价格/File/Version/权限/Auth/Series/ErrorLog完整SQL内容、GL/SLE及所有表行数恢复；这不等于每张数据库表的内容hash或双连接隔离。证据classic-inventory_catalog-native-result-r1.json、-r2.json。旧浏览操作/菜单及实际图片HTTP、Company仅select真实岗位、原生字段read/mask撤权、双连接并发仍待验。旧站本轮登录结果未知，不能把后端或模型当成旧页面操作通过。
+
 ## 2026-10-01 档案报告整套复验及应付查询守门
 
 `a1baf4a` 为每次成功原生操作核对完整 Error Log，防止附件钩子吞下错误；预期报告权限拒绝仅清理本次调用新增、标题/角色/异常/完整行哈希均匹配的一条原生日志，使用原生删除并记录精确回执，既有日志不动。整套 catalog_full r2 在初始产品图片别名断言处失败，独立全表/账簿审计无变化。已证原生 File.insert 会把该别名尝试去重为 Item 附件，`3c998c9` 用原生 create_attachment_copy 补齐验收数据，不放松业务角色或 File 权限。r3 整套64门通过，8条本次预期报告日志精确清理，成功保存未增加附图错误；独立连接确认完整档案/子表/附件/Version/Series/Auth、员工、账簿及所有表计数恢复。r1 的9条旧日志仍保留。证据 `classic-catalog_full-native-result-r2.json`、`-r3.json`；未扩大为实际浏览器保存/上传、并发或全模块通过。
 
 默认号 GUI 首批见到旧文案、号未刷新，但该批仅核对另取资源 SHA，无法证明执行的类属于最新版本；下方“编号原文”可编辑本来就是原文维护设计，上方“编号”只读。fresh r2 已确认实际 buildEditor 含新文案、不含旧文案，字段区别正确、空查询及首次 init HTTP200。第二次新增等待遇工具30秒超时、句柄重置，未重复点击；响应/DOM号码匹配、请求 UUID、clean 与最终弹层状态未知，不能计通过或判业务缺陷。两批独立审计保护业务全内容及账簿，首批计数无变化、Admin.last_active变；r2 仅Admin.last_active/last_login与登录Sessions/Activity各+1。证据 `tool-archive-default-number-gui-20261001.md`、两个 number GUI fresh 审计。
 
-`9468187` 新增只读 query_payables：明确公司/供应商/截止日，调用真实 Accounts Payable，以公司本币返回原生金额；完整核对科目、PLE、原凭证/对方凭证、费用来源、字段与记录权限、重过账状态，隐藏付款不提供部分余额。报告前后完整内容与权限输入变化即拒绝，未修改事务隔离或锁定 writer；准确处理原生 Date 首列合计尾行。root独立全1048模型、改动Ruff/编译通过。原生PI/PE/JE与实际岗位界面尚待验证，没有接旧对账菜单或宣称旧对账口径已取得。
+`9468187` 新增只读 query_payables：明确公司/供应商/截止日，调用真实 Accounts Payable，以公司本币返回原生金额；完整核对科目、PLE、原凭证/对方凭证、费用来源、字段与记录权限、重过账状态，隐藏付款不提供部分余额。报告前后完整内容与权限输入变化即拒绝，未修改事务隔离或锁定 writer；准确处理原生 Date 首列合计尾行。root独立全1048模型、改动Ruff/编译通过。后续6b45af9补独立mask权限守门，37项应付模型通过。d1bce6d原生r6共19门通过：120元采购发票、40+30元分批付款、20元退货冲抵与未来10元付款的截止余额30元；80元赊账费用沿真实JE，另25元来源用于隔离负例；外币原生本币投影、隐藏付款/PLE/科目/对方发票/费用反向来源拒绝、三项字段read撤权及金额mask、持久重过账Queued/Failed/Completed状态、已安装取消账本语义均已验证。r1至r5为验收数据角色、历史记账标志和退货草稿旧总额问题，不计通过；原生validate先核旧总额再重算，r6改为数量调整后调用原生金额重算，没有修改应付生产算法或授予DocPerm。每轮独立新连接确认指定来源/子表、完整权限与Auth/Series、GL/SLE及所有表计数恢复。证据classic-supplier_reconciliation-native-result-r1.json至-r6.json。root当前全1077模型通过（含尚待原生验收的库存浏览25项），不是模块完成率。Company仅select真实角色、双连接并发、实际重过账worker、岗位GUI和旧对账口径仍待验证，未接旧对账菜单。
 
 ## 2026-10-01 模具、版种原生及单列弹窗续验
 
