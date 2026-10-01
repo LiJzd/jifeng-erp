@@ -1,0 +1,21 @@
+{
+ "doctype": "DocType", "name": "Jifeng Product Category", "module": "Jifeng ERP", "allow_rename": 0,
+ "autoname": "format:JF-PROD-C-{YYYY}-{#####}", "title_field": "major_name",
+ "search_fields": "major_name,legacy_code,owner_name,region", "track_changes": 1,
+ "field_order": ["company", "legacy_code", "major_name", "owner_name", "region", "inactive", "request_id", "request_digest"],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "legacy_code", "fieldtype": "Data", "label": "代码", "in_list_view": 1, "description": "独立原文；本批不推断自动编号、唯一规则或业务商品分组。"},
+  {"fieldname": "major_name", "fieldtype": "Data", "label": "大类", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "owner_name", "fieldtype": "Data", "label": "负责", "description": "保留原文，不自动关联员工或账号。"},
+  {"fieldname": "region", "fieldtype": "Data", "label": "区域"},
+  {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1, "description": "停用阻止新增明细与新选择，已有明细和档案原文不自动改变。"},
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "新建请求身份", "hidden": 1, "read_only": 1, "unique": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "request_digest", "fieldtype": "Data", "label": "新建请求摘要", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+  {"role": "Stock Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+  {"role": "Manufacturing Manager", "read": 1, "select": 1, "write": 1, "create": 1}
+ ]
+}

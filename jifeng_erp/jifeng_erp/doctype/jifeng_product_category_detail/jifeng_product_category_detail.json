@@ -1,0 +1,23 @@
+{
+ "doctype": "DocType", "name": "Jifeng Product Category Detail", "module": "Jifeng ERP", "allow_rename": 0,
+ "autoname": "format:JF-PROD-CD-{YYYY}-{#####}", "title_field": "minor_name",
+ "search_fields": "minor_name,material,display_uom,conversion_uom_text", "track_changes": 1,
+ "field_order": ["category", "company", "minor_name", "material", "display_uom", "conversion_uom_text", "conversion_value", "inactive", "request_id", "request_digest"],
+ "fields": [
+  {"fieldname": "category", "fieldtype": "Link", "label": "大类", "options": "Jifeng Product Category", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "read_only": 1, "set_only_once": 1, "fetch_from": "category.company", "description": "服务器依据真实大类派生，公司和大类保存后固定。"},
+  {"fieldname": "minor_name", "fieldtype": "Data", "label": "小类", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "material", "fieldtype": "Data", "label": "材质", "description": "独立原文，不映射 Item Group 或材料成本。"},
+  {"fieldname": "display_uom", "fieldtype": "Data", "label": "单位", "description": "独立原文，不替换商品库存单位。"},
+  {"fieldname": "conversion_uom_text", "fieldtype": "Data", "label": "换算单位", "description": "独立原文，不自动创建或映射 UOM。"},
+  {"fieldname": "conversion_value", "fieldtype": "Data", "label": "换算值", "description": "仅接受可空有限数值，空值、精度和负零独立保存为数值文本；方向尚未确认，不参与业务计算，未设置默认1。"},
+  {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1, "description": "停用影响新选择，历史原文和来源保留。"},
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "新建请求身份", "hidden": 1, "read_only": 1, "unique": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "request_digest", "fieldtype": "Data", "label": "新建请求摘要", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+  {"role": "Stock Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+  {"role": "Manufacturing Manager", "read": 1, "select": 1, "write": 1, "create": 1}
+ ]
+}
