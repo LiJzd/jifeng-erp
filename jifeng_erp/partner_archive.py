@@ -236,7 +236,14 @@ def _create_supplier(profile, values):
     # A duplicate name fails atomically; it never selects an existing party.
     supplier.supplier_name = profile.display_name
     supplier.disabled = 0
-    supplier.save()
+    try:
+        supplier.save()
+    except frappe.DuplicateEntryError as error:
+        if len(error.args) < 2 or error.args[0] != "Supplier" or error.args[1] != supplier.name:
+            raise
+        # This native name collision is a correctable rejected request. The
+        # outer transaction still rolls back; never auto-link an existing party.
+        frappe.throw("同名业务供应商已存在，请修改名称，或明确关联已有供应商后保存。")
     return supplier
 
 

@@ -17,6 +17,10 @@ from uuid import uuid4
 ROOT = Path(__file__).parents[1]
 
 
+class NativeDuplicateEntryError(NameError):
+    """The installed Frappe duplicate-name category, distinct from validation."""
+
+
 class Record(dict):
     __getattr__ = dict.get
     __setattr__ = dict.__setitem__
@@ -88,7 +92,7 @@ class Document(Record):
             self.name = ("PROFILE-" + str(env.tick) if self.doctype == env.module.PROFILE else
                          self.supplier_name if env.supplier_naming == "Supplier Name" else "SUP-" + str(env.tick))
             if (self.doctype, self.name) in env.records:
-                raise ValueError("native duplicate supplier name")
+                raise env.frappe.DuplicateEntryError(self.doctype, self.name, ValueError("native duplicate name"))
             self.creation = "2026-10-02T00:00:00.000001"
         env.tick += 1
         self.modified = "2026-10-02T00:00:" + str(env.tick).zfill(2) + ".123456"
@@ -109,6 +113,7 @@ class TestPartnerArchive(unittest.TestCase):
         self.hook = None
         self.frappe = types.ModuleType("frappe")
         self.frappe.PermissionError, self.frappe.TimestampMismatchError = PermissionError, RuntimeError
+        self.frappe.DuplicateEntryError = NativeDuplicateEntryError
         self.frappe.session = Record(user="purchase-manager@example.invalid")
         self.frappe.flags, self.frappe.local = Record(), types.SimpleNamespace()
         self.frappe.whitelist = lambda **kwargs: lambda function: function
@@ -300,12 +305,40 @@ class TestPartnerArchive(unittest.TestCase):
     def test_duplicate_supplier_fails_without_auto_binding(self):
         payload = self.create_supplier_payload()
         self.module.save_archive(payload)
-        before = deepcopy(self.records)
+        before = deepcopy((self.records, self.saves))
+        callbacks = {name: list(getattr(self.frappe.db, name)._functions) for name in
+                     ("before_commit", "after_commit", "before_rollback", "after_rollback")}
+        context = deepcopy((self.frappe.flags, vars(self.frappe.local)))
         second = deepcopy(payload)
         second["request_id"] = str(uuid4())
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "同名业务供应商已存在，请修改名称") as failure:
             self.module.save_archive(second)
-        self.assertEqual(self.records, before)
+        self.assertNotIsInstance(failure.exception, NativeDuplicateEntryError)
+        self.assertEqual((self.records, self.saves), before)
+        self.assertEqual({name: list(getattr(self.frappe.db, name)._functions) for name in callbacks}, callbacks)
+        self.assertEqual((self.frappe.flags, vars(self.frappe.local)), context)
+        self.assertIsNone(self.module._CREATING.get())
+        self.assertEqual(self.module.resolve_creation(second["request_id"], self.module.KIND, "Company A"),
+                         {"status": "not_found"})
+        # A human corrects the same rejected UUID; no existing Supplier is adopted.
+        second["profile"]["display_name"] = "合成修正后的独立新供应商"
+        corrected = self.module.save_archive(second)
+        self.assertNotEqual(corrected["supplier"], payload["profile"]["display_name"])
+        self.assertEqual(corrected["profile"]["display_name"], second["profile"]["display_name"])
+        self.assertEqual(self.module.resolve_creation(second["request_id"], self.module.KIND, "Company A")
+                         ["archive"]["name"], corrected["name"])
+
+    def test_non_duplicate_native_supplier_error_keeps_original_category(self):
+        with patch.object(Document, "save", side_effect=RuntimeError("native unrelated failure")):
+            with self.assertRaisesRegex(RuntimeError, "native unrelated failure"):
+                self.module.save_archive(self.create_supplier_payload())
+
+    def test_other_native_document_duplicate_is_not_labeled_supplier_conflict(self):
+        error = NativeDuplicateEntryError("Contact", "synthetic-contact", ValueError("native duplicate"))
+        with patch.object(Document, "save", side_effect=error):
+            with self.assertRaises(NativeDuplicateEntryError) as failure:
+                self.module.save_archive(self.create_supplier_payload())
+        self.assertIs(failure.exception, error)
 
     def test_joint_failure_rolls_new_supplier_back(self):
         self.fail_save = True

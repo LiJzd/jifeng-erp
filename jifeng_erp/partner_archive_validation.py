@@ -16,7 +16,7 @@ from jifeng_erp.catalog_validation import (
 from jifeng_erp.diagnostics import _begin_rollback_only
 from jifeng_erp.inventory_validation import _ledger_snapshot
 from jifeng_erp.partner_archive import (
-    KIND, PROFILE, init_archive, query_archives, read_archive, read_supplier,
+    KIND, PROFILE, _CREATING, init_archive, query_archives, read_archive, read_supplier,
     resolve_creation, save_archive,
 )
 from jifeng_erp.personnel_changes_validation import _callbacks, _tab_counts, _versions
@@ -264,6 +264,42 @@ def smoke(company, other_company):
         joint = native(lambda: save_archive(edit(joint, {"notes": "只改联合新建后的档案原文"})))
         assert _document_snapshot("Supplier", joint["supplier"]) == joint_supplier_before
         passed("actual_purchase_manager_with_purchase_master_manager_one_save_native_supplier_factory_idempotence_and_no_shared_supplier_edit")
+
+        current = "native_supplier_name_duplicate_is_correctable_and_fully_rolled_back"
+        assert frappe.defaults.get_global_default("supp_master_name") == "Supplier Name", \
+            "真实重名门槛须既有Supplier Name配置，不修改站点命名规则"
+        assert joint["supplier"] == joint_request["profile"]["display_name"]
+        duplicate_request = deepcopy(joint_request)
+        duplicate_request["request_id"] = str(uuid4())
+        duplicate_request["profile"]["legacy_number"] = prefix + "-重名拒绝"
+        duplicate_counts = _tab_counts(tables)[1]
+        duplicate_actor = (frappe.session.user, frappe.in_test, _CREATING.get())
+
+        def duplicate_action():
+            try:
+                save_archive(duplicate_request)
+            except frappe.ValidationError as error:
+                assert str(error) == "同名业务供应商已存在，请修改名称，或明确关联已有供应商后保存。"
+                raise
+
+        # rejected already verifies complete Supplier/Profile/children/Version/
+        # Error Log/Series contents, callbacks, local context and whole GL/SLE.
+        rejected(duplicate_action, frappe.ValidationError)
+        assert _tab_counts(tables)[1] == duplicate_counts
+        assert (frappe.session.user, frappe.in_test, _CREATING.get()) == duplicate_actor
+        assert _document_snapshot("Supplier", joint["supplier"]) == joint_supplier_before
+        assert pure(lambda: resolve_creation(duplicate_request["request_id"], KIND, company)) == {"status": "not_found"}
+        passed("native_supplier_name_duplicate_returns_actionable_validation_and_restores_complete_contents_series_counts_callbacks_and_context")
+
+        current = "human_corrects_rejected_duplicate_with_same_uuid"
+        duplicate_request["profile"]["display_name"] = prefix + "-合成修正独立供应商"
+        corrected = create(duplicate_request)
+        records.add(("Supplier", corrected["supplier"]))
+        assert corrected["supplier"] != joint["supplier"]
+        assert corrected["profile"]["display_name"] == duplicate_request["profile"]["display_name"]
+        assert _document_snapshot("Supplier", joint["supplier"]) == joint_supplier_before
+        assert pure(lambda: resolve_creation(duplicate_request["request_id"], KIND, company))["archive"]["name"] == corrected["name"]
+        passed("native_explicit_name_correction_reuses_rejected_uuid_without_adopting_existing_supplier")
 
         current = "second_document_failure_rolls_back_new_supplier"
         broken_joint = deepcopy(joint_request)
