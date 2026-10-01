@@ -187,10 +187,32 @@ class NativeDictionarySnapshot(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "不能遗漏虚拟子表"):
             self.snapshot("Jifeng Product Profile", "QA-PROFILE")
 
+    def test_native_whole_audit_keeps_series_without_doctype_metadata_and_low_decimal_digits(self):
+        series = [{"name": "QA-SERIES", "current": 9, "extra_installed_column": "kept"}]
+        item = [{"name": "QA-ITEM", "extra_decimal": Decimal("999999999999.000000001")}]
+        database = types.SimpleNamespace(
+            exists=Mock(side_effect=lambda dt, name: name != "Series"),
+            sql=Mock(side_effect=lambda query, **kwargs: deepcopy(
+                series if "`tabSeries`" in query else item if "`tabItem`" in query else [])))
+        metadata = Mock(side_effect=lambda dt: self.assertNotEqual(dt, "Series") or Record(get_table_fields=lambda: []))
+        runtime = types.SimpleNamespace(db=database, get_meta=metadata)
+        tree = ast.parse((ROOT / "jifeng_erp/product_dictionary_validation.py").read_text(encoding="utf-8"))
+        definition = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_native_contents")
+        namespace = {"frappe": runtime, "DOCTYPE": DOCTYPE, "PROFILE": "Jifeng Product Profile", "_sql_row_hash": self.sql_digest}
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), "actual_whole_native_audit", "exec"), namespace)
+        audit = namespace["_native_contents"]
+        before = audit()
+        self.assertEqual(before["Series"], self.sql_digest(series))
+        self.assertNotIn(unittest.mock.call("DocType", "Series"), database.exists.call_args_list)
+        series[0]["extra_installed_column"] = "changed"
+        self.assertNotEqual(audit()["Series"], before["Series"])
+        item[0]["extra_decimal"] = Decimal("999999999999.000000002")
+        self.assertNotEqual(audit()["Item"], before["Item"])
+
 
 class TestProductDictionary(unittest.TestCase):
     def setUp(self):
-        self.documents, self.versions = {}, []
+        self.documents, self.versions, self.series = {}, [], {}
         self.role_denials, self.document_denials, self.denied_companies = set(), set(), set()
         self.hidden = {"read": set(), "write": set()}
         self.tick, self.fail_after_save, self.forced_list = 1, False, None
@@ -209,18 +231,22 @@ class TestProductDictionary(unittest.TestCase):
         self.frappe.get_all = Mock(side_effect=AssertionError("unscoped listing is forbidden"))
         self.snapshots = {}
         self.db = types.SimpleNamespace(savepoint=self.savepoint, rollback=self.rollback,
+            get_value=Mock(side_effect=lambda dt, name, field, **kwargs: self.series.get(name) if dt == "Series" else None),
             **{key: Queue() for key in ("before_commit", "after_commit", "before_rollback", "after_rollback")})
         self.frappe.db = self.db
         model = types.ModuleType("frappe.model")
         model.get_permitted_fields = lambda dt, permission_type, **kwargs: (
             {row["fieldname"] for row in SCHEMA["fields"]} | {"name", "modified", "creation", "owner", "modified_by"}) - self.hidden[permission_type]
+        naming = types.ModuleType("frappe.model.naming")
+        self.allocate = naming.getseries = Mock(side_effect=self.next_number)
         separation = types.ModuleType("jifeng_erp.personnel_separation")
         tree = ast.parse((ROOT / "jifeng_erp/personnel_separation.py").read_text(encoding="utf-8"))
         definition = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_atomic")
         namespace = {"frappe": self.frappe, "wraps": wraps, "deepcopy": deepcopy, "uuid4": uuid4}
         exec(compile(ast.Module(body=[definition], type_ignores=[]), "actual_native_atomic", "exec"), namespace)
         separation._atomic = namespace["_atomic"]
-        scope = patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model, "jifeng_erp.personnel_separation": separation})
+        scope = patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model,
+            "frappe.model.naming": naming, "jifeng_erp.personnel_separation": separation})
         scope.start()
         self.addCleanup(scope.stop)
         spec = importlib.util.spec_from_file_location("product_dictionary_under_test", ROOT / "jifeng_erp/product_dictionary.py")
@@ -231,7 +257,8 @@ class TestProductDictionary(unittest.TestCase):
 
     def new_doc(self, doctype):
         self.assertEqual(doctype, DOCTYPE)
-        return NativeDocument(doctype=DOCTYPE, name=None, company="DEFAULT-DENIED", dictionary_type="风格", inactive=0, __islocal=1)
+        return NativeDocument(doctype=DOCTYPE, name=None, company="DEFAULT-DENIED", dictionary_type="风格",
+                              numbering_mode=None, inactive=0, __islocal=1)
 
     def get_doc(self, doctype, name, **kwargs):
         if doctype == "Company":
@@ -262,10 +289,18 @@ class TestProductDictionary(unittest.TestCase):
         return sorted(result, key=lambda row: row.get("value", row.name))
 
     def savepoint(self, point):
-        self.snapshots[point] = deepcopy((self.documents, self.versions))
+        self.snapshots[point] = deepcopy((self.documents, self.versions, self.series))
 
     def rollback(self, save_point):
-        self.documents, self.versions = deepcopy(self.snapshots[save_point])
+        self.documents, self.versions, self.series = deepcopy(self.snapshots[save_point])
+
+    def next_number(self, key, digits):
+        self.series[key] = self.series.get(key, 0) + 1
+        return str(self.series[key]).zfill(digits)
+
+    def automatic_payload(self, **changes):
+        return {key: value for key, value in self.payload(numbering_mode=self.module.AUTO_MODE, **changes).items()
+                if key != "legacy_number"}
 
     def payload(self, **changes):
         return {"request_id": str(uuid4()), "company": "C-1", "dictionary_type": "风格", "legacy_number": "001",
@@ -287,6 +322,7 @@ class TestProductDictionary(unittest.TestCase):
         self.assertTrue(SCHEMA["track_changes"])
         self.assertTrue(all(fields[field]["set_only_once"] for field in self.module.IDENTITY))
         self.assertFalse(fields["value"].get("set_only_once"))
+        self.assertTrue(fields["legacy_number"]["no_copy"])
         self.assertEqual({row["role"] for row in SCHEMA["permissions"]}, {"System Manager", "Stock Manager", "Manufacturing Manager"})
         self.assertTrue(all({key for key, value in row.items() if value == 1} == {"read", "select", "create", "write"} for row in SCHEMA["permissions"]))
 
@@ -321,10 +357,13 @@ class TestProductDictionary(unittest.TestCase):
         document.company, document.value = "C-1", "原生新建"
         document.save()
         self.assertEqual(UUID(document.request_id).version, 4)
-        self.assertEqual(document.request_digest, self.module._digest("C-1", "风格", self.module._values(document)))
+        self.assertEqual(document.numbering_mode, self.module.AUTO_MODE)
+        self.assertEqual(document.legacy_number, "001")
+        self.assertEqual(document.request_digest, self.module._digest("C-1", "风格", self.module._values(document), self.module.AUTO_MODE))
 
     def test_native_new_form_rejects_server_metadata_or_json_token_injection(self):
-        for field, value in (("request_id", str(uuid4())), ("request_digest", "a" * 64)):
+        for field, value in (("request_id", str(uuid4())), ("request_digest", "a" * 64),
+                             ("numbering_mode", self.module.AUTO_MODE)):
             document = self.new_doc(DOCTYPE)
             document.company, document.value = "C-1", "原生新建"
             document.set(field, value)
@@ -337,6 +376,127 @@ class TestProductDictionary(unittest.TestCase):
         document.__dict__["_jf_dictionary_server"] = "client-token"
         with self.assertRaisesRegex(ValueError, "只能由服务器生成"):
             self.module.validate_dictionary(document)
+
+    def test_automatic_preview_is_only_advisory_and_does_not_allocate_or_expose_unreadable_number(self):
+        empty = self.module.init_dictionary("风格")
+        self.assertIsNone(empty["number_preview"])
+        for _ in range(2):
+            preview = self.module.init_dictionary("风格", "C-1")
+            self.assertEqual(preview["number_preview"], "001")
+            self.assertTrue(preview["number_preview_is_provisional"])
+            self.assertIsNone(preview["legacy_number"])
+            self.assertTrue(preview["field_meta"]["legacy_number"]["read_only"])
+            self.assertEqual(self.db.get_value.call_args.kwargs, {"order_by": "name"})
+        self.assertFalse(self.series)
+        self.allocate.assert_not_called()
+        self.hidden["read"].add("legacy_number")
+        self.db.get_value.reset_mock()
+        self.assertIsNone(self.module.init_dictionary("风格", "C-1")["number_preview"])
+        self.db.get_value.assert_not_called()
+
+    def test_automatic_final_number_is_allocated_at_save_and_scoped_by_company_and_type(self):
+        preview = self.module.init_dictionary("风格", "C-1")["number_preview"]
+        first = self.module.save_dictionary(self.automatic_payload())
+        second = self.module.save_dictionary(self.automatic_payload())
+        brand = self.module.save_dictionary(self.automatic_payload(dictionary_type="品牌"))
+        foreign = self.module.save_dictionary(self.automatic_payload(company="C-2"))
+        self.assertEqual((preview, first["legacy_number"], second["legacy_number"], brand["legacy_number"], foreign["legacy_number"]),
+                         ("001", "001", "002", "001", "001"))
+        self.assertEqual(first["numbering_mode"], self.module.AUTO_MODE)
+        self.assertIsNone(second["number_preview"])
+        self.assertFalse(second["number_preview_is_provisional"])
+        self.assertEqual(len(self.series), 3)
+
+    def test_automatic_retry_after_rename_keeps_original_digest_final_number_and_counter(self):
+        payload = self.automatic_payload()
+        archive = self.module.save_dictionary(payload)
+        original_digest = self.documents[archive["name"]]["request_digest"]
+        changed = self.update(archive, value="后续改名", remarks="后续备注")
+        before = deepcopy((self.documents, self.versions, self.series))
+        count = self.allocate.call_count
+        self.assertEqual(self.module.save_dictionary(payload), changed)
+        self.assertEqual(self.module.resolve_creation(payload["request_id"], "风格", "C-1")["archive"], changed)
+        self.assertEqual((self.documents, self.versions, self.series), before)
+        self.assertEqual(self.allocate.call_count, count)
+        self.assertEqual(self.documents[archive["name"]]["request_digest"], original_digest)
+        with self.assertRaisesRegex(ValueError, "新建请求已使用"):
+            self.module.save_dictionary(payload | {"value": "改初始输入"})
+        with self.assertRaisesRegex(ValueError, "新建请求已使用"):
+            self.module.save_dictionary({key: value for key, value in payload.items() if key != "numbering_mode"})
+        self.assertEqual((self.documents, self.versions, self.series), before)
+
+    def test_automatic_number_mode_and_receipt_are_fixed_through_api_and_native_save(self):
+        archive = self.module.save_dictionary(self.automatic_payload())
+        for field, value in (("legacy_number", "999"), ("numbering_mode", None), ("numbering_mode", "bad")):
+            with self.subTest(api=field), self.assertRaises(ValueError):
+                self.update(archive, **{field: value})
+            document = self.get_doc(DOCTYPE, archive["name"])
+            document.set(field, value)
+            with self.subTest(native=field), self.assertRaises(ValueError):
+                document.save()
+        self.assertEqual(self.documents[archive["name"]]["legacy_number"], "001")
+        self.assertEqual(self.series, {self.module._series_key("C-1", "风格"): 1})
+
+    def test_automatic_creation_rejects_client_number_mode_and_before_validate_marker_reuse(self):
+        for changes in ({"legacy_number": None}, {"legacy_number": "001"}, {"numbering_mode": "bad"}):
+            payload = self.automatic_payload() | changes
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.module.save_dictionary(payload)
+        self.allocate.assert_not_called()
+        direct = self.new_doc(DOCTYPE)
+        direct.company, direct.value, direct.legacy_number = "C-1", "直接伪造编号", "001"
+        with self.assertRaisesRegex(ValueError, "只能由服务器生成"):
+            direct.save()
+        valid = self.new_doc(DOCTYPE)
+        valid.company, valid.value = "C-1", "原生初始化"
+        self.module.before_insert_dictionary(valid)
+        forged = self.new_doc(DOCTYPE)
+        forged.update(valid)
+        forged.__dict__["_jf_dictionary_server"] = True
+        forged.__dict__["_jf_dictionary_number"] = (True, valid.legacy_number)
+        with self.assertRaisesRegex(ValueError, "只能由服务器生成"):
+            self.module.validate_dictionary(forged)
+        valid.legacy_number = "999"
+        with self.assertRaisesRegex(ValueError, "只能由服务器生成"):
+            self.module.validate_dictionary(valid)
+
+    def test_automatic_permission_or_post_save_failure_rolls_back_series_and_all_data(self):
+        self.hidden["write"].add("value")
+        with self.assertRaises(PermissionError):
+            self.module.save_dictionary(self.automatic_payload())
+        self.allocate.assert_not_called()
+        self.hidden["write"].clear()
+        self.fail_after_save = True
+        with self.assertRaisesRegex(ValueError, "native post-save failure"):
+            self.module.save_dictionary(self.automatic_payload())
+        self.assertTrue(self.allocate.called)
+        self.assertEqual((self.documents, self.versions, self.series), ({}, [], {}))
+
+    def test_server_number_does_not_require_client_write_permission_but_mode_read_still_guards(self):
+        self.hidden["write"].add("legacy_number")
+        archive = self.module.save_dictionary(self.automatic_payload())
+        self.assertEqual(archive["legacy_number"], "001")
+        self.assertTrue(archive["field_meta"]["legacy_number"]["read_only"])
+        self.hidden["read"].add("numbering_mode")
+        before = deepcopy((self.documents, self.versions, self.series))
+        with self.assertRaises(PermissionError):
+            self.module.save_dictionary(self.automatic_payload())
+        self.assertEqual((self.documents, self.versions, self.series), before)
+
+    def test_legacy_empty_mode_digest_and_duplicate_original_numbers_remain_compatible(self):
+        payload = self.payload()
+        old_body = {"company": "C-1", "dictionary_type": "风格", "fields": {
+            "legacy_number": "001", "value": " 典雅 ", "remarks": " 原始备注\n第二行 ", "abbreviation": " DY ", "inactive": 0}}
+        digest = hashlib.sha256(json.dumps(old_body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+        archive = self.module.save_dictionary(payload)
+        self.assertEqual(self.documents[archive["name"]]["request_digest"], digest)
+        self.assertIsNone(archive["numbering_mode"])
+        another = self.module.save_dictionary(self.payload())
+        self.assertEqual(archive["legacy_number"], another["legacy_number"])
+        changed = self.update(archive, legacy_number="历史仍可修改")
+        self.assertEqual(self.module.save_dictionary(payload), changed)
+        self.assertEqual(self.documents[archive["name"]]["request_digest"], digest)
+        self.allocate.assert_not_called()
 
     def test_rename_keeps_stable_name_receipt_and_generates_history(self):
         archive = self.saved()

@@ -30,7 +30,7 @@ from jifeng_erp.personnel_changes_validation import (
 )
 from jifeng_erp.personnel_separation_validation import _local_context, _restore_local_context
 from jifeng_erp.product_dictionary import (
-    COLLISION, DOCTYPE, FIELDS, IDENTITY, REQUEST_FIELDS, TYPES,
+    AUTO_MODE, COLLISION, DOCTYPE, FIELDS, IDENTITY, REQUEST_FIELDS, TYPES, _series_key,
     init_dictionary, list_dictionary, read_dictionary, resolve_creation, save_dictionary,
 )
 
@@ -68,13 +68,16 @@ def _document_snapshot(doctype, name):
 def _native_contents():
     """Compare full installed rows internally; only opaque hashes leave here."""
     doctypes = {DOCTYPE, PROFILE, "Item", "Employee", "Jifeng Employee Supplement",
-                "User", "Role Profile", "User Permission", "DocShare", "Version", "Series", "File"}
+                "User", "Role Profile", "User Permission", "DocShare", "Version", "File"}
     doctypes = {doctype for doctype in doctypes if frappe.db.exists("DocType", doctype)}
     for doctype in tuple(doctypes):
         doctypes.update(field.options for field in frappe.get_meta(doctype).get_table_fields())
-    result = {doctype: _digest(frappe.db.sql("SELECT * FROM `tab" + doctype.replace("`", "``")
+    result = {doctype: _sql_row_hash(frappe.db.sql("SELECT * FROM `tab" + doctype.replace("`", "``")
         + "` ORDER BY name", as_dict=True)) for doctype in sorted(doctypes)}
-    result["__Auth"] = _digest(frappe.db.sql("SELECT * FROM `__Auth` ORDER BY doctype, name, fieldname", as_dict=True))
+    result["__Auth"] = _sql_row_hash(frappe.db.sql("SELECT * FROM `__Auth` ORDER BY doctype, name, fieldname", as_dict=True))
+    # Series is a core physical table, not a DocType. Never silently omit its
+    # rows or request a nonexistent Series Meta in the complete rollback audit.
+    result["Series"] = _sql_row_hash(frappe.db.sql("SELECT * FROM `tabSeries` ORDER BY name", as_dict=True))
     return result
 
 
@@ -95,6 +98,7 @@ def smoke(company, other_company, item_group, stock_uom):
     assert all(frappe.get_meta(PROFILE).get_field(field).fieldtype == "Data" for field in TYPES.values())
     for field in REQUEST_FIELDS:
         assert all(meta.get_field(field).get(attr) for attr in ("hidden", "read_only", "no_copy", "print_hide"))
+    assert all(meta.get_field("numbering_mode").get(attr) for attr in ("hidden", "read_only", "no_copy", "print_hide"))
     tables, counts_before = _tab_counts()
     before, ledger_before = _native_contents(), _ledger_snapshot()
     callbacks_before, context_before = _callbacks(), _local_context()
@@ -147,6 +151,18 @@ def smoke(company, other_company, item_group, stock_uom):
         archive = native(lambda: save_dictionary(values))
         records.add((DOCTYPE, archive["name"]))
         return archive
+
+    def automatic_payload(kind="风格", **changes):
+        return {key: value for key, value in payload(kind, numbering_mode=AUTO_MODE, **changes).items()
+                if key != "legacy_number"}
+
+    def series_rows():
+        return frappe.db.sql("SELECT * FROM `tabSeries` ORDER BY name", as_dict=True)
+
+    def series_current(company_name, kind):
+        rows = frappe.db.sql("SELECT current FROM `tabSeries` WHERE name=%s",
+                             (_series_key(company_name, kind),))
+        return int(rows[0][0]) if rows else 0
 
     def update(archive, **changes):
         return save({field: archive[field] for field in ("name", "version", *FIELDS) if field in archive} | changes)
@@ -237,11 +253,105 @@ def smoke(company, other_company, item_group, stock_uom):
         frappe.set_user(actors["stock"])
         direct = insert(DOCTYPE, company=company, dictionary_type="风格", value=prefix + "-native", inactive=0)
         assert UUID(direct.request_id).version == 4 and len(direct.request_digest) == 64
+        assert direct.numbering_mode == AUTO_MODE and direct.legacy_number.isdigit()
         document = frappe.get_doc(DOCTYPE, direct.name)
         document.value, document.remarks, document.abbreviation = prefix + "-native-renamed", "原生备注", "自定简拼"
         native(document.save)
         assert document.request_id == direct.request_id and document.request_digest == direct.request_digest
+        assert document.numbering_mode == AUTO_MODE and document.legacy_number == direct.legacy_number
         assert _version_has(document, "value") and _version_has(document, "abbreviation")
+        source_before = _document_snapshot(DOCTYPE, document.name)
+        copied = remember(frappe.copy_doc(frappe.get_doc(DOCTYPE, document.name)))
+        assert all(copied.get(field) in (None, "") for field in ("legacy_number", "numbering_mode", *REQUEST_FIELDS))
+        native(copied.insert)
+        assert copied.numbering_mode == AUTO_MODE and copied.legacy_number != document.legacy_number
+        assert copied.request_id != document.request_id and copied.value == document.value
+        assert _document_snapshot(DOCTYPE, document.name) == source_before
+        passed()
+
+        current = "automatic_preview_is_read_only_without_series_version_or_context_changes"
+        baseline, callbacks, context = _native_contents(), _callbacks(), _local_context()
+        expected = str(series_current(company, "品牌") + 1).zfill(3)
+        for _ in range(2):
+            initialized = native(lambda: init_dictionary("品牌", company, AUTO_MODE))
+            assert initialized["numbering_mode"] == AUTO_MODE and initialized["legacy_number"] is None
+            assert initialized["number_preview"] == expected and initialized["number_preview_is_provisional"]
+            assert initialized["field_meta"]["legacy_number"]["read_only"]
+        assert _native_contents() == baseline and _callbacks() == callbacks and _local_context() == context
+        passed()
+
+        current = "automatic_final_allocation_is_company_type_scoped_and_uses_native_series"
+        start = {(scope, kind): series_current(scope, kind) for scope, kind in
+                 ((company, "风格"), (company, "品牌"), (other_company, "风格"))}
+        auto_original = automatic_payload(value=prefix + "-自动原始")
+        auto_first, auto_next = save(auto_original), save(automatic_payload(value=prefix + "-自动第二"))
+        auto_brand = save(automatic_payload("品牌", value=prefix + "-自动品牌"))
+        frappe.set_user("Administrator")
+        auto_other = save(automatic_payload(company=other_company, value=prefix + "-另一公司自动"))
+        for archive, offset in ((auto_first, 1), (auto_next, 2), (auto_brand, 1), (auto_other, 1)):
+            assert archive["numbering_mode"] == AUTO_MODE
+            assert archive["legacy_number"] == str(start[(archive["company"], archive["dictionary_type"])] + offset).zfill(3)
+            assert archive["number_preview"] is None and not archive["number_preview_is_provisional"]
+            assert archive["field_meta"]["legacy_number"]["read_only"]
+        assert series_current(company, "风格") == start[(company, "风格")] + 2
+        assert series_current(company, "品牌") == start[(company, "品牌")] + 1
+        assert series_current(other_company, "风格") == start[(other_company, "风格")] + 1
+        evidence["numbering_design"] = {"policy": AUTO_MODE, "scope": "company/type; no historical seeding",
+                                       "digits": 3, "preview": "advisory; not reserved", "native_race_tested": False}
+        passed()
+
+        current = "automatic_uuid_retry_after_rename_keeps_final_number_original_digest_and_series"
+        frappe.set_user(actors["stock"])
+        original_auto_receipt = tuple(frappe.get_doc(DOCTYPE, auto_first["name"]).get(field) for field in REQUEST_FIELDS)
+        auto_renamed = update(auto_first, value=prefix + "-自动后续改名")
+        assert _version_has(frappe.get_doc(DOCTYPE, auto_first["name"]), "value")
+        baseline, count = _native_contents(), len(_versions(DOCTYPE, auto_first["name"]))
+        assert save(auto_original) == auto_renamed
+        assert native(lambda: resolve_creation(auto_original["request_id"], "风格", company))["archive"] == auto_renamed
+        assert _native_contents() == baseline and len(_versions(DOCTYPE, auto_first["name"])) == count
+        assert tuple(frappe.get_doc(DOCTYPE, auto_first["name"]).get(field) for field in REQUEST_FIELDS) == original_auto_receipt
+        rejected(lambda: save_dictionary(auto_original | {"value": "不同原始请求"}), text=COLLISION, atomic=True)
+        rejected(lambda: save_dictionary({key: value for key, value in auto_original.items() if key != "numbering_mode"}),
+                 text=COLLISION, atomic=True)
+        passed()
+
+        current = "automatic_number_mode_and_client_number_metadata_injection_rejected"
+        rejected(lambda: update(auto_renamed, legacy_number="999"), text="编号保存后不能修改", atomic=True)
+        rejected(lambda: update(auto_renamed, numbering_mode=None), text="不能修改", atomic=True)
+        for field, value in (("legacy_number", "999"), ("numbering_mode", None)):
+            document = frappe.get_doc(DOCTYPE, auto_renamed["name"])
+            document.set(field, value)
+            rejected(document.save, text="不能修改")
+        for supplied in (None, "001"):
+            rejected(lambda supplied=supplied: save_dictionary(automatic_payload() | {"legacy_number": supplied}),
+                     text="编号只能由服务器生成", atomic=True)
+        rejected(lambda: insert(DOCTYPE, company=company, dictionary_type="品牌", value=prefix + "-假原生号", legacy_number="999"),
+                 text="编号只能由服务器生成")
+        rejected(lambda: insert(DOCTYPE, company=company, dictionary_type="品牌", value=prefix + "-假模式", numbering_mode=AUTO_MODE),
+                 text="只能由服务器生成")
+        assert frappe.get_doc(DOCTYPE, auto_renamed["name"]).legacy_number == auto_renamed["legacy_number"]
+        passed()
+
+        current = "automatic_permission_denial_and_known_nested_rollback_restore_complete_series"
+        rejected(lambda: save_dictionary(automatic_payload(company=other_company)), frappe.PermissionError, atomic=True)
+        frappe.set_user(clerk)
+        rejected(lambda: save_dictionary(automatic_payload()), frappe.PermissionError, atomic=True)
+        frappe.set_user(actors["stock"])
+        nested = "jf_product_auto_rollback_" + frappe.generate_hash(length=8)
+        baseline, counter = _native_contents(), _sql_row_hash(series_rows())
+        callbacks, context = _callbacks(), _local_context()
+        frappe.db.savepoint(nested)
+        try:
+            rolled = save(automatic_payload(value=prefix + "-回滚自动编号"))
+            assert _sql_row_hash(series_rows()) != counter
+            assert frappe.db.exists(DOCTYPE, rolled["name"])
+        finally:
+            frappe.db.rollback(save_point=nested)
+            _restore_callbacks(callbacks)
+            _restore_local_context(context)
+        assert _native_contents() == baseline and _sql_row_hash(series_rows()) == counter
+        assert not frappe.db.exists(DOCTYPE, rolled["name"])
+        evidence["number_allocation_failure_scope"] = "API permission denials + known nested rollback; post-save injected fault only modeled"
         passed()
 
         current = "native_form_and_api_server_metadata_injection_rejected"
@@ -405,4 +515,4 @@ def smoke(company, other_company, item_group, stock_uom):
             "table_counts_before": counts_before, "table_counts_after": _tab_counts(tables)[1],
             "whole_ledger_before": ledger_before, "whole_ledger_after": _ledger_snapshot(),
             "gui_verified": False, "concurrency": "serial rollback experiment; not raced",
-            "remaining": ["旧删除操作", "自动简拼更新", "旧编号预填序列", "打印/预览/导入/导出及经典列表客户端"]}
+            "remaining": ["旧删除操作", "自动简拼更新", "旧编号算法与首次并发Series创建", "打印/预览/导入/导出及经典列表客户端"]}

@@ -2,6 +2,7 @@
 
 Only style, source and brand are covered. Product Profile Data values remain
 independent; renaming or disabling a word never rewrites an archived product.
+Automatic company/type numbering is a new-system policy, not the legacy rule.
 Legacy deletion and automatic abbreviation generation are not implemented.
 """
 
@@ -22,9 +23,10 @@ DOCTYPE = "Jifeng Product Dictionary"
 TYPES = {"风格": "style", "来源": "source", "品牌": "brand"}
 EDIT_FIELDS = ("legacy_number", "value", "remarks", "abbreviation", "inactive")
 IDENTITY = ("company", "dictionary_type")
-FIELDS = (*IDENTITY, *EDIT_FIELDS)
+AUTO_MODE = "automatic_v1"
+FIELDS = (*IDENTITY, *EDIT_FIELDS, "numbering_mode")
 REQUEST_FIELDS = ("request_id", "request_digest")
-REQUIRED_READ = {"name", "modified", *IDENTITY, "value", "inactive"}
+REQUIRED_READ = {"name", "modified", *IDENTITY, "value", "inactive", "numbering_mode"}
 AUDIT_FIELDS = ("creation", "owner", "modified_by")
 _CREATING = ContextVar("jifeng_product_dictionary_creation", default=None)
 _SERVER = object()
@@ -92,10 +94,33 @@ def _values(document):
     return {field: _normalize(field, document.get(field)) for field in EDIT_FIELDS}
 
 
-def _digest(company, dictionary_type, values):
+def _mode(value):
+    if value in (None, ""):
+        return None
+    if value != AUTO_MODE:
+        frappe.throw("请选择有效产品词典编号模式")
+    return value
+
+
+def _series_key(company, dictionary_type):
+    # Isolated new-system counters; do not infer or seed from historical codes.
+    return "JF-PROD-N-" + hashlib.sha256(company.encode()).hexdigest() + "-" + TYPES[dictionary_type] + "-"
+
+
+def _number_preview(company, dictionary_type):
+    # Advisory peek only. getseries allocates; NamingSeries.get_current_value
+    # locks; NamingSeries.get_preview is a sample, not the next stored counter.
+    current = frappe.db.get_value("Series", _series_key(company, dictionary_type), "current", order_by="name")
+    return str(int(current or 0) + 1).zfill(3)
+
+
+def _digest(company, dictionary_type, values, numbering_mode=None):
+    mode = _mode(numbering_mode)
     body = {"company": company, "dictionary_type": dictionary_type,
             "fields": {field: _normalize(field, values.get(field, 0 if field == "inactive" else None))
-                       for field in EDIT_FIELDS}}
+                       for field in EDIT_FIELDS if not (mode == AUTO_MODE and field == "legacy_number")}}
+    if mode:
+        body["numbering_mode"] = mode
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False,
                                     separators=(",", ":")).encode()).hexdigest()
 
@@ -106,18 +131,30 @@ def before_insert_dictionary(document):
     _company(document.company)
     _type(document.dictionary_type)
     document.check_permission("create")
+    if _CREATING.get() is document:
+        mode = _mode(document.get("numbering_mode"))
+        _uuid(document.request_id)
+        if document.request_digest != _digest(document.company, document.dictionary_type, _values(document), mode):
+            frappe.throw("产品词典新建请求校验不完整")
+    else:
+        if any(document.get(field) not in (None, "") for field in (*REQUEST_FIELDS, "numbering_mode")):
+            frappe.throw("产品词典新建追溯身份只能由服务器生成")
+        # Direct native new Forms follow the same allocation policy. v0 API
+        # remains the explicit compatibility path for original number text.
+        mode = AUTO_MODE
+        document.numbering_mode = mode
+        document.request_id = str(uuid4())
+        document.request_digest = _digest(document.company, document.dictionary_type, _values(document), mode)
+    if mode == AUTO_MODE and document.get("legacy_number") not in (None, ""):
+        frappe.throw("自动编号只能由服务器生成，不能指定编号")
     populated = {field for field in EDIT_FIELDS if document.get(field) not in (None, "")}
     _fields({*IDENTITY, "value", "inactive", *populated}, "read")
     _fields({*IDENTITY, "value", "inactive", *populated}, "write")
-    if _CREATING.get() is document:
-        _uuid(document.request_id)
-        if document.request_digest != _digest(document.company, document.dictionary_type, _values(document)):
-            frappe.throw("产品词典新建请求校验不完整")
-    else:
-        if any(document.get(field) not in (None, "") for field in REQUEST_FIELDS):
-            frappe.throw("产品词典新建追溯身份只能由服务器生成")
-        document.request_id = str(uuid4())
-        document.request_digest = _digest(document.company, document.dictionary_type, _values(document))
+    if mode == AUTO_MODE:
+        from frappe.model.naming import getseries
+
+        document.legacy_number = getseries(_series_key(document.company, document.dictionary_type), 3)
+        document.__dict__["_jf_dictionary_number"] = (_SERVER, document.legacy_number)
     document.__dict__["_jf_dictionary_server"] = _SERVER
 
 
@@ -126,21 +163,29 @@ def validate_dictionary(document):
     _login()
     _company(document.company)
     _type(document.dictionary_type)
+    mode = _mode(document.get("numbering_mode"))
     _fields(REQUIRED_READ, "read")
     if document.is_new():
         document.check_permission("create")
         if document.__dict__.get("_jf_dictionary_server") is not _SERVER:
             frappe.throw("产品词典新建追溯身份只能由服务器生成")
         _uuid(document.request_id)
-        if document.request_digest != _digest(document.company, document.dictionary_type, _values(document)):
+        if document.request_digest != _digest(document.company, document.dictionary_type, _values(document), mode):
             frappe.throw("产品词典新建请求校验不完整")
         changed = {field for field in EDIT_FIELDS if document.get(field) not in (None, "")}
+        if mode == AUTO_MODE:
+            generated = document.__dict__.get("_jf_dictionary_number")
+            if not generated or generated[0] is not _SERVER or generated[1] != document.legacy_number:
+                frappe.throw("自动编号只能由服务器生成，不能指定编号")
+            changed.discard("legacy_number")
         changed.update((*IDENTITY, "value", "inactive"))
     else:
         document.check_permission("write")
         before = document.get_doc_before_save()
-        if not before or any(before.get(field) != document.get(field) for field in (*IDENTITY, *REQUEST_FIELDS)):
+        if not before or any(before.get(field) != document.get(field) for field in (*IDENTITY, *REQUEST_FIELDS, "numbering_mode")):
             frappe.throw("产品词典公司、类型及新建追溯身份不能修改")
+        if mode == AUTO_MODE and before.legacy_number != document.legacy_number:
+            frappe.throw("自动编号保存后不能修改")
         changed = {field for field in EDIT_FIELDS if before.get(field) != document.get(field)}
     _fields(changed, "read")
     _fields(changed, "write")
@@ -190,6 +235,9 @@ def _pack(document, *, unscoped=False):
     can_write = (frappe.has_permission(DOCTYPE, "create") if unscoped else
                  document.has_permission("write" if existing else "create"))
     editable = set(EDIT_FIELDS) if existing else set(FIELDS)
+    mode = _mode(values.get("numbering_mode"))
+    if mode == AUTO_MODE:
+        editable.discard("legacy_number")
     meta = {}
     for field in FIELDS:
         if field not in values:
@@ -198,20 +246,24 @@ def _pack(document, *, unscoped=False):
         meta[field] = {"fieldtype": df.fieldtype, "options": df.options or "", "reqd": bool(df.reqd),
                        "read_only": bool(df.read_only or field not in editable or field not in writable or not can_write),
                        "description": df.description or ""}
+    preview = (_number_preview(document.company, document.dictionary_type)
+               if not existing and mode == AUTO_MODE and document.company and "legacy_number" in values else None)
     return {"name": values.get("name") if existing else None,
             **{field: values[field] for field in (*FIELDS, *AUDIT_FIELDS) if field in values},
             "version": _version(values.get("modified")) if existing else None,
+            "number_preview": preview, "number_preview_is_provisional": preview is not None,
             "field_meta": meta, "can_write": bool(can_write and
                 (editable & writable & set(values) if existing else
                  {*IDENTITY, "value", "inactive"}.issubset(writable)))}
 
 
 @frappe.whitelist()
-def init_dictionary(dictionary_type, company=None):
+def init_dictionary(dictionary_type, company=None, numbering_mode=AUTO_MODE):
     _login()
     _type(dictionary_type)
     document = frappe.new_doc(DOCTYPE)
     document.company, document.dictionary_type = None, dictionary_type
+    document.numbering_mode = _mode(numbering_mode)
     for field in EDIT_FIELDS:
         document.set(field, 0 if field == "inactive" else None)
     for field in REQUEST_FIELDS:
@@ -321,6 +373,7 @@ def save_dictionary(payload):
         frappe.throw("请选择公司及产品词典类型")
     _company(payload["company"])
     _type(payload["dictionary_type"])
+    mode = _mode(payload.get("numbering_mode"))
     updates = {field: _normalize(field, payload[field]) for field in EDIT_FIELDS if field in payload}
     _fields(REQUIRED_READ, "read")
     _fields(updates, "read")
@@ -336,18 +389,28 @@ def save_dictionary(payload):
             frappe.throw("产品词典已由其他操作修改，请重读核对后保存", frappe.TimestampMismatchError)
         if tuple(document.get(field) for field in IDENTITY) != tuple(payload[field] for field in IDENTITY):
             frappe.throw("产品词典公司、类型及新建追溯身份不能修改")
+        mode = _mode(document.get("numbering_mode"))
+        if "numbering_mode" in payload and _mode(payload["numbering_mode"]) != mode:
+            frappe.throw("产品词典公司、类型及新建追溯身份不能修改")
+        if mode == AUTO_MODE and "legacy_number" in updates:
+            if updates["legacy_number"] != document.legacy_number:
+                frappe.throw("自动编号保存后不能修改")
+            updates.pop("legacy_number")
     else:
         if payload.get("version") not in (None, ""):
             frappe.throw("新增词条不能携带旧版本")
         request_id = _uuid(payload.get("request_id"))
+        if mode == AUTO_MODE and "legacy_number" in payload:
+            frappe.throw("自动编号只能由服务器生成，不能指定编号")
         values = {field: updates.get(field, 0 if field == "inactive" else None) for field in EDIT_FIELDS}
-        digest = _digest(payload["company"], payload["dictionary_type"], values)
+        digest = _digest(payload["company"], payload["dictionary_type"], values, mode)
         previous = _receipt(request_id, payload["dictionary_type"], payload["company"])
         if previous:
             if previous.request_digest != digest:
                 frappe.throw(COLLISION)
             return _pack(previous)
         document = frappe.new_doc(DOCTYPE)
+        document.numbering_mode = mode
         for field in IDENTITY:
             document.set(field, payload[field])
         for field, value in values.items():
