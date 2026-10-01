@@ -319,7 +319,21 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
 
         current = "real_native_total_cutoff_two_partial_payments_return_future_and_expense_je"
         baseline = read()
-        assert amount(baseline, pi) == 30, "显式冲抵原发票的验收截止余额不符：" + str(amount(baseline, pi))
+        if amount(baseline, pi) != 30:
+            import json
+
+            labels = {doc.name: label for doc, label in ((pi, "invoice"), (returned, "return"),
+                (first, "first_payment"), (second, "second_payment"), (future, "future_payment"),
+                (journal, "expense"))}
+            return_values = frappe.db.get_value("Purchase Invoice", returned.name,
+                ["is_return", "update_outstanding_for_self", "return_against", "grand_total", "posting_date"], as_dict=True)
+            return_values["return_against"] = return_values["return_against"] == pi.name
+            payments = frappe.get_all(PLE, filters={"company": company, "party_type": "Supplier", "party": supplier.name},
+                fields=["voucher_no", "against_voucher_no", "posting_date", "amount", "delinked"], limit_page_length=0)
+            for row in payments:
+                row["voucher_no"], row["against_voucher_no"] = labels.get(row["voucher_no"], "other_fixture"), labels.get(row["against_voucher_no"], "other_fixture")
+            raise AssertionError("显式冲抵原发票的验收截止余额不符：" + json.dumps({
+                "outstanding": amount(baseline, pi), "return": return_values, "synthetic_ple": payments}, default=str))
         assert amount(baseline, pi, "invoiced") == 120
         assert amount(baseline, journal) == 80
         assert Decimal(str(frappe.db.get_value("Purchase Invoice", pi.name, "outstanding_amount"))) != 30
