@@ -286,7 +286,8 @@ def smoke(company, other_company, item_group, stock_uom):
             fresh = update(fresh, {field: attachment.file_url})
             assert fresh["profile"][field] == attachment.file_url
             assert fresh["image_states"][field] == {"url": attachment.unique_url, "state": "已上传"}
-            reject(lambda field=field, attachment=attachment: update(fresh, {field: attachment.unique_url}))
+            reject(lambda field=field, attachment=attachment: update(fresh, {field: attachment.unique_url}),
+                   frappe.PermissionError)
         passed()
 
         current = "upload_candidate_reconciliation_is_readonly_exact_private_field_and_never_adopts_automatically"
