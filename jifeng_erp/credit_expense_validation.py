@@ -191,7 +191,7 @@ def smoke(company, other_company):
             amount=120, arrears_reference=999, counterparty_name="独立旧名称", summary=prefix + "-原摘要")
         source.summary = prefix + "-修订摘要"
         native(source.save)
-        assert _version_has(SOURCE, source.name, {"summary"})
+        assert _version_has(source, "summary")
         assert not source.journal_entry
         passed()
 
