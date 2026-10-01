@@ -47,7 +47,10 @@ class TestProductAnalysis(unittest.TestCase):
         utils.getdate = Mock()
         picture = types.ModuleType("jifeng_erp.production_picture")
         picture._readable_image = Mock()
-        with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.utils": utils,
+        picture._normalize_image_url = Mock(side_effect=AssertionError("count analysis must not inspect images"))
+        model = types.ModuleType("frappe.model")
+        model.get_permitted_fields = Mock(side_effect=AssertionError("count analysis must not request full catalog columns"))
+        with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.utils": utils, "frappe.model": model,
                                      "jifeng_erp.production_picture": picture}):
             scope = load_module("product_scope_under_test", ROOT / "jifeng_erp/inventory_scope.py")
             with patch.dict(sys.modules, {"jifeng_erp.inventory_scope": scope}):

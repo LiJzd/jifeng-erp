@@ -1,15 +1,21 @@
 """Company-scoped catalog records; reference values never post stock or accounts."""
 
 import frappe
+from frappe.model import get_permitted_fields
 from frappe.utils import cint
 
 from jifeng_erp.inventory_scope import column, decimal_number, readable_documents
-from jifeng_erp.production_picture import _readable_image
+from jifeng_erp.production_picture import _normalize_image_url, _readable_image
 
 
 PROFILE = "Jifeng Product Profile"
 MOLD = "Jifeng Mold"
 PLATE = "Jifeng Plate"
+ORIGINAL_FIELDS = ("legacy_number", "legacy_code", "display_name", "display_uom", "legacy_remarks")
+PRODUCT_TEXT_FIELDS = ("old_number", "major_category", "minor_category", "brand", "material",
+                       "style", "source", "designer", "pattern_maker", "modeler", "specification")
+PRODUCT_NUMBER_FIELDS = ("list_price", "blank_price", "weight", "silver_weight", "stone_weight",
+                         "material_unit_cost", "processing_unit_cost")
 
 
 def _scope(filters, doctype, inactive_field, inactive_label):
@@ -64,6 +70,33 @@ def _image(value, cache):
     return {"image_url": url, "image_status": status}
 
 
+def _profile_image(document):
+    """An archive image authorizes only its exact private File binding."""
+    result = {"profile_image_url": "", "profile_image_status": "未上传"}
+    value = document.get("profile_image")
+    if not value:
+        return result
+    if not isinstance(value, str) or not value.startswith("/private/files/") or _normalize_image_url(value) != (value, True):
+        result["profile_image_status"] = "图片地址无效"
+        return result
+    binding = {"file_url": value, "is_private": 1, "attached_to_doctype": PROFILE,
+               "attached_to_name": document.name, "attached_to_field": "profile_image"}
+    names = frappe.get_all("File", filters=binding, pluck="name", order_by="name", limit_page_length=0)
+    result["profile_image_status"] = "无附件权限" if names else "附件记录不存在"
+    for name in names:
+        try:
+            attachment = frappe.get_doc("File", name)
+        except frappe.DoesNotExistError:
+            continue
+        # Recheck after loading, including URL. Another same-URL alias or a
+        # binding changed since the list query cannot supply authorization.
+        if any(attachment.get(field) != expected for field, expected in binding.items()):
+            continue
+        if attachment.has_permission("read") and attachment.is_downloadable():
+            return {"profile_image_url": attachment.unique_url, "profile_image_status": "已上传"}
+    return result
+
+
 def _base_columns(doctype):
     return [column("document", "来源档案", "Link", doctype, 180),
             column("company", "公司", "Link", "Company", 180),
@@ -72,23 +105,33 @@ def _base_columns(doctype):
 
 def product_catalog(filters=None):
     _, currency, documents = _scope(filters, PROFILE, "inactive", "停用")
+    for doctype, required in (
+            (PROFILE, {"name", "company", "item_code", "inactive", "profile_image",
+                       *ORIGINAL_FIELDS, *PRODUCT_TEXT_FIELDS, *PRODUCT_NUMBER_FIELDS}),
+            ("Item", {"name", "item_name", "stock_uom", "image"})):
+        readable = set(get_permitted_fields(doctype, permission_type="read", ignore_virtual=True))
+        if not required.issubset(readable):
+            frappe.throw("无法完整读取产品档案或商品字段，请核对字段读取权限", frappe.PermissionError)
     items, images, rows = {}, {}, []
     for doc in documents:
         item = _item(doc.item_code, items)
         row = {"document": doc.name, "company": doc.company, "item_code": doc.item_code,
                "product_name": item.item_name, "stock_uom": item.stock_uom,
                "status": "停用" if cint(doc.inactive) else "在用", "currency": currency,
-               **_image(item.image, images)}
-        for field in ("old_number", "major_category", "minor_category", "brand", "material",
-                      "style", "source", "designer", "pattern_maker", "modeler", "specification"):
+               **_image(item.image, images), **_profile_image(doc)}
+        row.update({field: doc.get(field) for field in ORIGINAL_FIELDS})
+        for field in PRODUCT_TEXT_FIELDS:
             row[field] = doc.get(field)
-        for field in ("list_price", "blank_price", "weight", "silver_weight", "stone_weight",
-                      "material_unit_cost", "processing_unit_cost"):
+        for field in PRODUCT_NUMBER_FIELDS:
             row[field] = _reference(doc.get(field))
         rows.append(row)
     columns = _base_columns(PROFILE) + [
         column("product_name", "商品名称", width=180), column("stock_uom", "库存单位", "Link", "UOM"),
         column("status", "档案状态"), column("image_url", "商品图片", width=125), column("image_status", "图片状态"),
+        *[column(field, label, width=180) for field, label in (
+            ("legacy_number", "编号原文"), ("legacy_code", "代码原文"),
+            ("display_name", "名称原文"), ("display_uom", "单位原文"), ("legacy_remarks", "备注原文"))],
+        column("profile_image_url", "产品档案图片", width=125), column("profile_image_status", "档案图片状态"),
         *[column(field, label) for field, label in (
             ("old_number", "旧号"), ("major_category", "档案大类"), ("minor_category", "档案小类"),
             ("brand", "档案品牌"), ("material", "材质"), ("style", "风格"), ("source", "来源"),

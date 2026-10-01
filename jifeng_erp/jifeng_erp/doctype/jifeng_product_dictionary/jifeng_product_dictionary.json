@@ -1,0 +1,26 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Product Dictionary",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-PROD-D-{YYYY}-{#####}",
+ "title_field": "value",
+ "search_fields": "value,legacy_number,abbreviation",
+ "track_changes": 1,
+ "field_order": ["company", "dictionary_type", "legacy_number", "value", "remarks", "abbreviation", "inactive", "request_id", "request_digest"],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "dictionary_type", "fieldtype": "Select", "label": "产品词典类型", "options": "风格\n来源\n品牌", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "legacy_number", "fieldtype": "Data", "label": "编号", "in_list_view": 1, "description": "独立原文编号，不替代本词条的系统编号；旧唯一规则尚未确认。"},
+  {"fieldname": "value", "fieldtype": "Data", "label": "名称", "reqd": 1, "in_list_view": 1, "description": "可修改原文；已有产品档案的独立原文不会自动改变。"},
+  {"fieldname": "remarks", "fieldtype": "Small Text", "label": "备注"},
+  {"fieldname": "abbreviation", "fieldtype": "Data", "label": "简拼", "description": "保留输入原文；本批不自动生成或更新简拼。"},
+  {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1, "description": "停用影响新选择，已有产品档案原文保持不变；本批未实现删除。"},
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "新建请求身份", "hidden": 1, "read_only": 1, "unique": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "request_digest", "fieldtype": "Data", "label": "新建请求摘要", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+  {"role": "Stock Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+  {"role": "Manufacturing Manager", "read": 1, "select": 1, "write": 1, "create": 1}
+ ]
+}
