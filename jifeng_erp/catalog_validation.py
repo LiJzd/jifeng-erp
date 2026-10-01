@@ -381,3 +381,310 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             "file_metadata_records_tracked": sum(doctype == "File" for doctype, _ in fixtures),
             "material_visibility": material_visibility,
             "concurrency": "serial rollback experiment; not raced"}
+
+
+def _profile_fixture_png(token):
+    """A tiny local PNG with unique bytes, never a remote download/dedup blob."""
+    import struct
+    import zlib
+
+    def chunk(kind, content):
+        return (struct.pack(">I", len(content)) + kind + content
+                + struct.pack(">I", zlib.crc32(kind + content) & 0xffffffff))
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+            + chunk(b"tEXt", b"QA\x00" + token.encode())
+            + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\xff")) + chunk(b"IEND", b""))
+
+
+def _profile_rollback(point, previous):
+    """Savepoint rollback plus only this experiment's native cleanup callbacks.
+
+    Native rollback(save_point=...) does not run File.on_rollback. Its cleanup
+    must run AFTER the fixture File aliases disappear, then the caller's queues
+    are restored intact. Failure is reported; no manual filesystem delete or
+    fallback commit is attempted.
+    """
+    from jifeng_erp.personnel_changes_validation import _restore_callbacks
+
+    callbacks = {name: list(getattr(frappe.db, name)._functions)[len(previous[name]):]
+                 for name in ("before_rollback", "after_rollback")}
+    failures = []
+
+    def cleanup(action, label):
+        try:
+            action()
+        except Exception as error:
+            failures.append(label + ":" + type(error).__name__)
+
+    try:
+        for callback in callbacks["before_rollback"]:
+            cleanup(callback, "before_rollback")
+        cleanup(lambda: _end_rollback_only(point), "database_rollback")
+        for callback in callbacks["after_rollback"]:
+            cleanup(callback, "after_rollback")
+    finally:
+        _restore_callbacks(previous)
+    if failures:
+        raise AssertionError("产品档案验收回滚清理失败：" + ",".join(failures))
+
+
+def delta_smoke(company, item_group, stock_uom, other_company):
+    """One serial, rollback-only experiment for the six independent fields.
+
+    After migration, call directly from the site's Python process once; do not
+    use bench execute, whose error fallback may invoke a failed helper twice::
+
+        result = delta_smoke(company="Jifeng ERP UI Validation", item_group="Products",
+                             stock_uom="Nos", other_company="Jifeng ERP Validation")
+
+    This calls native controllers/File.insert as the real catalog roles. It
+    creates a tiny local PNG for each upload; no image is downloaded. Database
+    rows, callback queues, local context and exact generated filesystem paths
+    are audited after native rollback cleanup. HTTP byte serving and Desk image
+    rendering require separate UI acceptance.
+    """
+    from pathlib import Path
+
+    from jifeng_erp.personnel_changes_validation import (
+        _callbacks, _digest, _restore_callbacks, _tab_counts,
+    )
+    from jifeng_erp.personnel_separation import _atomic
+    from jifeng_erp.personnel_separation_validation import _local_context, _restore_local_context
+
+    frappe.only_for("System Manager")
+    assert frappe.db.db_type == "mariadb", "全表回滚审计需要当前 MariaDB 站点"
+    assert other_company and other_company != company
+    for doctype, name in (("Company", company), ("Company", other_company),
+                          ("Item Group", item_group), ("UOM", stock_uom)):
+        assert frappe.db.exists(doctype, name), "请提供已存在的公司、明细商品分组及单位"
+    assert not frappe.db.get_value("Item Group", item_group, "is_group")
+    doctype = CATALOGS[0]
+    original_fields = {"legacy_number": "Data", "legacy_code": "Data", "display_name": "Data",
+                       "display_uom": "Data", "legacy_remarks": "Small Text", "profile_image": "Attach Image"}
+    meta = frappe.get_meta(doctype)
+    for name, kind in original_fields.items():
+        field = meta.get_field(name)
+        assert field and field.fieldtype == kind and not field.reqd and not field.fetch_from, "原文字段尚未迁移"
+    assert meta.track_changes and meta.get_field("item_code").unique
+
+    suffix = frappe.generate_hash(length=10)
+    prefix, point = "JF-QA-PROFILE-" + suffix, "jf_profile_" + suffix
+    original_user, original_test = frappe.session.user, frappe.in_test
+    ledger_before, (tables, counts) = _ledger_snapshot(), _tab_counts()
+    callbacks_before, context_before = _callbacks(), _local_context()
+    item_before = _digest(frappe.get_all("Item", fields=["*"], order_by="name", limit_page_length=0))
+    checks, records, users, objects, files = [], set(), [], [], []
+    roots = [Path(frappe.get_site_path(*parts)) for parts in (("private", "files"), ("public", "files"))]
+
+    def fixture_paths():
+        return {str(path.resolve()) for root in roots for path in root.glob(prefix + "*")}
+
+    assert fixture_paths() == set(), "验收前已存在本次随机前缀文件"
+    evidence, current = {}, "fixtures"
+    _begin_rollback_only(point)
+    try:
+        frappe.in_test = True
+        frappe.set_user("Administrator")
+
+        def insert(kind, **values):
+            document = frappe.get_doc({"doctype": kind, **values})
+            objects.append(document)
+            document.insert()
+            records.add((kind, document.name))
+            records.update((row.doctype, row.name) for row in document.get_all_children() if row.name)
+            return document
+
+        def item(kind):
+            return insert("Item", item_code=prefix + "-" + kind, item_name="业务商品 " + kind,
+                          item_group=item_group, stock_uom=stock_uom, is_stock_item=1)
+
+        def changed(name, **values):
+            document = frappe.get_doc(doctype, name)
+            document.update(values)
+            return document.save(ignore_version=False)
+
+        def rejected(label, action, error=frappe.ValidationError):
+            nonlocal current
+            current = label
+            before, callbacks, context = _ledger_snapshot(), _callbacks(), _local_context()
+            tracked_counts = _tab_counts(tables)[1]
+            try:
+                @_atomic
+                def attempt():
+                    action()
+                    raise AssertionError("原生操作接受了应拒绝的产品原文或图片")
+                try:
+                    attempt()
+                except error:
+                    pass
+            finally:
+                # _atomic restores failed document callbacks and native saving
+                # context. Do not discard pre-existing image cleanup callbacks.
+                assert _callbacks() == callbacks and _local_context() == context
+                assert _ledger_snapshot() == before and _tab_counts(tables)[1] == tracked_counts
+            checks.append(label)
+
+        native_items = [item(kind) for kind in ("stock", "production", "foreign", "hidden")]
+        item_names = [document.name for document in native_items]
+        item_fixture_hash = _digest(frappe.get_all("Item", filters={"name": ["in", item_names]},
+                                   fields=["*"], order_by="name", limit_page_length=0))
+        foreign = insert(doctype, item_code=native_items[2].name, company=other_company)
+        foreign_file = insert("File", file_name=prefix + "-foreign.png",
+                              content=_profile_fixture_png(prefix + "-foreign"), is_private=1,
+                              attached_to_doctype=doctype, attached_to_name=foreign.name,
+                              attached_to_field="profile_image")
+        files.append(foreign_file)
+        foreign_url = foreign_file.file_url
+        assert foreign_url.startswith("/private/files/" + prefix)
+        changed(foreign.name, profile_image=foreign_url)
+
+        def role_user(kind, roles):
+            user = insert("User", email=prefix.lower() + "-" + kind + "@example.invalid",
+                          first_name="产品原文验收", send_welcome_email=0,
+                          roles=[{"role": role} for role in roles])
+            users.append(user.name)
+            insert("User Permission", user=user.name, allow="Company", for_value=company,
+                   apply_to_all_doctypes=1)
+            return user
+
+        actors = [(role_user("stock", ["Stock Manager"]), native_items[0], "stock"),
+                  (role_user("production", ["Manufacturing Manager", "Manufacturing User"]),
+                   native_items[1], "production")]
+        documents = []
+        for user, source_item, kind in actors:
+            current = kind + "_native_original_fields_and_file"
+            frappe.set_user(user.name)
+            document = insert(doctype, item_code=source_item.name, company=company, old_number="旧号保留",
+                              notes="注意事项保留", requirements="工艺要求保留", packaging="包装要求保留",
+                              list_price=11, blank_price=7, weight=2)
+            assert all(not document.get(name) for name in original_fields)
+            assert (document.product_name, document.stock_uom, document.image) == (
+                source_item.item_name, source_item.stock_uom, source_item.image)
+            payload = {"legacy_number": "000017", "legacy_code": "旧代码/" + kind,
+                       "display_name": "旧名称 " + kind, "display_uom": "对（原文非 UOM）",
+                       "legacy_remarks": "备注第一行\n备注第二行"}
+            document = changed(document.name, **payload)
+            document.reload()
+            assert all(document.get(name) == value for name, value in payload.items())
+            assert all(_version_has(document, name) for name in payload)
+            assert (document.old_number, document.notes, document.requirements, document.packaging) == (
+                "旧号保留", "注意事项保留", "工艺要求保留", "包装要求保留")
+            assert (Decimal(str(document.list_price)), Decimal(str(document.blank_price)),
+                    Decimal(str(document.weight)), Decimal(str(document.material_unit_cost)),
+                    Decimal(str(document.processing_unit_cost))) == tuple(map(Decimal, (11, 7, 2, 0, 0)))
+            checks.append(kind + "_native_optional_original_text_save_and_versions_leave_business_fields_unchanged")
+
+            attachment = insert("File", file_name=prefix + "-" + kind + ".png",
+                                content=_profile_fixture_png(prefix + "-" + kind), is_private=1,
+                                attached_to_doctype=doctype, attached_to_name=document.name,
+                                attached_to_field="profile_image")
+            files.append(attachment)
+            assert attachment.file_url.startswith("/private/files/" + prefix)
+            assert Path(attachment.get_full_path()).is_file()
+            assert attachment.get_content() == _profile_fixture_png(prefix + "-" + kind)
+            assert attachment.is_downloadable()
+            attachment.check_permission("read")
+            assert attachment.on_rollback in list(frappe.db.after_rollback._functions), "原生 File 未注册磁盘清理"
+            document = changed(document.name, profile_image=attachment.file_url)
+            assert _version_has(document, "profile_image")
+            assert document.image == source_item.image
+            documents.append((user, document, attachment))
+            checks.append(kind + "_native_private_file_upload_exact_profile_field_binding_and_version")
+            frappe.set_user("Administrator")
+
+        user, document, attachment = documents[0]
+        frappe.set_user(user.name)
+        rejected("remote_image_url_rejected", lambda: changed(document.name,
+                 profile_image="https://" + prefix.lower() + ".example.invalid/image.png"))
+        rejected("public_image_url_rejected", lambda: changed(document.name,
+                 profile_image="/files/" + prefix + "-unregistered.png"))
+        rejected("private_image_without_file_rejected", lambda: changed(document.name,
+                 profile_image="/private/files/" + prefix + "-unregistered.png"))
+        assert not foreign_file.is_downloadable()
+        rejected("foreign_profile_private_image_rejected_without_rebinding", lambda:
+                 changed(document.name, profile_image=foreign_url))
+        assert frappe.db.get_value("File", foreign_file.name, "attached_to_name") == foreign.name
+        rejected("new_unsaved_profile_image_rejected", lambda:
+                 insert(doctype, item_code=native_items[3].name, company=company,
+                        profile_image=attachment.file_url))
+
+        # Same URL is not enough: an own readable File attached to a different
+        # field must not become the product image unless there is an exact alias.
+        other_field = insert("File", file_name=prefix + "-other-field.png",
+                             content=_profile_fixture_png(prefix + "-other-field"), is_private=1,
+                             attached_to_doctype=doctype, attached_to_name=document.name,
+                             attached_to_field="patent_image")
+        files.append(other_field)
+        assert other_field.is_downloadable()
+        rejected("own_private_attachment_on_wrong_field_rejected", lambda:
+                 changed(document.name, profile_image=other_field.file_url))
+
+        cleared = changed(document.name, **{name: "" for name in original_fields})
+        assert all(not cleared.get(name) for name in original_fields)
+        assert (cleared.product_name, cleared.stock_uom, cleared.image) == (
+            native_items[0].item_name, stock_uom, native_items[0].image)
+        assert _version_has(cleared, "profile_image")
+        assert Path(attachment.get_full_path()).is_file(), "清空字段不得擅自删除原生附件"
+        checks.append("cleared_original_fields_keep_native_identity_and_item_fallback_with_image_history")
+        rejected("company_select_user_permission_rejected", lambda:
+                 insert(doctype, item_code=native_items[3].name, company=other_company), frappe.PermissionError)
+
+        frappe.set_user("Administrator")
+        rejected("same_item_second_company_profile_still_unique_rejected", lambda:
+                 insert(doctype, item_code=native_items[0].name, company=other_company), frappe.DuplicateEntryError)
+        insert("User Permission", user=user.name, allow="Item", for_value=native_items[0].name,
+               apply_to_all_doctypes=1)
+        frappe.set_user(user.name)
+        rejected("hidden_item_read_user_permission_rejected", lambda:
+                 insert(doctype, item_code=native_items[3].name, company=company), frappe.PermissionError)
+        assert _ledger_snapshot() == ledger_before
+        frappe.set_user("Administrator")
+        reloaded = frappe.get_all("Item", filters={"name": ["in", item_names]}, fields=["*"],
+                                  order_by="name", limit_page_length=0)
+        assert _digest(reloaded) == item_fixture_hash, "保存独立原文改变了共享 Item"
+        checks.append("whole_fixture_items_and_gl_sle_unchanged_during_original_field_actions")
+        evidence = {"roles": [frappe.get_roles(actor.name) for actor, _, _ in actors],
+                    "private_file_records": len(files), "local_png_bytes": [file.file_size for file in files],
+                    "native_file_rollback_callbacks_registered": all(
+                        file.on_rollback in list(frappe.db.after_rollback._functions) for file in files)}
+    except Exception as error:
+        error.add_note("产品原文 delta failed at gate: " + current)
+        raise
+    finally:
+        try:
+            frappe.set_user("Administrator")
+            for document in objects:
+                if document.name:
+                    records.add((document.doctype, document.name))
+                records.update((row.doctype, row.name) for row in document.get_all_children() if row.name)
+            generated_paths = fixture_paths() | {str(Path(file.get_full_path()).resolve()) for file in files}
+            urls = [file.file_url for file in files]
+            if urls:
+                records.update(("File", name) for name in frappe.get_all("File",
+                               filters={"file_url": ["in", urls]}, pluck="name"))
+        finally:
+            try:
+                _profile_rollback(point, callbacks_before)
+            finally:
+                _restore_callbacks(callbacks_before)
+                _restore_local_context(context_before)
+                frappe.in_test = original_test
+                frappe.set_user(original_user)
+                for actor in users:
+                    frappe.clear_cache(user=actor)
+                for kind, name in records:
+                    frappe.clear_document_cache(kind, name)
+            assert all(not frappe.db.exists(kind, name) for kind, name in records), "回滚后有夹具残留"
+            assert _tab_counts(tables)[1] == counts, "全站原生表记录数未恢复"
+            assert _digest(frappe.get_all("Item", fields=["*"], order_by="name", limit_page_length=0)) == item_before
+            assert _ledger_snapshot() == ledger_before, "全站 GL/SLE hash 未恢复"
+            assert fixture_paths() == set() and all(not Path(path).exists() for path in generated_paths), "原生回滚后私有图片磁盘残留"
+            assert _callbacks() == callbacks_before and _local_context() == context_before
+    checks.append("rollback_all_records_versions_table_counts_item_ledgers_callbacks_and_generated_file_paths")
+    return {"passed": True, "gate_count": len(checks), "checks": checks, "business_data": "rolled_back",
+            "evidence": evidence, "table_counts_before": counts, "table_counts_after": _tab_counts(tables)[1],
+            "whole_ledger_before": ledger_before, "whole_ledger_after": _ledger_snapshot(),
+            "file_metadata_records_tracked": sum(kind == "File" for kind, _ in records),
+            "filesystem": "native File rollback cleanup; exact generated paths absent after rollback",
+            "remote_downloads": False, "gui_verified": False, "http_image_download_verified": False}

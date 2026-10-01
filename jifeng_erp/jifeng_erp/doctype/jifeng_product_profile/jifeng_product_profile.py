@@ -10,6 +10,12 @@ class JifengProductProfile(Document):
         item = self._check_reference("Item", self.item_code, "read")
         self._check_reference("Company", self.company)
         self._check_reference("Supplier", self.supplier)
+        if self.get("profile_image"):
+            # The existing archive contract requires a saved document, exact
+            # private File/field binding and the caller's native File.read.
+            from jifeng_erp.personnel_archive import _image
+
+            _image(self, "profile_image", self.profile_image)
         if self.bom:
             self._get_bom()
         for row in self.get("materials") or []:
