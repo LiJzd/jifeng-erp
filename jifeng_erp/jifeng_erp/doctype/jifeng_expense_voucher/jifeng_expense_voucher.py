@@ -1,7 +1,10 @@
 import frappe
 from frappe.model.document import Document
 
-from jifeng_erp.accounting import validate_expense_voucher
+from jifeng_erp.accounting import (
+    CREDIT, expense_journal, expense_journal_action, payment_context,
+    validate_credit_cancellation, validate_expense_voucher,
+)
 
 
 class JifengExpenseVoucher(Document):
@@ -14,6 +17,9 @@ class JifengExpenseVoucher(Document):
         if frappe.db.exists("Journal Entry", {"jf_expense_voucher": self.name}):
             frappe.throw("该费用登记已有总账凭证，请先核对")
         amount = validate_expense_voucher(self)
+        offset = {"account": self.payment_account, "credit_in_account_currency": amount}
+        if self.payment_method == CREDIT:
+            offset.update(account=self.payable_account, party_type="Supplier", party=self.supplier)
         journal = frappe.get_doc({
             "doctype": "Journal Entry",
             "voucher_type": "Journal Entry",
@@ -24,22 +30,26 @@ class JifengExpenseVoucher(Document):
             "accounts": [
                 {"account": self.expense_account, "cost_center": self.cost_center,
                  "debit_in_account_currency": amount},
-                {"account": self.payment_account, "credit_in_account_currency": amount},
+                offset,
             ],
         })
-        journal.flags.from_jifeng_expense = True
-        journal.insert()
-        journal.submit()
+        with expense_journal_action(journal, self.name):
+            journal.insert()
+            journal.submit()
         self.db_set("journal_entry", journal.name, update_modified=False)
 
-    def on_cancel(self):
-        if not self.journal_entry:
-            frappe.throw("费用登记缺少关联总账凭证，请先核对")
-        journal = frappe.get_doc("Journal Entry", self.journal_entry)
+    def before_cancel(self):
+        journal, _ = expense_journal(self, lock=True)
         journal.check_permission("cancel")
-        if journal.get("jf_expense_voucher") != self.name:
-            frappe.throw("关联总账凭证的来源费用登记不一致")
-        if journal.docstatus != 1:
-            frappe.throw("关联总账凭证不是已提交状态，请先核对")
-        journal.flags.from_jifeng_expense = True
-        journal.cancel()
+        if self.payment_method == CREDIT:
+            validate_credit_cancellation(self)
+
+    def on_cancel(self):
+        journal, _ = expense_journal(self, lock=True)
+        journal.check_permission("cancel")
+        with expense_journal_action(journal, self.name):
+            journal.cancel()
+
+    @frappe.whitelist()
+    def credit_payment_context(self):
+        return payment_context(self.name)

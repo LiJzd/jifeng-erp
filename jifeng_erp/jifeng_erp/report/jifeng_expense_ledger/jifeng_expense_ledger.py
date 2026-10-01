@@ -3,6 +3,12 @@
 import frappe
 from frappe.utils import getdate
 
+from jifeng_erp.accounting import CREDIT, SOURCE, expense_journal, require_fields
+
+REPORT_FIELDS = ("name", "posting_date", "store_name", "cost_center", "legacy_number", "counterparty_name",
+                 "payment_method", "expense_account", "payment_account", "supplier", "payable_account",
+                 "amount", "arrears_reference", "summary", "journal_entry")
+
 
 def execute(filters=None):
     filters = frappe._dict(filters or {})
@@ -23,19 +29,33 @@ def execute(filters=None):
         "company": visible[0], "docstatus": 1,
         "posting_date": ["between", [str(start), str(end)]],
     }
-    for field in ("expense_account", "cost_center", "store_name"):
+    for field in ("expense_account", "cost_center", "store_name", "payment_method", "supplier"):
         if filters.get(field):
             query[field] = filters[field]
+    require_fields(SOURCE, ["company", "docstatus", *REPORT_FIELDS])
     vouchers = frappe.get_list(
         "Jifeng Expense Voucher", filters=query,
-        fields=[
-            "name", "posting_date", "store_name", "cost_center", "legacy_number",
-            "counterparty_name", "payment_method", "expense_account", "payment_account",
-            "amount", "summary", "journal_entry",
-        ],
+        fields=list(REPORT_FIELDS),
         order_by="posting_date asc, name asc", limit_page_length=0,
     )
-    currency = frappe.db.get_value("Company", visible[0], "default_currency")
+    company = frappe.get_doc("Company", visible[0])
+    company.check_permission("read")
+    require_fields("Company", ("name", "default_currency"))
+    currency = company.default_currency
+    rows = []
+    for row in vouchers:
+        document = frappe.get_doc(SOURCE, row.name)
+        document.check_permission("read")
+        if document.docstatus != 1 or document.company != visible[0]:
+            continue
+        if document.payment_method == CREDIT:
+            expense_journal(document)
+        result = {field: document.get(field) for field in REPORT_FIELDS} | {"currency": currency}
+        if document.payment_method == CREDIT:
+            result["payment_account"] = None
+        else:
+            result["supplier"] = result["payable_account"] = None
+        rows.append(result)
     columns = [
         {"fieldname": "name", "label": "费用登记单", "fieldtype": "Link", "options": "Jifeng Expense Voucher", "width": 165},
         {"fieldname": "posting_date", "label": "费用日期", "fieldtype": "Date", "width": 105},
@@ -45,9 +65,12 @@ def execute(filters=None):
         {"fieldname": "counterparty_name", "label": "名称", "fieldtype": "Data", "width": 140},
         {"fieldname": "payment_method", "label": "方式", "fieldtype": "Data", "width": 100},
         {"fieldname": "expense_account", "label": "费用科目", "fieldtype": "Link", "options": "Account", "width": 175},
-        {"fieldname": "payment_account", "label": "付款科目", "fieldtype": "Link", "options": "Account", "width": 175},
+        {"fieldname": "payment_account", "label": "付款科目（非赊账）", "fieldtype": "Link", "options": "Account", "width": 175},
+        {"fieldname": "supplier", "label": "应付供应商（明确来源）", "fieldtype": "Link", "options": "Supplier", "width": 175},
+        {"fieldname": "payable_account", "label": "实际应付科目", "fieldtype": "Link", "options": "Account", "width": 175},
         {"fieldname": "amount", "label": "本币金额", "fieldtype": "Currency", "options": "currency", "width": 125},
         {"fieldname": "journal_entry", "label": "总账凭证", "fieldtype": "Link", "options": "Journal Entry", "width": 165},
+        {"fieldname": "arrears_reference", "label": "旧欠款参考（不入账）", "fieldtype": "Currency", "options": "currency", "width": 165},
         {"fieldname": "summary", "label": "摘要", "fieldtype": "Small Text", "width": 240},
     ]
-    return columns, [{**row, "currency": currency} for row in vouchers]
+    return columns, rows

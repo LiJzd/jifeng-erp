@@ -55,9 +55,12 @@ scheduler_events = {"cron": {"*/15 * * * *": ["jifeng_erp.sync.scheduled_sync"]}
 doc_events = {
     "Additional Salary": {"validate": "jifeng_erp.payroll.validate_wage_additional_salary"},
     "Journal Entry": {
+        "before_validate": "jifeng_erp.accounting.lock_expense_settlement_references",
         "validate": "jifeng_erp.accounting.validate_expense_journal_entry",
+        "before_update_after_submit": "jifeng_erp.accounting.validate_expense_journal_entry",
         "before_cancel": "jifeng_erp.accounting.validate_expense_journal_entry_cancel",
     },
+    "Payment Entry": {"before_validate": "jifeng_erp.accounting.lock_expense_settlement_references"},
     "Job Card": {
         "before_validate": "jifeng_erp.production_department.validate_job_card_department",
         "validate": "jifeng_erp.setup.validate_flow_links",
