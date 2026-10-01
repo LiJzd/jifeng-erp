@@ -63,7 +63,7 @@ def _child_fields(document, table, names):
 
 
 def _person(company, employee, *, lock=False, active=True):
-    frappe.get_doc("Company", company).check_permission("read")
+    frappe.get_doc("Company", company).check_permission("select")
     person = frappe.get_doc("Employee", employee, for_update=lock)
     person.check_permission("read")
     _fields(person, ("company", "status", "employee_name"))

@@ -211,6 +211,15 @@ class TestWageWorkbench(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "计件单位"):
             self.module.save_drafts(self.payload)
 
+    def test_company_selection_scope_suffices_without_company_private_read(self):
+        self.docs[("Company", "C-1")].denied = ("read",)
+        source = self.module.get_entry_source("JC-1", "C-1", "E-1")
+        self.assertEqual(source["job_card"], "JC-1")
+        self.assertTrue(self.module.save_drafts(self.payload)["wages"])
+        self.docs[("Company", "C-1")].denied = ("read", "select")
+        with self.assertRaises(PermissionError):
+            self.module.get_entry_source("JC-1", "C-1", "E-1")
+
     def test_employee_must_be_active_company_scoped(self):
         employee = self.docs[("Employee", "E-1")]
         for field, value in (("company", "C-2"), ("status", "Left")):
