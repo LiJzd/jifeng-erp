@@ -114,6 +114,9 @@ def list_piece_workers(company, keyword=""):
     query = {"company": company, "status": "Active"}
     permitted = (set(EMPLOYEE_FIELDS) if frappe.session.user == "Administrator" else
                  set(frappe.get_meta("Employee").get_permitted_fieldnames(permission_type="read")))
+    # Meta returns business fields; native get_permitted_fields adds standard
+    # document identifiers separately. This name comes only from scoped get_list.
+    permitted.add("name")
     if not {"company", "status", "employee_name"}.issubset(permitted):
         frappe.throw("没有读取计件人员资格所需员工字段的权限", frappe.PermissionError)
     options = {"or_filters": {field: ["like", "%" + keyword + "%"]

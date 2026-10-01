@@ -141,6 +141,11 @@ class TestPieceWorkers(unittest.TestCase):
         self.assertNotIn("employee_number", query["fields"])
         self.assertNotIn("employee_number", query["or_filters"])
 
+    def test_native_meta_omits_standard_name_but_scoped_list_must_select_it(self):
+        self.fields.remove("name")
+        self.assertEqual(self.module.list_piece_workers("C-1")[0]["name"], "E-1")
+        self.assertIn("name", self.frappe.get_list.call_args.kwargs["fields"])
+
     def test_stale_native_list_candidate_changed_company_or_status_is_omitted(self):
         for field, value in (("company", "C-2"), ("status", "Left")):
             original = getattr(self.person, field)
