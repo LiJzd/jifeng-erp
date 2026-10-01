@@ -14,7 +14,9 @@
 
 每次GUI保存后停止本任务web并由新连接核验：`output/plating-gui-fixture-r1/created-proof.json`、`edited-proof.json`、`retired-proof.json`均通过。备注修改只增加一条精确Version，Supplier完整行保持；最后正常停用Profile并禁用本次Supplier，保留1 Profile/1 Supplier/0子行/3 Version及Series+1，原有全SQL、元数据、物理结构/indexes、GL/SLE和完整Error Log队列保持。没有删除来源或倒拨编号。实际GUI两项审计人均为Admin，创建人与其他修改人分离由原生17门的采购岗位验证。
 
-随后增加可见“状态”选择（在用/停用/全部，默认在用），用于查询正常停用的档案；后台已有筛选，不改API/schema/权限。切换清空结果并回第1页，保留公司和关键词，等用户查询；打开/编辑/只读弹层及未知保存期间禁用选择，迟到响应不能覆盖切换后结果。实际组件和菜单bridge两组CJS通过；构建及真实停用/全部查询继续验收。旧站状态控件位置和查询时机尚无证据，不宣称该新增入口已复刻未知旧行为。
+`725ba8f` 随后增加可见“状态”选择（在用/停用/全部，默认在用），用于查询正常停用的档案；后台已有筛选，不改API/schema/权限。切换清空结果并回第1页，保留公司和关键词，等用户查询；打开/编辑/只读弹层及未知保存期间禁用选择，迟到响应不能覆盖切换后结果。实际组件和菜单bridge两组CJS及cached单app构建通过。真实GUI三种状态各手动查询两次，六次GET均200、结果各为0/1/1；只切状态的事件窗口零API请求。备注/账号原文、19列、Admin现有可编辑弹层期间状态禁用与关闭恢复、主页重入保留状态/公司/前缀/单行且无新查询均通过；外发空网格实见13列及默认在用，没有全范围查询。证据 `output/partner-status-gui-r1/report.md`。旧站状态控件位置和查询时机尚无证据，不宣称该新增入口已复刻未知旧行为。
+
+首次hard reload的两个原生启动POST被只读守卫阻止；查本地源码后仅放行会话默认值读取、jifeng-legacy页面资源及标准Company候选查询，再正常重刷，业务保存始终禁止。GUI结束后精确停本任务web；新工具登记ead→725的六路径和原链字节，不改旧proof/guard。实际执行退出0，`output/partner-status-gui-readonly-r1/actual-status-gui-proof.json`确认926表完整canonical、23元数据、全部保留来源/Version/Series、Auth/Role、GL/SLE、结构/indexes与native Error Log队列不变，仅原Admin/SID窄时间刷新。rollback/destroy真正返回后才原子发布proof；没有重跑native17或数据写入。CLI新快照的清理被工具策略阻止，文件未读取并保留；既有追加console也保留，没有删除此前证据。
 
 `14568c4` 重名纠错续验已完成：真实原生15门及独立完整SQL回滚通过，实际GUI只放行一个原POST，收到HTTP417和中文ValidationError，草稿仍可修改；关闭否/是守护通过，没有自动重发。停web后的新连接 `output/partner-duplicate-http-r1-full-sql/actual-http417-proof.json` 确认完整SQL、保留夹具、Series、GL/SLE和Error Log队列不变，原UUID只读resolve为not_found。未关闭或压制日志配置。
 
