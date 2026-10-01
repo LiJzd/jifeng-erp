@@ -68,6 +68,72 @@ async function selectSupplier(value, state, name = "SUP-A", version = "2026-10-0
 async function changed(state, field, value) { await state.controls[field].set_value(value); }
 async function tick() { await new Promise(setImmediate); }
 
+function statusChange(value, desired) { value.statusSelect.value = desired; return value.statusSelect.events.get("change")({ target: value.statusSelect }); }
+function frozenStatus(value, state = value.editor) {
+	assert.equal(value.statusSelect.disabled, true);
+	const snapshot = () => JSON.stringify({ status: value.statusFilter, company: value.companyScope, revision: value.revision, openRevision: value.openRevision,
+		page: value.page, draft: state ? value.draft(state) : null, requestId: state?.requestId, candidate: state?.candidate,
+		profileVersion: state?.archive.profile_version, supplierVersion: state?.supplierVersion });
+	const before = snapshot(), count = calls.length; statusChange(value, "停用");
+	assert.equal(value.statusSelect.value, value.statusFilter); assert.equal(snapshot(), before); assert.equal(calls.length, count);
+}
+async function statusFilterEvents(kind) {
+	const value = await bench(kind), select = value.statusSelect;
+	assert.equal(select.tag, "select"); assert.equal(select.attributes["aria-label"], "状态");
+	assert.deepEqual(select.children.map((option) => [option.tag, option.value, option.textContent]),
+		[["option", "在用", "在用"], ["option", "停用", "停用"], ["option", "全部", "全部"]]);
+	assert.equal(select.value, "在用"); assert.equal(select.disabled, false);
+	assert.equal(value.host.children[0].children.at(-2).children[0].textContent, "状态");
+	const active = () => archive("ACTIVE", "Company A", false, kind), inactive = () => {
+		const row = archive("INACTIVE", "Company A", false, kind); row.profile.inactive = 1; return row;
+	};
+	const secondPage = value.query(2), secondCall = calls.at(-1);
+	secondCall.resolve({ ...page(secondCall, [active()]), total: 101, total_pages: 2 }); await secondPage;
+	assert.equal(value.page, 2); value.search.value = "保留关键词"; value.scroller.scrollLeft = 440; value.scroller.scrollTop = 32;
+	const beforeChange = calls.length, oldRevision = value.revision; statusChange(value, "停用");
+	assert.equal(calls.length, beforeChange); assert.equal(value.revision, oldRevision + 1);
+	assert.equal(value.statusFilter, "停用"); assert.equal(value.page, 1); assert.equal(value.goto.value, "1");
+	assert.equal(value.rows.length, 0); assert.equal(value.tbody.children.length, 0); assert.equal(value.total, null);
+	assert.equal(value.previous.disabled, true); assert.equal(value.next.disabled, true); assert.equal(value.count.textContent, "尚未查询");
+	assert.equal(value.companyScope, "Company A"); assert.equal(value.search.value, "保留关键词");
+	assert.equal(value.scroller.scrollLeft, 440); assert.equal(value.scroller.scrollTop, 32);
+	assert.match(value.status.textContent, /请查询/);
+	const stopped = value.queryButton.events.get("click")(), stoppedCall = calls.at(-1);
+	assert.equal(stoppedCall.options.type, "GET"); assert.equal(stoppedCall.options.args.status, "停用"); assert.equal(stoppedCall.options.args.page, 1);
+	stoppedCall.resolve(page(stoppedCall, [inactive()])); await stopped;
+	assert.equal(value.rows[0].profile.inactive, 1); fixedTail(value);
+	statusChange(value, "全部"); assert.equal(calls.length, beforeChange + 1);
+	const all = value.queryButton.events.get("click")(), allCall = calls.at(-1);
+	assert.equal(allCall.options.args.status, "全部"); allCall.resolve(page(allCall, [active(), inactive()])); await all;
+	assert.deepEqual(Array.from(value.rows, (row) => row.profile.inactive), [0, 1]);
+	const mismatch = value.query(), mismatchCall = calls.at(-1);
+	mismatchCall.resolve({ ...page(mismatchCall, [active()]), status: "在用" }); await mismatch; assert.equal(value.total, null);
+	statusChange(value, "停用"); const wrongRows = value.query(), wrongCall = calls.at(-1);
+	wrongCall.resolve(page(wrongCall, [active()])); await wrongRows; assert.equal(value.total, null); assert.equal(value.rows.length, 0);
+	// A -> B -> A without another query must still invalidate the original A response.
+	statusChange(value, "在用"); const stale = value.query(), staleCall = calls.at(-1), count = calls.length;
+	statusChange(value, "停用"); statusChange(value, "在用"); assert.equal(calls.length, count);
+	staleCall.resolve(page(staleCall, [active()])); await stale; assert.equal(value.total, null); assert.equal(value.rows.length, 0);
+	const invalidRevision = value.revision; statusChange(value, "坏状态"); assert.equal(select.value, "在用"); assert.equal(value.revision, invalidRevision);
+	await value.companyControl.set_value("Company B"); assert.equal(value.statusFilter, "在用"); assert.equal(select.value, "在用");
+	assert.equal(value.search.value, "保留关键词"); assert.equal(calls.length, count); await value.companyControl.set_value("Company A");
+	const opening = value.openNew(), openCall = calls.at(-1); frozenStatus(value, null);
+	openCall.resolve(archive(null, "Company A", true, kind)); await opening; const state = value.editor; frozenStatus(value);
+	await value.companyControl.set_value("Company B"); assert.equal(value.companyScope, "Company A"); assert.equal(value.companyControl.get_value(), "Company A");
+	await changed(state, "notes", "保持原始草稿"); frozenStatus(value);
+	const confirmClose = state.dialog.hide(); assert.equal(state.confirming, true); frozenStatus(value); confirms.at(-1).no(); await confirmClose;
+	const saving = value.save(state), saveCall = calls.at(-1); assert.equal(state.busy, true); frozenStatus(value);
+	saveCall.reject(new Error("unknown transport")); await saving; assert.equal(state.unknown, true); frozenStatus(value);
+	const writeCount = calls.filter((call) => call.options.type === "POST").length;
+	await value.save(state); assert.equal(calls.filter((call) => call.options.type === "POST").length, writeCount);
+	value.destroy(); frozenStatus(value, state);
+	// Normal native hide and explicit close both restore the visible filter for a reader.
+	const reader = await bench(kind), readState = await existing(reader, archive("PROFILE-A", "Company A", false, kind));
+	frozenStatus(reader); readState.nativeHide(); assert.equal(reader.editor, null); assert.equal(reader.statusSelect.disabled, false);
+	const nextReader = await existing(reader, archive("PROFILE-A", "Company A", false, kind)); frozenStatus(reader);
+	reader.closeEditor(); assert.equal(nextReader.closed, true); assert.equal(reader.statusSelect.disabled, false); reader.destroy();
+}
+
 async function main() {
 	// Every tail style remains scoped to this table; both cells share the right offset width.
 	const styles = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, selector]) => /jfe-partner-(?:table|action|modify|delete)/.test(selector));
@@ -313,6 +379,7 @@ async function main() {
 	assert.equal(platingEdit.unknown, false); assert.equal(platingEdit.archive.kind, "电镀厂");
 	await platingEdit.dialog.hide(); plating.destroy();
 	assert.equal(calls.filter((call) => /delete|trash|unlink/.test(call.options.method)).length, 0);
+	await statusFilterEvents("外发工厂"); await statusFilterEvents("电镀厂");
 
 	console.log("partner archive client protocol models: PASS");
 }

@@ -1,5 +1,37 @@
 # 验证记录
 
+## 2026-10-02 工厂列序对照与电镀档案同步
+
+旧站只读续查确认：外发工厂 metadata 虽有19项，当前桌面实际只显示13列（编号、名称、负责、手机、接货、电话、地址、备注、开户、户名、账号、修改、删除）；停用及四项审计列被原布局隐藏。此前本地16列不能算已符合当前原页，旧观察按历史保留。电镀厂实际19列，含左侧空列、12个档案字段、操作/日期/修改人/修改日期和修改/删除；“操作”绑定创建人，不是编辑按钮。电镀空新增与已有记录修改弹层的字段、按钮只读证据已取得；底部“修改”的另一条件及存储过程语义尚不明。证据 `output/legacy-external-factory-evidence-20261002/`、`output/legacy-plating-factory-evidence-20261002/`，未在旧站保存或删除。
+
+`eadcb2d` 增加独立电镀档案类型，外发默认13列、电镀19列及双列弹层按上述证据调整；电镀创建人取 Profile.owner，与修改人分开。两个档案共用Supplier时仍按公司和类型严格隔离，编辑档案不改共享Supplier。删除仅显示禁用按钮，底部未知“修改”未开放，正常保存、修改与停用保留原生审计。两入口标为“部分可用”；导入、导出、简拼、打印、历史迁移及未知旧按钮语义尚未完成。
+
+定向同步只执行一次原生 reload：archive_kind.options 增加“电镀厂”，父DocType和22条子元数据按原生导入重建，未改变业务表结构、索引或权限定义。独立连接 `output/partner-kind-schema-r2/fresh-synced-proof.json` 确认同步完成，逐项核对完整23行及新旧身份映射，其他全站SQL、原有合成夹具、账号角色、Series、GL/SLE和完整Error Log队列保持。r1只读prepare因WSL工作区Git信任配置缺失而失败，未登记reload或写入；保留失败收据，r2使用既有专用Git配置。同步通过不代表真实电镀业务或界面验收完成。
+
+该提交58项工厂模型、全部1308项Python模型和18组CJS协议通过；单app构建退出0，未下载或执行整站迁移。实际原生17门一次运行通过，进程完成退出0后才记录执行收据；独立连接 `output/partner-native17-r1-full-sql/actual-native17-proof.json` 核对所有SQL、完整23元数据、保留夹具、结构/indexes和Error Log队列保持。包含真实采购主管/主数据岗位的电镀联合新建、公司/类型/UUID隔离、共享Supplier保持及创建人与修改人分开；整批业务回滚。结果完整归档 `output/classic-partner_archive-native-result-r3.json`。当前363入口中239直接服务器映射（7 Page/92 Report/34 Create/104 List/2 Catalog）、106业务预览、13总经理导航和5工具/说明；其中2个工厂入口标部分可用，其余237个正式徽标也不能代替逐模块验收。
+
+同一Administrator实际从“主页→发镀→电镀厂”进入：19列、六行双列弹层、36px可调文本框、账号/停用同排已核。一次真实新建和一次仅备注修改均先暂停原POST、核对来源/版本后放行一次，HTTP200及页面成功接纳、正常关闭modal=0。新建原生分组通过中文“分销商”候选选择，底层仍为Distributor；银行账号前导0和备注字面HTML保持。合成前缀只查到一行，水平滚动实测0/900/1960，末端修改/删除列固定且hit-test命中；回主页重入保留同document/table/scroller、筛选和滚动。未证明旧空列选择功能，不将未登记的frame对象算作iframe身份。GUI证据 `output/plating-gui-r1/gui-report.md`。
+
+每次GUI保存后停止本任务web并由新连接核验：`output/plating-gui-fixture-r1/created-proof.json`、`edited-proof.json`、`retired-proof.json`均通过。备注修改只增加一条精确Version，Supplier完整行保持；最后正常停用Profile并禁用本次Supplier，保留1 Profile/1 Supplier/0子行/3 Version及Series+1，原有全SQL、元数据、物理结构/indexes、GL/SLE和完整Error Log队列保持。没有删除来源或倒拨编号。实际GUI两项审计人均为Admin，创建人与其他修改人分离由原生17门的采购岗位验证。
+
+随后增加可见“状态”选择（在用/停用/全部，默认在用），用于查询正常停用的档案；后台已有筛选，不改API/schema/权限。切换清空结果并回第1页，保留公司和关键词，等用户查询；打开/编辑/只读弹层及未知保存期间禁用选择，迟到响应不能覆盖切换后结果。实际组件和菜单bridge两组CJS通过；构建及真实停用/全部查询继续验收。旧站状态控件位置和查询时机尚无证据，不宣称该新增入口已复刻未知旧行为。
+
+`14568c4` 重名纠错续验已完成：真实原生15门及独立完整SQL回滚通过，实际GUI只放行一个原POST，收到HTTP417和中文ValidationError，草稿仍可修改；关闭否/是守护通过，没有自动重发。停web后的新连接 `output/partner-duplicate-http-r1-full-sql/actual-http417-proof.json` 确认完整SQL、保留夹具、Series、GL/SLE和Error Log队列不变，原UUID只读resolve为not_found。未关闭或压制日志配置。
+
+## 2026-10-02 外发工厂同步及原生13项验收
+
+`64133b9`、`1290195`、`77e96e9` 将“外发→外发工厂”接入专用服务器档案和经典弹层；按旧空新增弹层保留双列字段顺序，默认一次保存新建原生 Supplier 与独立公司工厂档案，也可显式关联已有 Supplier。不会按名称复用供应商；档案编辑不改共享供应商、联系人或银行账户。已有档案受双来源版本保护，新建 UUID 可只读核对，未知结果不自动重发；停用保留历史，档案不能删除。旧编号算法仍未知，当前本站编号可编辑，不能宣称旧编号已迁移。
+
+首次定向 schema reload 已执行一次，但核验器误判当前 DocField Meta 中已退役的物理 tinyint 列 `show_preview_popup` 的 SQL 默认值“0”与整数0，原生导入末尾的 `migration_hash` 更新随后被连接回滚撤销。原 `unknown` manifest、失败 fresh proof 与原工具均保留。独立只读恢复核验精确证明新增1 DocType/17 DocField/5 DocPerm、新空业务表与索引、原有全部 SQL/表结构/账簿保持；唯一未持久化字段是新 DocType 的导入哈希。另一次定向动作沿原生导入末尾 QB 实现只补这一字段，未再次 reload/DDL；新连接 `complete-fresh-r1.json` 确认同步完成、只此字段变化、原数据/所有其他新增元数据和所有计数/结构不变。证据 `output/partner-profile-schema-r1/`、`output/partner-schema-hash-finalize-r1/`。同步成功不代表业务验收完成。
+
+`45cec29` 后直接运行工厂原生 helper，13项通过：原文银行账号/地址/字面HTML、显式关联与共享Supplier不变、同UUID幂等及不同内容拒绝、只读核对、编辑/停用/Version、两来源旧版本和固定身份、必填失败回滚、真实 Purchase Manager/Profile 创建编辑、真实 Purchase User 只读、Company/Supplier/Profile User Permission、两页精确来源和停用查询、非法分页、联合创建及第二份档案失败后全回滚。原生 Purchase Manager 没有 Supplier.create，已实际验证拒绝；联合新建使用 Purchase Manager + Purchase Master Manager，未授予 System Manager 或改权限。独立连接核对全部表计数、完整供应商/子表/档案/账号角色/Series/Error Log 和 GL/SLE 恢复；再按同步完成 proof 的整站 SQL 哈希核对所有旧行与新增元数据保持。证据 `output/classic-partner_archive-native-result-r1.json`、`output/factory-gui-origin-after-native-r1.json`。
+
+`77e96e9` 完整前端构建退出0。后续单 app 构建发现本项目缺少 Frappe app discovery 必需的 `patches.txt`；`9f263ba` 加入标准空 patch 分节，未运行迁移。`da69b45` 调整弹窗宽度，实际原生 Small Text 控件的 inline 150px 高度仍覆盖 CSS，失败截图保留；`708863f` 在控件构造后设置初始36px，实际账号/停用均可见，用户仍可拖动文本框。该版单 app 构建及实际页面加载通过。中文 Supplier Group 是原生 translated doctype：英文 Distributor 搜索返回空，中文“分销商”候选选中后真实控件值为 Distributor；未创建或直接设置分组。
+
+同一 Administrator 登录在隔离站真实执行新增一次、备注修改一次，每次点击可见保存并暂停原 POST；root 在发送前核对完整载荷、UUID/版本、Supplier/Profile 命名及 Series，确认后放行同一请求一次。新增 HTTP200，组件只读 resolve found 后接纳；真实列表前缀查询恰好一行，再点“查看 / 修改”仅修改备注，HTTP200后干净关闭。字面HTML、银行账号前导0和其余字段保持；没有直接 API 代替界面保存。停 web 后独立 created/edited proof 逐项核对新完整行、0子表、精确备注 Version、原有全部SQL/GL/SLE。最后正常保存本次 Profile.inactive=1、Supplier.disabled=1，fresh retired proof 通过：保留1 Profile/1 Supplier/0子行/3 Version及原生Series+1，不删除或回退计数器。证据 `output/factory-gui-r1/empty-gui-report.md`、`output/factory-gui-fixture-r1/created-proof.json`、`edited-proof.json`、`retired-proof.json`。材料/物料浏览与外发工厂实际正式徽标已核；缓存旧文档的失败观察及随后同SID刷新证据分别保留。
+
+`14568c4` 精确把当前 Supplier 的原生重名拒绝转为中文 ValidationError，整笔事务回滚，不自动关联已有同名供应商；其他文档重复和未知结果仍保持原处理。50项工厂模型、实际组件纠错/未知结果协议及Ruff通过，原生15门和真实HTTP417正在续验。旧编号算法、迁移、导入/导出/打印和实际采购岗位GUI仍未完成。当前363入口中238正式映射（7 Page/92 Report/34 Create/103 List/2 Catalog）、107业务预览、13总经理导航和5工具/说明；入口映射仍不是全模块交付。原生13项、全模型1298项与18组客户端协议为各自已执行范围，不替代其余旧流程验收。
+
 ## 2026-10-02 库存浏览原生13门与真实双行GUI
 
 root 在已构建的4e12a6c隔离站直接运行库存浏览helper，原生13门通过：真实Stock User/Manager、Profile和Item User Permission、公司隔离、停用历史、原文/零值、可见总数与两页精确来源、HTTP整数文本、非法和越界分页；独立fresh连接确认完整来源/子表/角色账号/Series、所有表计数和GL/SLE回滚恢复。证据 `output/classic-inventory_catalog-native-result-r3.json`，原r1失败、r2九门与其同SHA副本均保留。
