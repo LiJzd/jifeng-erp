@@ -1,0 +1,30 @@
+{
+ "doctype": "DocType", "name": "Jifeng Plate Modeling", "module": "Jifeng ERP", "allow_rename": 0,
+ "autoname": "format:JF-PLATE-M-{YYYY}-{#####}", "title_field": "model_number", "track_changes": 1,
+ "search_fields": "legacy_number,model_number,product_code,modeler_text,remarks",
+ "field_order": ["company", "legacy_number", "model_number", "product_code", "reference_unit_price", "modeler_text",
+                 "model_date", "remarks", "legacy_copy", "design_image", "business_links", "item_code", "plate", "expense_voucher", "request_id", "request_digest"],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "legacy_number", "fieldtype": "Data", "label": "编号原文", "description": "单独保存历史编号，与本系统记录名独立；不推断旧自动编号规则。"},
+  {"fieldname": "model_number", "fieldtype": "Data", "label": "建模号", "in_list_view": 1},
+  {"fieldname": "product_code", "fieldtype": "Data", "label": "产品编号原文", "description": "按录入原文保存，不自动匹配商品。", "in_list_view": 1},
+  {"fieldname": "reference_unit_price", "fieldtype": "Data", "label": "单价参考", "description": "有限非负数值原文，可留空；不计算费用、库存或工资。"},
+  {"fieldname": "modeler_text", "fieldtype": "Data", "label": "建模原文", "description": "普通人员文字，不自动关联员工或账户。", "in_list_view": 1},
+  {"fieldname": "model_date", "fieldtype": "Date", "label": "日期", "default": "Today", "in_list_view": 1},
+  {"fieldname": "remarks", "fieldtype": "Data", "label": "备注", "description": "对应旧页面单行备注；只提交实际修改的原文。"},
+  {"fieldname": "legacy_copy", "fieldtype": "Check", "label": "复制勾选记录", "default": "0", "description": "仅保留勾选状态，暂不执行复制。"},
+  {"fieldname": "design_image", "fieldtype": "Attach Image", "label": "设计原图", "description": "先保存记录，再上传精确绑定本记录此字段的私有图片。"},
+  {"fieldname": "business_links", "fieldtype": "Section Break", "label": "业务关联（可选）"},
+  {"fieldname": "item_code", "fieldtype": "Link", "label": "关联商品", "options": "Item", "description": "明确选择实际商品，不从产品编号原文匹配。"},
+  {"fieldname": "plate", "fieldtype": "Link", "label": "关联版种档案", "options": "Jifeng Plate", "description": "可选同公司可查看的实际版种档案，不从建模号匹配。"},
+  {"fieldname": "expense_voucher", "fieldtype": "Link", "label": "实际费用来源", "options": "Jifeng Expense Voucher", "description": "可选同公司已提交且可查看的费用凭证；仅追溯来源，不代表已付款。后续反审保留来源，查询显示当前状态。"},
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "新建请求身份", "hidden": 1, "read_only": 1, "unique": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "request_digest", "fieldtype": "Data", "label": "新建请求摘要", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1, "report": 1},
+  {"role": "Stock Manager", "read": 1, "select": 1, "write": 1, "create": 1, "report": 1},
+  {"role": "Manufacturing Manager", "read": 1, "select": 1, "write": 1, "create": 1, "report": 1}
+ ]
+}
