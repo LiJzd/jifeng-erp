@@ -12,6 +12,7 @@ Repost state fixtures use normal insert followed by writes to only that job's
 protocol status/docstatus and child docstatus. They never submit or run a worker.
 """
 
+from collections import Counter
 import json
 
 import frappe
@@ -95,6 +96,63 @@ def _assert_native_manufacturing_sources(result, order, raw_item, sources):
                 assert finished[field] == source_finished[0].get(field), "成品明细必须保留准确父项、商品与流程单"
             for field in ("qty", "transfer_qty"):
                 assert flt(finished[field]) == flt(source_finished[0].get(field)) == 1
+
+
+def _assert_native_independent_manufacturing_sources(result, order, raw_item, sources):
+    """Match each independent parent/FG child to its planned exact SO Flow."""
+    details = {row.name: row for row in order.items}
+    projected = {row["document"]["name"]: row for row in result["independent_manufacture_entries"]}
+    assert len(projected) == len(result["independent_manufacture_entries"]) == len(sources)
+    assert set(projected) == {entry.name for entry, _ in sources}, "独立制造来源不能遗漏、重复或混入工单制造"
+    for entry, planned_flows in sources:
+        assert entry.doctype == "Stock Entry" and entry.company == order.company and entry.purpose == "Manufacture"
+        assert entry.docstatus in (1, 2) and not entry.work_order and not entry.job_card
+        finished = [row for row in entry.items if row.is_finished_item]
+        raw = [row for row in entry.items if not row.is_finished_item]
+        assert len(finished) == len(planned_flows) in (1, 2) and len(raw) == 1
+        assert raw[0].item_code == raw_item and flt(raw[0].transfer_qty) == len(planned_flows)
+        assert (raw[0].jf_flow_order or None) == (planned_flows[0].name if len(planned_flows) == 1 else None)
+        assert flt(entry.fg_completed_qty) == len(planned_flows) and flt(entry.process_loss_qty) == 0
+        assert len({flow.name for flow in planned_flows}) == len(planned_flows)
+        assert len({flow.sales_order_item for flow in planned_flows}) == len(planned_flows)
+        batch = projected[entry.name]
+        for field in ("name", "company", "work_order", "purpose", "docstatus", "stock_entry_type"):
+            assert batch["document"][field] == entry.get(field), "独立制造父凭证必须保留当前原生来源及取消状态"
+        assert batch["document"]["posting_date"] == str(entry.posting_date)
+        for field in ("fg_completed_qty", "process_loss_qty"):
+            assert flt(batch["document"][field]) == flt(entry.get(field))
+        children = {row["name"]: row for row in batch["finished_items"]}
+        assert len(children) == len(batch["finished_items"]) == len(finished)
+        assert set(children) == {row.name for row in finished}, "独立制造仅保留准确成品子行，原料和同商品别行不能替代"
+        for source, flow in zip(finished, planned_flows, strict=True):
+            detail = details[flow.sales_order_item]
+            assert (flow.company, flow.sales_order, flow.item_code) == (order.company, order.name, detail.item_code)
+            assert source.item_code == detail.item_code and source.jf_flow_order == flow.name
+            assert (source.parent, source.parenttype, source.parentfield) == (entry.name, "Stock Entry", "items")
+            assert source.is_finished_item == 1 and flt(source.qty) == flt(source.transfer_qty) == 1
+            child = children[source.name]
+            for field in ("name", "parent", "parenttype", "parentfield", "idx", "item_code", "is_finished_item",
+                          "jf_flow_order", "uom", "stock_uom"):
+                assert child[field] == source.get(field), "同商品不同订单行的独立制造来源不能串行"
+            for field in ("qty", "transfer_qty"):
+                assert flt(child[field]) == flt(source.get(field)) == 1
+
+
+def _assert_native_independent_stock_ledger(entry, warehouse, ledger):
+    """Compare native child-level stock movements, including cancel reversals."""
+    assert entry.docstatus in (1, 2) and not entry.work_order and not entry.job_card
+    expected = Counter()
+    for row in entry.items:
+        assert row.is_finished_item in (0, 1) and flt(row.transfer_qty) > 0
+        assert (row.t_warehouse or None, row.s_warehouse or None) == ((warehouse, None) if row.is_finished_item else (None, warehouse))
+        qty = flt(row.transfer_qty) * (1 if row.is_finished_item else -1)
+        expected[(row.name, row.item_code, warehouse, qty)] += 1
+        if entry.docstatus == 2:
+            expected[(row.name, row.item_code, warehouse, -qty)] += 1
+    assert all((row.voucher_type, row.voucher_no, row.company) == (entry.doctype, entry.name, entry.company)
+               and row.is_cancelled == (1 if entry.docstatus == 2 else 0) for row in ledger)
+    actual = Counter((row.voucher_detail_no, row.item_code, row.warehouse, flt(row.actual_qty)) for row in ledger)
+    assert actual == expected, "独立制造须保留逐子行真实入库、原料扣减及取消反向SLE，不能用工序数量替代"
 
 
 def _contents():
@@ -386,6 +444,78 @@ def smoke(company, other_company, item_group, stock_uom):
                     lambda: restriction("Stock Entry", seed.name),
                     hidden=tuple(entry.name for _, _, entries in manufacturing_sources for entry in entries))
 
+        current = "native_independent_manufacture_exact_flows_and_real_stock"
+        frappe.set_user(actors["writer"])
+
+        def independent(planned_flows, clock):
+            assert len(planned_flows) in (1, 2) and bom.is_active == 1 and flt(bom.cost_allocation_per) == 100
+            document = _stamp(frappe.get_doc({"doctype": "Stock Entry", "company": company,
+                "stock_entry_type": "Manufacture", "purpose": "Manufacture", "bom_no": bom.name,
+                "from_bom": 1, "use_multi_level_bom": 1, "fg_completed_qty": len(planned_flows),
+                "from_warehouse": fixture.warehouse.name, "to_warehouse": fixture.warehouse.name}), clock)
+            document.get_items()  # installed native BOM raw quantities/costs and finished row
+            assert not document.work_order and not document.job_card and len(document.items) == 2
+            finished = next(row for row in document.items if row.is_finished_item)
+            raw = next(row for row in document.items if not row.is_finished_item)
+            assert finished.item_code == fixture.item.name and raw.item_code == fixture.raw.name
+            assert flt(finished.qty) == flt(raw.qty) == len(planned_flows) and flt(finished.basic_rate) == 2
+            if len(planned_flows) == 1:
+                for row in document.items:
+                    row.jf_flow_order = planned_flows[0].name
+            else:
+                # Native Manufacture permits several FG rows of the same Item.
+                # Its automatic cost is divided per FG row, so retain the BOM's
+                # pre-split rate using the normal Set Basic Rate Manually control.
+                # The shared raw row has no invented per-Flow consumption split.
+                template = {field: value for field, value in finished.as_dict().items() if field not in {
+                    "name", "parent", "parenttype", "parentfield", "idx", "creation", "modified", "owner", "modified_by", "docstatus"}}
+                finished.qty, finished.jf_flow_order, finished.set_basic_rate_manually = 1, planned_flows[0].name, 1
+                document.append("items", template | {"qty": 1, "jf_flow_order": planned_flows[1].name,
+                                                     "set_basic_rate_manually": 1})
+            entry = post(document)
+            assert not entry.work_order and not entry.job_card and flt(entry.total_incoming_value) == flt(entry.total_outgoing_value)
+            assert all(flt(row.basic_rate) == 2 for row in entry.items)
+            return entry
+
+        planned_flows = tuple(source[0] for source in manufacturing_sources)
+        standalone = independent(planned_flows[:1], "07:40:00")
+        shared = independent(planned_flows, "07:50:00")
+        independent_sources = [(standalone, planned_flows[:1]), (shared, planned_flows)]
+
+        def independent_ledger(entry):
+            ledger = frappe.get_all("Stock Ledger Entry", filters={"voucher_type": entry.doctype, "voucher_no": entry.name},
+                fields=["voucher_type", "voucher_no", "company", "voucher_detail_no", "item_code", "warehouse", "actual_qty", "is_cancelled"])
+            _assert_native_independent_stock_ledger(entry, fixture.warehouse.name, ledger)
+
+        completed_reposts()
+        for entry, _ in independent_sources:
+            independent_ledger(entry)
+        assert flt(frappe.db.get_value("Bin", {"item_code": fixture.item.name, "warehouse": fixture.warehouse.name}, "actual_qty")) == 31
+        assert flt(frappe.db.get_value("Bin", {"item_code": fixture.raw.name, "warehouse": fixture.warehouse.name}, "actual_qty")) == 4
+        frappe.set_user(actors["reader"])
+        independent_result = read()
+        _assert_native_manufacturing_sources(independent_result, order, fixture.raw.name, manufacturing_sources)
+        _assert_native_independent_manufacturing_sources(independent_result, order, fixture.raw.name, independent_sources)
+        passed("native_independent_single_and_shared_same_item_two_so_flow_finished_rows_have_exact_sle_and_stock")
+        nested_gate("native_hidden_independent_manufacture_entry_rejects_complete_view",
+                    lambda: restriction("Stock Entry", seed.name), hidden=(standalone.name, shared.name))
+        nested_gate("native_hidden_flow_in_shared_independent_manufacture_rejects_complete_view",
+                    lambda: restriction(FLOW, planned_flows[0].name), hidden=(planned_flows[1].name,))
+        current = "native_cancelled_independent_manufacture_keeps_source_history_and_reverses_stock"
+        frappe.set_user(actors["writer"])
+        native(standalone, "cancel")
+        standalone.reload()
+        completed_reposts()
+        independent_ledger(standalone)
+        independent_ledger(shared)
+        assert flt(frappe.db.get_value("Bin", {"item_code": fixture.item.name, "warehouse": fixture.warehouse.name}, "actual_qty")) == 30
+        assert flt(frappe.db.get_value("Bin", {"item_code": fixture.raw.name, "warehouse": fixture.warehouse.name}, "actual_qty")) == 5
+        frappe.set_user(actors["reader"])
+        cancelled_independent = read()
+        _assert_native_manufacturing_sources(cancelled_independent, order, fixture.raw.name, manufacturing_sources)
+        _assert_native_independent_manufacturing_sources(cancelled_independent, order, fixture.raw.name, independent_sources)
+        passed("native_cancelled_independent_manufacture_preserves_original_fg_child_flow_and_inverse_sle_without_net_dto")
+
         current = "native_exact_returns_and_receipt"
         frappe.set_user(actors["writer"])
         returned_dn = make_return_doc("Delivery Note", deliveries[2].name)
@@ -570,10 +700,10 @@ def smoke(company, other_company, item_group, stock_uom):
             "table_counts_before": counts, "table_counts_after": _tab_counts(tables)[1],
             "gui_verified": False, "concurrency_verified": False,
             "no_ple_vouchers": "normal native draft PE/JE; not submitted rebuilds",
-            "manufacturing_verification": "native no-operation BOM, two exact SO-line WOs, three Manufacture batches",
+            "manufacturing_verification": "native no-operation BOM, two exact SO-line WOs/three batches; two independent entries with shared same-item FG rows and one cancellation",
             "repost_verification": "persisted RPL protocol fixtures only; no submit/enqueue/worker",
-            "remaining": ["旧销售跟踪操作/UI", "独立无Work Order制造入库来源", "原生字段read/mask撤权",
-                          "含工序或取消的制造来源",
+            "remaining": ["旧销售跟踪操作/UI", "跨客户共用独立制造凭证", "原生字段read/mask撤权",
+                          "含工序或取消工单的制造来源",
                           "Company仅select的真实岗位", "多币种专项", "真实重过账worker",
                           "Repost Accounting Ledger 原生状态专项", "已提交PE/JE重建期间暂缺PLE",
                           "双连接并发来源或权限变化"]}

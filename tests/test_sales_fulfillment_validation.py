@@ -1,6 +1,7 @@
 """Guard native fixture source checks and worker-free repost protocol writes."""
 
 import ast
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 import sys
@@ -230,6 +231,13 @@ class NativeRow(dict):
             return dict.__getitem__(self, field)
         return dict.__getattribute__(self, field)
 
+    def __deepcopy__(self, memo):
+        result = type(self)()
+        memo[id(self)] = result
+        for field, value in dict.items(self):
+            result[deepcopy(field, memo)] = deepcopy(value, memo)
+        return result
+
 
 class TestNativeManufacturingSourceGate(unittest.TestCase):
     """A native verifier must fail on omitted batches, raw rows or crossed SO lines."""
@@ -329,6 +337,127 @@ class TestNativeManufacturingSourceGate(unittest.TestCase):
             self.result["work_orders"][0]["manufacture_entries"][0])
         with self.assertRaises(AssertionError):
             self.verify_fixture()
+
+
+class TestNativeIndependentManufacturingSources(unittest.TestCase):
+    """Exact Flow/FG child provenance and native SLE signs, never parent totals."""
+
+    def setUp(self):
+        namespace = {"flt": lambda value: float(value or 0), "Counter": Counter}
+        functions("jifeng_erp/sales_fulfillment_validation.py", {
+            "_assert_native_independent_manufacturing_sources", "_assert_native_independent_stock_ledger"}, namespace)
+        self.verify = namespace["_assert_native_independent_manufacturing_sources"]
+        self.verify_stock = namespace["_assert_native_independent_stock_ledger"]
+        self.order = NativeRow(name="SO", company="QA", items=[
+            NativeRow(name="SO-A", item_code="SAME-FG", qty=6), NativeRow(name="SO-B", item_code="SAME-FG", qty=4)])
+        self.flows = [NativeRow(name="FLOW-" + str(index), company="QA", sales_order="SO",
+            sales_order_item=detail.name, item_code=detail.item_code) for index, detail in enumerate(self.order.items)]
+        self.sources, self.result = [], {"independent_manufacture_entries": [], "work_orders": []}
+        for name, planned in (("INDEP-A", self.flows[:1]), ("INDEP-SHARED", self.flows)):
+            raw = NativeRow(name=name + "-RAW", parent=name, parenttype="Stock Entry", parentfield="items", idx=1,
+                item_code="RAW", is_finished_item=0, qty=len(planned), transfer_qty=len(planned), uom="Nos", stock_uom="Nos",
+                s_warehouse="WH", t_warehouse=None, jf_flow_order=planned[0].name if len(planned) == 1 else None)
+            finished = [NativeRow(name=name + "-FG-" + str(index), parent=name, parenttype="Stock Entry", parentfield="items",
+                idx=index + 2, item_code="SAME-FG", is_finished_item=1, qty=1, transfer_qty=1, uom="Nos", stock_uom="Nos",
+                s_warehouse=None, t_warehouse="WH", jf_flow_order=flow.name) for index, flow in enumerate(planned)]
+            entry = NativeRow(doctype="Stock Entry", name=name, company="QA", purpose="Manufacture", stock_entry_type="Manufacture",
+                docstatus=1, work_order=None, job_card=None, fg_completed_qty=len(planned), process_loss_qty=0,
+                posting_date="2026-10-01", items=[raw, *finished])
+            self.sources.append((entry, planned))
+            self.result["independent_manufacture_entries"].append({"document": {
+                field: entry[field] for field in ("name", "company", "work_order", "purpose", "docstatus", "stock_entry_type",
+                    "posting_date", "fg_completed_qty", "process_loss_qty")}, "finished_items": [dict(row) for row in finished]})
+
+    def verify_sources(self):
+        self.verify(self.result, self.order, "RAW", self.sources)
+
+    def ledger(self, entry):
+        rows = []
+        for child in entry.items:
+            qty = child.transfer_qty * (1 if child.is_finished_item else -1)
+            for movement in ((qty, -qty) if entry.docstatus == 2 else (qty,)):
+                rows.append(NativeRow(voucher_type="Stock Entry", voucher_no=entry.name, company="QA", warehouse="WH",
+                    item_code=child.item_code, voucher_detail_no=child.name, actual_qty=movement,
+                    is_cancelled=1 if entry.docstatus == 2 else 0))
+        return rows
+
+    def test_single_and_two_same_item_finished_rows_keep_exact_flow_so_details_and_each_stock_movement(self):
+        self.verify_sources()
+        for entry, _ in self.sources:
+            self.verify_stock(entry, "WH", self.ledger(entry))
+        shared = self.result["independent_manufacture_entries"][1]["finished_items"]
+        self.assertEqual([row["item_code"] for row in shared], ["SAME-FG", "SAME-FG"])
+        self.assertEqual({row["jf_flow_order"] for row in shared}, {flow.name for flow in self.flows})
+
+    def test_cancelled_history_keeps_original_positive_fg_child_and_requires_both_inverse_sle_rows(self):
+        entry = self.sources[0][0]
+        entry["docstatus"] = 2
+        self.result["independent_manufacture_entries"][0]["document"]["docstatus"] = 2
+        self.verify_sources()
+        ledger = self.ledger(entry)
+        self.assertEqual(len(ledger), 4)
+        self.verify_stock(entry, "WH", ledger)
+        self.assertEqual(self.result["independent_manufacture_entries"][0]["finished_items"][0]["qty"], 1)
+        for wrong in (ledger[:2], [row | {"actual_qty": 0} for row in ledger],
+                      [NativeRow(row | {"is_cancelled": 0}) for row in ledger]):
+            with self.subTest(ledger=wrong), self.assertRaises(AssertionError):
+                self.verify_stock(entry, "WH", [NativeRow(row) for row in wrong])
+
+    def test_omitted_duplicate_raw_or_other_parent_finished_children_cannot_use_header_quantity(self):
+        for change in ("omit", "duplicate", "raw", "other-parent", "wrong-flow", "parent-total"):
+            result = deepcopy(self.result)
+            children = result["independent_manufacture_entries"][1]["finished_items"]
+            if change == "omit":
+                children.pop()
+            elif change == "duplicate":
+                children[1] = deepcopy(children[0])
+            elif change == "raw":
+                children[0] = dict(self.sources[1][0].items[0])
+            elif change == "other-parent":
+                children[0]["parent"] = "INDEP-A"
+            elif change == "wrong-flow":
+                children[1]["jf_flow_order"] = self.flows[0].name
+            else:
+                children[0]["qty"] = 2
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                self.verify(result, self.order, "RAW", self.sources)
+
+    def test_changed_native_flow_binding_or_work_order_cannot_be_adopted_as_independent_expectation(self):
+        for field, wrong in (("sales_order_item", "SO-B"), ("sales_order", "OTHER-SO"), ("company", "OTHER")):
+            sources = deepcopy(self.sources)
+            sources[0][1][0][field] = wrong
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                self.verify(self.result, self.order, "RAW", sources)
+        for field, wrong in (("work_order", "WO"), ("job_card", "CARD"), ("docstatus", 0)):
+            sources = deepcopy(self.sources)
+            sources[0][0][field] = wrong
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                self.verify(self.result, self.order, "RAW", sources)
+
+    def test_native_raw_consumption_and_independent_parent_cannot_be_omitted_or_aggregated(self):
+        missing = deepcopy(self.result)
+        missing["independent_manufacture_entries"].pop()
+        with self.assertRaises(AssertionError):
+            self.verify(missing, self.order, "RAW", self.sources)
+        for field, wrong in (("item_code", "SAME-FG"), ("transfer_qty", 1), ("jf_flow_order", "FLOW-0")):
+            sources = deepcopy(self.sources)
+            sources[1][0].items[0][field] = wrong
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                self.verify(self.result, self.order, "RAW", sources)
+
+    def test_sle_wrong_source_detail_item_sign_qty_or_warehouse_fails_even_if_stock_total_matches(self):
+        entry = self.sources[1][0]
+        ledger = self.ledger(entry)
+        for field, wrong in (("voucher_detail_no", "OTHER-CHILD"), ("voucher_no", "OTHER-ENTRY"), ("company", "OTHER"),
+                             ("item_code", "RAW"), ("warehouse", "OTHER-WH"), ("actual_qty", -1)):
+            mutated = deepcopy(ledger)
+            mutated[1][field] = wrong
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                self.verify_stock(entry, "WH", mutated)
+        # Same-item +1/+1 cannot be represented as one +2 child movement.
+        aggregate = [ledger[0], NativeRow(ledger[1] | {"actual_qty": 2})]
+        with self.assertRaises(AssertionError):
+            self.verify_stock(entry, "WH", aggregate)
 
 
 if __name__ == "__main__":
