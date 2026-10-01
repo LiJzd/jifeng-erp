@@ -326,6 +326,7 @@ def smoke(company, other_company, item_group, stock_uom):
         frappe.set_user(actors["writer"])
         bom = post(frappe.get_doc({"doctype": "BOM", "company": company, "item": fixture.item.name,
             "quantity": 1, "is_default": 0, "with_operations": 0, "currency": fixture.currency,
+            "cost_allocation_per": 100,
             "items": [{"item_code": fixture.raw.name, "qty": 1, "rate": 2}]}))
         assert bom.docstatus == 1 and not bom.operations
         manufacturing_sources = []
