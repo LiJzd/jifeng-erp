@@ -285,6 +285,9 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
         objects.append(returned)
         returned.posting_date = add_days(today(), -2)
         returned.set_posting_time, returned.posting_time = 1, "00:00:00"
+        # Native debit notes default to their own outstanding balance. This
+        # gate deliberately exercises the explicit original-invoice offset.
+        returned.update_outstanding_for_self = 0
         returned.set("items", [returned.items[0]])
         returned.items[0].qty = -1
         returned.disable_rounded_total = 1
@@ -316,7 +319,7 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
 
         current = "real_native_total_cutoff_two_partial_payments_return_future_and_expense_je"
         baseline = read()
-        assert amount(baseline, pi) == 30
+        assert amount(baseline, pi) == 30, "显式冲抵原发票的验收截止余额不符：" + str(amount(baseline, pi))
         assert amount(baseline, pi, "invoiced") == 120
         assert amount(baseline, journal) == 80
         assert Decimal(str(frappe.db.get_value("Purchase Invoice", pi.name, "outstanding_amount"))) != 30
