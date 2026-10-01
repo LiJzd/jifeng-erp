@@ -121,8 +121,9 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
         return track(document)
 
     def actor(label, role, allowed_company):
+        roles = (role,) if isinstance(role, str) else role
         user = insert("User", email=prefix.lower() + "-" + label + "@example.invalid", first_name=prefix,
-                      send_welcome_email=0, roles=[{"role": role}])
+                      send_welcome_email=0, roles=[{"role": name} for name in roles])
         users.append(user.name)
         insert("User Permission", user=user.name, allow="Company", for_value=allowed_company,
                apply_to_all_doctypes=1)
@@ -258,7 +259,10 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
     try:
         frappe.set_user("Administrator")
         clerk = actor("reader", "Accounts User", company)
-        manager = actor("writer", "Accounts Manager", company)
+        # Native PI item-details loading requires Item.read. Accounts Manager
+        # alone does not have it; use the standard purchasing/finance writer
+        # combination, keeping the API reader a pure Accounts User.
+        manager = actor("writer", ("Accounts Manager", "Purchase User"), company)
         outside = actor("outside", "Accounts User", other_company)
         item = insert("Item", item_code=prefix + "-service", item_group=item_group, stock_uom=stock_uom,
                       is_stock_item=0, is_purchase_item=1)
