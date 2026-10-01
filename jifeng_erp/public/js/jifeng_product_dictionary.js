@@ -166,6 +166,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 			const fields = ["legacy_number", "value", "remarks", "inactive", "abbreviation"].flatMap((fieldname) => {
 				const df = archive.field_meta[fieldname];
 				return df ? [{ ...df, fieldname, label: __(labels[fieldname]), default: fieldname === "legacy_number" ? this.numberPolicy(archive).value : archive[fieldname] ?? null,
+					...(fieldname === "remarks" && df.fieldtype === "Small Text" ? { fieldtype: "Data", length: 65535 } : {}),
 					hidden: fieldname === "abbreviation" && !archive.name,
 					...(fieldname === "legacy_number" ? { description: this.numberPolicy(archive).description } : {}),
 					read_only: !!(df.read_only || !archive.can_write || fieldname === "legacy_number") }] : [];
@@ -211,7 +212,13 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		else { result.request_id = state.requestId; result.numbering_mode = "automatic_v1"; }
 		for (const field of ["value", "remarks", "inactive", "abbreviation"]) {
 			const df = state.archive.field_meta[field], control = state.dialog.fields_dict[field];
-			if (control && df && !df.read_only && state.archive.can_write && (field !== "abbreviation" || state.archive.name)) result[field] = control.get_value();
+			if (control && df && !df.read_only && state.archive.can_write && (field !== "abbreviation" || state.archive.name)) {
+				const value = control.get_value();
+				// HTML text inputs flatten line breaks. An untouched historical
+				// value must not be rewritten when another field is changed.
+				const displayed = (text) => control.df.fieldtype === "Data" && typeof text === "string" ? text.replace(/[\r\n]/g, "") : text ?? "";
+				if (!state.archive.name || (field === "inactive" ? Number(value) !== Number(state.archive[field]) : displayed(value) !== displayed(state.archive[field]))) result[field] = value;
+			}
 		}
 		return result;
 	}

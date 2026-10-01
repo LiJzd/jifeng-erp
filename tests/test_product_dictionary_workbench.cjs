@@ -125,6 +125,8 @@ async function main() {
 	assert.equal(dialog.get_value("legacy_number"), "007", "provisional readonly number is displayed");
 	assert.ok(dialog.fields_dict.legacy_number.df.read_only); assert.match(dialog.fields_dict.legacy_number.df.description, /暂定号不占号/);
 	assert.equal(dialog.fields_dict.abbreviation.df.hidden, true);
+	assert.equal(dialog.fields_dict.remarks.df.fieldtype, "Data", "legacy remarks is a single text input");
+	assert.ok(dialog.fields_dict.remarks.df.length > 140, "single-line rendering must not add the Data 140-character limit to Small Text storage");
 	await dialog.set_values({ value: " 保留原文 ", remarks: hostile });
 	assert.equal(bench.payload(state).numbering_mode, "automatic_v1");
 	assert.equal("legacy_number" in bench.payload(state), false, "preview and legacy number never enter the POST");
@@ -176,6 +178,14 @@ async function main() {
 	bench.acceptCurrent(state); await confirmation.yes();
 	assert.equal(state.unresolved, false); assert.equal(dialog.get_value("value"), "另一人已改名"); assert.equal(bench.isDirty(), false);
 	assert.equal(calls.filter((call) => call.options.method.endsWith("save_dictionary")).length, beforeAdopt, "explicit local adoption never resends the POST");
+	state.archive.remarks = "历史\n两行";
+	await dialog.set_values({ remarks: "历史两行" });
+	assert.equal("remarks" in bench.payload(state), false, "untouched historical line breaks are not flattened in an unrelated save");
+	await dialog.set_values({ value: "另一人已改名", inactive: 1 });
+	assert.equal(bench.payload(state).inactive, 1);
+	assert.equal("remarks" in bench.payload(state), false);
+	state.archive.remarks = hostile;
+	await dialog.set_values({ remarks: hostile, inactive: 0 });
 
 	const resetting = bench.newDraft(state), resetCall = calls.at(-1); resetCall.resolve(blank({ number_preview: "009" })); await resetting;
 	assert.equal(state.archive.name, null); assert.equal(dialog.get_value("legacy_number"), "009"); assert.equal(dialog.fields_dict.abbreviation.df.hidden, true);
