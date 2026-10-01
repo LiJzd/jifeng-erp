@@ -105,8 +105,9 @@ def smoke(company, other_company):
         state, callbacks, context = _contents(), _callbacks(), _local_context()
         try:
             native(action)
-        except errors:
-            pass
+        except errors as error:
+            if any("回滚清理失败" in note for note in getattr(error, "__notes__", [])):
+                raise
         else:
             raise AssertionError("原生工厂请求未拒绝无权、冲突或坏参数")
         assert _contents() == state and _callbacks() == callbacks and _local_context() == context
@@ -173,7 +174,7 @@ def smoke(company, other_company):
         third = create(payload("实际主管", first_supplier))
         third = native(lambda: save_archive(edit(third, {"notes": "实际采购主管保存"})))
         assert third["can_write"] and _document_snapshot("Supplier", first_supplier.name) == supplier_before
-        passed("actual_purchase_manager_creates_and_updates_without_system_manager_or_supplier_write")
+        passed("actual_purchase_manager_creates_and_updates_without_system_manager_and_supplier_mutation")
 
         current = "actual_reader_readonly_pages_and_detail"
         frappe.set_user(reader)
@@ -215,6 +216,38 @@ def smoke(company, other_company):
         for options in ({"page": True}, {"page": 1.0}, {"page": " 1"}, {"page": 0}, {"page_size": 101}, {"page": 3, "page_size": 1}):
             rejected(lambda options=options: query_archives(KIND, company, prefix, **options), frappe.ValidationError)
         passed("native_invalid_bool_float_whitespace_zero_large_size_and_outside_page_rejected")
+
+        current = "one_save_native_supplier_and_factory_creation"
+        frappe.set_user(manager)
+        defaults = pure(lambda: init_archive(KIND, company))
+        assert defaults["can_create_supplier"] and defaults["can_link_supplier"]
+        group_values = deepcopy(defaults["supplier_defaults"])
+        group_values.update(supplier_group=groups[0], supplier_type="Company")
+        joint_request = {"kind": KIND, "company": company, "request_id": str(uuid4()),
+                         "supplier_create": group_values,
+                         "profile": {"legacy_number": prefix + "-一次新建",
+                                     "display_name": prefix + "-合成联合供应商",
+                                     "bank_account": "0000567800", "inactive": 0}}
+        joint = create(joint_request)
+        records.add(("Supplier", joint["supplier"]))
+        linked = frappe.get_doc("Supplier", joint["supplier"])
+        assert linked.supplier_name == joint_request["profile"]["display_name"] and not linked.disabled
+        assert joint["profile"]["bank_account"] == "0000567800"
+        assert _document_snapshot("Supplier", first_supplier.name) == supplier_before
+        joint_supplier_before = _document_snapshot("Supplier", joint["supplier"])
+        repeated_before = _contents()
+        assert create(joint_request)["name"] == joint["name"] and _contents() == repeated_before
+        joint = native(lambda: save_archive(edit(joint, {"notes": "只改联合新建后的档案原文"})))
+        assert _document_snapshot("Supplier", joint["supplier"]) == joint_supplier_before
+        passed("actual_purchase_manager_one_save_native_supplier_factory_idempotence_and_no_shared_supplier_edit")
+
+        current = "second_document_failure_rolls_back_new_supplier"
+        broken_joint = deepcopy(joint_request)
+        broken_joint["request_id"] = str(uuid4())
+        broken_joint["profile"].update(legacy_number="", display_name=prefix + "-合成失败供应商")
+        rejected(lambda: save_archive(broken_joint), frappe.ValidationError)
+        assert not frappe.db.exists(PROFILE, {"request_id": broken_joint["request_id"]})
+        passed("native_second_profile_failure_rolls_back_new_supplier_children_series_and_callback_queues")
     except Exception as error:
         primary = error
         error.add_note("工厂档案原生验收失败门槛：" + current)

@@ -159,7 +159,7 @@ const JIFENG_LIVE_ROUTES = {
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate", 版种建模: "Jifeng Plate Modeling", 建模: "Jifeng Plate Modeling" },
 	发镀: { 委外采购单: "Purchase Order", 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
-	外发: { 委外采购单: "Purchase Order", 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
+	外发: { 外发工厂: "Jifeng Partner Profile", 委外采购单: "Purchase Order", 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
 	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售单记录: "POS Invoice", 零售开班: "POS Opening Entry", 零售结班: "POS Closing Entry", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 费用登记单: "Jifeng Expense Voucher", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry", 费用登记查询: "Jifeng Expense Voucher" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
@@ -454,6 +454,15 @@ class JifengLegacyWorkspace {
 		}
 		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
 		if (liveDoctype) {
+			if (liveDoctype === "Jifeng Partner Profile") {
+				if (!this.formalBridge || !window.JifengPartnerArchive) {
+					frappe.msgprint(__("工厂档案页面未能加载，请刷新后重试。"));
+					return;
+				}
+				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
+					doctype: liveDoctype, partnerArchive: name });
+				return;
+			}
 			let filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
 			const inventoryArchive = liveDoctype === "Jifeng Inventory Profile" ? moduleName : null;
 			const hrDictionary = liveDoctype === "Jifeng HR Dictionary" ? name.replace(/^人事/, "") : null;
