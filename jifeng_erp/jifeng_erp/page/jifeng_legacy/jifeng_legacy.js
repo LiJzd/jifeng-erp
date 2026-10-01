@@ -384,6 +384,8 @@ class JifengLegacyWorkspace {
 	switchTab(key) {
 		const tab = this.tabs.find((item) => item.key === key);
 		if (!tab) return;
+		// Returning through the breadcrumb hides the cached page. Only closeTab
+		// disposes it, after the dirty and unknown-result guards have passed.
 		this.saveActiveTabState();
 		this.activeKey = key;
 		Object.assign(this, this.defaultViewState(tab.page), tab.viewState || {});
@@ -523,8 +525,8 @@ class JifengLegacyWorkspace {
 			'<div class="jfe-top-tools"><span class="jfe-clock" data-clock></span><button class="jfe-icon-btn" data-action="fullscreen" title="全屏">⛶</button>' +
 			'<button class="jfe-icon-btn" data-action="history" title="最近访问">◷</button><button class="jfe-user" data-action="user">◉ <span>当前用户</span>⌄</button></div></header>' +
 			'<div class="jfe-body"><nav class="jfe-sidebar">' + this.renderSidebar() + '</nav>' +
-			'<section class="jfe-work"><div class="jfe-tabs">' + this.renderTabs() + '<button class="jfe-tab-menu" data-action="tab-menu" title="标签列表">☷</button></div>' +
-			'<main class="jfe-content">' + this.renderBreadcrumb(active) + this.renderActive(active) + '</main></section></div>' +
+			'<section class="jfe-work"><div class="jfe-navigation">' + this.renderBreadcrumb(active) + '</div>' +
+			'<main class="jfe-content">' + this.renderActive(active) + '</main></section></div>' +
 			'<div class="jfe-toast" data-toast></div><div class="jfe-modal-root" data-modal-root></div></div>';
 		this.bindEvents();
 		this.formalBridge?.sync();
@@ -549,17 +551,6 @@ class JifengLegacyWorkspace {
 			.join("");
 	}
 
-	renderTabs() {
-		return this.tabs
-			.map((tab) => {
-				return '<button class="jfe-tab ' + (tab.key === this.activeKey ? "is-active" : "") + '" data-action="tab" data-key="' + this.esc(tab.key) + '">' +
-					this.esc(tab.title) +
-					(tab.key === "home" ? "" : '<span class="jfe-tab-close" data-action="close-tab" data-key="' + this.esc(tab.key) + '">×</span>') +
-					"</button>";
-			})
-			.join("");
-	}
-
 	renderActive(tab) {
 		if (tab.kind === "formal") return this.formalBridge.content(tab);
 		if (tab.kind === "home") return this.renderHome();
@@ -570,11 +561,16 @@ class JifengLegacyWorkspace {
 	}
 
 	renderBreadcrumb(tab) {
-		if (tab.kind === "home") return "";
-		return '<nav class="jfe-formal-breadcrumb" aria-label="页面位置">' +
-			'<button data-action="classic-home">主页</button><span>›</span>' +
-			(tab.kind === "module" ? '<b>' + this.esc(tab.module) + '</b>' :
-				'<button data-action="classic-module" data-module="' + this.esc(tab.module) + '">' + this.esc(tab.module) + '</button><span>›</span><b>' + this.esc(tab.title) + '</b>') + '</nav>';
+		const current = (title) => '<b aria-current="page">' + this.esc(title) + '</b>';
+		let path = tab.kind === "home" ? current("主页") : '<button data-action="classic-home">主页</button><span aria-hidden="true">›</span>';
+		if (tab.kind !== "home") {
+			if (tab.kind === "module") path += current(tab.module);
+			else {
+				if (tab.module) path += '<button data-action="classic-module" data-module="' + this.esc(tab.module) + '">' + this.esc(tab.module) + '</button><span aria-hidden="true">›</span>';
+				path += current(tab.title);
+			}
+		}
+		return '<nav class="jfe-formal-breadcrumb" aria-label="页面位置">' + path + '</nav>';
 	}
 
 	renderPayrollEntry() {
@@ -1494,7 +1490,7 @@ class JifengLegacyWorkspace {
 	refreshContent() {
 		const active = this.activeTab();
 		const content = this.host.querySelector(".jfe-content");
-		if (content) content.innerHTML = this.renderBreadcrumb(active) + this.renderActive(active);
+		if (content) content.innerHTML = this.renderActive(active);
 		this.formalBridge?.sync();
 	}
 
