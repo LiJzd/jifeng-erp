@@ -1,0 +1,36 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Partner Profile",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-PARTNER-{YYYY}-{#####}",
+ "title_field": "display_name",
+ "search_fields": "legacy_number,display_name",
+ "track_changes": 1,
+ "field_order": ["company", "archive_kind", "supplier", "legacy_number", "display_name", "owner_name", "mobile", "reception", "phone", "address", "notes", "bank_name", "account_name", "bank_account", "inactive", "request_id", "request_digest"],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "archive_kind", "fieldtype": "Select", "label": "档案种类", "options": "外发工厂", "reqd": 1, "set_only_once": 1},
+  {"fieldname": "supplier", "fieldtype": "Link", "label": "关联供应商", "options": "Supplier", "reqd": 1, "set_only_once": 1, "description": "显式选择正式业务供应商。工厂原文不改写共享供应商或银行账户。"},
+  {"fieldname": "legacy_number", "fieldtype": "Data", "label": "编号", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "display_name", "fieldtype": "Data", "label": "名称", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "owner_name", "fieldtype": "Data", "label": "负责"},
+  {"fieldname": "mobile", "fieldtype": "Data", "label": "手机"},
+  {"fieldname": "reception", "fieldtype": "Data", "label": "接货"},
+  {"fieldname": "phone", "fieldtype": "Data", "label": "电话"},
+  {"fieldname": "address", "fieldtype": "Small Text", "label": "地址"},
+  {"fieldname": "notes", "fieldtype": "Small Text", "label": "备注"},
+  {"fieldname": "bank_name", "fieldtype": "Data", "label": "开户"},
+  {"fieldname": "account_name", "fieldtype": "Data", "label": "户名"},
+  {"fieldname": "bank_account", "fieldtype": "Data", "label": "账号"},
+  {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1},
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "新建请求身份", "unique": 1, "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "request_digest", "fieldtype": "Data", "label": "新建请求内容校验", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "create": 1, "write": 1, "select": 1, "report": 1, "print": 1, "export": 1},
+  {"role": "Purchase Manager", "read": 1, "create": 1, "write": 1, "select": 1, "report": 1, "print": 1, "export": 1},
+  {"role": "Purchase User", "read": 1, "select": 1, "report": 1, "print": 1},
+  {"role": "Accounts Manager", "read": 1, "select": 1, "report": 1, "print": 1},
+  {"role": "Accounts User", "read": 1, "select": 1, "report": 1, "print": 1}
+ ]
+}
