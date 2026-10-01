@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-01 产品词典后端与原文目录权限
+
+655035c 新增公司范围的产品风格、来源、品牌词典，独立保存编号、名称、备注、简拼、停用；名称可修改，编号和名称未假定唯一。公司及类型固定，创建回执使用 UUID 和初始载荷摘要，改名后只读核对仍返回当前记录，不自动还原旧名；原生 Version、显式版本锁、Company/词条 User Permission 和字段权限继续生效。System Manager、Stock Manager、Manufacturing Manager 管理，不改员工、Item 或 Product Profile 历史原文。删除、编号分配、自动简拼、旧式界面及打印尚未完成，产品类别不套用此单值模型。
+
+词典 r1 第五门的原文不变判据失败：插入后 Python 文档中的日期为字符串，SQL 重读为 datetime，原 as_dict 摘要比较混用了两种表示。e12e778 改用准确父行及所有已安装子表的完整 SQL 快照，保留 creation/modified 微秒、DECIMAL 精度和全部物理字段，不忽略业务或审计列。r2 原生15门通过，真实三种管理角色、三个类型、重名/重号、原生表单回执、元数据注入拒绝、可变名称与原档案/Item 父子行不变、停用、未知结果只读核对、过期版本、公司/词条范围、非法输入、删除拒绝及普通角色拒绝均已检查。r1 与 r2 的独立新连接全表计数、完整词典/档案/Item/File/Version/Series、人员和子表、账号权限、补充档案及 GL/SLE 均恢复；r1 不计通过。
+
+产品目录增加五个独立原文列及独立私有档案图片，空原文或图片不从 Item 回填。所有实际返回字段要求原生读取字段权限；图片必须属于当前档案的准确字段，且 File.read 与 is_downloadable 同时通过。原文目录 r1 在同父多字段图片 alias 夹具的独立 File 假设处失败；未记录实际值，不能宣称已经证明原生去重细节。e12e778 采用官方 File.create_attachment_copy，默认保留权限验证，将同一私有 blob 复制到另一可读档案。r2 原生8门通过：真实 Stock Manager 调原生 QueryReport 取得准确业务/原文列和独立图片 URL，空原文不回填；准确源 File 被 File 专属 User Permission 拒绝时，即使另一档案同 URL alias 可读也不返回源图片。正例用原生 QueryReport.run，拒绝例用同报告核心，未冒称 HTTP 或报告外层拒绝验收；同父异字段和字段等级撤销仅模型覆盖。两张本地合成 PNG 共243字节，没有远程传输；原生回滚后准确磁盘路径消失、完整内容和全表计数恢复，独立新连接复核通过。
+
+本批全仓798项 Python 模型、相关 Ruff 和 diff 检查通过。忽略证据 `classic-product_dictionary-native-result-r1.json`、`-r2.json` 及 `classic-catalog_original-native-result-r1.json`、`-r2.json` 保留失败和成功记录。当前后台迁移成功，最新前端构建/重启及旧式三词典实际界面仍待；此阶段未减少116个业务预览，也不代表产品模块交付。
+
 ## 2026-10-01 产品档案独立原文与私有图片
 
 f2717a9 为 `Jifeng Product Profile` 增加可选的独立编号、代码、名称、单位、备注和产品档案图片字段。前五项保留原文，编号不合并 item_code 或旧号，备注不合并注意事项/默认要求；图片独立于共享 Item.image。没有迁移回填、改 Item 或增授角色，一件业务商品仍全局唯一对应一个 Product Profile。原生表单明确展示业务名称、库存单位和业务图片，先保存档案再上传私有档案图片；保存图片要求当前档案/字段的精确 File 绑定及原生 File.read，拒绝公开、远程、无 File、其他档案和其他字段的图片引用。
@@ -10,9 +20,17 @@ f2717a9 为 `Jifeng Product Profile` 增加可选的独立编号、代码、名�
 
 r2 原生16门通过：真实 Stock Manager 和 Manufacturing Manager/Manufacturing User 分别保存原文及 Version，原注意事项/旧号/要求/价格重量保持；每个角色实际插入自己的私有 File 并保存引用。拒绝远程/公开/无登记/异档案/未保存档案/同档案异字段图片，Company 和 Item User Permission 继续生效，同 Item 异公司重复档案仍拒绝。实际4张随机内容本地 PNG 共473字节，没有外部传输，均调用原生 File 回滚清理，精确私有/公开磁盘路径全部消失；全表计数、完整商品、GL/SLE、回调和保存/实时上下文恢复。独立新连接再核对所有 Item 子表、档案子表、File/Version/Series、人员子表、账户及权限、补充子表、GL/SLE 与批前一致。忽略证据为 `classic-catalog_delta-native-result-r1.json`、`-r2.json`。
 
-Luna 在更新后的原生 Product Profile 空列表打开新增表单，实际确认编号/代码/名称/单位/备注原文五个文本框可编辑，未保存并回到空列表。当前新建表单的图片控件未出现在实际快照中，不能算浏览器上传禁用或图片显示验收；新页控制台零错误、一条警告待归因。fresh before/after 核对完整商品及子表、Profile 及子表、File/Version/Series、人员/账号权限和 GL/SLE 相同、全表计数无变化，仅 Administrator.last_active 原生登录元数据变化。忽略证据 `product_raw_gui_fresh_before.json`、`product_raw_gui_fresh_after.json`。此次检查使用原生表单，并未验证旧产品菜单中的专用新增弹层。
+Luna 在更新后的原生 Product Profile 空列表打开新增表单，实际确认编号/代码/名称/单位/备注原文五个文本框可编辑，未保存并回到空列表。当前新建表单的图片控件未出现在实际快照中，不能算浏览器上传禁用或图片显示验收；新页控制台零错误、一条 Moment 日期解析警告，栈可见 convert_to_user_tz，但根因未定位。fresh before/after 核对完整商品及子表、Profile 及子表、File/Version/Series、人员/账号权限和 GL/SLE 相同、全表计数无变化，仅 Administrator.last_active 原生登录元数据变化。忽略证据 `gui-product-profile-browser-20261001.md`、`product_raw_gui_fresh_before.json`、`product_raw_gui_fresh_after.json`。此次检查使用原生表单，并未验证旧产品菜单中的专用新增弹层。
 
 本批仍未完成旧产品29字段顺序的专用录入弹层、产品词典、复制及列表工具栏；HTTP 图片下载字节、实际浏览器上传/保存及岗位验收未通过。旧页面已经确认的原文可持久保存不代表产品模块完整交付，也没有减少116个业务预览缺口。
+
+## 2026-10-01 旧产品四个词典的画布表头与空新增
+
+Luna 通过可见菜单打开并核对选中状态及实际 iframe 路径，取得产品类别、风格、来源、品牌的脱敏表头截图，root 已查看截图复核。SpreadJS 在 AX 文本中显示 Canvas fallback，但画面实际绘出了表头，不能据 fallback 文案把列头当作未知。来源和品牌的截图哈希相同，对应分别确认的 `/jfmy/产品来源` 和 `/jfmy/产品品牌`，不是只凭相同文件名推断页面。
+
+产品类别实际为两张并列表：左侧代码、大类、负责、区域、停用、删除；右侧小类、材质、单位、换算单位、换算值、停用、操作、删除。顶栏导出、导入、保存、更新简拼、关键词及查询。没有看到树控件；后续单击第二个可见父行时左右画布哈希均变化，观察到 GetTableDataWithOffset 和 GetTableRowData 请求，但未采集请求体、准确返回行数或选择返回字段，只能证明有限联动。焦点随后落到可见网格输入控件，未输入或保存，停止进一步操作。不能压成一个单值词典或擅套 Item Group，也不能把换算值直接写业务单位换算。
+
+风格/来源/品牌实际共用九列：编号、名称、备注、简拼、停用、操作、日期、修改、删除；顶栏新增、更新简拼、关键词、查询、格式1、打印、预览。三种空新增弹层均依次显示编号（预填序列）、名称、备注、停用，底部新增/保存/关闭；简拼不在空新增输入项中。后续真实 DOM 属性核验三个编号 text 控件均 readonly=true、disabled=false，名称和备注可编辑，停用未勾选；各窗逐一关闭。空窗观察的序列为001/004/006，只说明该次预填，不证明编号分配/并发/唯一性规则。均未保存，只关闭返回原页。类别合成无匹配查询后已恢复空关键词；未做导入/导出、简拼更新、行编辑或删除。旧站导航有未归因控制台错误，不当作本项目错误或某词典操作的确定缺陷。忽略证据 `output/legacy-product-dictionary-browser-20261001.md` 和所列 header-only/blank-dialog 安全截图。
 
 ## 2026-10-01 人事词典实际界面与本机实时连接
 
