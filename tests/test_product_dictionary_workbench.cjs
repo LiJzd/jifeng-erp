@@ -89,8 +89,15 @@ async function main() {
 	for (const label of ["更新简拼", "格式1", "打印", "预览"]) assert.ok(bench.host.descendants("button").find((node) => node.textContent === label).disabled);
 	assert.match(bench.limits.textContent, /本系统新规则/); assert.match(bench.limits.textContent, /暂定号不占号/);
 	assert.equal(bench.addButton.disabled, true, "new needs an explicit native Company selection");
-	bench.companyControl.set_value("Company A"); calls.at(-1).resolve([]); await tick();
+	bench.companyControl.set_value("Company A");
+	assert.equal(calls.at(-1).options.args.include_inactive, 0, "form POST must serialize the unchecked flag as 0, not false");
+	calls.at(-1).resolve([]); await tick();
 	assert.equal(bench.addButton.disabled, false);
+	bench.includeInactive.checked = true;
+	const inactiveQuery = bench.query();
+	assert.equal(calls.at(-1).options.args.include_inactive, 1, "form POST must serialize the checked flag as 1, not true");
+	calls.at(-1).resolve([]); await inactiveQuery;
+	bench.includeInactive.checked = false;
 	assert.match(bench.requestID(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, "LAN UUID fallback");
 
 	const oldQuery = bench.query(), oldCall = calls.at(-1);

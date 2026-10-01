@@ -104,7 +104,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		this.status.textContent = __("正在查询…");
 		try {
 			const response = await frappe.call({ method: "jifeng_erp.product_dictionary.list_dictionary",
-				args: { dictionary_type: this.type, company, search, include_inactive } });
+				args: { dictionary_type: this.type, company, search, include_inactive: Number(include_inactive) } });
 			if (this.disposed || sequence !== this.revision || this.company() !== company || this.search.value !== search ||
 				!!this.includeInactive.checked !== include_inactive) return;
 			if (!Array.isArray(response.message)) throw new Error("Incomplete list");
