@@ -134,6 +134,9 @@ def install():
     _install_wage_source_permissions()
     _install_wage_reversal_permissions()
     _install_separation_permissions()
+    from jifeng_erp.desktop_entry import repair_legacy_desktop_entry
+
+    repair_legacy_desktop_entry()
 
 
 def _install_wage_source_permissions():

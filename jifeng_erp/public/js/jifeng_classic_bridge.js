@@ -223,7 +223,11 @@ window.JifengClassicBridge = class JifengClassicBridge {
 			timer = setInterval(async () => {
 				if (stopped) return;
 				const child = iframe.contentWindow;
-				if (!child?.frappe?.boot?.user || !child.frappe.router || !child.frappe.new_doc) {
+				// These functions exist before Application.startup has routed Desk.
+				// Wait for the initial route too: its default Workspace redirect
+				// must finish before we select the classic page's native route.
+				if (!child?.frappe?.boot?.user || !child.frappe.app || !child.frappe.container ||
+					!child.frappe.router || !child.frappe.new_doc || !child.frappe.get_route?.()[0]) {
 					if (++attempts >= 300) {
 						stop();
 						loading.textContent = __("页面未能加载，请关闭后重新打开。");
@@ -284,6 +288,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 					}
 					if (spec.kind === "create") {
 						await new Promise((resolve) => child.frappe.model.with_doctype(spec.doctype, resolve));
+						if (stopped) return;
 						if (!child.frappe.model.can_create(spec.doctype)) {
 							loading.textContent = __("没有新建此单据的权限。");
 							settleReady(false);
@@ -294,6 +299,9 @@ window.JifengClassicBridge = class JifengClassicBridge {
 					else {
 						child.frappe.route_options = { ...(spec.filters || {}) };
 						await child.frappe.set_route(...spec.route);
+						if (stopped) return;
+						const isTargetRoute = () => spec.route.every((part, index) => child.frappe.get_route()[index] === part);
+						if (!isTargetRoute()) throw new Error("Native target route not ready");
 						if (spec.kind === "list" && !Object.keys(spec.filters || {}).length) {
 							// Native empty route_options keeps saved filters. Classic
 							// entry defaults must start clear, once per mounted tab.
@@ -302,7 +310,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 								timer = setInterval(() => {
 										const view = child.cur_list;
 									if (stopped) { clearInterval(timer); resolve(null); }
-									else if (view?.doctype === spec.doctype && view.filter_area) { clearInterval(timer); resolve(view); }
+									else if (isTargetRoute() && view?.doctype === spec.doctype && view.filter_area) { clearInterval(timer); resolve(view); }
 									else if (++tries >= 300) { clearInterval(timer); reject(new Error("List not ready")); }
 								}, 50);
 							});
@@ -311,7 +319,9 @@ window.JifengClassicBridge = class JifengClassicBridge {
 							await list.filter_area.clear(false);
 							await list.refresh();
 						}
+						if (!isTargetRoute()) throw new Error("Native target route changed during loading");
 					}
+					if (stopped) return;
 					loading.remove();
 					iframe.classList.add("is-ready");
 					settleReady(true);
