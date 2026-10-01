@@ -30,6 +30,9 @@ for (const kind of ["物料", "材料"]) {
 	const module = window.modules.find(item => item.name === kind);
 	const name = module.groups.flatMap(group => Array.from(group.items)).find(item => item === "浏览");
 	assert.equal(name, "浏览", "exercise the real legacy menu, not an invented prefixed alias");
+	const moduleHtml = workspace.renderModule(kind);
+	assert.match(moduleHtml, new RegExp('jfe-function-card is-live[^>]*data-page="浏览">[^]*?<em class="jfe-live-tag">正式</em>'),
+		"the real browse menu must show the formal server-backed entry badge");
 	workspace.openPage(name, kind);
 	const key = `formal:${kind}:浏览`, entry = bridge.frames.get(key);
 	assert.equal(entry.workbench.kind, kind); assert.equal(entry.iframe, undefined);
