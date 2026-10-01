@@ -192,7 +192,7 @@ const JIFENG_LIVE_CREATE = {
 			差异处理: { doctype: "Stock Reconciliation", values: {} },
 		},
 	产品: { 报价单: { doctype: "Quotation", values: { quotation_to: "Customer" } },
-		资料录入: { doctype: "Jifeng Product Profile", values: {} } },
+		资料录入: { doctype: "Jifeng Product Profile", values: {}, productArchive: true } },
 	订单: { 订单录入: { doctype: "Sales Order", values: {} } },
 	人事: {
 		晋升办理: { doctype: "Employee Promotion", values: {} },
@@ -430,7 +430,7 @@ class JifengLegacyWorkspace {
 		if (create) {
 			if (this.formalBridge) {
 				this.formalBridge.openCreate({ title: name, module: moduleName, kind: "create",
-					doctype: create.doctype, values: create.values || {} });
+					doctype: create.doctype, values: create.values || {}, productArchive: !!create.productArchive });
 				return;
 			}
 			frappe.new_doc(create.doctype, create.values);
@@ -457,6 +457,7 @@ class JifengLegacyWorkspace {
 					hrDictionary,
 					productDictionary,
 					productCategory: moduleName === "产品" && name === "类别" && liveDoctype === "Jifeng Product Category",
+					productArchive: moduleName === "产品" && name === "产品档案" && liveDoctype === "Jifeng Product Profile",
 					dictionaryArchive: liveDoctype === "Jifeng Inventory Dictionary",
 					personnelArchive: moduleName === "人事" && name === "人事档案",
 					hideCreate: moduleName === "人事" && name === "人事浏览" });

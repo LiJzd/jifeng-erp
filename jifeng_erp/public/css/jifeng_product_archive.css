@@ -1,0 +1,65 @@
+.jfe-product-archive { height: 100%; display: flex; flex-direction: column; padding: 12px; color: #263d50; }
+.jfe-product-archive-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-bottom: 1px solid #b7d0e4; padding-bottom: 10px; }
+.jfe-product-archive-company { min-width: 210px; }
+.jfe-product-archive-company .form-group { margin-bottom: 0; }
+.jfe-product-archive-toolbar > input { border: 1px solid #9ab8cd; border-radius: 3px; padding: 6px 8px; min-width: 170px; }
+.jfe-product-archive-inactive { display: flex; align-items: center; gap: 4px; margin: 0; }
+.jfe-product-archive-status { margin: 8px 0; }
+.jfe-product-archive-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid #a8c5db; }
+.jfe-product-archive-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1250px; font-size: 13px; }
+.jfe-product-archive-table th { background: #dcecf7; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+.jfe-product-archive-table th, .jfe-product-archive-table td { border-right: 1px solid #bbd1e2; border-bottom: 1px solid #bbd1e2; padding: 7px; vertical-align: top; }
+.jfe-product-archive-table td { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 260px; }
+.jfe-product-archive-table img { width: 70px; height: 65px; object-fit: contain; }
+.jfe-product-archive-editor .modal-dialog { width: calc(100vw - 70px); max-width: 1440px; }
+.jfe-product-archive-editor .modal-body { max-height: calc(100vh - 160px); overflow: auto; }
+.jfe-product-archive-scope { border-bottom: 1px solid #d4dce2; padding-bottom: 7px; }
+.jfe-product-archive-editor-message { min-height: 18px; font-size: 12px; color: #5d6873; }
+.jfe-product-archive-fields { display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr)) minmax(230px, 270px); gap: 8px 12px; grid-auto-rows: minmax(57px, auto); }
+.jfe-product-archive-field label { display: block; margin-bottom: 4px; font-size: 13px; }
+.jfe-product-archive-field input[type=text], .jfe-product-archive-field textarea { width: 100%; padding: 6px; border: 1px solid #9ab8cd; border-radius: 3px; }
+.jfe-product-archive-field input:disabled, .jfe-product-archive-field textarea:disabled { color: #526579; background: #edf2f5; }
+.jfe-product-archive-field-major_category { display: flex; flex-wrap: wrap; gap: 3px; }
+.jfe-product-archive-field-major_category label { width: 100%; }
+.jfe-product-archive-field-major_category input[type=text] { flex: 1; min-width: 70px; width: 60%; }
+.jfe-product-archive-field-profile_image { grid-column: 5; grid-row: 1 / span 3; }
+.jfe-product-archive-field-patent_image { grid-column: 5; grid-row: 4 / span 3; }
+.jfe-product-archive-field-notes { grid-column: 4 / span 2; grid-row: 7 / span 2; }
+.jfe-product-archive-field-notes textarea { min-height: 110px; height: calc(100% - 24px); resize: vertical; }
+.jfe-product-archive-field-legacy_remarks { grid-column: 2 / span 2; }
+.jfe-product-archive-image-preview { min-height: 110px; height: 125px; border: 1px solid #b7cbd9; background: #f7fafd; display: flex; align-items: center; justify-content: center; color: #677785; }
+.jfe-product-archive-image-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.jfe-product-archive-field-profile_image p, .jfe-product-archive-field-patent_image p { font-size: 12px; margin: 5px 0; }
+.jfe-product-archive-field-profile_image button, .jfe-product-archive-field-patent_image button { margin-right: 5px; margin-bottom: 3px; }
+.jfe-product-archive-supplier, .jfe-product-archive-business { border-top: 1px solid #d4dce2; margin-top: 12px; padding-top: 10px; }
+.jfe-product-archive-business > p { font-size: 12px; margin: 6px 0; }
+.jfe-product-archive-business-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; }
+.jfe-product-archive-business-grid .form-group { margin-bottom: 0; }
+.jfe-product-archive-business-grid select { width: 100%; padding: 7px; border: 1px solid #9ab8cd; border-radius: 3px; }
+.jfe-product-archive-editor-footer { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; border-top: 1px solid #d4dce2; padding-top: 10px; }
+.jfe-product-archive-editor-footer > button { min-width: 95px; }
+.jfe-product-archive-review { overflow: auto; max-height: 240px; margin-top: 8px; }
+.jfe-product-archive-review:empty { display: none; }
+.jfe-product-archive-review table { border-collapse: collapse; width: 100%; }
+.jfe-product-archive-review th, .jfe-product-archive-review td { border: 1px solid #ccd6de; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jfe-product-archive-picker-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.jfe-product-archive-picker-toolbar input { padding: 5px; border: 1px solid #9ab8cd; border-radius: 3px; }
+.jfe-product-archive-picker-list { max-height: 360px; overflow: auto; border: 1px solid #a8c5db; }
+.jfe-product-archive-picker-list table { border-collapse: collapse; min-width: 800px; width: 100%; }
+.jfe-product-archive-picker-list th, .jfe-product-archive-picker-list td { padding: 7px; border: 1px solid #ccd6de; white-space: pre-wrap; }
+.jfe-product-archive-picker-list th { background: #dcecf7; position: sticky; top: 0; }
+.jfe-product-archive-picker-list tr[tabindex] { cursor: pointer; }
+.jfe-product-archive-picker-list tr[tabindex]:focus, .jfe-product-archive-picker-list tr[tabindex]:hover, .jfe-product-archive-picker-list tr[aria-selected=true] { background: #d4eaf8; }
+.jfe-product-archive-upload-candidates > div { border-top: 1px solid #d4dce2; padding: 5px; }
+.jfe-product-archive-upload-candidates img { width: 70px; height: 65px; object-fit: contain; }
+.jfe-product-archive-upload-candidates span, .jfe-product-archive-upload-candidates small { display: block; overflow-wrap: anywhere; }
+.jfe-product-archive-editor [hidden] { display: none !important; }
+@media (max-width: 900px) {
+  .jfe-product-archive-editor .modal-dialog { width: calc(100vw - 24px); }
+  .jfe-product-archive-fields { grid-template-columns: repeat(2, minmax(110px, 1fr)) minmax(180px, 220px); }
+  .jfe-product-archive-field-profile_image { grid-column: 3; grid-row: 1 / span 5; }
+  .jfe-product-archive-field-patent_image { grid-column: 3; grid-row: 6 / span 5; }
+  .jfe-product-archive-field-notes { grid-column: 2 / span 2; grid-row: 13 / span 2; }
+  .jfe-product-archive-field-legacy_remarks { grid-column: 1 / span 2; }
+  .jfe-product-archive-business-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+}

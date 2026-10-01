@@ -89,6 +89,12 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	openCreate(spec) {
+		if (spec.productArchive && window.JifengProductArchive) {
+			const key = "formal:产品:产品档案";
+			this.open({ title: "产品档案", module: "产品", kind: "list", doctype: "Jifeng Product Profile", productArchive: true });
+			const entry = this.frames.get(key);
+			return Promise.resolve(entry?.ready).then(() => entry?.workbench?.openEditor());
+		}
 		if (spec.hrDictionary && window.JifengHRDictionary) {
 			return this.openHRDictionary(spec.hrDictionary, null, spec.values?.company);
 		}
@@ -181,6 +187,10 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	mount(host, spec) {
+		if (spec.productArchive) {
+			const workbench = new window.JifengProductArchive(host, this);
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		if (spec.productCategory) {
 			const workbench = new window.JifengProductCategory(host);
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
