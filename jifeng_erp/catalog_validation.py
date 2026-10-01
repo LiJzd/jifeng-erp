@@ -310,6 +310,18 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
 
         own_file = upload(main, "item")
         native(lambda: document.save(ignore_version=False), "save_item_image_fallback:Jifeng Product Profile")
+        # File.insert may deduplicate the hook's attempted alias to the Item
+        # attachment. Prepare an actual native copy before testing File UP;
+        # do not elevate a manager save or weaken native File permissions.
+        if not frappe.db.exists("File", {"file_url": own_file.file_url,
+                "attached_to_doctype": document.doctype, "attached_to_name": document.name,
+                "attached_to_field": "image"}):
+            alias = native(lambda: own_file.create_attachment_copy(attached_to_doctype=document.doctype,
+                attached_to_name=document.name, attached_to_field="image"), "copy_item_image_fallback")
+            files.append(alias)
+            objects.append(alias)
+            fixtures.append(("File", alias.name))
+            assert alias.name != own_file.name and alias.file_url == own_file.file_url
         assert frappe.db.exists("File", {"file_url": own_file.file_url,
             "attached_to_doctype": document.doctype, "attached_to_name": document.name,
             "attached_to_field": "image"}), "初始档案缺少 Item 图片的原生精确附件别名"
