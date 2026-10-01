@@ -400,6 +400,109 @@ class TestInventoryArchive(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.module.init_archive("物料", copy_from="PROFILE")
 
+    def unbound_payload(self):
+        item = self.add("Item", "EXISTING-UNBOUND", **{key: deepcopy(value) for key, value in self.item.items()
+                                                     if key not in ("doctype", "name", "modified", "__islocal")})
+        return self.creation_payload(existing_item=item["name"], item_version=item["modified"], item={})
+
+    def test_link_existing_item_without_item_create_or_write_and_preserve_every_field(self):
+        payload = self.unbound_payload()
+        self.denials.update({("Item", "create"), ("Item", "write")})
+        init = self.module.init_archive("物料", company="JF", existing_item=payload["existing_item"])
+        self.assertTrue(init["can_link_item"] and init["can_write"])
+        self.assertFalse(init["can_create_item"])
+        self.assertEqual(init["existing_item"], payload["existing_item"])
+        self.assertEqual(init["item_version"], payload["item_version"])
+        self.assertTrue(init["field_meta"]["item"]["stock_uom"]["read_only"])
+        self.assertFalse(init["field_meta"]["item"]["stock_uom"]["reqd"])
+        self.assertEqual(init["profile"]["display_name"], "原生名称")
+        self.assertIsNone(init["profile"]["legacy_number"])
+        before = deepcopy(self.documents[("Item", payload["existing_item"])])
+        result = self.module.save_archive(payload)
+        self.assertEqual(result["item_code"], payload["existing_item"])
+        self.assertIsNone(result["existing_item"])
+        self.assertEqual(self.documents[("Item", payload["existing_item"])], before)
+        self.assertNotIn("Item", self.saves)
+        self.assertEqual(self.module.save_archive(payload)["name"], result["name"])
+        self.assertEqual(self.module.resolve_creation(payload["request_id"], "物料")["archive"]["name"], result["name"])
+
+    def test_init_link_only_role_does_not_require_item_create_but_fresh_save_does(self):
+        self.denials.add(("Item", "create"))
+        result = self.module.init_archive("物料")
+        self.assertTrue(result["can_link_item"] and result["can_write"])
+        self.assertFalse(result["can_create_item"])
+        self.assertTrue(result["field_meta"]["item"]["item_group"]["read_only"])
+        with self.assertRaises(PermissionError):
+            self.module.save_archive(self.creation_payload())
+
+    def test_link_rejects_source_permissions_company_and_hidden_code(self):
+        payload = self.unbound_payload()
+        for denial in (("Item", "read"), (self.module.PROFILE, "create"), ("Company", "select")):
+            self.denials.add(denial)
+            with self.assertRaises(PermissionError):
+                self.module.init_archive("物料", company="JF", existing_item=payload["existing_item"])
+            with self.assertRaises(PermissionError):
+                self.module.save_archive(payload)
+            self.denials.remove(denial)
+        self.denied_names.add(payload["existing_item"])
+        with self.assertRaises(PermissionError):
+            self.module.save_archive(payload)
+        self.denied_names.clear()
+        for doctype in (self.module.PROFILE, "Item"):
+            self.hidden[(doctype, "read")] = {"item_code"}
+            with self.assertRaises(PermissionError):
+                self.module.save_archive(payload)
+            self.hidden.clear()
+
+    def test_link_duplicate_hidden_profile_never_returns_its_identity(self):
+        self.denied_names.add("PROFILE")
+        payload = self.creation_payload(existing_item="BUSINESS-ITEM", item_version=self.item["modified"], item={})
+        before = deepcopy(self.documents)
+        for operation in (lambda: self.module.init_archive("材料", company="OTHER", existing_item="BUSINESS-ITEM"),
+                          lambda: self.module.save_archive(payload)):
+            with self.assertRaisesRegex(ValueError, "已有库存档案") as error:
+                operation()
+            self.assertNotIn("PROFILE", str(error.exception))
+            self.assertNotIn("JF", str(error.exception))
+        self.assertEqual(self.documents, before)
+
+    def test_link_requires_source_version_and_rejects_rewrite_rebind_and_changed_receipt(self):
+        payload = self.unbound_payload()
+        for changes in ({"item_version": None}, {"item_version": "old"}):
+            with self.assertRaises(RuntimeError):
+                self.module.save_archive({**payload, **changes})
+        for changes in ({"item": {"stock_uom": "Kg"}}, {"profile_version": "old"},
+                        {"existing_item": True}, {"existing_item": ""}):
+            with self.assertRaises(ValueError):
+                self.module.save_archive({**payload, **changes})
+        with self.assertRaises(ValueError):
+            self.module.init_archive("物料", existing_item=payload["existing_item"])
+        with self.assertRaises(ValueError):
+            self.module.init_archive("物料", company="JF", copy_from="PROFILE", existing_item=payload["existing_item"])
+        self.module.save_archive(payload)
+        changed = {**payload, "existing_item": "BUSINESS-ITEM"}
+        with self.assertRaisesRegex(ValueError, "不同内容"):
+            self.module.save_archive(changed)
+        with self.assertRaises(ValueError):
+            self.module.save_archive(self.existing_payload(existing_item="EXISTING-UNBOUND"))
+
+    def test_link_profile_failure_leaves_native_source_and_callbacks_unchanged(self):
+        payload = self.unbound_payload()
+        self.fail_profile = True
+        before = deepcopy(self.documents)
+        previous = Mock()
+        self.frappe.db.after_commit.add(previous)
+        with self.assertRaisesRegex(ValueError, "profile native failure"):
+            self.module.save_archive(payload)
+        self.assertEqual(self.documents, before)
+        self.assertEqual(self.frappe.db.after_commit._functions, [previous])
+        self.assertIsNone(self.module._CREATING.get())
+        self.assertNotIn("Item", self.saves)
+        calls = self.frappe.get_doc.call_args_list
+        self.assertTrue(any(call.args == ("Item", "EXISTING-UNBOUND") and call.kwargs.get("for_update") for call in calls))
+        self.assertTrue(any(call.args == (self.module.PROFILE, {"item_code": "EXISTING-UNBOUND"}, "name") and
+                            call.kwargs.get("for_update") for call in self.frappe.db.get_value.call_args_list))
+
     def test_persistent_dictionary_has_scoped_unique_values_and_native_guards(self):
         payload = {"kind": "材料", "company": "JF", "dictionary_type": "形状", "value": " 圆形 ", "inactive": 0}
         first = self.module.save_dictionary(payload)

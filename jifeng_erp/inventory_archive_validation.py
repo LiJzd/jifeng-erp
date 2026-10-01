@@ -230,6 +230,77 @@ def smoke(company, other_company, item_group, stock_uom, alternate_uom=None):
         reject(lambda: init_archive("物料", company=other_company), frappe.PermissionError)
         passed("real_stock_manager_update_company_scope_and_resolution_recheck")
 
+        current = "existing_item_binding"
+        frappe.set_user("Administrator")
+        sources = []
+        for suffix in ("source", "allowed"):
+            source = native(lambda suffix=suffix: frappe.get_doc({"doctype": "Item", "item_code": prefix + "-" + suffix,
+                "item_name": prefix + "-原生名称", "item_group": item_group, "stock_uom": stock_uom,
+                "is_stock_item": 1, "opening_stock": 0, "standard_rate": 0}).insert())
+            records.add(("Item", source.name))
+            sources.append(source)
+        restricted = frappe.get_doc({"doctype": "User", "email": prefix.lower() + "-restricted@example.invalid",
+            "first_name": prefix + "-restricted", "send_welcome_email": 0, "roles": [{"role": "Stock Manager"}]}).insert()
+        users.append(restricted.name)
+        records.add(("User", restricted.name))
+        for doctype, value in (("Company", company), ("Item", sources[1].name)):
+            restriction = frappe.get_doc({"doctype": "User Permission", "user": restricted.name,
+                "allow": doctype, "for_value": value, "apply_to_all_doctypes": 1}).insert()
+            records.add(("User Permission", restriction.name))
+        frappe.clear_cache(user=restricted.name)
+        frappe.set_user(actors["manager"])
+        assert not frappe.has_permission("Item", "create") and not frappe.has_permission("Item", "write")
+        init = init_archive("物料", company=company, existing_item=sources[0].name)
+        assert init["can_write"] and init["can_link_item"] and not init["can_create_item"]
+        assert init["item_code"] == sources[0].name and init["item_version"]
+        assert init["field_meta"]["item"]["stock_uom"]["read_only"]
+        assert not init["field_meta"]["item"]["stock_uom"]["reqd"]
+        binding = new_payload()
+        binding.update(existing_item=sources[0].name, item_version=init["item_version"], item={})
+        for version in (None, "2000-01-01T00:00:00"):
+            reject(lambda version=version: save_archive({**binding, "item_version": version}), frappe.TimestampMismatchError)
+        reject(lambda: save_archive({**binding, "item": {"stock_uom": alternate_uom}}), frappe.ValidationError)
+        reject(lambda: save_archive({**binding, "profile": {**binding["profile"], "company": other_company}}),
+               frappe.PermissionError)
+        reject(lambda: save_archive({**binding, "profile": {**binding["profile"], "conversion_value": 0}}),
+               frappe.ValidationError)
+        source_contents = _contents()
+        associated = create(binding)
+        assert associated["item_code"] == sources[0].name and associated["existing_item"] is None
+        assert all(_contents()[doctype] == source_contents[doctype]
+                   for doctype in source_contents if doctype not in (PROFILE, "Version"))
+        unchanged = _contents()
+        assert native(lambda: save_archive(binding))["name"] == associated["name"] and _contents() == unchanged
+        assert resolve_creation(binding["request_id"], "物料")["archive"]["item_code"] == sources[0].name
+        reject(lambda: save_archive({**binding, "existing_item": sources[1].name}), frappe.ValidationError)
+        # A hidden foreign company's binding cannot be reused or disclose its profile identity.
+        duplicate = {**binding, "request_id": str(uuid4()), "existing_item": foreign["item_code"],
+                     "item_version": foreign["item_version"]}
+        try:
+            native(lambda: save_archive(duplicate))
+        except frappe.ValidationError as error:
+            assert foreign["name"] not in str(error) and other_company not in str(error)
+        else:
+            raise AssertionError("接受了已绑定物料")
+        assert _contents() == unchanged
+        evidence["existing_item_binding"] = {"roles": sorted(frappe.get_roles()), "item_create": False,
+            "item_write": False, "native_item_and_all_children_unchanged": True, "prices_and_ledgers_unchanged": True,
+            "source_version_required": True, "request_reused": True, "hidden_duplicate_id_redacted": True}
+        passed("real_stock_manager_associates_existing_item_without_create_write_or_shared_item_changes")
+
+        current = "binding_item_user_permission"
+        frappe.set_user(restricted.name)
+        reject(lambda: init_archive("物料", company=company, existing_item=sources[0].name), frappe.PermissionError)
+        reject(lambda: save_archive({**binding, "request_id": str(uuid4())}), frappe.PermissionError)
+        allowed = init_archive("材料", company=company, existing_item=sources[1].name)
+        allowed_request = new_payload("材料")
+        allowed_request.update(existing_item=sources[1].name, item_version=allowed["item_version"], item={})
+        allowed_before = _contents()
+        assert create(allowed_request)["item_code"] == sources[1].name
+        assert all(_contents()[doctype] == allowed_before[doctype]
+                   for doctype in allowed_before if doctype not in (PROFILE, "Version"))
+        passed("existing_item_association_respects_native_item_user_permission_allow_and_deny")
+
         current = "native_item_manager_creation_combination"
         frappe.set_user("Administrator")
         assert frappe.db.exists("Role", "Item Manager"), "原生商品管理角色必须存在"

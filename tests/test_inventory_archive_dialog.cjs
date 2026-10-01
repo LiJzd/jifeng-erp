@@ -17,7 +17,8 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js
 const editor = new window.JifengInventoryArchive({ frames: new Map() });
 
 function fixture(name = null) {
-	const archive = { name, kind: "材料", can_write: true, profile_version: name ? "v1" : null,
+	const archive = { name, kind: "材料", can_write: true, can_create_item: !name, can_link_item: !name,
+		existing_item: null, profile_version: name ? "v1" : null,
 		item_version: name ? "i1" : null, item_code: name ? "ITEM-1" : null,
 		profile: { company: "Company", display_name: "材料A", list_price: 0 },
 		item: { item_group: "Group", stock_uom: "Nos" },
@@ -112,6 +113,36 @@ async function main() {
 	const malformed = fixture(); reply = {};
 	await editor.save(malformed.state); assert.equal(malformed.state.unresolved, true);
 	assert.equal(malformed.button.disabled, true, "malformed success still requires read verification");
+
+	const link = fixture(); link.fields.profile_display_name.value = "已有手填名称";
+	link.fields.profile_list_price.value = 0;
+	const linked = { ...link.state.archive, existing_item: "SOURCE", item_code: "SOURCE", item_version: "source-v1",
+		item_name: "共享业务名称", item: { item_group: "Original Group", stock_uom: "Kg" },
+		field_meta: { profile: link.state.archive.field_meta.profile,
+			item: { item_group: { read_only: true, reqd: false }, stock_uom: { read_only: true, reqd: false } } } };
+	reply = linked;
+	assert.equal(await editor.setSource(link.state, "SOURCE"), true);
+	assert.equal(link.fields.profile_display_name.value, "已有手填名称", "linking retains typed archive values");
+	assert.equal(link.fields.profile_list_price.value, 0);
+	assert.equal(link.fields.item_stock_uom.value, "Kg");
+	assert.equal(editor.payload(link.state).existing_item, "SOURCE");
+	assert.equal(editor.payload(link.state).item_version, "source-v1");
+	assert.equal(Object.keys(editor.payload(link.state).item).length, 0);
+	assert.equal(editor.isDirty(link.state), true, "association is an unsaved draft change");
+	reply = validation;
+	assert.equal(await editor.setSource(link.state, "OTHER"), false);
+	assert.equal(link.state.archive.existing_item, "SOURCE", "denied selection retains the current draft source");
+	assert.equal(link.fields.profile_display_name.value, "已有手填名称");
+	link.state.unresolved = true;
+	const heldCalls = calls.length;
+	assert.equal(await editor.setSource(link.state, null), false);
+	assert.equal(calls.length, heldCalls, "unknown saves cannot change the held source or request identity");
+	link.state.unresolved = false;
+	reply = { ...linked, existing_item: null, item_code: null, item_version: null,
+		item: { item_group: null, stock_uom: null }, field_meta: link.state.archive.field_meta };
+	assert.equal(await editor.setSource(link.state, null), true);
+	assert.equal("existing_item" in editor.payload(link.state), false);
+	assert.equal(link.fields.profile_display_name.value, "已有手填名称");
 	console.log("Inventory archive protocol checks passed");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

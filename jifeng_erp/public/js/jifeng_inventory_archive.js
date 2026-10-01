@@ -78,9 +78,11 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 			size: "extra-large", fields, no_submit_on_enter: true });
 		dialog.$wrapper.addClass("jfe-inventory-editor");
 		const state = { archive, kind, key, dialog, bindings, requestId: this.requestID(),
-			saving: false, unresolved: false, confirming: false, closed: false };
+			saving: false, linking: false, unresolved: false, confirming: false, closed: false };
 		this.active.set(key, state);
 		if (archive.can_write) dialog.set_primary_action(archive.name ? "保存" : "新增", () => this.save(state));
+		if (archive.can_link_item) dialog.add_custom_action(__("关联已有业务物料"), () => this.selectExistingItem(state));
+		if (archive.can_create_item) dialog.add_custom_action(__("新建业务物料"), () => this.setSource(state, null));
 		dialog.add_custom_action(__("核对保存结果"), () => this.resolve(state));
 		dialog.add_custom_action(__("关闭"), () => dialog.hide());
 		this.guardClose(state);
@@ -97,7 +99,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		}
 		state.original = JSON.stringify(this.payload(state));
 		const beforeUnload = (event) => {
-			if (state.saving || state.unresolved || this.isDirty(state)) { event.preventDefault(); event.returnValue = ""; }
+			if (state.saving || state.linking || state.unresolved || this.isDirty(state)) { event.preventDefault(); event.returnValue = ""; }
 		};
 		window.addEventListener("beforeunload", beforeUnload);
 		dialog.on_hide = () => { window.removeEventListener("beforeunload", beforeUnload); this.active.delete(key); };
@@ -116,6 +118,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 			item_version: state.archive.item_version || null,
 			request_id: state.archive.name ? null : state.requestId,
 			profile: {}, item: {} };
+		if (!state.archive.name && state.archive.existing_item) result.existing_item = state.archive.existing_item;
 		for (const { group, fieldname, controlName, locked } of state.bindings) {
 			const control = state.dialog.fields_dict[controlName];
 			const df = state.archive.field_meta?.[group]?.[fieldname];
@@ -133,8 +136,8 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		const close = () => { state.closed = true; hide(); };
 		state.dialog.hide = () => {
 			if (state.closed || state.confirming) return;
-			if (state.saving || state.unresolved) {
-				frappe.msgprint(__(state.saving ? "正在保存，请稍候。" : "保存结果尚未确认，请先核对保存结果。")); return;
+			if (state.saving || state.linking || state.unresolved) {
+				frappe.msgprint(__(state.unresolved ? "保存结果尚未确认，请先核对保存结果。" : "正在处理，请稍候。")); return;
 			}
 			if (!this.isDirty(state)) { close(); return; }
 			state.confirming = true;
@@ -150,7 +153,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 	}
 
 	async save(state) {
-		if (state.saving || state.unresolved || !state.dialog.get_values()) return;
+		if (state.saving || state.linking || state.unresolved || !state.dialog.get_values()) return;
 		state.saving = true;
 		state.candidate = structuredClone(this.payload(state));
 		state.dialog.get_primary_btn().prop("disabled", true);
@@ -212,7 +215,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 	}
 
 	async resolve(state) {
-		if (!state.unresolved || state.saving) return;
+		if (!state.unresolved || state.saving || state.linking) return;
 		state.saving = true;
 		try {
 			const existing = !!state.candidate?.name;
@@ -221,7 +224,8 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 				args: existing ? { name: state.candidate.name, kind: state.kind } :
 					{ request_id: state.requestId, kind: state.kind }, freeze: true });
 			const archive = existing ? response.message : response.message?.archive;
-			const matches = archive?.name && Object.entries(state.candidate.profile).every(([field, value]) =>
+			const matches = archive?.name && (!state.candidate.existing_item || archive.item_code === state.candidate.existing_item) &&
+				Object.entries(state.candidate.profile).every(([field, value]) =>
 				String(archive.profile?.[field] ?? "") === String(value ?? ""));
 			if (!matches) {
 				frappe.msgprint(__("尚未核对到与这份草稿一致的保存结果。请保留草稿，稍后核对；不会自动再次保存。")); return;
@@ -233,14 +237,64 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 
 	async copy(state) {
 		await state.dialog.set_value("copy_archive", 0);
-		if (state.saving || state.unresolved) return;
+		if (state.saving || state.linking || state.unresolved) return;
 		if (!state.archive.name) { frappe.msgprint(__("先保存档案，再复制。")); return; }
 		if (this.isDirty(state)) { frappe.msgprint(__("先保存当前修改，再复制。")); return; }
 		try { await this.open(state.kind, null, state.archive.name); } catch { /* native RPC */ }
 	}
 
+	async setSource(state, itemCode) {
+		if (state.closed || state.archive.name || state.saving || state.linking || state.unresolved) return false;
+		if (itemCode ? !state.archive.can_link_item : !state.archive.can_create_item) return false;
+		const company = state.dialog.get_value("profile_company");
+		if (!company) { frappe.msgprint(__("先选择公司。")); return false; }
+		const held = Object.fromEntries(state.bindings.filter(({ group }) => group === "profile")
+			.map(({ controlName }) => [controlName, state.dialog.fields_dict[controlName].get_value()]));
+		state.linking = true;
+		state.dialog.get_primary_btn().prop("disabled", true);
+		try {
+			const response = await frappe.call({ method: "jifeng_erp.inventory_archive.init_archive",
+				args: { kind: state.kind, company, existing_item: itemCode || null }, freeze: true });
+			const archive = response.message;
+			if (!archive || archive.name || archive.existing_item !== (itemCode || null) ||
+				archive.profile?.company !== company || state.closed) return false;
+			state.archive = archive;
+			for (const { group, fieldname, controlName, locked } of state.bindings) {
+				const df = archive.field_meta?.[group]?.[fieldname];
+				state.dialog.set_df_property(controlName, "read_only", !!(!df || df.read_only || locked || !archive.can_write));
+				state.dialog.set_df_property(controlName, "reqd", !!df?.reqd);
+			}
+			const values = this.initialValues(state);
+			for (const [controlName, value] of Object.entries(held)) {
+				// Retain typed archive values; empty name/unit may use the explicit source's readable defaults.
+				if (value !== null && value !== undefined && value !== "") values[controlName] = value;
+			}
+			await state.dialog.set_values(values);
+			await state.dialog.set_value("business_item", archive.item_code || "保存后生成");
+			await state.dialog.set_value("business_name", archive.item_name || "");
+			return true;
+		} catch { return false; /* native RPC displays the error without changing the draft */ }
+		finally { state.linking = false; state.dialog.get_primary_btn().prop("disabled", !state.archive.can_write); }
+	}
+
+	selectExistingItem(state) {
+		if (state.closed || state.archive.name || state.saving || state.linking || state.unresolved || !state.archive.can_link_item) return;
+		const company = state.dialog.get_value("profile_company");
+		if (!company) { frappe.msgprint(__("先选择公司。")); return; }
+		const chooser = new frappe.ui.Dialog({ title: __("关联已有业务物料"),
+			fields: [{ fieldname: "item", fieldtype: "Link", options: "Item", label: "业务物料", reqd: 1 }],
+			primary_action_label: __("关联"), primary_action: async () => {
+				const values = chooser.get_values();
+				if (!values || state.dialog.get_value("profile_company") !== company) return;
+				chooser.get_primary_btn().prop("disabled", true);
+				try { if (await this.setSource(state, values.item)) chooser.hide(); }
+				finally { chooser.get_primary_btn().prop("disabled", false); }
+			} });
+		chooser.show();
+	}
+
 	async selectDictionary(state, field, type) {
-		if (state.saving || state.unresolved) return;
+		if (state.saving || state.linking || state.unresolved) return;
 		const company = state.dialog.get_value("profile_company");
 		if (!company) { frappe.msgprint(__("先选择公司。")); return; }
 		let revision = 0, disposed = false;
@@ -260,7 +314,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 				if (!rows.length) host.text(__("没有可选记录。"));
 				for (const row of rows) $("<button type='button' class='btn btn-default btn-sm jfe-dictionary-choice'></button>")
 					.text(row.value).on("click", () => {
-						if (state.closed || state.saving || state.unresolved ||
+						if (state.closed || state.saving || state.linking || state.unresolved ||
 							state.dialog.get_value("profile_company") !== company) return;
 						state.dialog.set_value("profile_" + field, row.value); dialog.hide();
 					}).appendTo(host);

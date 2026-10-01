@@ -190,41 +190,65 @@ def _field_meta(document, names, allowed):
 
 def _pack(profile, item, unscoped=False):
     existing = not profile.is_new()
+    linked = not item.is_new()
     editable = PROFILE_EDIT | ({"company"} if not existing else set())
     names = PROFILE_READ - ({"shape", "color"} if profile.archive_kind == "物料" else {"material"})
     profile_meta, profile_values = _field_meta(profile, names, editable)
-    item_meta, item_values = _field_meta(item, ITEM_CREATE, ITEM_CREATE if not existing else set())
+    item_meta, item_values = _field_meta(item, ITEM_CREATE, ITEM_CREATE if not linked else set())
     source_visible = "item_code" in _columns(PROFILE, "read") & _columns("Item", "read")
     if not source_visible:
         profile_meta.pop("item_code", None)
         profile_values.pop("item_code", None)
-    for meta in item_meta.values():
-        if existing:
-            meta["read_only"] = True
     permitted = (lambda doc, perm: frappe.has_permission(doc.doctype, perm)) if unscoped else (
         lambda doc, perm: doc.has_permission(perm))
+    can_create = not existing and permitted(profile, "create") and permitted(item, "create")
+    can_link = (not existing and permitted(profile, "create") and permitted(item, "read")
+                and source_visible)
+    for meta in item_meta.values():
+        if linked or not can_create:
+            meta["read_only"] = True
+            meta["reqd"] = False
     return {
         "name": profile.name if existing else None, "kind": profile.archive_kind,
-        "item_code": item.name if existing and source_visible else None,
+        "item_code": item.name if linked and source_visible else None,
+        "existing_item": item.name if linked and not existing and source_visible else None,
         "item_name": item.item_name if "item_name" in _columns("Item", "read") else None,
         "profile_version": _value(profile.modified) if existing else None,
-        "item_version": _value(item.modified) if existing else None,
+        "item_version": _value(item.modified) if linked else None,
         "profile": profile_values, "item": item_values,
         "field_meta": {"profile": profile_meta, "item": item_meta},
-        "can_write": bool(permitted(profile, "write" if existing else "create")
-                          and permitted(item, "read" if existing else "create")),
+        "can_create_item": bool(can_create), "can_link_item": bool(can_link),
+        "can_write": bool(permitted(profile, "write") and permitted(item, "read") if existing
+                          else can_link if linked else can_create or can_link),
     }
 
 
+def _linked_item(name, lock=False):
+    if not isinstance(name, str) or not name.strip():
+        frappe.throw("请选择已有业务物料")
+    item = frappe.get_doc("Item", name, for_update=lock)
+    _permission(item, "read")
+    if "item_code" not in _columns(PROFILE, "read") & _columns("Item", "read"):
+        frappe.throw("没有读取业务物料编号的权限", frappe.PermissionError)
+    # Native Item is the common first lock for both profile edits and bindings.
+    # A current read sees a binding committed after an RR snapshot was opened.
+    if frappe.db.get_value(PROFILE, {"item_code": item.name}, "name", for_update=lock):
+        frappe.throw("该业务物料已有库存档案，请使用已有档案入口")
+    return item
+
+
 @frappe.whitelist()
-def init_archive(kind, company=None, copy_from=None):
+def init_archive(kind, company=None, copy_from=None, existing_item=None):
     _login()
     _kind(kind)
     profile, item = frappe.new_doc(PROFILE), frappe.new_doc("Item")
     profile.company, profile.archive_kind = None, kind
     profile.conversion_value, profile.inactive = 1, 0
     _permission(profile, "create", role_only=True)
-    _permission(item, "create", role_only=True)
+    if not (frappe.has_permission("Item", "create") or frappe.has_permission("Item", "read")):
+        frappe.throw("没有读取或创建业务物料的权限", frappe.PermissionError)
+    if existing_item and copy_from:
+        frappe.throw("复制与关联已有业务物料不能同时使用")
     if copy_from:
         source, source_item = _documents(copy_from, kind)
         if company and company != source.company:
@@ -239,6 +263,15 @@ def init_archive(kind, company=None, copy_from=None):
         _company(company)
         profile.company = company
         _permission(profile, "create")
+    if existing_item:
+        if not company:
+            frappe.throw("请先选择公司再关联业务物料")
+        item = _linked_item(existing_item)
+        readable = _columns("Item", "read")
+        if "item_name" in readable:
+            profile.display_name = item.item_name
+        if "stock_uom" in readable:
+            profile.display_uom = item.stock_uom
     return _pack(profile, item, unscoped=not company)
 
 
@@ -248,9 +281,11 @@ def read_archive(name, kind):
     return _pack(profile, item)
 
 
-def _digest(kind, profile_values, item_values):
+def _digest(kind, profile_values, item_values, existing_item=None):
     body = {"kind": kind, "profile": _normalized(PROFILE, profile_values, PROFILE_EDIT | {"company"}),
             "item": _normalized("Item", item_values, ITEM_CREATE)}
+    if existing_item:
+        body["existing_item"] = existing_item
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False,
                                     separators=(",", ":")).encode()).hexdigest()
 
@@ -286,13 +321,14 @@ def _reuse_creation(name, kind, digest):
 def save_archive(payload):
     _login()
     payload = _object(payload, "库存档案请求")
-    if not set(payload).issubset({"kind", "name", "profile_version", "item_version", "request_id", "profile", "item"}):
+    if not set(payload).issubset({"kind", "name", "profile_version", "item_version", "request_id", "profile", "item",
+                                "existing_item"}):
         frappe.throw("库存档案请求包含不支持的参数")
     kind = _kind(payload.get("kind"))
     profile_values = _object(payload.get("profile", {}), "库存档案字段")
     item_values = _object(payload.get("item", {}), "原生库存字段")
     if payload.get("name"):
-        if item_values or payload.get("request_id"):
+        if item_values or payload.get("request_id") or payload.get("existing_item"):
             frappe.throw("已有档案不能改写共享商品或新建请求身份")
         profile, item = _documents(payload["name"], kind, lock=True)
         _permission(profile, "write")
@@ -307,29 +343,38 @@ def save_archive(payload):
         return _pack(profile, item)
 
     request_uuid = _uuid(payload.get("request_id"))
-    if payload.get("profile_version") or payload.get("item_version"):
+    linked_name = payload.get("existing_item")
+    if linked_name is not None and (not isinstance(linked_name, str) or not linked_name.strip()):
+        frappe.throw("请选择有效的已有业务物料")
+    if payload.get("profile_version") or (payload.get("item_version") and not linked_name):
         frappe.throw("新档案不能携带已有档案版本")
-    digest = _digest(kind, profile_values, item_values)
+    if linked_name and item_values:
+        frappe.throw("关联已有业务物料不能改写共享商品")
+    digest = _digest(kind, profile_values, item_values, linked_name)
     name = _creation_name(str(request_uuid))
     if name:
         return _reuse_creation(name, kind, digest)
     profile, item = frappe.new_doc(PROFILE), frappe.new_doc("Item")
     _permission(profile, "create", role_only=True)
-    _permission(item, "create", role_only=True)
     _company(profile_values.get("company"))
     profile.company, profile.archive_kind = profile_values["company"], kind
     profile.conversion_value, profile.inactive = 1, 0
     _updates(profile, profile_values, PROFILE_EDIT | {"company"})
-    if not all(isinstance(item_values.get(field), str) and item_values[field].strip() for field in ITEM_CREATE):
-        frappe.throw("请明确选择系统商品分组及真实库存单位")
-    _updates(item, item_values, ITEM_CREATE)
-    item.item_code = "JF-INV-" + request_uuid.hex
-    item.item_name, item.is_stock_item = profile.display_name, 1
-    item.opening_stock = 0
-    item.standard_rate = 0
     _permission(profile, "create")
-    _permission(item, "create")
-    item.save()
+    if linked_name:
+        item = _linked_item(linked_name, lock=True)
+        _latest(item, payload.get("item_version"), "关联商品")
+    else:
+        _permission(item, "create", role_only=True)
+        if not all(isinstance(item_values.get(field), str) and item_values[field].strip() for field in ITEM_CREATE):
+            frappe.throw("请明确选择系统商品分组及真实库存单位")
+        _updates(item, item_values, ITEM_CREATE)
+        item.item_code = "JF-INV-" + request_uuid.hex
+        item.item_name, item.is_stock_item = profile.display_name, 1
+        item.opening_stock = 0
+        item.standard_rate = 0
+        _permission(item, "create")
+        item.save()
     profile.item_code, profile.request_id, profile.request_digest = item.name, str(request_uuid), digest
     context = _CREATING.set(profile)
     try:
@@ -345,7 +390,7 @@ def validate_profile(profile):
     _kind(profile.archive_kind)
     if profile.is_new():
         if _CREATING.get() is not profile:
-            frappe.throw("请从物料或材料档案入口联合新建商品及档案")
+            frappe.throw("请从物料或材料档案入口联合新建或关联业务物料")
         _uuid(profile.request_id)
         if not isinstance(profile.request_digest, str) or len(profile.request_digest) != 64:
             frappe.throw("库存档案新建请求校验不完整")
