@@ -5,6 +5,11 @@ Run once through direct Python in an exclusive business-write window, never
 User Permissions. No DocPerm grants, ignore_permissions, force, commits, GUI,
 schema changes or direct ledger edits are used. Native in_test mode only permits the
 installed synchronous stock repost path; this is not a background-worker test.
+
+Draft PE/JE fixtures prove precise reverse-reference discovery without PLE/GL;
+they do not prove a submitted voucher with temporarily missing ledger rows.
+Repost state fixtures use normal insert followed by writes to only that job's
+protocol status/docstatus and child docstatus. They never submit or run a worker.
 """
 
 import json
@@ -17,7 +22,7 @@ from jifeng_erp.diagnostics import _begin_rollback_only
 from jifeng_erp.fulfillment_validation import _preflight, _stamp
 from jifeng_erp.inventory_validation import _finish_fixture_reposts, _ledger_snapshot
 from jifeng_erp.personnel_changes_validation import _callbacks, _tab_counts
-from jifeng_erp.personnel_separation_validation import _local_context
+from jifeng_erp.personnel_separation_validation import _local_context, _restore_local_context
 from jifeng_erp.product_dictionary_validation import _native_contents, _sql_row_hash
 from jifeng_erp.sales_fulfillment_workbench import FLOW, PARENTS, TABLES, query_orders, read_order
 
@@ -28,6 +33,19 @@ ROLES = {
     "no_flow": ("Sales User", "Accounts User", "Stock User"),
     "other": ("Sales User", "Accounts User", "Stock User", "Manufacturing User"),
 }
+
+
+def _repost_protocol_state(insert, voucher, status):
+    """Persist an explicit RPL read-gate fixture; never submit/enqueue/repost."""
+    assert voucher.doctype in {"Payment Entry", "Journal Entry"} and voucher.name
+    assert status in {"Queued", "Failed", "Completed"}
+    job = insert("Repost Payment Ledger", company=voucher.company, posting_date=voucher.posting_date,
+                 add_manually=1, repost_vouchers=[{"voucher_type": voucher.doctype, "voucher_no": voucher.name}])
+    assert job.docstatus == 0, "重过账状态验收只能从原生草稿开始"
+    frappe.db.set_value(job.doctype, job.name, {"docstatus": 1, "repost_status": status})
+    for row in job.repost_vouchers:
+        frappe.db.set_value(row.doctype, row.name, "docstatus", 1)
+    return job
 
 
 def _contents():
@@ -63,6 +81,12 @@ def smoke(company, other_company, item_group, stock_uom):
     cash = frappe.db.get_value("Company", company, "default_cash_account") or frappe.db.get_value(
         "Account", {"company": company, "account_type": "Cash", "is_group": 0}, "name")
     assert cash, "销售履行收款验收需要既有本公司现金科目"
+    # Pick an empty historical SO date before inserting anything. Batch queries
+    # then contain only the two exact owned roots, without querying private
+    # existing orders or relying on today's population/naming-series prefix.
+    batch_date = next((add_days(today(), -offset) for offset in range(1, 367)
+        if not frappe.db.exists("Sales Order", {"company": company, "transaction_date": add_days(today(), -offset)})), None)
+    assert batch_date, "跨客户批次验收需要一年内没有既有销售订单的日期"
     tables, counts = _tab_counts()
     before, ledger_before = _contents(), _ledger_snapshot()
     callbacks, context = _callbacks(), _local_context()
@@ -122,6 +146,50 @@ def smoke(company, other_company, item_group, stock_uom):
     def passed(label):
         checks.append(label)
 
+    def nested_gate(label, setup, action=None, errors=frappe.PermissionError, hidden=()):
+        nonlocal current
+        current = label
+        saved, saved_callbacks, saved_context = _contents(), _callbacks(), _local_context()
+        nested, nested_primary = "jf_sales_follow_gate_" + frappe.generate_hash(length=8), None
+        _begin_rollback_only(nested)
+        try:
+            frappe.set_user("Administrator")
+            setup()
+            frappe.set_user(actors["reader"])
+            if errors is None:
+                read(action)
+            else:
+                state, queued, local = _contents(), _callbacks(), _local_context()
+                try:
+                    (action or (lambda: read_order(company, order.name)))()
+                except errors as error:
+                    assert all(name not in str(error) for name in hidden), "读取错误泄露隐藏来源标识"
+                else:
+                    raise AssertionError("完整销售来源或重过账状态门接受了应拒绝的查询")
+                assert _contents() == state and _callbacks() == queued and _local_context() == local
+        except Exception as error:
+            nested_primary = error
+            raise
+        finally:
+            def restore_nested():
+                frappe.clear_cache(user=actors["reader"])
+                for doctype, name in records:
+                    frappe.clear_document_cache(doctype, name)
+                frappe.set_user(actors["reader"])
+                _restore_local_context(saved_context)
+            _profile_audit([
+                ("nested_database_and_callbacks_rollback", lambda: _profile_rollback(nested, saved_callbacks)),
+                ("nested_owned_caches_actor_context_restore", restore_nested),
+                ("nested_complete_sql_restored", lambda: _contents() == saved),
+                ("nested_callbacks_context_restored", lambda: _callbacks() == saved_callbacks and _local_context() == saved_context),
+            ], primary=nested_primary)
+        passed(label)
+
+    def restriction(doctype, allowed_name):
+        insert("User Permission", user=actors["reader"], allow=doctype, for_value=allowed_name,
+               apply_to_all_doctypes=0, applicable_for=doctype)
+        frappe.clear_cache(user=actors["reader"])
+
     _begin_rollback_only(point)
     try:
         frappe.in_test = True
@@ -155,7 +223,7 @@ def smoke(company, other_company, item_group, stock_uom):
                        "cost_center": fixture.cost_center}]}))
         assert seed.docstatus == 1
         order = post(frappe.get_doc({"doctype": "Sales Order", "company": company,
-            "customer": fixture.customer.name, "transaction_date": today(), "delivery_date": add_days(today(), 7),
+            "customer": fixture.customer.name, "transaction_date": batch_date, "delivery_date": add_days(today(), 7),
             "selling_price_list": fixture.price_list.name, "price_list_currency": fixture.currency,
             "currency": fixture.currency, "conversion_rate": 1, "plc_conversion_rate": 1,
             "ignore_pricing_rule": 1, "disable_rounded_total": 1,
@@ -196,7 +264,7 @@ def smoke(company, other_company, item_group, stock_uom):
         assert len(baseline["delivery_notes"]) == 3 and len(baseline["sales_invoices"]) == 4
         assert [row["document"]["name"] for row in baseline["sales_invoices"] if row["document"]["update_stock"]] == [direct.name]
         assert baseline["work_orders"] == []
-        assert [row["sales_order"]["name"] for row in read(lambda: query_orders(company, today(), today(), order.name))] == [order.name]
+        assert [row["sales_order"]["name"] for row in read(lambda: query_orders(company, batch_date, batch_date, order.name))] == [order.name]
         passed("real_reader_native_batches_dn_si_and_stock_invoice_are_distinct_sources_without_net_totals")
 
         current = "native_exact_returns_and_receipt"
@@ -227,6 +295,97 @@ def smoke(company, other_company, item_group, stock_uom):
         assert ("Payment Entry", payment.name) in {(row["doctype"], row["document"]["name"])
                                                      for row in result["receivables"]["voucher_sources"]}
         passed("native_partial_return_exact_original_details_and_payment_ledger_source_with_native_invoice_state")
+
+        current = "native_draft_pe_je_precise_references_without_ledger"
+        frappe.set_user(actors["writer"])
+        draft_ledgers = _ledger_snapshot()
+        draft_ple = _sql_row_hash(frappe.db.sql("SELECT * FROM `tabPayment Ledger Entry` ORDER BY name", as_dict=True))
+        native_outstanding = frappe.db.get_value("Sales Invoice", invoices[2].name, "outstanding_amount")
+        draft_pe = remember(get_payment_entry("Sales Invoice", invoices[2].name, party_amount=2,
+                                              bank_account=cash, bank_amount=2))
+        draft_pe.posting_date, draft_pe.reference_no, draft_pe.reference_date = today(), prefix + "-draft", today()
+        native(draft_pe, "insert")
+        records.add((draft_pe.doctype, draft_pe.name))
+        draft_je = insert("Journal Entry", company=company, posting_date=today(), voucher_type="Journal Entry",
+            accounts=[{"account": cash, "debit_in_account_currency": 2, "cost_center": fixture.cost_center},
+                      {"account": fixture.accounts.receivable, "credit_in_account_currency": 2,
+                       "party_type": "Customer", "party": fixture.customer.name, "reference_type": "Sales Invoice",
+                       "reference_name": invoices[2].name, "cost_center": fixture.cost_center}])
+        # A separate unreferenced draft is only the exact allow-list value used
+        # to hide draft_je via normal User Permission, without new role grants.
+        control_je = insert("Journal Entry", company=company, posting_date=today(), voucher_type="Journal Entry",
+            accounts=[{"account": fixture.accounts.expense, "debit_in_account_currency": 1,
+                       "cost_center": fixture.cost_center},
+                      {"account": cash, "credit_in_account_currency": 1, "cost_center": fixture.cost_center}])
+        for document in (draft_pe, draft_je):
+            assert document.docstatus == 0
+            assert not frappe.db.exists("Payment Ledger Entry", {"voucher_type": document.doctype, "voucher_no": document.name})
+            assert not frappe.db.exists("Payment Ledger Entry", {"against_voucher_type": document.doctype, "against_voucher_no": document.name})
+        assert _ledger_snapshot() == draft_ledgers
+        assert _sql_row_hash(frappe.db.sql("SELECT * FROM `tabPayment Ledger Entry` ORDER BY name", as_dict=True)) == draft_ple
+        assert frappe.db.get_value("Sales Invoice", invoices[2].name, "outstanding_amount") == native_outstanding
+        frappe.set_user(actors["reader"])
+        drafts = read()
+        sources = {(row["doctype"], row["document"]["name"]): row["document"]
+                   for row in drafts["receivables"]["voucher_sources"]}
+        assert all(sources[document.doctype, document.name]["docstatus"] == 0 for document in (draft_pe, draft_je))
+        assert (control_je.doctype, control_je.name) not in sources
+        passed("native_draft_pe_je_without_ple_gl_are_exact_reverse_sources_and_do_not_change_invoice_outstanding")
+        nested_gate("native_hidden_draft_pe_reverse_reference_rejects_complete_view",
+                    lambda: restriction("Payment Entry", payment.name), hidden=(draft_pe.name,))
+        nested_gate("native_hidden_draft_je_reverse_reference_rejects_complete_view",
+                    lambda: restriction("Journal Entry", control_je.name), hidden=(draft_je.name,))
+        for voucher in (draft_pe, draft_je):
+            for status in ("Queued", "Failed", "Completed"):
+                nested_gate("persisted_rpl_protocol_" + voucher.doctype + "_draft_no_ple_" + status,
+                    lambda doc=voucher, value=status: _repost_protocol_state(insert, doc, value),
+                    errors=None if status == "Completed" else frappe.ValidationError)
+
+        current = "native_two_customers_share_item_and_receivable_account"
+        frappe.set_user("Administrator")
+        second_customer = insert("Customer", customer_name=prefix + "-second-customer", customer_type="Company",
+            customer_group=fixture.customer_group, territory=fixture.territory,
+            accounts=[{"company": company, "account": fixture.accounts.receivable}])
+        frappe.set_user(actors["writer"])
+        second_order = post(frappe.get_doc({"doctype": "Sales Order", "company": company,
+            "customer": second_customer.name, "transaction_date": batch_date, "delivery_date": add_days(today(), 7),
+            "selling_price_list": fixture.price_list.name, "price_list_currency": fixture.currency,
+            "currency": fixture.currency, "conversion_rate": 1, "plc_conversion_rate": 1,
+            "ignore_pricing_rule": 1, "disable_rounded_total": 1,
+            "items": [{"item_code": fixture.item.name, "qty": 2, "rate": 17, "warehouse": fixture.warehouse.name,
+                       "delivery_date": add_days(today(), 7), "jf_make_flow": 0}]}))
+        second_invoice = make_sales_invoice(second_order.name)
+        second_invoice.debit_to, second_invoice.update_stock = fixture.accounts.receivable, 0
+        second_invoice = post(_stamp(second_invoice, "11:20:00"))
+        second_payment = get_payment_entry("Sales Invoice", second_invoice.name, party_amount=4,
+                                          bank_account=cash, bank_amount=4)
+        second_payment.posting_date, second_payment.reference_no, second_payment.reference_date = today(), prefix + "-second", today()
+        second_payment = post(second_payment)
+        completed_reposts()
+        frappe.set_user(actors["reader"])
+        batch = read(lambda: query_orders(company, batch_date, batch_date))
+        roots = {row["sales_order"]["name"]: row for row in batch}
+        assert set(roots) == {order.name, second_order.name}, "批次只能包含两个预先登记的验收订单"
+        for source_order, customer, invoice in ((order, fixture.customer, invoices[2]),
+                                               (second_order, second_customer, second_invoice)):
+            root = roots[source_order.name]
+            assert root["sales_order"]["customer"] == customer.name
+            assert {row["item_code"] for row in root["items"]} == {fixture.item.name}
+            assert all(row["document"]["customer"] == customer.name and row["document"]["debit_to"] == fixture.accounts.receivable
+                       for row in root["sales_invoices"])
+            assert root["receivables"]["ledger_entries"]
+            assert all(row["party"] == customer.name and row["account"] == fixture.accounts.receivable
+                       for row in root["receivables"]["ledger_entries"])
+            projected = next(row["document"] for row in root["sales_invoices"] if row["document"]["name"] == invoice.name)
+            assert flt(projected["outstanding_amount"]) == flt(frappe.db.get_value("Sales Invoice", invoice.name, "outstanding_amount"))
+        assert ("Payment Entry", second_payment.name) not in {(row["doctype"], row["document"]["name"])
+            for row in roots[order.name]["receivables"]["voucher_sources"]}
+        assert ("Payment Entry", payment.name) not in {(row["doctype"], row["document"]["name"])
+            for row in roots[second_order.name]["receivables"]["voucher_sources"]}
+        passed("native_two_customer_batch_preserves_independent_ple_and_invoice_state_with_shared_item_account")
+        nested_gate("native_customer_user_permission_denies_exact_hidden_root",
+                    lambda: restriction("Customer", fixture.customer.name),
+                    action=lambda: read_order(company, second_order.name), hidden=(second_customer.name,))
 
         current = "native_hidden_source_and_company"
         frappe.set_user(actors["no_flow"])
@@ -291,5 +450,9 @@ def smoke(company, other_company, item_group, stock_uom):
             "actual_roles": roles, "contents_before": before, "contents_after": _contents(),
             "table_counts_before": counts, "table_counts_after": _tab_counts(tables)[1],
             "gui_verified": False, "concurrency_verified": False,
+            "no_ple_vouchers": "normal native draft PE/JE; not submitted rebuilds",
+            "repost_verification": "persisted RPL protocol fixtures only; no submit/enqueue/worker",
             "remaining": ["旧销售跟踪操作/UI", "原生工单制造入库链", "原生字段read/mask撤权",
-                          "Company仅select的真实岗位", "多币种专项", "真实重过账worker", "双连接并发来源或权限变化"]}
+                          "Company仅select的真实岗位", "多币种专项", "真实重过账worker",
+                          "Repost Accounting Ledger 原生状态专项", "已提交PE/JE重建期间暂缺PLE",
+                          "双连接并发来源或权限变化"]}
