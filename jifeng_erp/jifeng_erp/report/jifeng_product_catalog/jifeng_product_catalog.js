@@ -12,9 +12,10 @@ frappe.query_reports["Jifeng Product Catalog"] = {
             .prependTo(report.page.main);
     },
     formatter(value, row, column, data, default_formatter) {
-        if (column.fieldname === "image_url" && value) {
+        if (["image_url", "profile_image_url"].includes(column.fieldname) && value) {
             const url = frappe.utils.escape_html(String(value));
-            return `<a href="${url}" target="_blank" rel="noopener noreferrer"><img src="${url}" alt="档案图片" style="max-width:100px;max-height:70px;object-fit:contain"></a>`;
+            const label = column.fieldname === "profile_image_url" ? "产品档案图片" : "业务商品图片";
+            return `<a href="${url}" target="_blank" rel="noopener noreferrer"><img src="${url}" alt="${label}" style="max-width:100px;max-height:70px;object-fit:contain"></a>`;
         }
         if (column.fieldtype === "Data") {
             return frappe.utils.escape_html(String(value ?? ""));
