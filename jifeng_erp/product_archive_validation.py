@@ -146,7 +146,11 @@ def smoke(company, other_company, item_group, stock_uom):
     try:
         assert not paths()
         frappe.set_user("Administrator")
-        system = actor("system", ["System Manager"], [company, other_company])
+        # System Manager does not imply native Item.create. Use installed
+        # Item Manager rights explicitly; also prove the ordinary stock path.
+        system = actor("system", ["System Manager", "Item Manager"], [company, other_company])
+        creator = actor("creator", ["Stock Manager", "Item Manager"], [company, other_company])
+        item_scoped = actor("item-scoped", ["Stock Manager"], [company])
         stock = actor("stock", ["Stock Manager"], [company])
         outside = actor("outside", ["Stock Manager"], [other_company])
         clerk = actor("clerk", ["Stock User"], [company])
@@ -181,7 +185,10 @@ def smoke(company, other_company, item_group, stock_uom):
         passed()
 
         current = "explicit_native_item_creation_separates_business_name_unit_code_and_archive_raw_fields"
-        frappe.set_user(system)
+        frappe.set_user(creator)
+        evidence["creator_roles"] = sorted(frappe.get_roles())
+        assert "Item Manager" in evidence["creator_roles"] and "Stock Manager" in evidence["creator_roles"]
+        assert "System Manager" not in evidence["creator_roles"]
         fresh_input = payload()
         prices = frappe.db.count("Item Price")
         fresh = save(fresh_input)
@@ -341,6 +348,14 @@ def smoke(company, other_company, item_group, stock_uom):
         passed()
 
         current = "native_company_and_item_permissions_hide_lists_receipts_and_forbid_extra_roles"
+        frappe.set_user("Administrator")
+        insert("User Permission", user=item_scoped, allow="Item", for_value=unbound.name, apply_to_all_doctypes=1)
+        frappe.clear_cache(user=item_scoped)
+        frappe.set_user(item_scoped)
+        assert native(lambda: read_archive(linked["name"]))["name"] == linked["name"]
+        assert {row["name"] for row in native(lambda: list_archives(company, include_inactive=True))} == {linked["name"]}
+        reject(lambda: read_archive(fresh["name"]), frappe.PermissionError, atomic=False)
+        assert native(lambda: resolve_creation(fresh_input["request_id"], company)) == {"status": "not_found"}
         frappe.set_user(outside)
         reject(lambda: list_archives(company), frappe.PermissionError, atomic=False)
         reject(lambda: read_archive(fresh["name"]), frappe.PermissionError, atomic=False)
