@@ -1,5 +1,7 @@
 """Serial native HR vocabulary acceptance, always rolled back; no GUI or commits."""
 
+import json
+
 import frappe
 from frappe.utils import today
 
@@ -77,14 +79,20 @@ def smoke(company, other_company):
     def rejected(action, errors=frappe.ValidationError, atomic=False, text=None, forbidden=None):
         local_point = "jf_hr_dictionary_rejection"
         contents, callbacks, context, ledger = _native_contents(), _callbacks(), _local_context(), _ledger_snapshot()
+        messages_before = len(getattr(frappe.local, "message_log", None) or [])
         frappe.db.savepoint(local_point)
         try:
             native(action)
         except errors as error:
+            queued = json.dumps((getattr(frappe.local, "message_log", None) or [])[messages_before:], ensure_ascii=False)
             if text:
                 assert text in str(error), "rejection did not match the expected HR dictionary guard"
             if forbidden:
                 assert forbidden not in str(error), "rejection leaked an unreadable dictionary identity"
+                assert forbidden not in queued, "queued UI messages leaked an unreadable dictionary identity"
+            if text == "词条已存在或身份冲突":
+                assert error.__context__ is None, "native duplicate traceback remained attached"
+                assert "人事词条唯一身份" not in queued, "native unique-index UI message remained queued"
             if atomic:
                 # Prove the API's own rollback before a fixture savepoint can
                 # conceal partial records, versions or native naming changes.

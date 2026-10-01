@@ -229,6 +229,17 @@ class TestHRDictionary(unittest.TestCase):
             self.saved(value=" 装配 ")
         self.assertEqual(self.documents, before)
 
+    def test_native_duplicate_messages_do_not_reach_the_api_response(self):
+        self.frappe.local.message_log = [{"message": "earlier independent message"}]
+        def collision(document):
+            self.frappe.local.message_log.append({"message": "private native row name / unique index"})
+            raise self.frappe.UniqueValidationError("private native row name / SQL")
+        with patch.object(NativeDocument, "save", collision):
+            with self.assertRaisesRegex(ValueError, "词条已存在或身份冲突") as caught:
+                self.saved()
+        self.assertIsNone(caught.exception.__context__)
+        self.assertEqual(self.frappe.local.message_log, [{"message": "earlier independent message"}])
+
     def test_permission_hidden_unique_collision_has_no_identity_or_exception_context(self):
         archive = self.saved()
         self.document_denials.add(archive["name"])

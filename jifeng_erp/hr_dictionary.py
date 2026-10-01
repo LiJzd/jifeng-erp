@@ -262,6 +262,7 @@ def save_dictionary(payload):
     if "inactive" in payload:
         document.inactive = _check(payload["inactive"])
     collision = False
+    messages_before = list(getattr(frappe.local, "message_log", None) or [])
     try:
         document.save()
     except (frappe.DuplicateEntryError, frappe.UniqueValidationError):
@@ -270,5 +271,8 @@ def save_dictionary(payload):
         # Native unique exceptions contain internal document names/SQL values.
         # Raise outside the except block to avoid exposing their exception
         # context; retain the DB constraint and the API's full atomic rollback.
+        # Native duplicate handlers also queue a UI message before raising.
+        # Preserve earlier messages while replacing this operation's internals.
+        frappe.local.message_log = messages_before
         frappe.throw("同公司同类型的词条已存在或身份冲突，请查询核对，不自动重复保存")
     return _pack(document)
