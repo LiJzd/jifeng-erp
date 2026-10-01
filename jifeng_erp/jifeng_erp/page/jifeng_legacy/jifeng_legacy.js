@@ -152,7 +152,7 @@ const JIFENG_LIVE_ROUTES = {
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card",
 		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation",
 		入库单: "Stock Entry", 反审: "Work Order", 工作站: "Workstation" },
-	人事: { 人事档案: "Employee", 人事浏览: "Employee", 人事部门: "Department", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
+	人事: { 人事专长: "Jifeng HR Dictionary", 人事文化: "Jifeng HR Dictionary", 人事民族: "Jifeng HR Dictionary", 人事档案: "Employee", 人事浏览: "Employee", 人事部门: "Department", 人员浏览: "Employee", 部门: "Department", 员工档案: "Employee", 员工补充档案: "Jifeng Employee Supplement", 部门档案: "Department", 职位档案: "Designation", 晋升记录: "Employee Promotion", 调岗记录: "Employee Transfer", 离职流程: "Employee Separation" },
 	工资: { 计薪记录: "Jifeng Wage Entry", 分配审核: "Jifeng Wage Allocation", 工资录入: "Jifeng Wage Entry", 工资明细: "Jifeng Wage Entry", 审核: "Jifeng Wage Entry", 工资附加项: "Additional Salary", 工资单: "Salary Slip", 工资汇总: "Salary Slip", 工资发放: "Payroll Entry", 调薪记录: "Salary Structure Assignment" },
 	模具: { 模具录入: "Jifeng Mold", 模具查询: "Jifeng Mold", 模具档案: "Jifeng Mold" },
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate" },
@@ -438,6 +438,8 @@ class JifengLegacyWorkspace {
 		if (liveDoctype) {
 			let filters = JIFENG_LIVE_LIST_FILTERS[moduleName]?.[name];
 			const inventoryArchive = liveDoctype === "Jifeng Inventory Profile" ? moduleName : null;
+			const hrDictionary = liveDoctype === "Jifeng HR Dictionary" ? name.replace(/^人事/, "") : null;
+			if (hrDictionary) filters = { dictionary_type: hrDictionary };
 			if (inventoryArchive) filters = { archive_kind: moduleName };
 			if (liveDoctype === "Jifeng Inventory Dictionary") filters = { archive_kind: moduleName,
 				...(name === "形状" || name === "颜色" ? { dictionary_type: name } : {}) };
@@ -448,6 +450,7 @@ class JifengLegacyWorkspace {
 				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
 					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {},
 					inventoryArchive,
+					hrDictionary,
 					dictionaryArchive: liveDoctype === "Jifeng Inventory Dictionary",
 					personnelArchive: moduleName === "人事" && name === "人事档案",
 					hideCreate: moduleName === "人事" && name === "人事浏览" });

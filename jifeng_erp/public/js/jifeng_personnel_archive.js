@@ -117,6 +117,7 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 		if (archive.can_write) dialog.set_primary_action(archive.name ? "保存" : "新增", () => this.save(state));
 		dialog.add_custom_action(__("关闭"), () => dialog.hide());
 		await dialog.set_values(this.initialValues(state));
+		this.installDictionaries(state);
 		state.original = JSON.stringify(this.payload(state));
 		const beforeUnload = (event) => {
 			if (state.saving || JSON.stringify(this.payload(state)) !== state.original) {
@@ -126,11 +127,52 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 		};
 		window.addEventListener("beforeunload", beforeUnload);
 		dialog.on_hide = () => {
+			for (const chooser of state.dictionaryDialogs || []) chooser.hide();
 			window.removeEventListener("beforeunload", beforeUnload);
 			this.active.delete(name || "new");
 		};
 		dialog.show();
 		return dialog;
+	}
+
+	canSelectDictionary(state, field) {
+		const control = state.dialog.fields_dict["supplement_" + field];
+		const df = state.archive.field_meta?.supplement?.[field];
+		return !!(control && df && !df.read_only && !control.df.read_only && state.archive.can_write &&
+			!state.closed && !state.saving && !state.confirming);
+	}
+
+	installDictionaries(state) {
+		if (!window.JifengHRDictionary) return;
+		state.dictionaryDialogs ||= new Set();
+		state.dictionaryButtons ||= new Map();
+		for (const [field, type] of [["ethnicity", "民族"], ["education_level", "文化"], ["specialty", "专长"]]) {
+			const control = state.dialog.fields_dict["supplement_" + field];
+			if (!control) continue;
+			if (!state.dictionaryButtons.has(field)) {
+				const button = $("<button type='button' class='btn btn-xs btn-default'>选择</button>")
+					.on("click", () => this.selectDictionary(state, field, type)).appendTo(control.$wrapper);
+				state.dictionaryButtons.set(field, button);
+			}
+			state.dictionaryButtons.get(field).prop("disabled", !this.canSelectDictionary(state, field));
+		}
+	}
+
+	selectDictionary(state, field, type) {
+		if (!this.canSelectDictionary(state, field) || !window.JifengHRDictionary) return;
+		const company = state.dialog.fields_dict.employee_company?.get_value();
+		if (!company) { frappe.msgprint(__("先选择公司。")); return; }
+		const archive = state.archive;
+		const control = state.dialog.fields_dict["supplement_" + field];
+		this.bridge.hrDictionaryEditor ||= new window.JifengHRDictionary(this.bridge);
+		const chooser = this.bridge.hrDictionaryEditor.choose({ type, company,
+			current: () => this.canSelectDictionary(state, field) && state.archive === archive &&
+				state.dialog.fields_dict.employee_company?.get_value() === company,
+			getValue: () => control.get_value(),
+			apply: async (value) => { await state.dialog.set_value("supplement_" + field, value); return true; },
+			onHide: (dialog) => state.dictionaryDialogs?.delete(dialog) });
+		if (chooser) state.dictionaryDialogs.add(chooser);
+		return chooser;
 	}
 
 	uploadOptions(archive, group, fieldname) {
@@ -220,6 +262,7 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 	async save(state) {
 		if (state.saving || !state.dialog.get_values()) return;
 		state.saving = true;
+		this.installDictionaries(state);
 		const button = state.dialog.get_primary_btn().prop("disabled", true);
 		try {
 			const response = await frappe.call({ method: "jifeng_erp.personnel_archive.save_archive",
@@ -261,6 +304,7 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 			// Frappe displays the server/network failure; keep this draft editable.
 		} finally {
 			state.saving = false;
+			this.installDictionaries(state);
 			button.prop("disabled", false);
 		}
 	}

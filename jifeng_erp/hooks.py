@@ -6,7 +6,8 @@ app_email = "erp@example.invalid"
 app_license = "GPL-3.0-or-later"
 required_apps = ["erpnext", "hrms"]
 app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css"]
-app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jifeng_erp/js/jifeng_personnel_archive.js",
+app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jifeng_erp/js/jifeng_hr_dictionary.js",
+                  "/assets/jifeng_erp/js/jifeng_personnel_archive.js",
                   "/assets/jifeng_erp/js/jifeng_inventory_archive.js"]
 before_request = "jifeng_erp.session_init.initialize_csrf"
 doctype_js = {

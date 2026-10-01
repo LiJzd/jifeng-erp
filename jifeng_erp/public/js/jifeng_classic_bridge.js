@@ -88,6 +88,9 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	openCreate(spec) {
+		if (spec.hrDictionary && window.JifengHRDictionary) {
+			return this.openHRDictionary(spec.hrDictionary, null, spec.values?.company);
+		}
 		if (spec.inventoryArchive && window.JifengInventoryArchive) {
 			return this.openInventory(spec.inventoryArchive);
 		}
@@ -146,6 +149,11 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	openInventory(kind, name) {
 		this.inventoryEditor ||= new window.JifengInventoryArchive(this);
 		return this.inventoryEditor.open(kind, name).catch(() => {});
+	}
+
+	openHRDictionary(type, name, company) {
+		this.hrDictionaryEditor ||= new window.JifengHRDictionary(this);
+		return this.hrDictionaryEditor.open(type, name, company).catch(() => {});
 	}
 
 	async selectPieceWorker(company, employee) {
@@ -219,6 +227,16 @@ window.JifengClassicBridge = class JifengClassicBridge {
 								this.openInventory(spec.inventoryArchive, link.dataset.name);
 							}, true);
 						}
+						if (spec.hrDictionary && window.JifengHRDictionary) {
+							child.document.addEventListener("click", (event) => {
+								const link = event.target.closest?.(".list-row a[data-name]");
+								if (!link || child.frappe.get_route()[0] !== "List" ||
+									child.cur_list?.doctype !== "Jifeng HR Dictionary" ||
+									!child.cur_list.data?.some((row) => row.name === link.dataset.name)) return;
+								event.preventDefault(); event.stopImmediatePropagation();
+								this.openHRDictionary(spec.hrDictionary, link.dataset.name);
+							}, true);
+							}
 						if (spec.personnelArchive && window.JifengPersonnelArchive) {
 							child.document.addEventListener("click", (event) => {
 								const link = event.target.closest?.(".list-row a[data-name]");
@@ -235,7 +253,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 							if (child.frappe.get_route()[0] === "List" && doctype === spec.doctype && !callback) {
 								if (spec.hideCreate) return Promise.resolve();
 								this.openCreate({ ...spec, title: "新增" + spec.title, kind: "create",
-									values: spec.dictionaryArchive ? { ...opts, ...spec.filters } : opts || {} });
+									values: spec.dictionaryArchive || spec.hrDictionary ? { ...opts, ...spec.filters } : opts || {} });
 								return Promise.resolve();
 							}
 							return nativeNew.call(child.frappe, doctype, opts, callback);
