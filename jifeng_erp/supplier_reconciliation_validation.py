@@ -291,9 +291,15 @@ def smoke(company, item_group, stock_uom, other_company, foreign_currency="USD")
         returned.set("items", [returned.items[0]])
         returned.items[0].qty = -1
         returned.disable_rounded_total = 1
+        # Mapping copied the full-invoice total. Native validate checks that
+        # old total against the live outstanding before recalculating taxes,
+        # so recalculate the edited draft exactly as the native client does.
+        native(returned.calculate_taxes_and_totals)
+        assert Decimal(str(returned.grand_total)) == -20
         native(returned.insert)
         native(returned.submit)
         assert str(getdate(returned.posting_date)) == add_days(today(), -2)
+        assert not returned.update_outstanding_for_self
         track(returned)
         foreign_pi = invoice(foreign_supplier, foreign_account.name, foreign_currency, rate=10)
         source = insert(SOURCE, company=company, posting_date=invoice_date, cost_center=center,
