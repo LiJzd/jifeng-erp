@@ -253,7 +253,10 @@ window.JifengToolArchive = class JifengToolArchive {
 				} }); upload.uploader = uploader;
 			const nativeUpload = uploader.upload_files.bind(uploader); uploader.upload_files = () => {
 				if (upload.started) { state.message.textContent = __("本次上传已发起，请核对结果后继续。"); return Promise.resolve(); }
-				if (!uploader.uploader?.files?.length) return nativeUpload(); upload.started = true; uploader.dialog.get_primary_btn().prop("disabled", true);
+				const files = uploader.uploader?.files; if (!files?.length) return nativeUpload();
+				// Native defaults large images to optimization even when its toggle is hidden.
+				for (const file of files) file.optimize = false;
+				upload.started = true; uploader.dialog.get_primary_btn().prop("disabled", true);
 				try { const pending = nativeUpload(); return pending?.catch ? pending.catch(() => { state.uploadUnresolved = true; this.freeze(state); }) : pending; }
 				catch { state.uploadUnresolved = true; this.freeze(state); return Promise.resolve(); }
 			};

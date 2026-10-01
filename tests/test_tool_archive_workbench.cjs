@@ -39,9 +39,9 @@ class Dialog {
 	hide() { this.hidden = true; this.on_hide?.(); }
 }
 class FileUploader {
-	constructor(options) { this.options = options; this.dialog = new Dialog(); this.uploader = { files: [{ private: true, file_obj: {} }] }; this.nativeWrites = 0; this.nativeHidden = 0;
+	constructor(options) { this.options = options; this.dialog = new Dialog(); this.uploader = { files: [{ private: true, optimize: true, file_obj: { size: 201 * 1024 } }] }; this.nativeWrites = 0; this.nativeHidden = 0;
 		this.dialog.on_hide = () => { this.nativeHidden++; }; uploads.push(this); }
-	upload_files() { this.nativeWrites++; return Promise.resolve(); } // Native resolves before HTTP on_success.
+	upload_files() { this.nativeWrites++; this.nativeOptimizeFlags = this.uploader.files.map((file) => file.optimize); return Promise.resolve(); } // Native resolves before HTTP on_success.
 }
 const window = { addEventListener(name, action) { listeners.set(action, name); }, removeEventListener(_, action) { listeners.delete(action); } };
 const document = { createElement: (tag) => new Element(tag) };
@@ -105,7 +105,9 @@ async function main() {
 	const imageOpening = mold.uploadImage(state); calls.at(-1).resolve([attachment({ name: "OLDER" })]); await imageOpening; const uploader = uploads.at(-1);
 	assert.equal(uploader.options.doctype, "Jifeng Mold"); assert.equal(uploader.options.docname, "MOLD-1"); assert.equal(uploader.options.fieldname, "image");
 	assert.equal(uploader.options.make_attachments_public, 0); assert.equal(uploader.options.allow_toggle_private, false);
+	assert.equal(uploader.options.allow_toggle_optimize, false); uploader.uploader.files.push({ private: true, optimize: true, file_obj: { size: 301 * 1024 } });
 	await uploader.upload_files(); assert.ok(state.upload.open); assert.equal(state.imageValue, null, "early Promise resolution is not confirmed upload");
+	assert.deepEqual(uploader.nativeOptimizeFlags, [false, false], "native upload receives every original image without optimization"); assert.equal(uploader.nativeWrites, 1);
 	uploader.dialog.hidden = true; uploader.dialog.on_hide(); assert.equal(uploader.nativeHidden, 1); assert.equal(state.upload.open, false); assert.equal(state.uploadUnresolved, true);
 	assert.ok(!state.image.resolveButton.hidden); const writes = uploader.nativeWrites; await uploader.upload_files(); assert.equal(uploader.nativeWrites, writes, "unknown upload cannot repeat POST");
 	const none = mold.resolveUpload(state); calls.at(-1).resolve([attachment({ name: "OLDER" })]); await none; assert.ok(state.uploadUnresolved);
@@ -192,6 +194,7 @@ async function main() {
 	assert.equal(state.controls.model_number.value, " 模号原文 ", "modeling Data is not trimmed"); assert.equal(state.controls.reference_unit_price.value, "01.00000000000000000000001");
 	const modelImage = modeling.uploadImage(state); assert.equal("fieldname" in calls.at(-1).options.args, false); calls.at(-1).resolve([]); await modelImage; const modelUploader = uploads.at(-1);
 	assert.equal(modelUploader.options.doctype, "Jifeng Plate Modeling"); assert.equal(modelUploader.options.fieldname, "design_image"); await modelUploader.upload_files();
+	assert.deepEqual(modelUploader.nativeOptimizeFlags, [false], "design original uses the shared upload guard"); await modelUploader.upload_files(); assert.equal(modelUploader.nativeWrites, 1, "retry cannot upload the design original again");
 	modelUploader.options.on_success({ name: "MODELFILE", doctype: "File", is_private: 1, attached_to_doctype: "Jifeng Plate Modeling", attached_to_name: "MODEL-1", attached_to_field: "design_image", file_url: "/private/files/model.png" }); modelUploader.dialog.hide();
 	assert.equal(state.imageValue, "/private/files/model.png"); const modelImageSave = modeling.save(state); assert.equal(calls.at(-1).options.args.payload.design_image, "/private/files/model.png"); assert.equal("image" in calls.at(-1).options.args.payload, false);
 	calls.at(-1).resolve(flatModel(true, { ...modelSaved, version: "2026-10-01T00:00:02", design_image: "/private/files/model.png", image_state: { state: "已上传", url: "/private/files/model.png?_file=MODELFILE" }, expense_voucher_state: "已取消" })); await modelImageSave;
@@ -214,6 +217,6 @@ async function main() {
 	context.window.ToolWorkspace.prototype.openPage.call(workspace, "版种建模查询", "版种"); context.window.ToolWorkspace.prototype.openPage.call(workspace, "建模查询", "版种");
 	assert.equal(dispatched[4].route.join("/"), "query-report/Jifeng Plate Modeling Catalog"); assert.equal(dispatched[5].route.join("/"), "query-report/Jifeng Plate Modeling Catalog");
 	mold.destroy(); plate.destroy(); modeling.destroy(); assert.equal(listeners.size, 0);
-	console.log("Tool/modeling DOM/protocol PASS: actual menus+aliases, old11/10/8 fields, changed-only raw text, type+UUID/version and flat receipt adapter, unknown read-only adoption, native X upload lifecycle, exact private attachment.");
+	console.log("Tool/modeling DOM/protocol PASS: actual menus+aliases, old11/10/8 fields, changed-only raw text, type+UUID/version and flat receipt adapter, unknown read-only adoption, native X upload lifecycle, original-image flags and one-upload guard, exact private attachment.");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
