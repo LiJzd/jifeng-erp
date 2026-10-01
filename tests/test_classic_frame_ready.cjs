@@ -12,7 +12,7 @@ class Element {
 
 function fixture(spec) {
 	const timers = new Map(), calls = { route: 0, clear: 0, refresh: 0, create: 0 };
-	let sequence = 0, route = [], onRoute, onRefresh;
+	let sequence = 0, route = null, onRoute, onRefresh;
 	const child = { document: { createElement: () => new Element(), head: new Element() },
 		frappe: { boot: { user: { name: "synthetic" } }, router: {}, app: null, container: null,
 			get_route: () => route, new_doc: async () => { calls.create++; },
@@ -51,11 +51,18 @@ async function main() {
 	page.start(); await page.tick();
 	assert.equal(page.calls.route, 0, "loaded functions are not completed Application startup");
 	page.boot(); await page.tick();
-	assert.equal(page.calls.route, 0, "the initial blank route can still redirect to a Workspace");
+	assert.equal(page.calls.route, 0, "native null current_route means initial parsing is still pending");
 	page.setRoute(["Workspaces", "private", "synthetic"]);
 	await Promise.all(await page.tick());
 	assert.equal(await page.entry.ready, true); assert.equal(page.calls.route, 1);
 	assert.equal(page.frames[0].classes.has("is-ready"), true);
+
+	const home = fixture({ title: "Synthetic List", kind: "list", doctype: "Synthetic", route: ["List", "Synthetic"] });
+	home.boot(); home.setRoute([""]); home.child.cur_list = home.list("Synthetic");
+	home.start(); const fromHome = await home.tick(); await Promise.all(await home.tick());
+	await Promise.all(fromHome);
+	assert.equal(await home.entry.ready, true, "native v16 Home's completed [''] route must allow the target list");
+	assert.equal(home.calls.route, 1); assert.equal(home.calls.clear, 1); assert.equal(home.calls.refresh, 1);
 
 	const wrong = fixture({ title: "Synthetic List", kind: "list", doctype: "Synthetic", route: ["List", "Synthetic"] });
 	wrong.boot(); wrong.setRoute(["Workspaces"]); wrong.child.cur_list = wrong.list("Synthetic");
@@ -96,6 +103,6 @@ async function main() {
 	let metadata; create.child.frappe.model.with_doctype = (_name, callback) => { metadata = callback; };
 	create.start(); const creating = await create.tick(); create.entry.stop(); metadata(); await Promise.all(creating);
 	assert.equal(await create.entry.ready, false); assert.equal(create.calls.create, 0);
-	console.log("Classic frame startup: cold initial routing, stale/wrong lists, late redirects and close during route/metadata passed (6 protocol cases; no real browser).");
+	console.log("Classic frame startup: null startup, native empty-name Home, stale/wrong lists, late redirects and close during route/metadata passed (7 protocol cases; no real browser).");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

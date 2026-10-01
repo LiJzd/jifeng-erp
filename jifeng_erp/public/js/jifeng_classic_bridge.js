@@ -224,10 +224,11 @@ window.JifengClassicBridge = class JifengClassicBridge {
 				if (stopped) return;
 				const child = iframe.contentWindow;
 				// These functions exist before Application.startup has routed Desk.
-				// Wait for the initial route too: its default Workspace redirect
-				// must finish before we select the classic page's native route.
+				// Native v16 Home is the completed route [""], whereas startup's
+				// current_route is null. Wait for parsing, not a named first page.
+				const initialRoute = child?.frappe?.get_route?.();
 				if (!child?.frappe?.boot?.user || !child.frappe.app || !child.frappe.container ||
-					!child.frappe.router || !child.frappe.new_doc || !child.frappe.get_route?.()[0]) {
+					!child.frappe.router || !child.frappe.new_doc || !Array.isArray(initialRoute) || !initialRoute.length) {
 					if (++attempts >= 300) {
 						stop();
 						loading.textContent = __("页面未能加载，请关闭后重新打开。");
