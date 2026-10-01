@@ -36,12 +36,19 @@ class Dialog {
 		this.button = new Wrapper(); this.close = new Wrapper(); this.actions = new Map();
 		this.custom_actions = new Wrapper(); this.custom_actions.buttons = new Map();
 		this.fields_dict = Object.fromEntries(config.fields.map((df) => [df.fieldname,
-			{ df: { ...df }, value: df.default, $wrapper: new Wrapper(), get_value() { return this.value; } }])); dialogs.push(this);
+			{ df: { ...df }, value: df.default, $wrapper: new Wrapper(), get_value() { return this.value; } }]));
+		// Native Layout inserts this non-value object into fields_dict.
+		this.fields_dict.__section_1 = { df: { fieldtype: "Section Break" } }; dialogs.push(this);
 	}
 	get_value(field) { return this.fields_dict[field].value; }
-	async set_values(values) { for (const [field, value] of Object.entries(values)) this.fields_dict[field].value = value; }
+	async set_values(values) { for (const [field, value] of Object.entries(values)) {
+		assert.notEqual(field, "__section_1", "native Section has no set_value"); this.fields_dict[field].value = value;
+	} }
 	get_values() { return {}; }
-	set_df_property(field, property, value) { this.fields_dict[field].df[property] = value; }
+	set_df_property(field, property, value) {
+		assert.notEqual(field, "__section_1", "business permissions must not hide the native layout section");
+		this.fields_dict[field].df[property] = value;
+	}
 	set_primary_action(_, action) { this.primary = action; }
 	get_primary_btn() { return this.button; }
 	get_close_btn() { return this.close; }

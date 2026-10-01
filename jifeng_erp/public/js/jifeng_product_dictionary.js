@@ -155,6 +155,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		const company = this.company();
 		if (!company || !this.readyArchive || !name && !this.readyArchive.can_write) return;
 		this.opening = true; this.updateAddButton();
+		let initializingState;
 		try {
 			const response = await frappe.call({ method: "jifeng_erp.product_dictionary." + (name ? "read_dictionary" : "init_dictionary"),
 				args: name ? { name, dictionary_type: this.type } : { dictionary_type: this.type, company, numbering_mode: "automatic_v1" }, freeze: true });
@@ -174,6 +175,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 			dialog.$body.prepend(scope);
 			const state = { archive, company, dialog, requestId: archive.name ? null : this.requestID(),
 				closed: false, busy: false, unresolved: false, confirming: false, candidate: null, conflict: null };
+			initializingState = state;
 			state.review = this.element("div", undefined, "jfe-product-dictionary-review"); dialog.$body.append(state.review);
 			this.editor = state;
 			dialog.set_primary_action(__("保存"), () => this.save(state));
@@ -185,12 +187,21 @@ window.JifengProductDictionary = class JifengProductDictionary {
 			await dialog.set_values(this.values(state)); state.original = JSON.stringify(this.payload(state));
 			this.freeze(state); dialog.show();
 			return dialog;
-		} catch { /* Native RPC shows permission/validation failures; the held editor is unchanged. */ }
+		} catch {
+			if (initializingState) {
+				initializingState.closed = true;
+				initializingState.nativeHide?.();
+				initializingState.dialog.$wrapper.remove();
+				if (this.editor === initializingState) this.editor = null;
+			}
+			if (!this.disposed) this.status.textContent = __("无法打开词条，请刷新后重试。");
+		}
 		finally { this.opening = false; if (!this.disposed) this.updateAddButton(); }
 	}
 
 	values(state) {
-		return Object.fromEntries(Object.keys(state.dialog.fields_dict).map((field) => [field,
+		return Object.fromEntries(["legacy_number", "value", "remarks", "inactive", "abbreviation"]
+			.filter((field) => state.dialog.fields_dict[field]).map((field) => [field,
 			state.archive.field_meta[field] ? field === "legacy_number" ? this.numberPolicy(state.archive).value : state.archive[field] ?? null : null]));
 	}
 
@@ -232,7 +243,8 @@ window.JifengProductDictionary = class JifengProductDictionary {
 	}
 
 	freeze(state) {
-		for (const [field, control] of Object.entries(state.dialog.fields_dict)) {
+		for (const field of ["legacy_number", "value", "remarks", "inactive", "abbreviation"]) {
+			if (!state.dialog.fields_dict[field]) continue;
 			const df = state.archive.field_meta[field];
 			state.dialog.set_df_property(field, "hidden", !df || field === "abbreviation" && !state.archive.name);
 			state.dialog.set_df_property(field, "read_only", !!(state.busy || state.unresolved || state.confirming || !df || df.read_only || !state.archive.can_write || field === "legacy_number"));
