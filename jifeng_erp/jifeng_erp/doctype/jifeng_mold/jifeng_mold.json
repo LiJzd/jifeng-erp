@@ -4,15 +4,16 @@
  "module": "Jifeng ERP",
  "autoname": "format:JF-MOLD-{YYYY}-{#####}",
  "title_field": "mold_no",
- "search_fields": "mold_no,product_code,item_code,location",
+ "search_fields": "legacy_number,mold_no,product_code,item_code,location",
  "track_changes": 1,
  "field_order": [
-  "company", "mold_no", "product_code", "item_code", "image",
-  "quantity", "maker", "mold_date", "amount", "location",
-  "scrapped", "scrap_date", "scrap_reason", "copy_from", "remark"
+  "company", "legacy_number", "mold_no", "product_code", "quantity", "maker",
+  "mold_date", "amount", "remark", "location", "scrapped", "legacy_copy", "copy_from",
+  "item_code", "image", "scrap_date", "scrap_reason"
  ],
  "fields": [
   {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "legacy_number", "fieldtype": "Data", "label": "编号原文", "description": "单独保存历史录入编号，不从模具号或系统主键带入，也不自动生成旧编号。"},
   {"fieldname": "mold_no", "fieldtype": "Data", "label": "模具号", "reqd": 1, "unique": 1, "in_list_view": 1},
   {"fieldname": "product_code", "fieldtype": "Data", "label": "产品号", "reqd": 1, "in_list_view": 1},
   {"fieldname": "item_code", "fieldtype": "Link", "label": "ERP 商品", "options": "Item"},
@@ -25,7 +26,8 @@
   {"fieldname": "scrapped", "fieldtype": "Check", "label": "已报废", "in_list_view": 1},
   {"fieldname": "scrap_date", "fieldtype": "Date", "label": "报废日期", "depends_on": "eval:doc.scrapped==1", "mandatory_depends_on": "eval:doc.scrapped==1"},
   {"fieldname": "scrap_reason", "fieldtype": "Small Text", "label": "报废原因", "depends_on": "eval:doc.scrapped==1"},
-  {"fieldname": "copy_from", "fieldtype": "Link", "label": "复制来源模具", "options": "Jifeng Mold"},
+  {"fieldname": "legacy_copy", "fieldtype": "Check", "label": "复制勾选记录", "description": "只保留旧录入的勾选状态，不执行复制；复制来源另行明确填写。"},
+  {"fieldname": "copy_from", "fieldtype": "Link", "label": "复制来源模具", "options": "Jifeng Mold", "description": "只记录同公司可读的来源模具，不自动复制字段或生成记录。"},
   {"fieldname": "remark", "fieldtype": "Small Text", "label": "说明"}
  ],
  "permissions": [

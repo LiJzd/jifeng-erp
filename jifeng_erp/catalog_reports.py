@@ -172,9 +172,17 @@ def product_material_catalog(filters=None):
 def _tool_catalog(filters, doctype, inactive_field, inactive_label):
     from jifeng_erp.catalog_access import check_employee
 
+    is_mold = doctype == MOLD
+    required = {"name", "company", "item_code", "legacy_number", "legacy_copy", "copy_from",
+                "maker", "location", "image", "quantity"}
+    required.update({"mold_no", "product_code", "mold_date", "amount", "scrapped", "scrap_date", "scrap_reason", "remark"}
+                    if is_mold else {"plate_no", "plate_type", "product_code", "assessment_score", "plate_date", "modeler",
+                                    "reference_cost", "retired", "retired_date", "retired_reason", "notes"})
+    readable = set(get_permitted_fields(doctype, permission_type="read", ignore_virtual=True))
+    if not required.issubset(readable):
+        frappe.throw("无法完整读取模具或版种字段，请核对字段读取权限", frappe.PermissionError)
     _, currency, documents = _scope(filters, doctype, inactive_field, inactive_label)
     items, images, rows = {}, {}, []
-    is_mold = doctype == MOLD
     for doc in documents:
         _item(doc.item_code, items)
         check_employee(doc.maker, doc.company, "压模人" if is_mold else "制版人")
@@ -188,14 +196,21 @@ def _tool_catalog(filters, doctype, inactive_field, inactive_label):
                "inactive_date": doc.scrap_date if is_mold else doc.retired_date,
                "inactive_reason": doc.scrap_reason if is_mold else doc.retired_reason,
                "currency": currency, "reference_amount": _reference(doc.amount if is_mold else doc.reference_cost),
+               "legacy_number": doc.get("legacy_number"), "legacy_copy": cint(doc.get("legacy_copy")),
+               "catalog_notes": doc.get("remark" if is_mold else "notes"),
                **_image(doc.image, images)}
         if is_mold:
             row.update(product_code=doc.product_code, quantity=_reference(doc.quantity))
-            # A hidden source must not be exposed by a readable copied catalog.
-            original = readable_documents(MOLD, {"name": doc.copy_from}).get(doc.copy_from) if doc.copy_from else None
-            row["copy_from"] = original.name if original and original.company == doc.company else None
+        else:
+            row.update(plate_type=doc.get("plate_type"), product_code=doc.get("product_code"),
+                       assessment_score=doc.get("assessment_score"), quantity=doc.get("quantity"))
+        # A hidden source must not be exposed by a readable copied catalog.
+        source = doc.get("copy_from")
+        original = readable_documents(doctype, {"name": source}).get(source) if source else None
+        row["copy_from"] = original.name if original and original.company == doc.company else None
         rows.append(row)
     columns = _base_columns(doctype) + [column("number", "模具号" if is_mold else "版种编号"),
+        column("legacy_number", "编号原文"),
         column("catalog_date", "建档日期", "Date"), column("status", "档案状态"),
         column("image_url", "档案图片", width=125), column("image_status", "图片状态"),
         column("maker", "压模人" if is_mold else "制版人", "Link", "Employee"),
@@ -203,10 +218,14 @@ def _tool_catalog(filters, doctype, inactive_field, inactive_label):
         column("location", "存放位置"), column("currency", "参考金额币种", "Link", "Currency"),
         column("reference_amount", "档案参考金额", "Currency", "currency"),
         column("inactive_date", "报废日期" if is_mold else "停用日期", "Date"),
-        column("inactive_reason", "报废原因" if is_mold else "停用原因", width=220)]
+        column("inactive_reason", "报废原因" if is_mold else "停用原因", width=220),
+        column("catalog_notes", "说明", width=220), column("legacy_copy", "复制勾选记录", "Check")]
     if is_mold:
-        columns += [column("product_code", "档案产品号"), column("quantity", "模具数量", "Float"),
-                    column("copy_from", "复制来源", "Link", MOLD, 180)]
+        columns += [column("product_code", "档案产品号"), column("quantity", "模具数量", "Float")]
+    else:
+        columns += [column("plate_type", "类型原文"), column("product_code", "产品编号原文"),
+                    column("assessment_score", "考核分原文"), column("quantity", "数量原文")]
+    columns += [column("copy_from", "复制来源", "Link", doctype, 180)]
     return columns, sorted(rows, key=lambda row: row["document"])
 
 
