@@ -1,5 +1,27 @@
 # 验证记录
 
+## 2026-10-01 产品档案独立原文与私有图片
+
+f2717a9 为 `Jifeng Product Profile` 增加可选的独立编号、代码、名称、单位、备注和产品档案图片字段。前五项保留原文，编号不合并 item_code 或旧号，备注不合并注意事项/默认要求；图片独立于共享 Item.image。没有迁移回填、改 Item 或增授角色，一件业务商品仍全局唯一对应一个 Product Profile。原生表单明确展示业务名称、库存单位和业务图片，先保存档案再上传私有档案图片；保存图片要求当前档案/字段的精确 File 绑定及原生 File.read，拒绝公开、远程、无 File、其他档案和其他字段的图片引用。
+
+47 个专项、全仓759个纯 Python 模型通过，Ruff、JSON 字段顺序、Python/JS 语法及 diff 检查通过；上传配置的四类权限状态仅为客户端模型检查。原有57门 catalog smoke 文本保持一致，没有重复扩大整套旧功能验收。WSL 测试站迁移和完整构建均退出0，服务重启到本批代码。
+
+新增 `catalog_validation.delta_smoke(company, item_group, stock_uom, other_company)`。r1 在最终回调审计失败：实际 Frappe clear_document_cache 会再次登记 after_commit/after_rollback，原 helper 恢复队列后又清缓存；该次独立新连接的全表计数、所有商品及子表、Profile/File/Version/Series、员工、账户权限、补充档案和 GL/SLE 均恢复，仍未计为通过。ae2dd41 调整为完成缓存清理后最后恢复原队列及上下文，逐项清理审计保留原业务异常及失败记录，不改业务权限。
+
+r2 原生16门通过：真实 Stock Manager 和 Manufacturing Manager/Manufacturing User 分别保存原文及 Version，原注意事项/旧号/要求/价格重量保持；每个角色实际插入自己的私有 File 并保存引用。拒绝远程/公开/无登记/异档案/未保存档案/同档案异字段图片，Company 和 Item User Permission 继续生效，同 Item 异公司重复档案仍拒绝。实际4张随机内容本地 PNG 共473字节，没有外部传输，均调用原生 File 回滚清理，精确私有/公开磁盘路径全部消失；全表计数、完整商品、GL/SLE、回调和保存/实时上下文恢复。独立新连接再核对所有 Item 子表、档案子表、File/Version/Series、人员子表、账户及权限、补充子表、GL/SLE 与批前一致。忽略证据为 `classic-catalog_delta-native-result-r1.json`、`-r2.json`。
+
+Luna 在更新后的原生 Product Profile 空列表打开新增表单，实际确认编号/代码/名称/单位/备注原文五个文本框可编辑，未保存并回到空列表。当前新建表单的图片控件未出现在实际快照中，不能算浏览器上传禁用或图片显示验收；新页控制台零错误、一条警告待归因。fresh before/after 核对完整商品及子表、Profile 及子表、File/Version/Series、人员/账号权限和 GL/SLE 相同、全表计数无变化，仅 Administrator.last_active 原生登录元数据变化。忽略证据 `product_raw_gui_fresh_before.json`、`product_raw_gui_fresh_after.json`。此次检查使用原生表单，并未验证旧产品菜单中的专用新增弹层。
+
+本批仍未完成旧产品29字段顺序的专用录入弹层、产品词典、复制及列表工具栏；HTTP 图片下载字节、实际浏览器上传/保存及岗位验收未通过。旧页面已经确认的原文可持久保存不代表产品模块完整交付，也没有减少116个业务预览缺口。
+
+## 2026-10-01 人事词典实际界面与本机实时连接
+
+本轮 Luna 子智能体已实际操作隔离站经典工作台，三个词典入口分别打开固定类型的新增弹层，公司、名称、停用及底部新增/核对/关闭可见，关闭后原词典列表和类型过滤保留。人事档案明确选择测试公司，在民族、文化、专长填入三个不同合成原文；各自打开关键词选择弹层，空结果关闭后原文完整保留。父层 X 的放弃确认选择“否”仍保留草稿，底部关闭选择“是”后返回员工列表，最终对话框为零、添加及过滤按钮仍在。未创建词条、未保存人员，没有实际词条行可供选择，不能算岗位浏览器保存或有结果选择验收。脱敏证据为忽略的 `output/gui-hr-dictionary-browser-20261001.md`。
+
+原生只读复核确认员工及所有子表、补充档案及所有子表、词典/Version/Series、Auth/角色/User Permission 和 GL/SLE 内容未变。较早原生基线到首次登录之间，User 父表摘要有变化，Activity Log/Sessions 各增加一行，不能从旧摘要反推具体 User 字段。随后重新建立逐字段哈希基线，只允许 Administrator 的原生 last_login/last_active/last_ip 变化，再重复三项原文与关闭守护检查；fresh after 全部保护内容相同，User 字段和全表计数均无差异。对应证据 `hr_dictionary_gui_protected.json`（旧基线不通过）和 `hr_dictionary_gui_fresh_before.json`、`hr_dictionary_gui_fresh_after.json`（新基线通过），均仅存忽略目录，不含明文账户内容。
+
+实时连接曾报 Socket.IO Unauthorized/fetch failed。已核对实际 Node 认证代码和 DNS：WSL 将 `jifeng.localhost` 解析到 TUN 虚拟地址，Node 访问本地后端失败。仅在 WSL `/etc/hosts` 增加本机 127.0.0.1 对该站名的映射，原文件备份在 WSL root 私有目录，前后哈希记于本地 `local-site-hosts-audit.json`；没有改上游代码、代理或 TUN 规则。新解析为 127.0.0.1，Node 后端 HTTP200；浏览器重新加载后 socket.connected=true，四次轮询 HTTP200、控制台零错误/警告。WSL 自动生成 hosts，重启后需重新核对映射。先前 `/undefined` 资源404在这次重载未复现，来源仍未定位，不能称为已修复。
+
 ## 2026-10-01 人事专长、文化和民族持久词典
 
 a2c0056 新增公司范围的 `Jifeng HR Dictionary`，经典人事三个原菜单进入按类型筛选的正式列表，新增/修改使用弹层，底部新增/保存/关闭及 X 走草稿保护。人事档案在原民族、文化、专长位置增加关键词选择弹窗，仍允许保存既有及手填 Data 原文。没有改动人员字段顺序，未将民族映射到 Religion，也未推定旧词典编号或 Canvas 列。词条公司、类型、原文创建后固定；修正采用停用并新增，禁止删除，原生 Version 记录启停。这是本次明确设计，尚未核实旧词典内部操作是否一致。
