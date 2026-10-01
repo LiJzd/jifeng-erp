@@ -189,12 +189,15 @@ async function main() {
 	const delayedQuery = bench.query(), delayedQueryCall = calls.at(-1); bench.destroy(); delayedQueryCall.resolve([listRow({ company: "Company B" })]); await delayedQuery;
 	assert.equal(bench.disposed, true); assert.equal(listeners.has(bench.beforeUnload), false);
 
-	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js"), "utf8") + "\nwindow.Workspace = JifengLegacyWorkspace;", context);
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js"), "utf8") + "\nwindow.Workspace = JifengLegacyWorkspace; window.MenuModules = JIFENG_LEGACY_MODULES;", context);
 	const workspace = Object.create(window.Workspace.prototype), opened = []; workspace.formalBridge = { open(spec) { opened.push(spec); } };
+	const productMenuNames = new Set(window.MenuModules.find((module) => module.name === "产品").groups.flatMap((group) => group.items));
+	workspace.addTab = () => { throw new Error("visible product dictionary menu fell back to a local preview"); };
 	for (const type of ["风格", "来源", "品牌"]) {
-		workspace.openPage("产品" + type, "产品"); assert.equal(opened.at(-1).productDictionary, type); assert.equal(opened.at(-1).doctype, "Jifeng Product Dictionary");
+		assert.ok(productMenuNames.has(type), "use the actual visible product menu name");
+		workspace.openPage(type, "产品"); assert.equal(opened.at(-1).productDictionary, type); assert.equal(opened.at(-1).doctype, "Jifeng Product Dictionary");
 	}
-	assert.equal(opened.length, 3); workspace.addTab = (tab) => opened.push(tab); workspace.openPage("产品类别", "产品"); assert.equal(opened.at(-1).productDictionary, undefined);
+	assert.equal(opened.length, 3); workspace.addTab = (tab) => opened.push(tab); workspace.openPage("类别", "产品"); assert.equal(opened.at(-1).productDictionary, undefined);
 	const bridge = Object.create(window.JifengClassicBridge.prototype);
 	bridge.frames = new Map([["WORD", { workbench: { isDirty: () => true, getCloseBlock: () => "保存结果未知" } }]]);
 	assert.equal(bridge.canClose("WORD"), false); assert.equal(bridge.closeBlock("WORD"), "保存结果未知");
@@ -203,8 +206,8 @@ async function main() {
 
 	// Exercise the real classic closeTab -> bridge.sync -> workbench.destroy lifecycle.
 	const mountedWorkspace = Object.create(window.Workspace.prototype), mountedBridge = Object.create(window.JifengClassicBridge.prototype);
-	mountedWorkspace.tabs = [{ key: "home" }, { key: "formal:产品:产品风格", kind: "formal", spec: { productDictionary: "风格" } }];
-	mountedWorkspace.activeKey = "formal:产品:产品风格"; mountedWorkspace.formalBridge = mountedBridge;
+	mountedWorkspace.tabs = [{ key: "home" }, { key: "formal:产品:风格", kind: "formal", spec: { productDictionary: "风格" } }];
+	mountedWorkspace.activeKey = "formal:产品:风格"; mountedWorkspace.formalBridge = mountedBridge;
 	mountedWorkspace.saveActiveTabState = () => {}; mountedWorkspace.defaultViewState = () => ({});
 	mountedWorkspace.render = () => mountedBridge.sync();
 	mountedBridge.workspace = mountedWorkspace; mountedBridge.frames = new Map(); mountedBridge.layer = new Element(); mountedBridge.align = () => {};
