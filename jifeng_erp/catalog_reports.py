@@ -97,6 +97,15 @@ def _profile_image(document):
     return result
 
 
+def _tool_image(document):
+    # Tool attachments use their saved parent AND image field as identity.
+    # A same-URL attachment on another record cannot supply authorization.
+    from jifeng_erp.tool_archive import _image_state
+
+    state = _image_state(document)
+    return {"image_url": state["url"], "image_status": state["state"]}
+
+
 def _base_columns(doctype):
     return [column("document", "来源档案", "Link", doctype, 180),
             column("company", "公司", "Link", "Company", 180),
@@ -182,7 +191,7 @@ def _tool_catalog(filters, doctype, inactive_field, inactive_label):
     if not required.issubset(readable):
         frappe.throw("无法完整读取模具或版种字段，请核对字段读取权限", frappe.PermissionError)
     _, currency, documents = _scope(filters, doctype, inactive_field, inactive_label)
-    items, images, rows = {}, {}, []
+    items, rows = {}, []
     for doc in documents:
         _item(doc.item_code, items)
         check_employee(doc.maker, doc.company, "压模人" if is_mold else "制版人")
@@ -198,7 +207,7 @@ def _tool_catalog(filters, doctype, inactive_field, inactive_label):
                "currency": currency, "reference_amount": _reference(doc.amount if is_mold else doc.reference_cost),
                "legacy_number": doc.get("legacy_number"), "legacy_copy": cint(doc.get("legacy_copy")),
                "catalog_notes": doc.get("remark" if is_mold else "notes"),
-               **_image(doc.image, images)}
+               **_tool_image(doc)}
         if is_mold:
             row.update(product_code=doc.product_code, quantity=_reference(doc.quantity))
         else:

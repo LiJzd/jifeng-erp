@@ -208,11 +208,16 @@ def smoke(company, other_company, item_group, stock_uom):
         current = "real_manufacturing_manager_native_insert_server_receipt_and_fixed_identity"
         frappe.set_user(manufacturing)
         evidence["manufacturing_roles"] = sorted(frappe.get_roles())
+        assert "Manufacturing Manager" in evidence["manufacturing_roles"]
+        assert "Stock Manager" not in evidence["manufacturing_roles"] and "System Manager" not in evidence["manufacturing_roles"]
+        evidence["manufacturing_item_read"] = frappe.get_doc("Item", item.name).has_permission("read")
+        assert not evidence["manufacturing_item_read"], "实际纯生产管理角色的 Item.read 与本次拒绝门不符"
+        reject(lambda: save_record(payload("plate", "manufacturing-item")), frappe.PermissionError)
         ordinary = insert(DOCTYPES["plate"], company=company, plate_no=prefix + "-NATIVE", plate_date="2026-10-01",
-                          item_code=item.name, maker=employee.name, modeler=employee.name, reference_cost=0)
+                          reference_cost=0)
         assert UUID(ordinary.request_id).version == 4 and len(ordinary.request_digest) == 64
         assert ordinary.assessment_score == "1"
-        empty = save(payload("plate", "empty", assessment_score=""))
+        empty = save(payload("plate", "empty", assessment_score="", item_code=None, maker=None, modeler=None))
         assert empty["values"]["assessment_score"] == ""
         def native_change(field, value):
             document = frappe.get_doc(ordinary.doctype, ordinary.name)
@@ -229,6 +234,7 @@ def smoke(company, other_company, item_group, stock_uom):
         passed()
 
         current = "copy_link_only_records_same_company_readable_source_and_blocks_transitive_cycle"
+        frappe.set_user(stock)
         linked = save(payload("plate", "copy", copy_from=plate["name"], legacy_number="另编号原文"))
         assert linked["values"]["legacy_number"] == "另编号原文" and linked["values"]["copy_from"] == plate["name"]
         reject(lambda: update(plate, copy_from=linked["name"]))

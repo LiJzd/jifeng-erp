@@ -1,5 +1,6 @@
 """Legacy tool text stays independent of native identities, stock and HR data."""
 
+import ast
 from copy import deepcopy
 import datetime
 from decimal import Decimal
@@ -10,6 +11,7 @@ import sys
 import types
 import unittest
 from unittest.mock import Mock, patch
+from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).parents[1]
@@ -191,11 +193,23 @@ class TestToolOriginalReport(unittest.TestCase):
         frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         self.company = types.SimpleNamespace(check_permission=Mock())
         frappe.get_doc = Mock(return_value=self.company)
+        frappe.get_all = Mock(return_value=[])
+        frappe.DoesNotExistError = KeyError
         frappe.db = types.SimpleNamespace(get_value=Mock(return_value="CNY"))
         fields = {definition["name"]: {"name", *(field["fieldname"] for field in definition["fields"])}
                   for definition in (schema("mold"), schema("plate"))}
+        fields["File"] = {"name", "file_url", "is_private", "attached_to_doctype", "attached_to_name", "attached_to_field"}
         model = types.ModuleType("frappe.model")
         model.get_permitted_fields = Mock(side_effect=lambda doctype, **kwargs: fields[doctype] - self.hidden.get(doctype, set()))
+        # Actual private-path and exact-binding guard, with no File record.
+        namespace = {"frappe": frappe, "unquote": unquote, "urlsplit": urlsplit, "_UNSET": object(),
+                     "_columns": lambda dt, permission: set(model.get_permitted_fields(dt))}
+        for source_name, function in (("product_archive.py", "_private_url"), ("tool_archive.py", "_image_state")):
+            tree = ast.parse((ROOT / "jifeng_erp" / source_name).read_text(encoding="utf-8"))
+            definition = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function)
+            exec(compile(ast.Module(body=[definition], type_ignores=[]), source_name, "exec"), namespace)
+        tool_images = types.ModuleType("jifeng_erp.tool_archive")
+        tool_images._image_state = namespace["_image_state"]
         utils = types.ModuleType("frappe.utils")
         utils.cint = lambda value: int(value or 0)
         scope = types.ModuleType("jifeng_erp.inventory_scope")
@@ -209,14 +223,14 @@ class TestToolOriginalReport(unittest.TestCase):
         picture._normalize_image_url = Mock()
         access = types.ModuleType("jifeng_erp.catalog_access")
         access.check_employee = Mock()
-        self.picture, self.access, self.scope = picture, access, scope
+        self.picture, self.access, self.scope, self.frappe = picture, access, scope, frappe
         with patch.dict(sys.modules, {"frappe": frappe, "frappe.model": model, "frappe.utils": utils,
                 "jifeng_erp.inventory_scope": scope, "jifeng_erp.production_picture": picture}):
             self.module = load("tool_report_legacy", "jifeng_erp/catalog_reports.py")
-        self.runtime = patch.dict(sys.modules, {"jifeng_erp.catalog_access": access})
+        self.runtime = patch.dict(sys.modules, {"jifeng_erp.catalog_access": access, "jifeng_erp.tool_archive": tool_images})
         self.runtime.start()
         self.addCleanup(self.runtime.stop)
-        self.plate = Record(name="PLATE", company="JF", item_code=None, plate_no="native-identity", plate_date="2026-10-01",
+        self.plate = Record(doctype="Jifeng Plate", is_new=lambda: False, name="PLATE", company="JF", item_code=None, plate_no="native-identity", plate_date="2026-10-01",
             maker="EMP", modeler=None, location="原库位", retired=0, retired_date=None, retired_reason=None,
             reference_cost=3, image="/private/files/old.png", legacy_number=" 000009 ", plate_type=" 原类型 ",
             product_code="旧产品号", assessment_score="01.00000000000009", quantity=" 0 ", legacy_copy=1,
@@ -234,7 +248,11 @@ class TestToolOriginalReport(unittest.TestCase):
         self.assertEqual(rows[0]["catalog_notes"], "原文\n说明")
         self.assertEqual(rows[0]["legacy_copy"], 1)
         self.assertEqual(self.plate, before)
-        self.picture._readable_image.assert_called_once_with("/private/files/old.png")
+        self.picture._readable_image.assert_not_called()
+        self.frappe.get_all.assert_called_once_with("File", filters={"file_url": "/private/files/old.png", "is_private": 1,
+            "attached_to_doctype": "Jifeng Plate", "attached_to_name": "PLATE", "attached_to_field": "image"},
+            pluck="name", order_by="name", limit_page_length=0)
+        self.assertEqual((rows[0]["image_url"], rows[0]["image_status"]), ("", "附件不可用"))
 
     def test_historic_none_and_explicit_empty_report_values_are_not_defaulted(self):
         for value in (None, "", "0", "-0"):
@@ -260,7 +278,7 @@ class TestToolOriginalReport(unittest.TestCase):
         self.assertEqual(self.module.plate_catalog({"company": "JF"})[1][0]["copy_from"], "SOURCE")
 
     def test_mold_keeps_numeric_reference_and_returns_separate_markers(self):
-        self.docs["Jifeng Mold"] = [Record(name="MOLD", company="JF", item_code=None, mold_no="M-1", product_code="P-1",
+        self.docs["Jifeng Mold"] = [Record(doctype="Jifeng Mold", is_new=lambda: False, name="MOLD", company="JF", item_code=None, mold_no="M-1", product_code="P-1",
             mold_date="2026-10-01", maker=None, location="库位", scrapped=0, scrap_date=None, scrap_reason=None,
             amount=2, quantity="1.5", image=None, legacy_number="000004", legacy_copy=0, copy_from=None, remark="说明")]
         columns, rows = self.module.mold_catalog({"company": "JF"})

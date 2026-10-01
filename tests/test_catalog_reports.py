@@ -69,6 +69,30 @@ class TestCatalogReports(unittest.TestCase):
         model = types.ModuleType("frappe.model")
         model.get_permitted_fields = Mock(side_effect=lambda doctype, **kwargs:
             self.fields[doctype] - self.hidden_fields.get(doctype, set()))
+        for kind in ("mold", "plate"):
+            tool_schema = json.loads((Path(__file__).parents[1] / "jifeng_erp/jifeng_erp/doctype" /
+                ("jifeng_" + kind) / ("jifeng_" + kind + ".json")).read_text(encoding="utf-8"))
+            self.fields[tool_schema["name"]] = {"name", *(field["fieldname"] for field in tool_schema["fields"])}
+        self.fields["File"] = {"name", "file_url", "is_private", "attached_to_doctype", "attached_to_name", "attached_to_field"}
+        # Execute the actual frozen Tool image authorization and private parser;
+        # this report suite does not need unrelated creation/transaction imports.
+        archive_source = Path(__file__).parents[1] / "jifeng_erp/product_archive.py"
+        archive_tree = ast.parse(archive_source.read_text(encoding="utf-8"))
+        parser = next(node for node in archive_tree.body if isinstance(node, ast.FunctionDef) and node.name == "_private_url")
+        image_namespace = {"frappe": frappe, "unquote": unquote, "urlsplit": urlsplit, "_UNSET": object(),
+            "_columns": lambda dt, permission: set(model.get_permitted_fields(dt, permission_type=permission))}
+        exec(compile(ast.Module(body=[parser], type_ignores=[]), str(archive_source), "exec"), image_namespace)
+        tool_source = Path(__file__).parents[1] / "jifeng_erp/tool_archive.py"
+        tool_tree = ast.parse(tool_source.read_text(encoding="utf-8"))
+        image = next(node for node in tool_tree.body if isinstance(node, ast.FunctionDef) and node.name == "_image_state")
+        exec(compile(ast.Module(body=[image], type_ignores=[]), str(tool_source), "exec"), image_namespace)
+        tools = types.ModuleType("jifeng_erp.tool_archive")
+        tools._image_state = image_namespace["_image_state"]
+        access = types.ModuleType("jifeng_erp.catalog_access")
+        access.check_employee = Mock()
+        runtime = patch.dict(sys.modules, {"jifeng_erp.tool_archive": tools, "jifeng_erp.catalog_access": access})
+        runtime.start()
+        self.addCleanup(runtime.stop)
         path = Path(__file__).parents[1] / "jifeng_erp/catalog_reports.py"
         with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils, "frappe.model": model,
                                     "jifeng_erp.inventory_scope": scope,
@@ -100,6 +124,87 @@ class TestCatalogReports(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.module.product_catalog({"company": "OTHER"})
         self.scope.readable_documents.assert_not_called()
+
+    def tool(self, kind):
+        doctype = self.module.MOLD if kind == "mold" else self.module.PLATE
+        record = Record(doctype=doctype, name=kind.upper(), company="JF", item_code="FG", image="/private/files/archive.png",
+            maker=None, modeler=None, location="原库位", quantity="1.5" if kind == "mold" else " 原数量 ",
+            legacy_number=" 007 ", legacy_copy=0, copy_from=None, product_code="原号", is_new=lambda: False,
+            mold_no="M-1", mold_date="2026-10-01", amount=3, scrapped=0, scrap_date=None, scrap_reason=None, remark="原文",
+            plate_no="P-1", plate_date="2026-10-01", reference_cost=3, retired=0, retired_date=None, retired_reason=None,
+            plate_type="原类型", assessment_score="-0", notes="原文")
+        self.docs[doctype] = [record]
+        return record, self.module.mold_catalog if kind == "mold" else self.module.plate_catalog
+
+    def test_tool_report_exact_private_parent_and_field_without_global_url_authorization(self):
+        for kind in ("mold", "plate"):
+            document, report = self.tool(kind)
+            self.files.clear()
+            exact = self.attachment("EXACT", attached_to_doctype=document.doctype,
+                                    attached_to_name=document.name, attached_to_field="image")
+            self.attachment("ALIAS", attached_to_doctype=document.doctype, attached_to_name="OTHER", attached_to_field="image")
+            before = deepcopy(document)
+            with self.subTest(kind=kind):
+                row = report({"company": "JF"})[1][0]
+                self.assertEqual((row["image_url"], row["image_status"]), (exact.unique_url, "已上传"))
+                self.assertEqual(document, before)
+                self.assertEqual(row["legacy_number"], " 007 ")
+                self.assertEqual(self.frappe.get_all.call_args.kwargs["filters"], {
+                    "file_url": document.image, "is_private": 1, "attached_to_doctype": document.doctype,
+                    "attached_to_name": document.name, "attached_to_field": "image"})
+        self.picture._readable_image.assert_not_called()
+
+    def test_tool_report_readable_alias_wrong_binding_public_and_denied_download_never_leak(self):
+        for kind in ("mold", "plate"):
+            document, report = self.tool(kind)
+            for changed in ({"attached_to_name": "OTHER"}, {"attached_to_doctype": "Item"},
+                            {"attached_to_field": "remark"}, {"is_private": 0},
+                            {"has_permission": Mock(return_value=False)}, {"is_downloadable": Mock(return_value=False)}):
+                self.files.clear()
+                exact = self.attachment("EXACT", **({"attached_to_doctype": document.doctype,
+                    "attached_to_name": document.name, "attached_to_field": "image"} | changed))
+                self.attachment("READABLE-ALIAS", attached_to_doctype=document.doctype,
+                                attached_to_name="OTHER", attached_to_field="image")
+                with self.subTest(kind=kind, changed=changed):
+                    row = report({"company": "JF"})[1][0]
+                    self.assertEqual((row["image_url"], row["image_status"]), ("", "附件不可用"))
+                    self.assertNotIn(exact.unique_url, str(row))
+                    self.assertNotIn("EXACT", str(row))
+                    self.assertNotIn("READABLE-ALIAS", str(row))
+        self.picture._readable_image.assert_not_called()
+
+    def test_tool_invalid_historical_urls_or_file_field_permission_loss_are_masked(self):
+        for kind in ("mold", "plate"):
+            document, report = self.tool(kind)
+            for url in ("https://remote.example.invalid/a.png", "/files/a.png", "/private/files/a.png?_file=OTHER",
+                        "/private/files/%2fescaped.png", "/private/files/%2e%2e/a.png"):
+                document["image"] = url
+                self.frappe.get_all.reset_mock()
+                row = report({"company": "JF"})[1][0]
+                self.assertEqual((row["image_url"], row["image_status"]), ("", "附件不可用"))
+                self.assertNotIn(url, str(row))
+                self.frappe.get_all.assert_not_called()
+            document["image"] = "/private/files/archive.png"
+            self.attachment("EXACT", attached_to_doctype=document.doctype, attached_to_name=document.name,
+                            attached_to_field="image")
+            self.hidden_fields["File"] = {"file_url"}
+            row = report({"company": "JF"})[1][0]
+            self.assertEqual(row["image_url"], "")
+            self.hidden_fields.clear()
+            self.hidden_fields[document.doctype] = {"image"}
+            with self.assertRaises(PermissionError):
+                report({"company": "JF"})
+            self.hidden_fields.clear()
+        self.picture._readable_image.assert_not_called()
+
+    def test_tool_attachment_binding_change_or_disappearance_after_query_is_safe(self):
+        document, report = self.tool("mold")
+        self.attachment("MOVED", attached_to_doctype=document.doctype, attached_to_name="OTHER", attached_to_field="image")
+        self.frappe.get_all.side_effect = None
+        self.frappe.get_all.return_value = ["MOVED"]
+        self.assertEqual(report({"company": "JF"})[1][0]["image_url"], "")
+        self.files.clear()
+        self.assertEqual(report({"company": "JF"})[1][0]["image_url"], "")
 
     def test_company_selection_does_not_require_full_company_read(self):
         self.module.product_catalog({"company": "JF"})
