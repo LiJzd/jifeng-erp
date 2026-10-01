@@ -274,7 +274,9 @@ def smoke(company, other_company, item_group, stock_uom):
         frappe.set_user("Administrator")
         # Synthetic simulation of an already-submitted record predating this
         # schema; never certify the missing historical classification as known.
-        frappe.db.set_value("Jifeng Wage Entry", legacy.name, dict.fromkeys(SNAPSHOT_FIELDS, None), update_modified=False)
+        missing = dict.fromkeys(SNAPSHOT_FIELDS, None)
+        missing["piece_worker_qualified"] = 0  # Native Check column is NOT NULL, default zero on old records.
+        frappe.db.set_value("Jifeng Wage Entry", legacy.name, missing, update_modified=False)
         method(peer, "计时")
         frappe.set_user(manager)
         legacy = frappe.get_doc("Jifeng Wage Entry", legacy.name)
