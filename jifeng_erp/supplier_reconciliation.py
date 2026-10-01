@@ -44,12 +44,27 @@ def _invalid():
     frappe.throw("应付账簿与来源凭证不完整或范围不一致，请先核对原生账簿")
 
 
+def _unmasked(doctype, fields, parenttype=None):
+    # AP uses amount aliases: masking a source field in the native report's
+    # ref_doctype cannot reliably mask the derived balance. Follow Meta's mask
+    # permission rule from current fields, without its separate cached list.
+    if frappe.session.user == "Administrator":
+        return
+    meta = frappe.get_meta(doctype)
+    levels = set(meta.get_permlevel_access(permission_type="mask", parenttype=parenttype, user=frappe.session.user))
+    for field in fields:
+        df = meta.get_field(field)
+        if df and df.get("mask") and (df.permlevel or 0) not in levels:
+            _deny()
+
+
 def _fields(doctype, fields, parenttype=None):
     from frappe.model import get_permitted_fields
 
     permitted = set(get_permitted_fields(doctype, parenttype=parenttype, permission_type="read"))
     if not set(fields).issubset(permitted):
         _deny()
+    _unmasked(doctype, fields, parenttype)
 
 
 def _table(doctype, fieldname):
@@ -58,6 +73,7 @@ def _table(doctype, fieldname):
     levels = meta.get_permlevel_access(permission_type="read", user=frappe.session.user)
     if not field or field.fieldtype != "Table" or (field.permlevel or 0) not in levels:
         _deny()
+    _unmasked(doctype, (fieldname,))
 
 
 def _document(doctype, name, fields, *, select=False):
@@ -149,6 +165,7 @@ def _scope(company, supplier, report_date, payable_account):
         _deny()
     supplier_doc = _document("Supplier", supplier, ("name",), select=True)
     currency = company_doc.default_currency
+    _unmasked("Company", ("default_currency",))
     if not currency:
         frappe.throw("请先配置公司本币")
     currency_doc = _document("Currency", currency, ("name",), select=True)

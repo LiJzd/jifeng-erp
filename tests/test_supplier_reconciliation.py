@@ -58,6 +58,7 @@ class TestSupplierReconciliation(unittest.TestCase):
         utilities.getdate = lambda value: value if isinstance(value, date) else date.fromisoformat(value)
         self.model = types.ModuleType("frappe.model")
         self.fields_denied = {}
+        self.masked_fields, self.mask_levels, self.mask_calls = {}, {}, []
         self.model.get_permitted_fields = lambda doctype, **kwargs: self.permitted_fields[doctype] - self.fields_denied.get(doctype, set())
         self.report = types.ModuleType("frappe.desk.query_report")
         self.report.get_report_doc = Mock(return_value=Record(name="Accounts Payable"))
@@ -99,8 +100,16 @@ class TestSupplierReconciliation(unittest.TestCase):
         self.frappe.get_list = Mock(side_effect=lambda doctype, filters, **kwargs: [row.name for row in self.get_all(doctype, filters)
             if row.name not in self.hidden.get(doctype, set())])
         self.frappe.get_doc = Mock(side_effect=self.get_doc)
-        self.frappe.get_meta = lambda doctype: Record(get_field=lambda field: Record(fieldtype="Table", permlevel=0),
-            get_permlevel_access=lambda **kwargs: [0])
+        def meta(doctype):
+            def levels(**kwargs):
+                if kwargs.get("permission_type") == "mask":
+                    self.mask_calls.append((doctype, kwargs.get("parenttype")))
+                    return self.mask_levels.get(doctype, [])
+                return [0]
+            return Record(get_field=lambda field: Record(fieldtype="Table", permlevel=0,
+                mask=int(field in self.masked_fields.get(doctype, set()))), get_permlevel_access=levels,
+                get_masked_fields=Mock(return_value=[]))  # cached list may predate mask changes
+        self.frappe.get_meta = meta
         self.job_states = {}
         self.frappe.db = Record(get_value=lambda doctype, name, fields, **kwargs: self.job_states.get((doctype, name)))
         self.native_row = Record(posting_date="2026-09-29", due_date="2026-10-15", party_type="Supplier", party="SUPPLIER",
@@ -256,7 +265,45 @@ class TestSupplierReconciliation(unittest.TestCase):
                 with self.assertRaises(PermissionError):
                     self.query()
                 self.fields_denied.clear()
-        self.report.run.assert_not_called()
+                self.report.run.assert_not_called()
+
+    def test_masked_required_amounts_and_company_currency_reject_report_aliases(self):
+        for doctype, field in ((self.module.PLE, "amount"), ("Purchase Invoice", "grand_total"),
+                              ("Account", "account_currency"), ("Company", "default_currency")):
+            with self.subTest(doctype=doctype, field=field):
+                self.masked_fields[doctype] = {field}
+                with self.assertRaises(PermissionError):
+                    self.query()
+                self.report.run.assert_not_called()
+                self.masked_fields.clear()
+
+    def test_native_unmask_permission_and_administrator_follow_meta_rule(self):
+        for doctype, field in ((self.module.PLE, "amount"), ("Purchase Invoice", "grand_total"),
+                              ("Account", "account_currency"), ("Company", "default_currency")):
+            self.masked_fields[doctype] = {field}
+            self.mask_levels[doctype] = [0]
+        self.assertEqual(self.query()["rows"][0]["outstanding"], "84.57")
+        self.mask_levels.clear()
+        self.frappe.session.user = "Administrator"
+        self.assertEqual(self.query()["rows"][0]["outstanding"], "84.57")
+
+    def test_masked_journal_table_and_child_amount_need_separate_parent_mask_access(self):
+        self.masked_fields["Journal Entry"] = {"accounts"}
+        with self.assertRaises(PermissionError):
+            self.module._table("Journal Entry", "accounts")
+        self.masked_fields.clear()
+        self.masked_fields["Journal Entry Account"] = {"credit_in_account_currency"}
+        with self.assertRaises(PermissionError):
+            self.module._fields("Journal Entry Account", ("credit_in_account_currency",), parenttype="Journal Entry")
+        self.assertIn(("Journal Entry Account", "Journal Entry"), self.mask_calls)
+
+    def test_mask_revocation_during_report_rejects_even_with_stale_native_mask_list(self):
+        def revoke(*args, **kwargs):
+            self.masked_fields[self.module.PLE] = {"amount"}
+            return self.report_result
+        self.report.run.side_effect = revoke
+        with self.assertRaises(PermissionError):
+            self.query()
 
     def test_supplier_currency_or_company_permission_cannot_be_replaced_by_report_role(self):
         for doctype, name, action in (("Company", "COMPANY", "select"),
