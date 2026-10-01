@@ -2,7 +2,7 @@
 
 import ast
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from functools import wraps
 import importlib.util
@@ -107,7 +107,7 @@ class NativeDictionarySnapshot(unittest.TestCase):
             get_meta=Mock(side_effect=self.meta), get_doc=Mock(side_effect=AssertionError("as_dict controller reads are forbidden")))
         tree = ast.parse((ROOT / "jifeng_erp/personnel_changes_validation.py").read_text(encoding="utf-8"))
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in ("_serialize", "_digest")]
-        namespace = {"frappe": self.frappe, "date": date, "datetime": datetime, "Decimal": Decimal,
+        namespace = {"frappe": self.frappe, "date": date, "datetime": datetime, "timedelta": timedelta, "Decimal": Decimal,
                      "hashlib": hashlib, "json": json}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "actual_native_digest", "exec"), namespace)
         tree = ast.parse((ROOT / "jifeng_erp/product_dictionary_validation.py").read_text(encoding="utf-8"))
@@ -160,6 +160,14 @@ class NativeDictionarySnapshot(unittest.TestCase):
         left, right = Decimal("999999999999.000000001"), Decimal("999999999999.000000002")
         self.assertEqual(float(left), float(right))
         self.assertNotEqual(self.sql_digest([{"rate": left}]), self.sql_digest([{"rate": right}]))
+
+    def test_native_sql_time_keeps_sign_days_and_every_microsecond(self):
+        values = [timedelta(0), timedelta(microseconds=-1), timedelta(microseconds=1),
+                  timedelta(hours=25), timedelta(days=999999, microseconds=1),
+                  timedelta(days=999999, microseconds=2)]
+        self.assertEqual(len({self.sql_digest([{"posting_time": value}]) for value in values}), len(values))
+        self.assertNotEqual(self.sql_digest([{"posting_time": values[3]}]),
+                            self.sql_digest([{"posting_time": "1 day, 1:00:00"}]))
 
     def test_child_values_timestamps_identity_additions_and_deletions_are_detected(self):
         before = self.snapshot("Jifeng Product Profile", "QA-PROFILE")

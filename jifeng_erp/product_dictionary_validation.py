@@ -14,6 +14,7 @@ Native failures propagate after every rollback audit; no automatic retry.
 """
 
 import json
+from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -40,7 +41,11 @@ PROFILE = "Jifeng Product Profile"
 
 def _sql_row_hash(rows):
     # Native DECIMAL values must not lose low digits through float conversion.
-    return _digest([{field: {"__native_decimal__": str(value)} if isinstance(value, Decimal) else value
+    # MariaDB TIME arrives as timedelta, including negative or >24-hour values.
+    # Store its exact integer components instead of floating total_seconds().
+    return _digest([{field: {"__native_decimal__": str(value)} if isinstance(value, Decimal) else
+                     {"__native_time_delta__": [value.days, value.seconds, value.microseconds]}
+                     if isinstance(value, timedelta) else value
                      for field, value in row.items()} for row in rows])
 
 
