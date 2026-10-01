@@ -1,5 +1,25 @@
 # 验证记录
 
+## 2026-10-01 计件人员入口、当前资格和真实工资角色
+
+ac81c0d新增 `jifeng-piece-workers` 并接旧工资基础资料“计件人员”。保留已核实的关键字/查询与人员档案计件提示；旧Canvas列仍未取得，新表的编号/姓名/部门及进入工资录入操作为本次明确设计，不能当作已复刻旧列。人员候选先经过原生Employee get_list及逐文档读取、公司/员工User Permission、具体Wage.create，随后内部只读取Supplement的工资方式及审计来源；HR User不需要完整私密Supplement读取。接口只返回必要资格与已有许可Employee字段，来源编号和版本为服务器摘要，Wage/分配子行permlevel1仅System Manager读取。实际HR User原生client.get返回这两个字段为空，没有摘要内容。
+
+新增/改单/提交的计件工资核当前资格；数量及工价均0的纯计时不受计件资格限制。分配审核快照保留，但不能替代新生成工资或工资草稿提交的当前资格。已审核工资保留当时快照；早期已审核记录缺快照时不推定当时工资方式，取消仍走原生规则。默认HR User补六种来源的read/select（Job Card、Work Order、Item、Flow读取，Operation/UOM仅选择），无生产写/审核/取消/导出权。已有明确站点HR规则包括deny保持；实际迁移新增6条DocType审计注释，字段permlevel核对通过，忽略的 `piece-permission-migration-audit.json` 留存。
+
+原生r1发现业务Meta不含标准name，查询未取员工标识；2023c0c按Frappe标准字段契约补从权限过滤列表取name。r2发现旧Workbench错误要求Company.read，ec30b0d改为选择公司权限，员工公司与具体工资文档权限继续校验。r3原生字段值已被清除，但as_dict按schema输出null键，修正只要求不可读字段无值；r4模拟旧记录时错误将NOT NULL Check设null，改用旧迁移默认0。后两次为oracle/夹具修正，没有扩大读取权限。各次失败全批回滚并独立新连接核对全表计数、人员/账户/权限/补充档案、完整工资/分配子表/附加薪资、制造来源及全GL/SLE一致，失败未计通过。
+
+r5专用原生8项通过：真实纯HR User无Supplement.read但按已审核报工保存计件草稿、原生Company/Employee范围与Guest/财务角色拒绝、纯计时、重复请求只读复用、方式变化后的新建/改草稿/提交拒绝、已审核快照取消、分配快照不能绕过新工资资格、早期无快照工资取消及整批回滚。既有工资Workbench r6原生21项、多人分配至工资条/财务付款原生32项回归通过。每批独立新连接完整内容哈希及全表计数一致。证据为忽略的 `classic-pieces-native-result-r1.json`至`-r5.json`、`classic-wage-native-result-r6.json`、`classic-allocation-native-result-r1.json`。
+
+全仓718项模型、Workbench客户端24项、人员选择9项、classic跨iframe复用/脏草稿/未知结果/关闭取消、库存及人员既有协议通过，改动Python Ruff/JS语法通过。classic复用原工资标签而不在人员iframe另建工资台；选择期间保护控件与业务动作，资格异步响应后改公司/姓名或关闭的结果不覆盖新输入。迁移及完整bench build退出0，之后仅Page JS选择控件保护调整，清缓存和重启加载。实际新界面/旧表格、真实角色浏览器保存、打印/导出与并发资格变更仍待验收，Luna线程上限未解除。363个入口中226直接路由（7Page/91Report/34Create/94List），剩余119业务预览、13总经理导航、5工具/说明；目标仍未完成。
+
+## 2026-10-01 已有业务物料关联旧式库存档案
+
+12ec86d补齐明确选择已有Item并新增Profile的入口，不按旧编号/代码猜测匹配。关联先检查Profile具体create、Company.select、Item具体read及编号字段权限，保存锁定当前Item并核对原生版本，再检查已有绑定。纯Stock Manager无需Item.create/write即可关联已有物料；新建Item仍要求原生Item.create。业务Item从不save，Item名称/单位/子表/默认值、价格表和账簿保持；旧式档案的编号、代码、名称等独立保存。一个Item仍只能绑定一个Profile，已有隐藏公司的绑定拒绝不透露其档案编号或公司。UUID摘要加入所选来源；既有新建Item收据摘要保持兼容，重复关联核对原收据，改来源拒绝。已有档案不能重新绑定。
+
+库存模型24项、客户端协议及JS语法/Ruff通过。r4原生14门通过，新增纯Stock Manager关联成功、缺/过期来源版本拒绝、伪造Item改写及异公司/非法档案拒绝、重复收据与改来源拒绝、隐藏重复绑定不泄露身份；另一个真实Stock Manager带原生Item User Permission，只能关联允许的物料。未增加DocPerm或给用户越权。测试整批回滚，独立新连接全表计数无变化，完整Item与所有安装子表、ItemPrice、两类档案、Version、员工/账户/补充档案及GL/SLE哈希相同。忽略证据 `output/classic-inventory-native-result-r4.json`。
+
+客户端在原23/24字段顺序后提供“关联已有业务物料”和有权限时的“新建业务物料”操作。切换来源保留已填写档案值，所选业务物料的单位/分组只读，未知保存结果不能换来源。实际新界面、旧库存词典内部列、换算方向、导入/打印与两连接关联竞争仍未验收；本轮Luna启动受线程上限阻止，没有由主智能体代做GUI。
+
 ## 2026-10-01 两类库存档案、词典与保存响应版本
 
 95505c6新增Inventory Profile/Dictionary及联合录入API，旧物料/材料字段顺序分开，编号/代码/旧号独立；创建原生Item明确opening_stock=0、standard_rate=0。既有档案只改Profile，真实Item名称、单位、uoms/defaults/估值等保持；参考价格、换算值及停用不产生价格表、库存或财务动作。分类按公司/种类/词典类型持久保存，材料形状颜色不能写入物料；公司/绑定/请求身份不可改，原生Form也守门，档案不能删除请求身份。复制当前为清身份的新草稿，不能当作已复刻旧复制语义。创建有UUID4及载荷摘要，重复同请求读原档案，不同载荷拒绝；并发唯一冲突仍整体回滚，未做两连接建档实测。网络结果未知冻结当前草稿，只读核对后恢复，不自动重试创建；跨刷新草稿恢复未实现。本批界面结构与行为只由客户端协议检查，实际GUI及岗位浏览器保存没有通过。
