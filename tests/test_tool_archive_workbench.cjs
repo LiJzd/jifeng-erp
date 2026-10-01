@@ -58,7 +58,7 @@ const fields = {
 function blank(kind, changes = {}) {
 	const check = kind === "mold" ? "scrapped" : "retired", identity = kind === "mold" ? "mold_no" : "plate_no", float = kind === "mold" ? ["quantity", "amount"] : ["reference_cost"];
 	return { record_type: kind, name: null, version: null, values: { company: "Company A", ...Object.fromEntries(fields[kind].map((field) => [field, null])),
-		[check]: 0, legacy_copy: 0, [kind === "mold" ? "mold_date" : "plate_date"]: "2026-10-01", ...(kind === "mold" ? { quantity: 1, amount: 0 } : { assessment_score: "1", reference_cost: 0 }) },
+		[check]: 0, legacy_copy: 0, [kind === "mold" ? "mold_date" : "plate_date"]: "2026-10-01", ...(kind === "mold" ? { quantity: 1, amount: 0 } : { assessment_score: "1", reference_cost: 0, plate_no: "JF-P-12345678-1234-4234-8234-123456789abc" }) },
 		field_meta: { company: { fieldtype: "Link", options: "Company" }, ...Object.fromEntries(fields[kind].map((field) => [field, {
 			fieldtype: float.includes(field) ? "Float" : [check, "legacy_copy"].includes(field) ? "Check" : field.endsWith("_date") ? "Date" : ["maker", "modeler", "item_code", "copy_from"].includes(field) ? "Link" : ["notes", "remark"].includes(field) || field.endsWith("_reason") ? "Small Text" : "Data",
 			reqd: field === identity || kind === "mold" && field === "product_code", read_only: field === "image" }])) },
@@ -140,6 +140,8 @@ async function main() {
 	const closeYes = state.dialog.hide(); await tick(); confirmation.yes(); await closeYes; assert.equal(dialog.hidden, true);
 
 	dialog = await opening(plate); state = plate.editor;
+	assert.equal(state.nativeControls.plate_no.get_value(), blank("plate").values.plate_no); assert.equal(plate.payload(state).values.plate_no, blank("plate").values.plate_no);
+	assert.equal(plate.isDirty(), false, "server supplied number is the clean new draft default");
 	assert.equal(state.form.descendants("label").map((node) => node.textContent).join("/"), "编号/类型/产品/考核分/制版/数量/说明/库位/报废/复制");
 	assert.ok(state.form.descendants("button").find((node) => node.textContent === "选择类型").disabled); assert.equal(state.controls.notes.tag, "input"); assert.equal(state.nativeControls.plate_no.df.reqd, true);
 	for (const value of ["", "0", "-0", "0.123456789012345678901234567890", "01.0"]) { state.controls.quantity.value = value; state.controls.assessment_score.value = value;
@@ -152,7 +154,15 @@ async function main() {
 	assert.ok(state.unresolved); assert.equal(state.conflict, null);
 	const found = plate.resolve(state); const plateSaved = pack("plate", { request_id: candidate.request_id, values: { ...blank("plate").values, ...candidate.values, plate_no: "业务版1" } }); calls.at(-1).resolve({ status: "found", archive: plateSaved }); await found;
 	assert.equal(state.unresolved, false); assert.equal(state.controls.quantity.value, "-0"); assert.equal(state.controls.assessment_score.value, "0.12345678901234567890123456789"); calls.at(-1).resolve([]); await tick();
-	const fresh = plate.newDraft(state); calls.at(-1).resolve(blank("plate")); await fresh; assert.notEqual(state.requestId, candidate.request_id); assert.equal(state.archive.name, null); assert.equal(plate.isDirty(), false);
+	const nextNumber = "JF-P-87654321-4321-4321-8321-cba987654321", freshArchive = blank("plate"); freshArchive.values.plate_no = nextNumber;
+	const fresh = plate.newDraft(state); calls.at(-1).resolve(freshArchive); await fresh; assert.notEqual(state.requestId, candidate.request_id); assert.equal(state.archive.name, null); assert.equal(plate.isDirty(), false);
+	const automaticCandidate = plate.payload(state); assert.equal(automaticCandidate.values.plate_no, nextNumber);
+	const automaticSave = plate.save(state); calls.at(-1).reject(new Error("automatic number save unknown")); await automaticSave;
+	const beforeFreshRetry = calls.length; await plate.newDraft(state); assert.equal(calls.length, beforeFreshRetry, "unknown save never allocates a replacement draft number");
+	assert.equal(state.requestId, automaticCandidate.request_id); assert.equal(state.nativeControls.plate_no.get_value(), nextNumber);
+	const automaticResolve = plate.resolve(state); calls.at(-1).resolve({ status: "found", archive: pack("plate", { request_id: automaticCandidate.request_id,
+		values: { ...automaticCandidate.values } }) }); await automaticResolve; assert.equal(state.unresolved, false);
+	assert.equal(state.nativeControls.plate_no.get_value(), nextNumber); calls.at(-1).resolve([]); await tick();
 	state.controls.retired.checked = true; plate.freeze(state); assert.equal(state.nativeControls.retired_date.df.hidden, false); assert.equal(state.nativeControls.retired_date.df.reqd, true);
 	state.controls.retired.checked = false; plate.freeze(state); assert.equal(state.nativeControls.retired_date.df.hidden, true); assert.equal("retired_date" in plate.payload(state).values, false);
 	const close = dialog.hide(); await tick(); if (confirmation) confirmation.yes(); await close;

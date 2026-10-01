@@ -272,6 +272,60 @@ class TestToolArchive(unittest.TestCase):
         self.assertNotIn(("Company", "DENIED-DEFAULT", "select"), self.calls)
         self.assertTrue(all(name != "DEFAULT-EMP" for doctype, name, action in self.calls))
 
+    def test_plate_init_only_suggests_independent_uuid_business_numbers_without_writes(self):
+        before = deepcopy((self.documents, self.versions, self.series, self.snapshots))
+        views = [self.module.init_record("plate", company) for company in (None, "C-1", "C-1")]
+        numbers = [view["values"]["plate_no"] for view in views]
+        self.assertEqual(len(set(numbers)), 3)
+        for view, number in zip(views, numbers):
+            self.assertTrue(number.startswith("JF-PL-"))
+            self.assertEqual(UUID(number.removeprefix("JF-PL-")).version, 4)
+            self.assertEqual(str(UUID(number.removeprefix("JF-PL-"))), number.removeprefix("JF-PL-"))
+            self.assertIsNone(view["values"]["legacy_number"])
+            self.assertIsNone(view["name"])
+            self.assertNotIn("request_id", view)
+        self.assertIsNone(self.module.init_record("mold", "C-1")["values"]["mold_no"])
+        self.assertEqual((self.documents, self.versions, self.series, self.snapshots), before)
+
+    def test_plate_init_field_permissions_do_not_generate_hidden_or_readonly_numbers(self):
+        doctype = DOCTYPES["plate"]
+        before = deepcopy((self.documents, self.versions, self.series))
+        with patch.object(self.module, "uuid4", side_effect=AssertionError("unauthorized draft number")):
+            self.hidden[doctype, "write"] = {"plate_no"}
+            readonly = self.module.init_record("plate", "C-1")
+            self.assertTrue(readonly["field_meta"]["plate_no"]["read_only"])
+            self.assertIsNone(readonly["values"]["plate_no"])
+            self.hidden.clear()
+            self.fields[doctype]["plate_no"].read_only = 1
+            self.assertIsNone(self.module.init_record("plate")["values"]["plate_no"])
+            self.fields[doctype]["plate_no"].read_only = 0
+            self.hidden[doctype, "read"] = {"plate_no"}
+            with self.assertRaises(PermissionError):
+                self.module.init_record("plate", "C-1")
+            self.hidden.clear()
+            self.denials.add((doctype, "create"))
+            with self.assertRaises(PermissionError):
+                self.module.init_record("plate")
+        self.assertEqual((self.documents, self.versions, self.series), before)
+
+    def test_plate_default_number_save_manual_edit_and_original_receipt_replay(self):
+        candidate = self.module.init_record("plate", "C-1")
+        payload = {"record_type": "plate", "request_id": str(uuid4()),
+                   "values": candidate["values"] | {"legacy_number": " 旧号原文 "}}
+        saved = self.module.save_record(payload)
+        self.assertEqual(saved["values"]["plate_no"], candidate["values"]["plate_no"])
+        self.assertEqual(saved["values"]["legacy_number"], " 旧号原文 ")
+        self.assertNotEqual(saved["name"], saved["values"]["plate_no"])
+        edited = self.update(saved, plate_no=" EXPLICIT-BUSINESS-NUMBER ")
+        self.assertEqual(edited["values"]["plate_no"], "EXPLICIT-BUSINESS-NUMBER")
+        self.assertEqual(edited["request_digest"], saved["request_digest"])
+        before = deepcopy((self.documents, self.versions, self.series))
+        self.assertEqual(self.module.save_record(payload), edited)
+        self.assertEqual(self.module.resolve_creation(payload["request_id"], "plate", "C-1")["archive"], edited)
+        self.assertEqual(self.module.read_record(saved["name"], "plate"), edited)
+        self.module.init_record("plate", "C-1")
+        self.assertEqual((self.documents, self.versions, self.series), before)
+
     def test_raw_text_and_reference_amounts_never_update_item_or_employee(self):
         before = deepcopy((self.documents["ITEM"], self.documents["EMP"]))
         mold = self.saved(amount="12.25", quantity="2.5", remark="说明\n次行")

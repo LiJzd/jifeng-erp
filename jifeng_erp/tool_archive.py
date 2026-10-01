@@ -331,7 +331,12 @@ def init_record(record_type, company=None):
         document.company = company
         document.check_permission("create")
     _fields(document.doctype, {"company", TITLE[kind], INACTIVE[kind]})
-    return _pack(document, kind, unscoped=not company)
+    view = _pack(document, kind, unscoped=not company)
+    if kind == "plate" and not view["field_meta"]["plate_no"]["read_only"]:
+        # A draft suggestion only; no Series allocation or database write.
+        # Saving uses this explicit business number in the ordinary receipt.
+        view["values"]["plate_no"] = "JF-PL-" + str(uuid4())
+    return view
 
 
 @frappe.whitelist()

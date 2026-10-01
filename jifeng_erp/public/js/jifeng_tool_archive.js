@@ -107,7 +107,7 @@ window.JifengToolArchive = class JifengToolArchive {
 			state.form.append(cell); }
 		state.layout = this.element("div", undefined, "jfe-tool-layout"); state.imageCell = this.element("div", undefined, "jfe-tool-image"); this.buildImage(state); state.layout.append(state.form, state.imageCell);
 		const extra = this.element("section", undefined, "jfe-tool-extra"); extra.append(this.element("strong", __("业务关联与原文维护")),
-			this.element("p", __(this.modeling ? "编号、建模号、产品编号各自保存，不自动生成旧编号或匹配商品、员工。费用来源仅作追溯，当前状态不代表已付款。" : this.recordType === "mold" ? "上方模具是业务模具号，必须填写且唯一；编号原文在这里维护，不自动带入。" : "业务版种编号必须明确填写且唯一；类型、产品、编号原文各自保存，不自动带入。")));
+			this.element("p", __(this.modeling ? "编号、建模号、产品编号各自保存，不自动生成旧编号或匹配商品、员工。费用来源仅作追溯，当前状态不代表已付款。" : this.recordType === "mold" ? "上方模具是业务模具号，必须填写且唯一；编号原文在这里维护，不自动带入。" : "新增自动提供本系统的版种编号，可按实际需要修改。类型、产品及旧编号原文各自保存。")));
 		const grid = this.element("div", undefined, "jfe-tool-extra-grid"); state.companyControl = this.nativeControl(grid, "company", "公司", "Link", "Company", () => this.changeEditorCompany(state));
 		const additional = this.modeling ? [["legacy_number", "编号原文", "Data", ""], ["item_code", "关联商品", "Link", "Item"], ["plate", "关联版种档案", "Link", "Jifeng Plate"], ["expense_voucher", "实际费用来源", "Link", "Jifeng Expense Voucher"]] : [["legacy_number", "编号原文", "Data", ""], ...(this.recordType === "plate" ? [["plate_no", "业务版种编号", "Data", ""]] : []),
 			["item_code", "关联商品", "Link", "Item"], ["copy_from", "复制来源", "Link", this.doctype],

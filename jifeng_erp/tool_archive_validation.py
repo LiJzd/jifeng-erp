@@ -182,6 +182,46 @@ def smoke(company, other_company, item_group, stock_uom):
         assert all(len(view["request_digest"]) == 64 for view in (mold, plate))
         passed()
 
+        current = "plate_uuid_draft_numbers_are_independent_readonly_init_without_sql_series_or_context_writes"
+        state, readonly_counts = _contents(), _tab_counts(tables)[1]
+        queues, local = _callbacks(), _local_context()
+        drafts = [native(lambda owner=owner: init_record("plate", owner)) for owner in (None, company, company)]
+        numbers = [view["values"]["plate_no"] for view in drafts]
+        assert len(set(numbers)) == len(numbers)
+        for draft, number in zip(drafts, numbers):
+            assert number.startswith("JF-PL-")
+            identifier = number.removeprefix("JF-PL-")
+            assert UUID(identifier).version == 4 and str(UUID(identifier)) == identifier
+            assert draft["name"] is None and draft["values"]["legacy_number"] is None
+            assert not draft["field_meta"]["plate_no"]["read_only"] and "request_id" not in draft
+        assert native(lambda: init_record("mold", company))["values"]["mold_no"] is None
+        assert _contents() == state and _tab_counts(tables)[1] == readonly_counts
+        assert _callbacks() == queues and _local_context() == local
+        passed()
+
+        current = "plate_default_business_number_native_save_manual_edit_and_original_uuid_replay"
+        draft = drafts[-1]
+        automatic_request = {"record_type": "plate", "request_id": str(uuid4()),
+            "values": draft["values"] | {"legacy_number": " 旧编号原文 "}}
+        automatic = save(automatic_request)
+        assert automatic["values"]["plate_no"] == draft["values"]["plate_no"]
+        assert automatic["values"]["legacy_number"] == " 旧编号原文 "
+        assert automatic["name"] != automatic["values"]["plate_no"]
+        edited = update(automatic, plate_no=prefix + "-EXPLICIT-BUSINESS-NUMBER")
+        assert edited["values"]["plate_no"] == prefix + "-EXPLICIT-BUSINESS-NUMBER"
+        assert edited["request_digest"] == automatic["request_digest"]
+        assert _version_has(frappe.get_doc(DOCTYPES["plate"], edited["name"]), "plate_no")
+        state, readonly_counts = _contents(), _tab_counts(tables)[1]
+        queues, local = _callbacks(), _local_context()
+        assert save(automatic_request) == edited
+        assert native(lambda: resolve_creation(automatic_request["request_id"], "plate", company))["archive"] == edited
+        assert native(lambda: read_record(edited["name"], "plate")) == edited
+        native(lambda: init_record("plate", company))
+        assert _contents() == state and _tab_counts(tables)[1] == readonly_counts
+        assert _callbacks() == queues and _local_context() == local
+        evidence["plate_default_number"] = "init-only JF-PL- plus UUID4 draft suggestion; no Series allocation; business number remains explicitly editable; legacy_number independent"
+        passed()
+
         current = "uuid_replay_and_resolution_preserve_current_edits_without_series_or_version_writes"
         old_mold = mold
         mold = update(mold, location="后续库位")
