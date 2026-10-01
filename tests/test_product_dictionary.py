@@ -2,9 +2,11 @@
 
 import ast
 from copy import deepcopy
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from functools import wraps
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -86,6 +88,104 @@ class NativeDocument(Record):
             env.frappe.flags.currently_saving = ["unexpected context"]
             raise ValueError("native post-save failure")
         return self
+
+
+class NativeDictionarySnapshot(unittest.TestCase):
+    def setUp(self):
+        self.timestamp = datetime(2026, 10, 1, 10, 0, 0, 123456)
+        self.parent = {"name": "QA-PROFILE", "style": "旧原文", "creation": self.timestamp,
+                       "modified": self.timestamp, "owner": "qa@example.invalid", "private_extra_column": "kept"}
+        self.children = [Record(name="QA-MAT", parent="QA-PROFILE", parenttype="Jifeng Product Profile",
+                               parentfield="materials", idx=1, item_code="MAT", qty_per_unit=Decimal("1.00"),
+                               creation=self.timestamp, modified=self.timestamp),
+                         Record(name="QA-OP", parent="QA-PROFILE", parenttype="Jifeng Product Profile",
+                                parentfield="operations", idx=1, item_code="OP", qty_per_unit=Decimal("2.00"),
+                                creation=self.timestamp, modified=self.timestamp),
+                         Record(name="OTHER-PARENT", parent="OTHER", parenttype="Jifeng Product Profile", parentfield="materials", idx=1),
+                         Record(name="OTHER-TYPE", parent="QA-PROFILE", parenttype="OTHER", parentfield="materials", idx=1)]
+        self.frappe = types.SimpleNamespace(db=types.SimpleNamespace(sql=Mock(side_effect=self.sql)),
+            get_meta=Mock(side_effect=self.meta), get_doc=Mock(side_effect=AssertionError("as_dict controller reads are forbidden")))
+        tree = ast.parse((ROOT / "jifeng_erp/personnel_changes_validation.py").read_text(encoding="utf-8"))
+        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in ("_serialize", "_digest")]
+        namespace = {"frappe": self.frappe, "date": date, "datetime": datetime, "Decimal": Decimal,
+                     "hashlib": hashlib, "json": json}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "actual_native_digest", "exec"), namespace)
+        tree = ast.parse((ROOT / "jifeng_erp/product_dictionary_validation.py").read_text(encoding="utf-8"))
+        definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name in ("_sql_row_hash", "_document_snapshot")]
+        exec(compile(ast.Module(body=definitions, type_ignores=[]), "actual_native_snapshot", "exec"), namespace)
+        self.snapshot, self.digest, self.sql_digest = namespace["_document_snapshot"], namespace["_digest"], namespace["_sql_row_hash"]
+
+    def meta(self, doctype):
+        fields = [Record(fieldname=field, options="Shared Child Table", is_virtual=0) for field in ("materials", "operations")]
+        return Record(is_virtual=0, get_table_fields=lambda: fields if doctype == "Jifeng Product Profile" else [])
+
+    def sql(self, query, values, as_dict):
+        self.assertTrue(as_dict)
+        self.assertTrue(query.startswith("SELECT * FROM "), "snapshot must keep every physical column")
+        if len(values) == 1:
+            return [deepcopy(self.parent)] if self.parent else []
+        self.assertIn("WHERE parent=%s AND parenttype=%s AND parentfield=%s ORDER BY idx, name", query)
+        return deepcopy([row for row in self.children if (row.parent, row.parenttype, row.parentfield) == values])
+
+    def test_complete_sql_parent_and_all_child_fields_preserve_exact_identity_and_columns(self):
+        snapshot = self.snapshot("Jifeng Product Profile", "QA-PROFILE")
+        self.assertEqual(snapshot["parent"], self.sql_digest([self.parent]))
+        self.assertEqual(set(snapshot["children"]), {"materials", "operations"})
+        self.assertEqual(snapshot["children"]["materials"], self.sql_digest([self.children[0]]))
+        self.assertEqual(snapshot["children"]["operations"], self.sql_digest([self.children[1]]))
+        self.frappe.get_doc.assert_not_called()
+        self.assertEqual(self.frappe.db.sql.call_count, 3)
+
+    def test_insert_string_and_reread_datetime_representation_cannot_change_persisted_snapshot(self):
+        inserted = {"modified": str(self.timestamp)}
+        reread = {"modified": self.timestamp}
+        self.assertNotEqual(self.digest(inserted), self.digest(reread), "this is the real prior oracle mismatch")
+        before = self.snapshot("Jifeng Product Profile", "QA-PROFILE")
+        self.assertEqual(self.snapshot("Jifeng Product Profile", "QA-PROFILE"), before)
+        self.frappe.get_doc.assert_not_called()
+
+    def test_parent_modified_creation_or_extra_physical_column_changes_are_detected(self):
+        before = self.snapshot("Jifeng Product Profile", "QA-PROFILE")
+        for field, value in (("modified", self.timestamp.replace(microsecond=123457)),
+                             ("creation", self.timestamp.replace(microsecond=123457)),
+                             ("private_extra_column", "changed")):
+            original = self.parent[field]
+            self.parent[field] = value
+            with self.subTest(field=field):
+                self.assertNotEqual(self.snapshot("Jifeng Product Profile", "QA-PROFILE"), before)
+            self.parent[field] = original
+
+    def test_exact_native_decimal_low_digits_are_kept_without_float_rounding(self):
+        left, right = Decimal("999999999999.000000001"), Decimal("999999999999.000000002")
+        self.assertEqual(float(left), float(right))
+        self.assertNotEqual(self.sql_digest([{"rate": left}]), self.sql_digest([{"rate": right}]))
+
+    def test_child_values_timestamps_identity_additions_and_deletions_are_detected(self):
+        before = self.snapshot("Jifeng Product Profile", "QA-PROFILE")
+        for field, value in (("qty_per_unit", Decimal("1.1")), ("modified", self.timestamp.replace(microsecond=123457)),
+                             ("creation", self.timestamp.replace(microsecond=123457)), ("name", "DIFFERENT-CHILD")):
+            original = self.children[0][field]
+            self.children[0][field] = value
+            with self.subTest(field=field):
+                self.assertNotEqual(self.snapshot("Jifeng Product Profile", "QA-PROFILE"), before)
+            self.children[0][field] = original
+        row = self.children.pop(0)
+        self.assertNotEqual(self.snapshot("Jifeng Product Profile", "QA-PROFILE"), before)
+        self.children.insert(0, row)
+        self.children.append(Record(row | {"name": "EXTRA-CHILD", "idx": 2}))
+        self.assertNotEqual(self.snapshot("Jifeng Product Profile", "QA-PROFILE"), before)
+
+    def test_missing_source_or_virtual_child_never_looks_unchanged(self):
+        self.parent = None
+        with self.assertRaisesRegex(AssertionError, "准确的一条已保存来源"):
+            self.snapshot("Jifeng Product Profile", "QA-PROFILE")
+        self.parent = {"name": "QA-PROFILE"}
+        self.frappe.get_meta.side_effect = None
+        self.frappe.get_meta.return_value = Record(is_virtual=1, get_table_fields=lambda: [Record(
+            fieldname="materials", options="Shared Child Table", is_virtual=0)])
+        with self.assertRaisesRegex(AssertionError, "不能遗漏虚拟子表"):
+            self.snapshot("Jifeng Product Profile", "QA-PROFILE")
 
 
 class TestProductDictionary(unittest.TestCase):

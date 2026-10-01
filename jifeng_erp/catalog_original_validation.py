@@ -157,10 +157,20 @@ def smoke(company, other_company, item_group, stock_uom):
         blank = insert(PROFILE, item_code=empty_item.name, company=company)
         foreign = insert(PROFILE, item_code=foreign_item.name, company=other_company, display_name="外公司合成原文")
         archive_file = upload(profile, "profile_image", "archive")
-        alias = insert("File", file_name=prefix + "-alias.png", file_url=archive_file.file_url,
-            is_private=1, attached_to_doctype=PROFILE, attached_to_name=profile.name, attached_to_field="patent_image")
+        # Use the native attachment-copy API and a different parent. A direct
+        # same-parent File.insert cannot prove an independent wrong-field alias
+        # across framework versions with duplicate-assignment handling.
+        alias = archive_file.create_attachment_copy(attached_to_doctype=PROFILE,
+            attached_to_name=blank.name, attached_to_field="profile_image")
+        objects.append(alias)
+        records.add(("File", alias.name))
         files.append(alias)
-        assert alias.name != archive_file.name and alias.file_url == archive_file.file_url
+        assert alias.name != archive_file.name and alias.file_url == archive_file.file_url, {
+            "source_file": archive_file.name, "alias_file": alias.name,
+            "source_url": archive_file.file_url, "alias_url": alias.file_url,
+        }
+        assert (alias.attached_to_doctype, alias.attached_to_name, alias.attached_to_field, alias.is_private) == (
+            PROFILE, blank.name, "profile_image", 1)
         actor = insert("User", email=prefix.lower() + "@example.invalid", first_name="原文报告验收",
                        send_welcome_email=0, roles=[{"role": "Stock Manager"}])
         users.append(actor.name)
@@ -171,6 +181,12 @@ def smoke(company, other_company, item_group, stock_uom):
         evidence["roles"] = sorted(frappe.get_roles())
         evidence["gui_verified"] = evidence["http_image_download_verified"] = False
         evidence["field_permlevel_revocation"] = "model-tested; native metadata and DocPerm unchanged"
+        evidence["readable_alias_binding"] = {
+            "creation": "native File.create_attachment_copy, without ignore_permissions",
+            "same_private_url": True, "different_file_id": True,
+            "source_profile": profile.name, "alias_profile": blank.name, "field": "profile_image",
+            "scope": "other-profile alias; same-parent wrong-field binding is model-tested only",
+        }
 
         def read_state():
             return (_digest(_contents()), _digest(_user_contents()), _digest(_employee_contents()),
@@ -233,7 +249,7 @@ def smoke(company, other_company, item_group, stock_uom):
         assert blank_rows[0]["image_url"] in business_urls
         checks.append(current)
 
-        current = "native_file_read_restriction_does_not_use_readable_wrong_field_alias"
+        current = "native_file_read_restriction_does_not_use_readable_other_profile_alias"
         frappe.set_user("Administrator")
         assert alias.folder and frappe.db.exists("File", alias.folder)
         for name in (alias.name, alias.folder):
@@ -242,7 +258,9 @@ def smoke(company, other_company, item_group, stock_uom):
         frappe.clear_cache(user=actor.name)
         frappe.set_user(actor.name)
         assert frappe.get_doc(PROFILE, profile.name).has_permission("read")
+        assert frappe.get_doc(PROFILE, blank.name).has_permission("read")
         assert frappe.get_doc("File", alias.name).has_permission("read")
+        assert frappe.get_doc("File", alias.name).is_downloadable()
         assert all(not frappe.get_doc("File", file.name).has_permission("read")
                    and frappe.get_doc("File", file.name).is_downloadable() for file in exact)
         restricted = [row for row in read(main_item.name)["result"] if isinstance(row, dict)][0]

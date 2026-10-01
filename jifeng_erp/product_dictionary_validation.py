@@ -14,6 +14,7 @@ Native failures propagate after every rollback audit; no automatic retry.
 """
 
 import json
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import frappe
@@ -35,6 +36,33 @@ from jifeng_erp.product_dictionary import (
 
 
 PROFILE = "Jifeng Product Profile"
+
+
+def _sql_row_hash(rows):
+    # Native DECIMAL values must not lose low digits through float conversion.
+    return _digest([{field: {"__native_decimal__": str(value)} if isinstance(value, Decimal) else value
+                     for field, value in row.items()} for row in rows])
+
+
+def _document_snapshot(doctype, name):
+    """Hash native persisted rows, including every timestamp and installed child.
+
+    Insert-return controllers retain now() strings, whereas SQL rereads return
+    DATETIME objects. Compare SQL to SQL rather than as_dict representations;
+    no business, private, creation or modified column is discarded.
+    """
+    table = "`tab" + doctype.replace("`", "``") + "`"
+    rows = frappe.db.sql("SELECT * FROM " + table + " WHERE name=%s", (name,), as_dict=True)
+    assert len(rows) == 1, "原生完整行快照需要准确的一条已保存来源"
+    children = {}
+    for field in frappe.get_meta(doctype).get_table_fields():
+        assert not field.is_virtual and not frappe.get_meta(field.options).is_virtual, "原生快照不能遗漏虚拟子表"
+        child_table = "`tab" + field.options.replace("`", "``") + "`"
+        child_rows = frappe.db.sql("SELECT * FROM " + child_table
+            + " WHERE parent=%s AND parenttype=%s AND parentfield=%s ORDER BY idx, name",
+            (name, doctype, field.fieldname), as_dict=True)
+        children[field.fieldname] = _sql_row_hash(child_rows)
+    return {"parent": _sql_row_hash(rows), "children": children}
 
 
 def _native_contents():
@@ -229,8 +257,8 @@ def smoke(company, other_company, item_group, stock_uom):
                       stock_uom=stock_uom, is_stock_item=0)
         profile = insert(PROFILE, item_code=item.name, company=company,
                          **{field: words[kind]["value"] for kind, field in TYPES.items()})
-        profile_before = _digest(profile.as_dict())
-        item_before = _digest(frappe.get_doc("Item", item.name).as_dict())
+        profile_before = _document_snapshot(PROFILE, profile.name)
+        item_before = _document_snapshot("Item", item.name)
         frappe.set_user(actors["stock"])
         old = words["风格"]
         original_receipt = tuple(frappe.get_doc(DOCTYPE, old["name"]).get(field) for field in REQUEST_FIELDS)
@@ -238,8 +266,13 @@ def smoke(company, other_company, item_group, stock_uom):
         assert changed["name"] == old["name"] and changed["version"] != old["version"]
         assert tuple(frappe.get_doc(DOCTYPE, old["name"]).get(field) for field in REQUEST_FIELDS) == original_receipt
         assert _version_has(frappe.get_doc(DOCTYPE, old["name"]), "value")
-        assert _digest(frappe.get_doc(PROFILE, profile.name).as_dict()) == profile_before
-        assert _digest(frappe.get_doc("Item", item.name).as_dict()) == item_before
+        profile_after = _document_snapshot(PROFILE, profile.name)
+        item_after = _document_snapshot("Item", item.name)
+        evidence["raw_profile_item_native_rows"] = {
+            "profile_before": profile_before, "profile_after": profile_after,
+            "item_before": item_before, "item_after": item_after}
+        assert profile_after == profile_before, "词条改名改变了产品档案完整父行或子行"
+        assert item_after == item_before, "词条改名改变了共享 Item 完整父行或子行"
         words["风格"] = changed
         passed()
 

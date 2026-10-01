@@ -159,14 +159,17 @@ class TestCatalogReports(unittest.TestCase):
 
     def test_readable_same_url_alias_cannot_authorize_restricted_exact_attachment(self):
         self.profile["profile_image"] = "/private/files/archive.png"
-        exact = self.attachment("RESTRICTED", has_permission=Mock(return_value=False))
-        self.attachment("READABLE-ALIAS", attached_to_field="patent_image")
-        _, rows = self.module.product_catalog({"company": "JF"})
-        self.assertEqual(rows[0]["profile_image_url"], "")
-        self.assertEqual(rows[0]["profile_image_status"], "无附件权限")
-        self.assertNotIn("RESTRICTED", str(rows))
-        self.assertNotIn("READABLE-ALIAS", str(rows))
-        exact.is_downloadable.assert_not_called()
+        for binding in ({"attached_to_field": "patent_image"}, {"attached_to_name": "OTHER-PROFILE"}):
+            self.files.clear()
+            exact = self.attachment("RESTRICTED", has_permission=Mock(return_value=False))
+            self.attachment("READABLE-ALIAS", **binding)
+            with self.subTest(binding=binding):
+                _, rows = self.module.product_catalog({"company": "JF"})
+                self.assertEqual(rows[0]["profile_image_url"], "")
+                self.assertEqual(rows[0]["profile_image_status"], "无附件权限")
+                self.assertNotIn("RESTRICTED", str(rows))
+                self.assertNotIn("READABLE-ALIAS", str(rows))
+                exact.is_downloadable.assert_not_called()
         exact.has_permission.return_value = True
         exact.is_downloadable.return_value = False
         self.assertEqual(self.module.product_catalog({"company": "JF"})[1][0]["profile_image_url"], "")
