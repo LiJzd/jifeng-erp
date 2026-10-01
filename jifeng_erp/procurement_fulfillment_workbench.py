@@ -569,11 +569,16 @@ def _procurement_closure(graph, order):
                 if name not in selected[doctype]:
                     selected[doctype][name] = set()
                     changed = True
-            query = {RETURNS[doctype]: ["in", ids]}
-            for row in graph.records(TABLES[doctype][1], query, TABLES[doctype][2], parenttype=doctype, raw_filters=query):
-                if row["parent"] not in selected[doctype]:
-                    selected[doctype][row["parent"]] = set()
-                    changed = True
+            # Newly discovered parents have no authorized child IDs until the
+            # next pass. Native builders may omit empty IN and read all rows.
+            # The token includes IDs, so exact return-row discovery runs once
+            # those parents' complete children have been authorized.
+            if ids:
+                query = {RETURNS[doctype]: ["in", ids]}
+                for row in graph.records(TABLES[doctype][1], query, TABLES[doctype][2], parenttype=doctype, raw_filters=query):
+                    if row["parent"] not in selected[doctype]:
+                        selected[doctype][row["parent"]] = set()
+                        changed = True
         if not changed and not pending:
             break
         if sum(len(parents) for parents in selected.values()) > SOURCE_LIMIT:

@@ -933,6 +933,26 @@ class TestProcurementFulfillment(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.read()
 
+    def test_native_builder_ignoring_empty_in_cannot_expand_return_discovery(self):
+        self.receipt()
+        self.invoice()
+        self.add("Supplier", "OTHER")
+        self.po("OLD", supplier="OTHER")
+        self.line("Purchase Order", "OLD", "OLD-ROW")
+        _doc, other_receipt = self.receipt("OLDPR", supplier="OTHER")
+        other_receipt.update(purchase_order="OLD", purchase_order_item="OLD-ROW")
+        _doc, other_invoice = self.invoice("OLDPI", supplier="OTHER", ledger=False, outstanding_amount=0)
+        other_invoice.update(purchase_order="OLD", po_detail="OLD-ROW")
+        matches = self.matches
+        self.matches = lambda row, filters: matches(row, {
+            field: wanted for field, wanted in filters.items()
+            if not (isinstance(wanted, list) and wanted == ["in", []])})
+        result = self.read()
+        self.assertEqual([source["document"]["name"] for source in result["purchase_receipts"]], ["PR"])
+        self.assertEqual([source["document"]["name"] for source in result["purchase_invoices"]], ["PI"])
+        for call in self.frappe.get_list.call_args_list:
+            self.assertNotIn(["in", []], call.kwargs["filters"].values())
+
 
 if __name__ == "__main__":
     unittest.main()
