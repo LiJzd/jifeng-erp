@@ -38,7 +38,55 @@ def _blocked(action, error, point):
     assert _ledger_snapshot() == before, "拒绝操作改变了 GL/SLE"
 
 
-def _report(report, company, item=None, status=None):
+def _error_log_rows():
+    return {row.name: row for row in frappe.db.sql("SELECT * FROM `tabError Log` ORDER BY name", as_dict=True)}
+
+
+def _native_without_error_log(action, label):
+    """A successful native action must not hide a caught attachment error."""
+    from jifeng_erp.product_dictionary_validation import _sql_row_hash
+
+    before, prior = _error_log_rows(), frappe.in_test
+    try:
+        frappe.in_test = False
+        result = action()
+    finally:
+        frappe.in_test = prior
+    after = _error_log_rows()
+    assert _sql_row_hash(list(after.values())) == _sql_row_hash(list(before.values())), \
+        "成功的原生操作改变了错误日志：" + label
+    return result
+
+
+def _clean_expected_report_error(before, report, actor, evidence):
+    """Only this exact failed call's native MyISAM log; never suppress logging."""
+    from jifeng_erp.product_dictionary_validation import _sql_row_hash
+
+    after = _error_log_rows()
+    assert all(name in after and _sql_row_hash([row]) == _sql_row_hash([after[name]])
+               for name, row in before.items()), "既有错误日志发生变化，不能清理"
+    added = set(after) - set(before)
+    assert len(added) <= 1, "报告拒绝出现了无法归因的额外错误日志"
+    for name in added:
+        row = after[name]
+        assert (row.method == "Report execution failed for: " + report and row.owner == actor
+                and "query_report.py" in (row.error or "") and "PermissionError" in (row.error or "")), \
+            "错误日志并非当前原生报告的预期权限拒绝"
+        fingerprint = _sql_row_hash([row])
+        assert _sql_row_hash([_error_log_rows()[name]]) == fingerprint, "错误日志清理前发生变化"
+        previous = frappe.session.user
+        try:
+            frappe.set_user("Administrator")
+            frappe.delete_doc("Error Log", name, delete_permanently=True)
+        finally:
+            frappe.set_user(previous)
+        evidence.append({"name": name, "hash": fingerprint, "report": report, "reason": "expected_native_permission_rejection"})
+    restored = _error_log_rows()
+    assert set(restored) == set(before) and all(_sql_row_hash([row]) == _sql_row_hash([restored[name]])
+        for name, row in before.items()), "原生报告错误日志未准确恢复"
+
+
+def _report(report, company, item=None, status=None, cleaned_errors=None):
     from frappe.desk.query_report import run
 
     filters = {"company": company}
@@ -47,7 +95,13 @@ def _report(report, company, item=None, status=None):
     if status:
         filters["status"] = status
     before = _ledger_snapshot()
-    result = run(report, filters=filters, ignore_prepared_report=True)
+    logs = _error_log_rows()
+    actor = frappe.session.user
+    try:
+        result = run(report, filters=filters, ignore_prepared_report=True)
+    except frappe.PermissionError:
+        _clean_expected_report_error(logs, report, actor, cleaned_errors if cleaned_errors is not None else [])
+        raise
     assert _ledger_snapshot() == before, "报告 API 改变了 GL/SLE"
     assert not result.get("prepared_report"), "必须即时执行真实报告 API"
     return [row for row in result["result"] if isinstance(row, dict)]
@@ -158,7 +212,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
     prefix = "JF-QA-CATALOG-" + suffix
     point = "jf_catalog_" + suffix
     original_user, original_test = frappe.session.user, frappe.in_test
-    checks, users, fixtures, image_urls, files, objects = [], [], [], [], [], []
+    checks, users, fixtures, image_urls, files, objects, report_errors = [], [], [], [], [], [], []
     actual_roles = {}
     before = _ledger_snapshot()
     tables, counts_before = _tab_counts()
@@ -175,13 +229,8 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
     def paths():
         return {str(path.resolve()) for root in roots for path in root.glob(prefix + "*")}
 
-    def native(action):
-        prior = frappe.in_test
-        try:
-            frappe.in_test = False
-            return action()
-        finally:
-            frappe.in_test = prior
+    def native(action, label="native_action"):
+        return _native_without_error_log(action, label)
 
     primary = None
     _begin_rollback_only(point)
@@ -190,10 +239,13 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         frappe.in_test = True
         frappe.set_user("Administrator")
 
+        def run_report(report, owner, code=None, status=None):
+            return _report(report, owner, code, status, cleaned_errors=report_errors)
+
         def insert(doctype, **values):
             document = frappe.get_doc({"doctype": doctype, **values})
             objects.append(document)
-            native(document.insert)
+            native(document.insert, "insert:" + doctype)
             fixtures.append((doctype, document.name))
             fixtures.extend((child.doctype, child.name) for child in document.get_all_children() if child.name)
             return document
@@ -238,7 +290,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         for record, field, value in ((document, "list_price", 12), (main_mold, "amount", 14),
                                      (main_plate, "reference_cost", 18)):
             record.set(field, value)
-            native(lambda record=record: record.save(ignore_version=False))
+            native(lambda record=record: record.save(ignore_version=False), "initial_update:" + record.doctype)
             assert _version_has(record, field), "缺少档案参考值修改历史"
             assert record.docstatus == 0
         checks.append("three_native_catalogs_save_update_and_version")
@@ -253,11 +305,14 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             assert attachment.on_rollback in list(frappe.db.after_rollback._functions)
             assert Path(attachment.get_full_path()).is_file()
             parent.image = attachment.file_url
-            native(lambda: parent.save(ignore_version=False))
+            native(lambda: parent.save(ignore_version=False), "save_image:" + parent.doctype)
             return attachment
 
         own_file = upload(main, "item")
-        native(lambda: document.save(ignore_version=False))
+        native(lambda: document.save(ignore_version=False), "save_item_image_fallback:Jifeng Product Profile")
+        assert frappe.db.exists("File", {"file_url": own_file.file_url,
+            "attached_to_doctype": document.doctype, "attached_to_name": document.name,
+            "attached_to_field": "image"}), "初始档案缺少 Item 图片的原生精确附件别名"
         mold_file, plate_file = upload(main_mold, "mold"), upload(main_plate, "plate")
         foreign_mold_file = upload(foreign_mold, "foreign-mold")
         foreign_plate_file = upload(foreign_plate, "foreign-plate")
@@ -279,7 +334,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             else:
                 copied.plate_no = prefix + "-plate-copy"
                 copied.image = None
-            native(copied.insert)
+            native(copied.insert, "copy:" + copied.doctype)
             fixtures.append((copied.doctype, copied.name))
             assert copied.name != source.name and copied.docstatus == 0
             copies.append(copied)
@@ -292,7 +347,8 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         def changed(record, **values):
             current = frappe.get_doc(record.doctype, record.name)
             current.update(values)
-            return native(lambda: current.save(ignore_version=False))
+            return native(lambda: current.save(ignore_version=False),
+                          "update:" + current.doctype + ":" + ",".join(sorted(values)))
 
         for record, foreign_attachment in ((main_mold, foreign_mold_file), (main_plate, foreign_plate_file)):
             rejected(record.doctype + "_foreign_private_image_binding_denied",
@@ -365,12 +421,12 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
                 native(lambda record=record: record.save(ignore_version=False))
                 assert _version_has(record, field)
             for report in REPORTS:
-                rows = _report(report, company, code)
+                rows = run_report(report, company, code)
                 expected = role_profile.name if report in REPORTS[:2] else (
                     role_mold.name if report == REPORTS[2] else role_plate.name)
                 assert rows and {row["document"] for row in rows} == {expected}
                 rejected(kind + "_report_foreign_company_denied", lambda report=report:
-                         _report(report, other_company), frappe.PermissionError)
+                         run_report(report, other_company), frappe.PermissionError)
             for build in (lambda: profile(hidden.name, other_company),
                           lambda: mold(code, owner_company=other_company),
                           lambda: plate(code, owner_company=other_company)):
@@ -379,7 +435,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             frappe.set_user("Administrator")
 
         for report, record, attachment in ((REPORTS[2], main_mold, mold_file), (REPORTS[3], main_plate, plate_file)):
-            row = next(row for row in _report(report, company, main.name) if row["document"] == record.name)
+            row = next(row for row in run_report(report, company, main.name) if row["document"] == record.name)
             assert row["image_url"] == attachment.unique_url and row["image_status"] == "已上传"
             assert frappe.db.get_value(record.doctype, record.name, "image") == attachment.file_url
         checks.append("tool_report_private_images_use_exact_saved_parent_and_field")
@@ -408,13 +464,13 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         frappe.clear_cache(user=stock_user.name)
 
         frappe.set_user(stock_user.name)
-        product_rows = _report(REPORTS[0], company, main.name)
+        product_rows = run_report(REPORTS[0], company, main.name)
         assert len(product_rows) == 1 and product_rows[0]["document"] == document.name
         assert own_file.is_downloadable()
         allowed_images = {attachment.unique_url for attachment in own_files if attachment.is_downloadable()}
         assert product_rows[0]["image_url"] in allowed_images and product_rows[0]["image_status"] == "已上传"
         assert all(not frappe.get_doc("File", name).is_downloadable() for name in foreign_files)
-        material_rows = _report(REPORTS[1], company, main.name)
+        material_rows = run_report(REPORTS[1], company, main.name)
         assert len(material_rows) == 2
         expected_rows = {row.name: (row.uom, Decimal(str(row.qty_per_unit)), Decimal(str(row.unit_price)))
                          for row in document.materials}
@@ -428,11 +484,11 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             assert not frappe.get_doc("File", exact.name).has_permission("read")
             assert frappe.get_doc("File", alias.name).has_permission("read")
             assert frappe.get_doc("File", alias.name).is_downloadable()
-            row = next(row for row in _report(report, company, main.name) if row["document"] == record.name)
+            row = next(row for row in run_report(report, company, main.name) if row["document"] == record.name)
             assert row["image_url"] == "" and row["image_status"] == "附件不可用"
             assert exact.file_url not in str(row) and alias.name not in str(row)
             assert row["maker"] == own_employee.name
-        assert any(row["copy_from"] == main_mold.name for row in _report(REPORTS[2], company, main.name))
+        assert any(row["copy_from"] == main_mold.name for row in run_report(REPORTS[2], company, main.name))
         checks.append("report_api_exact_sources_duplicate_material_units_and_native_file_download_guard")
 
         for record, values, report, status, field in (
@@ -442,8 +498,8 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         ):
             changed(record, **values)
             assert _version_has(record, field)
-            assert record.name in {row["document"] for row in _report(report, company, main.name, status)}
-            assert record.name not in {row["document"] for row in _report(report, company, main.name, "在用")}
+            assert record.name in {row["document"] for row in run_report(report, company, main.name, status)}
+            assert record.name not in {row["document"] for row in run_report(report, company, main.name, "在用")}
         changed(main_mold, scrapped=0)
         changed(main_plate, retired=0)
         main_mold.reload()
@@ -470,13 +526,13 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
         rejected("restricted_material_item_read_denied", lambda: changed(document, materials=[
             {"item_code": raw.name, "uom": stock_uom, "qty_per_unit": 1, "unit_price": 2}]), frappe.PermissionError)
         if frappe.get_doc(document.doctype, document.name).has_permission("read"):
-            rejected("hidden_related_material_report_denied", lambda: _report(REPORTS[1], company, main.name),
+            rejected("hidden_related_material_report_denied", lambda: run_report(REPORTS[1], company, main.name),
                      frappe.PermissionError)
             material_visibility = "readable parent; hidden related material rejected with PermissionError"
         else:
             # Native User Permissions inspect child links too and can deny the
             # entire profile. Its report must then expose no recipe rows or cost.
-            assert _report(REPORTS[1], company, main.name) == []
+            assert run_report(REPORTS[1], company, main.name) == []
             checks.append("native_unreadable_parent_material_report_has_zero_rows")
             material_visibility = "native parent read denied; material report returned zero rows"
         for record in (foreign_profile, foreign_mold, foreign_plate):
@@ -491,7 +547,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
                 assert not frappe.has_permission(doctype, "write")
                 assert not frappe.has_permission(doctype, "read")
             for report in REPORTS:
-                rejected("unprivileged_report_api_denied", lambda report=report: _report(report, company),
+                rejected("unprivileged_report_api_denied", lambda report=report: run_report(report, company),
                          frappe.PermissionError)
         assert _ledger_snapshot() == before, "档案参考值/保存/历史/复制/报告改变了 GL/SLE"
         assert set(frappe.get_all("Error Log", pluck="name")) == logs_before
@@ -533,6 +589,7 @@ def smoke(company, item_group, stock_uom, other_company, alternate_uom=None):
             "images": "five tiny local private PNGs; exact Tool binding and native File.read/download tested; no HTTP download",
             "file_metadata_records_tracked": len({name for doctype, name in fixtures if doctype == "File"}),
             "hashes_before": sql_before, "hashes_after": _catalog_contents(),
+            "expected_native_report_error_cleanup": report_errors,
             "table_counts_before": counts_before, "table_counts_after": _tab_counts(tables)[1],
             "whole_ledger_before": before, "whole_ledger_after": _ledger_snapshot(),
             "material_visibility": material_visibility,

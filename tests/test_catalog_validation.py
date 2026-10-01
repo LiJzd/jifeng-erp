@@ -127,5 +127,113 @@ class TestCatalogNativeRejection(unittest.TestCase):
         self.assert_restored()
 
 
+class TestExactReportLogCleanup(unittest.TestCase):
+    def setUp(self):
+        self.rows = {"OLD": Flags(name="OLD", owner="other", method="historic", error="historic")}
+        self.before = deepcopy(self.rows)
+        self.evidence = []
+        self.frappe = types.SimpleNamespace(session=types.SimpleNamespace(user="qa-role"))
+        self.frappe.set_user = lambda user: setattr(self.frappe.session, "user", user)
+        self.frappe.delete_doc = Mock(side_effect=lambda doctype, name, **kwargs: self.rows.pop(name))
+        hashing = types.ModuleType("jifeng_erp.product_dictionary_validation")
+        hashing._sql_row_hash = lambda rows: repr(rows)
+        scope = patch.dict(sys.modules, {"jifeng_erp.product_dictionary_validation": hashing})
+        scope.start()
+        self.addCleanup(scope.stop)
+        namespace = {"frappe": self.frappe, "_error_log_rows": lambda: deepcopy(self.rows)}
+        functions("jifeng_erp/catalog_validation.py", {"_clean_expected_report_error"}, namespace)
+        self.clean = lambda: namespace["_clean_expected_report_error"](self.before, "REPORT", "qa-role", self.evidence)
+
+    def add_expected(self, **changes):
+        self.rows["NEW"] = Flags(name="NEW", owner="qa-role", method="Report execution failed for: REPORT",
+                                 error="query_report.py: frappe.exceptions.PermissionError") | changes
+        self.rows["NEW"] = Flags(self.rows["NEW"])
+
+    def test_only_exact_current_report_log_is_deleted_and_caller_restored(self):
+        self.add_expected()
+        self.clean()
+        self.assertEqual(self.rows, self.before)
+        self.frappe.delete_doc.assert_called_once_with("Error Log", "NEW", delete_permanently=True)
+        self.assertEqual(self.frappe.session.user, "qa-role")
+        self.assertEqual(self.evidence[0]["name"], "NEW")
+
+    def test_unrelated_attachment_owner_or_exception_never_deleted(self):
+        for changes in ({"method": "Error Attaching File"}, {"owner": "other"}, {"error": "query_report.py: ValidationError"}):
+            self.add_expected(**changes)
+            with self.subTest(changes=changes), self.assertRaises(AssertionError):
+                self.clean()
+            self.frappe.delete_doc.assert_not_called()
+            self.assertEqual(self.frappe.session.user, "qa-role")
+
+    def test_changed_historical_log_or_multiple_new_logs_refuses_all_deletion(self):
+        self.add_expected()
+        self.rows["OLD"].error = "changed"
+        with self.assertRaises(AssertionError):
+            self.clean()
+        self.frappe.delete_doc.assert_not_called()
+        self.rows["OLD"] = deepcopy(self.before["OLD"])
+        self.rows["ANOTHER"] = deepcopy(self.rows["NEW"])
+        with self.assertRaises(AssertionError):
+            self.clean()
+        self.frappe.delete_doc.assert_not_called()
+
+    def test_no_new_log_causes_no_write(self):
+        self.clean()
+        self.frappe.delete_doc.assert_not_called()
+        self.assertEqual(self.evidence, [])
+
+    def test_native_delete_failure_restores_caller_and_preserves_receipt(self):
+        self.add_expected()
+        self.frappe.delete_doc.side_effect = RuntimeError("delete failed")
+        with self.assertRaises(RuntimeError):
+            self.clean()
+        self.assertEqual(self.frappe.session.user, "qa-role")
+        self.assertEqual(self.evidence, [])
+        self.assertIn("NEW", self.rows)
+
+
+class TestSuccessfulNativeLogGuard(unittest.TestCase):
+    def setUp(self):
+        self.rows = {"OLD": Flags(name="OLD", error="historic")}
+        self.frappe = types.SimpleNamespace(in_test=True)
+        hashing = types.ModuleType("jifeng_erp.product_dictionary_validation")
+        hashing._sql_row_hash = lambda rows: repr(rows)
+        scope = patch.dict(sys.modules, {"jifeng_erp.product_dictionary_validation": hashing})
+        scope.start()
+        self.addCleanup(scope.stop)
+        namespace = {"frappe": self.frappe, "_error_log_rows": lambda: deepcopy(self.rows)}
+        functions("jifeng_erp/catalog_validation.py", {"_native_without_error_log"}, namespace)
+        self.native = namespace["_native_without_error_log"]
+
+    def test_success_uses_native_context_and_restores_it(self):
+        def action():
+            self.assertFalse(self.frappe.in_test)
+            return "saved"
+        self.assertEqual(self.native(action, "save"), "saved")
+        self.assertTrue(self.frappe.in_test)
+
+    def test_caught_attachment_error_stops_at_exact_action_without_deleting_log(self):
+        def action():
+            self.rows["NEW"] = Flags(name="NEW", error="attachment error")
+        with self.assertRaisesRegex(AssertionError, "update:Jifeng Product Profile:inactive"):
+            self.native(action, "update:Jifeng Product Profile:inactive")
+        self.assertIn("NEW", self.rows)
+        self.assertTrue(self.frappe.in_test)
+
+    def test_historical_log_change_cannot_pass(self):
+        with self.assertRaises(AssertionError):
+            self.native(lambda: self.rows["OLD"].update(error="changed"), "save")
+        self.assertTrue(self.frappe.in_test)
+
+    def test_expected_exception_remains_original_and_context_is_restored(self):
+        original = PermissionError("native denial")
+        def action():
+            raise original
+        with self.assertRaises(PermissionError) as result:
+            self.native(action, "denied")
+        self.assertIs(result.exception, original)
+        self.assertTrue(self.frappe.in_test)
+
+
 if __name__ == "__main__":
     unittest.main()
