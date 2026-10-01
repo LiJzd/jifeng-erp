@@ -356,6 +356,26 @@ class TestToolArchive(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.update(view, location="readonly")
 
+    def test_native_employee_select_search_projection_without_company_keeps_server_membership_guard(self):
+        # Frappe Meta.get_permitted_fieldnames(select) returns get_search_fields;
+        # company need not be in that projection even when native select is true.
+        self.hidden["Employee", "select"] = {"company"}
+        self.hidden["Employee", "read"] = {"company"}
+        self.denials.add(("Employee", "read"))
+        for kind in DOCTYPES:
+            view = self.saved(kind)
+            self.assertEqual(view["values"]["maker"], "EMP")
+            self.assertNotIn("bank", str(view))
+        self.assertIn(("Employee", "EMP", "select"), self.calls)
+        self.assertNotIn(("Employee", "EMP", "read"), self.calls)
+        self.documents["EMP"]["company"] = "C-2"
+        with self.assertRaisesRegex(ValueError, "当前公司"):
+            self.saved(mold_no="FOREIGN")
+        self.documents["EMP"]["company"] = "C-1"
+        self.denials.add(("EMP", "select"))
+        with self.assertRaises(PermissionError):
+            self.saved(mold_no="HIDDEN")
+
     def test_copy_link_does_not_copy_values_and_rejects_cycles_hidden_or_other_company(self):
         source = self.saved("plate", plate_no="SOURCE")
         target = self.saved("plate", plate_no="TARGET", copy_from=source["name"], legacy_number="独立编号")

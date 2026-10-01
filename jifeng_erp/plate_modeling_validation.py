@@ -391,7 +391,25 @@ def smoke(company, other_company, item_group, stock_uom):
         assert "design_image" not in hidden_image and hidden_image["image_state"] == {"state": "附件不可用", "url": ""}
         assert exact.file_url not in str(hidden_image) and alias.name not in str(hidden_image)
         assert native(lambda: list_image_attachments(main["name"])) == []
-        reject(lambda: update(hidden_image, design_image=exact.file_url), frappe.PermissionError)
+        # An unchanged historical URL is preserved, not newly authorized.
+        # First prove an ordinary edit keeps its stored value hidden, then
+        # clear through the real API so reattachment is an actual field change.
+        hidden_image = update(hidden_image, remarks="附件不可用时的普通备注修改")
+        assert "design_image" not in hidden_image and hidden_image["image_state"] == {"state": "附件不可用", "url": ""}
+        assert exact.file_url not in str(hidden_image) and alias.name not in str(hidden_image)
+        assert frappe.db.get_value(DOCTYPE, main["name"], "design_image") == exact.file_url
+        cleared_image = update(hidden_image, design_image=None)
+        assert cleared_image["design_image"] is None and cleared_image["image_state"] == {"state": "未上传", "url": ""}
+        assert frappe.db.get_value(DOCTYPE, main["name"], "design_image") is None
+        reject(lambda: update(cleared_image, design_image=exact.file_url), frappe.PermissionError)
+        assert native(lambda: read_record(main["name"])) == cleared_image
+        # Restore with an authorized actor and its latest version; later stale
+        # version and report gates must use this successful reattachment DTO.
+        frappe.set_user(finance)
+        main = native(lambda: read_record(main["name"]))
+        main = update(main, design_image=exact.file_url)
+        assert main["design_image"] == exact.file_url and main["image_state"] == {"state": "已上传", "url": exact.unique_url}
+        evidence["alias_denial"] = "unreadable unchanged image preserved without projection leak; real API clear, denied changed-field rebind, authorized latest-version restore"
         passed()
 
         current = "native_manufacturing_insert_server_receipt_fixed_identity_stale_version_and_rename_guards"

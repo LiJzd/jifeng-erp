@@ -153,6 +153,8 @@ def _digest(document, kind):
 
 
 def _linked(document, kind, *, lock=False):
+    from jifeng_erp.catalog_access import check_employee
+
     if document.get("item_code"):
         item = frappe.get_doc("Item", document.item_code)
         item.check_permission("read")
@@ -160,11 +162,10 @@ def _linked(document, kind, *, lock=False):
         _fields("Item", {"name"})
     for field in ("maker", "modeler") if kind == "plate" else ("maker",):
         if document.get(field):
-            employee = frappe.get_doc("Employee", document.get(field))
-            employee.check_permission("select")
-            _fields("Employee", {"name", "company"}, "select")
-            if employee.company != document.company:
-                frappe.throw("制作人员必须属于当前公司")
+            # Native select projections contain search fields, not all fields
+            # used internally for link validation. Company is checked only on
+            # the server after Employee.select; no Employee data is exported.
+            check_employee(document.get(field), document.company, "制作人员")
     source, seen = document.get("copy_from"), {document.name} if document.name else set()
     while source:
         if source in seen:
