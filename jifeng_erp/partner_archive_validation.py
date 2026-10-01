@@ -83,15 +83,19 @@ def smoke(company, other_company):
                 "profile": values}
 
     def actor(label, role, allowed_company=company, scope=None):
+        selected_roles = [role] if isinstance(role, str) else list(role)
+        assert selected_roles and all(isinstance(value, str) and value for value in selected_roles)
+        assert len(selected_roles) == len(set(selected_roles)) and "System Manager" not in selected_roles
         user = insert("User", email=prefix.lower() + "-" + label + "@example.invalid",
-                      first_name=prefix + label, send_welcome_email=0, roles=[{"role": role}])
+                      first_name=prefix + label, send_welcome_email=0,
+                      roles=[{"role": value} for value in selected_roles])
         users.append(user.name)
         insert("User Permission", user=user.name, allow="Company", for_value=allowed_company, apply_to_all_doctypes=1)
         if scope:
             insert("User Permission", user=user.name, allow=scope[0], for_value=scope[1], apply_to_all_doctypes=1)
         frappe.clear_cache(user=user.name)
         roles[label] = sorted(frappe.get_roles(user.name))
-        assert "System Manager" not in roles[label]
+        assert set(selected_roles).issubset(roles[label]) and "System Manager" not in roles[label]
         return user.name
 
     def pure(action):
@@ -174,7 +178,21 @@ def smoke(company, other_company):
         third = create(payload("实际主管", first_supplier))
         third = native(lambda: save_archive(edit(third, {"notes": "实际采购主管保存"})))
         assert third["can_write"] and _document_snapshot("Supplier", first_supplier.name) == supplier_before
-        passed("actual_purchase_manager_creates_and_updates_without_system_manager_and_supplier_mutation")
+        passed("actual_purchase_manager_creates_and_updates_profile_without_system_manager_and_supplier_mutation")
+
+        current = "actual_purchase_manager_has_no_native_supplier_create_permission"
+        manager_defaults = pure(lambda: init_archive(KIND, company))
+        assert manager_defaults["can_link_supplier"] and not manager_defaults["can_create_supplier"]
+        assert not frappe.has_permission("Supplier", "create")
+        denied_group_values = deepcopy(manager_defaults["supplier_defaults"])
+        denied_group_values.update(supplier_group=groups[0], supplier_type="Company")
+        denied_joint = {"kind": KIND, "company": company, "request_id": str(uuid4()),
+                        "supplier_create": denied_group_values,
+                        "profile": {"legacy_number": prefix + "-主管无主数据创建权",
+                                    "display_name": prefix + "-合成拒绝新供应商", "inactive": 0}}
+        rejected(lambda: save_archive(denied_joint))
+        assert not frappe.db.exists(PROFILE, {"request_id": denied_joint["request_id"]})
+        passed("actual_purchase_manager_links_existing_supplier_but_cannot_create_native_supplier")
 
         current = "actual_reader_readonly_pages_and_detail"
         frappe.set_user(reader)
@@ -217,8 +235,14 @@ def smoke(company, other_company):
             rejected(lambda options=options: query_archives(KIND, company, prefix, **options), frappe.ValidationError)
         passed("native_invalid_bool_float_whitespace_zero_large_size_and_outside_page_rejected")
 
-        current = "one_save_native_supplier_and_factory_creation"
-        frappe.set_user(manager)
+        current = "one_save_native_supplier_and_factory_creation_with_master_data_role"
+        frappe.set_user("Administrator")
+        master_manager = actor("master_manager", ["Purchase Manager", "Purchase Master Manager"])
+        frappe.set_user(master_manager)
+        assert {"Purchase Manager", "Purchase Master Manager"}.issubset(roles["master_manager"])
+        assert "System Manager" not in roles["master_manager"]
+        assert frappe.has_permission(PROFILE, "create") and frappe.has_permission(PROFILE, "write")
+        assert frappe.has_permission("Supplier", "create")
         defaults = pure(lambda: init_archive(KIND, company))
         assert defaults["can_create_supplier"] and defaults["can_link_supplier"]
         group_values = deepcopy(defaults["supplier_defaults"])
@@ -239,7 +263,7 @@ def smoke(company, other_company):
         assert create(joint_request)["name"] == joint["name"] and _contents() == repeated_before
         joint = native(lambda: save_archive(edit(joint, {"notes": "只改联合新建后的档案原文"})))
         assert _document_snapshot("Supplier", joint["supplier"]) == joint_supplier_before
-        passed("actual_purchase_manager_one_save_native_supplier_factory_idempotence_and_no_shared_supplier_edit")
+        passed("actual_purchase_manager_with_purchase_master_manager_one_save_native_supplier_factory_idempotence_and_no_shared_supplier_edit")
 
         current = "second_document_failure_rolls_back_new_supplier"
         broken_joint = deepcopy(joint_request)
