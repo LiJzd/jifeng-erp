@@ -112,7 +112,11 @@ class JifengWageWorkbench {
     async choosePieceWorker(company, employee) {
         if (this.selectionBusy || this.is_dirty()) { frappe.msgprint("请先保存或核对当前工资草稿，再选择计件人员。"); return false; }
         const previous = { company: this.value("company"), employee: this.value("employee") };
+        const locked = ["company", "employee"].map(field => ({
+            control: this.controls[field], readOnly: this.controls[field].df.read_only,
+        }));
         this.selectionBusy = true;
+        for (const { control } of locked) { control.df.read_only = true; control.refresh(); }
         try {
             const result = await frappe.call({ method: "jifeng_erp.piece_workers.select_piece_worker", args: { company, employee } });
             if (!result.message?.eligible || result.message.company !== company || result.message.employee !== employee) throw new Error("人员选择结果不匹配");
@@ -125,7 +129,10 @@ class JifengWageWorkbench {
             await this.controls.employee.set_value(employee);
             return true;
         } catch (error) { frappe.msgprint("计件人员资格核对失败，请回到计件人员重新查询。"); return false; }
-        finally { this.selectionBusy = false; }
+        finally {
+            for (const { control, readOnly } of locked) { control.df.read_only = readOnly; control.refresh(); }
+            this.selectionBusy = false;
+        }
     }
     is_dirty() { return this.rows.length > 0 || this.frozen || this.busy || Boolean(this.activeDialog && this.activeDialog.is_visible); }
     get_close_block() {
