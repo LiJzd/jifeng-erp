@@ -186,7 +186,9 @@ def smoke(company, other_company, item_group, stock_uom):
         assert wage.piece_worker_qualification_status == "已核实"
         from frappe.client import get
         visible = native(lambda: get("Jifeng Wage Entry", wage.name))
-        assert all(field not in visible for field in SNAPSHOT_FIELDS[1:3]), "hidden不能代替真正字段读取隔离"
+        # Native read permissions delete attributes; as_dict emits known schema
+        # fields as null afterward. Require absence of values, not absent keys.
+        assert all(visible.get(field) is None for field in SNAPSHOT_FIELDS[1:3]), "资格来源摘要未被字段权限清除"
         passed(current)
 
         current = "native_company_employee_user_permissions_and_guest"
