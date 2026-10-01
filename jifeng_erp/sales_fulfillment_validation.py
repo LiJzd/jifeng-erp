@@ -22,7 +22,7 @@ from jifeng_erp.diagnostics import _begin_rollback_only
 from jifeng_erp.fulfillment_validation import _preflight, _stamp
 from jifeng_erp.inventory_validation import _finish_fixture_reposts, _ledger_snapshot
 from jifeng_erp.personnel_changes_validation import _callbacks, _tab_counts
-from jifeng_erp.personnel_separation_validation import _local_context, _restore_local_context
+from jifeng_erp.personnel_separation_validation import _local_context
 from jifeng_erp.product_dictionary_validation import _native_contents, _sql_row_hash
 from jifeng_erp.sales_fulfillment_workbench import FLOW, PARENTS, TABLES, query_orders, read_order
 
@@ -223,11 +223,11 @@ def smoke(company, other_company, item_group, stock_uom):
             raise
         finally:
             def restore_nested():
-                frappe.clear_cache(user=actors["reader"])
-                for doctype, name in records:
-                    frappe.clear_document_cache(doctype, name)
-                frappe.set_user(actors["reader"])
-                _restore_local_context(saved_context)
+                # Native cache invalidations add transaction callbacks. Restore
+                # the caller's exact queues/context after all invalidations,
+                # including when an invalidation itself raises.
+                _profile_restore_caller(actors["reader"], frappe.in_test,
+                    [actors["reader"]], records, saved_callbacks, saved_context)
             _profile_audit([
                 ("nested_database_and_callbacks_rollback", lambda: _profile_rollback(nested, saved_callbacks)),
                 ("nested_owned_caches_actor_context_restore", restore_nested),
