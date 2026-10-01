@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-01 三类工装真实写入、完整清理及独立制造来源
+
+实际 classic GUI r3 已完成版种、模具、建模各一次新建、一次备注修改、一次图片引用保存，共9次成功 Save；三次原生私有图片上传与三个实际图片预览 HTTP200。每次请求先精确登记原载荷/UUID，再放行同一请求一次；服务器重读完整来源行、Version、File字段绑定、图片字节/hash/磁盘路径及全部受保护SQL、Series均通过。图片为本地3×2合成PNG，仅证明本批字节与预览，不扩大为大图上传或实际用户档案验收。模具首次因夹具缺少原生必填产品号收到确定417；原拒绝证据、无写证明、原载荷及明确补值修订保留，另用新UUID完成创建，没有减弱原生校验。
+
+清理预检的Single真实`name`字段曾与工具身份参数冲突，发生在删除登记之前；修正为独立`row_identity`后，新连接确认已知来源/File/审计/Series/保护SQL全未变。首张File实际删除随后因工具错误预期Deleted feed而停止，未commit或删磁盘；installed File.no_feed_on_delete为真。新连接完整SQL、Series、三个文件及alias证明整批回滚，原失败manifest字节保留。恢复入口只登记新receipt并再次核完整快照，不重基线；新清理使用原生权限/hooks、删除前冻结原生完整JSON、提交后核alias再删精确磁盘文件。三条来源及三个File已移除，原Series恢复，保留6条Deleted Document与3条Deleted Comment共9条原生审计；独立fresh连接再次确认全部SQL与最终receipt一致，源基线除精确审计及既有Admin/session活动外恢复，三个私有文件不存在。36项ignored夹具模型由root独立通过。证据`output/tool_gui_mutation_34d031243547_r3/cleanup-preflight-error-fresh.json`、`cleanup-first-delete-rollback-fresh.json`、`manifest-cleanup-recovery-27158e5300f4.json`、`cleanup-independent-fresh.json`；不声称所有表计数变化为零。
+
+`d558657`修复销售履行漏查合法无工单Manufacture：保留工单树，另返回准确`independent_manufacture_entries`成品行。Stock Entry及Flow材料完整原生子行、其他关联Flow/订单行/客户/工单进入权限、字段及末尾raw membership重核，坏父子身份或来源变化整体拒绝；原料、拆解、重新包装与委外发退料不冒充成品。56项销售API模型加原13项native-helper模型通过，root全1152模型通过。独立制造实际原生提交及新版导航GUI尚待，不计旧销售跟踪或整模块验收。原生sales r1/r2因BOM夹具缺100%成本分配及明确启用失败；r3已通过两SO行、Flow、两WO、三个Manufacture与实际成品/原料库存核对，后在验收脚本nested callback恢复检查失败。`bd981dd`复用既有caller恢复顺序，清缓存后在finally恢复精确callback队列/上下文，16项helper及14项Catalog模型通过；r4整套21门原生通过，包括完整制造库存、发货/库存发票、精确退货、收款、无PLE草稿反向来源、跨客户隔离、隐藏来源、取消及持久重过账状态。四轮独立连接均确认选定完整来源/子表/权限/Series及员工、账号、账簿、全表计数恢复，失败r1–r3保留且不计通过。证据`classic-sales_fulfillment-native-result-r1.json`至`-r4.json`；重过账仅状态协议，不是worker运行，尚缺多币种、字段高等级、双连接及实际销售GUI。
+
+`00f919f`令工装和建模上传器在原生上传前逐文件设置optimize=false；仅隐藏优化按钮不足以关闭原生大图默认压缩。201/301KB客户端协议已验证，实际大图GUI未验。`9b43df6`顶部已按旧站证据改为当前“主页→模块→页面”面包屑，内部缓存及显式关闭守护模型通过；完整build退出0、清缓存并重启至bd981dd，实际GUI续验中。用户暂不清楚原抓取保存目录，已有历史读取记录未发现HTML/HAR完整导出；旧站本轮登录响应仍未知，不能以后台或新界面代替旧操作证据。
+
 ## 2026-10-01 版种默认编号r3及销售履行后台
 
 Luna离线CLI独立session完成r3：实际classic版种录入，两次init HTTP200、两个canonical UUID4默认业务号不同且响应均匹配DOM，上方编号只读、编号原文可编辑；最终modal0、公司/关键词/空列表保留。无保存或上传。独立r3 fresh audit保护业务/权限/员工/账簿hash全一致，仅Admin.last_active/last_login及登录Sessions/Activity各+1。socket.io:9000有4次连接拒绝；初始导航未单独监听pageerror，不能称所有console/页面错误为0。v2 GUI夹具prepare先因运行cwd、后因SQL TIME驱动timedelta类型失败，均未创建业务或manifest；以bench/sites运行并精确保存带符号微秒后prepare成功，仅本地3张小PNG与manifest，19无DB夹具模型通过。实际Save/Upload及原生清理仍在执行，不计通过。
