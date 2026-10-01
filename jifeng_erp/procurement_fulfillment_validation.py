@@ -227,14 +227,29 @@ def _contents():
         "Repost Item Valuation", "Repost Payment Ledger", "Repost Accounting Ledger", "Stock Ledger Entry", "GL Entry",
         "DocType", "DocField", "DocPerm", "Custom DocPerm", "Custom Field", "Property Setter", "Error Log",
         "Communication", "Email Queue", "Notification Log", "Activity Log", "Stock Reservation Entry",
-        "Role", "User Type", "User Group", "Global Defaults",
+        "Role", "User Type", "User Group", "Global Defaults", "Buying Settings", "Stock Settings",
     }
     doctypes = {doctype for doctype in doctypes if frappe.db.exists("DocType", doctype)}
+    metadata = {doctype: frappe.get_meta(doctype) for doctype in doctypes}
     for doctype in tuple(doctypes):
-        doctypes.update(field.options for field in frappe.get_meta(doctype).get_table_fields())
-    result.update({doctype: _sql_row_hash(frappe.db.sql("SELECT * FROM `tab" + doctype.replace("`", "``")
-        + "` ORDER BY name", as_dict=True)) for doctype in sorted(doctypes)})
-    result["Singles"] = _sql_row_hash(frappe.db.sql("SELECT * FROM `tabSingles` ORDER BY doctype, field", as_dict=True))
+        meta = metadata[doctype]
+        assert not meta.is_virtual, "完整采购 SQL 快照不能遗漏虚拟 DocType：" + doctype
+        for field in meta.get_table_fields(include_computed=True):
+            child = frappe.get_meta(field.options)
+            assert not field.is_virtual and child.istable and not child.issingle and not child.is_virtual, "完整采购 SQL 快照需要实体子表：" + doctype + "." + field.fieldname
+            metadata[field.options] = child
+    # Single values have no tab<DocType> table. Keep all tabSingles columns and
+    # all Single doctypes (including settings outside the declared scope), plus
+    # an explicit per-Single hash for the declared settings. Their Table fields
+    # still live in physical child tables and are audited above/below.
+    singles = frappe.db.sql("SELECT * FROM `tabSingles` ORDER BY doctype, field", as_dict=True)
+    result["Singles"] = _sql_row_hash(singles)
+    for doctype, meta in sorted(metadata.items()):
+        if meta.issingle:
+            result[doctype] = _sql_row_hash([row for row in singles if row["doctype"] == doctype])
+        else:
+            assert frappe.db.table_exists(doctype), "完整采购 SQL 快照缺少实体表：" + doctype
+            result[doctype] = _sql_row_hash(frappe.db.sql("SELECT * FROM `tab" + doctype.replace("`", "``") + "` ORDER BY name", as_dict=True))
     if frappe.db.table_exists("DefaultValue"):
         result["DefaultValue"] = _sql_row_hash(frappe.db.sql("SELECT * FROM `tabDefaultValue` ORDER BY name", as_dict=True))
     return result

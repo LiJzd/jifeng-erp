@@ -3,8 +3,10 @@
 import ast
 from collections import Counter
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+import hashlib
+import json
 from pathlib import Path
 import sys
 import types
@@ -349,6 +351,111 @@ class TestNativeProcurementSourceOracles(unittest.TestCase):
         for value in ("123456789012345.123456788", "Infinity", "NaN"):
             with self.assertRaises(AssertionError):
                 verify({"name": "EXACT", "amount": value}, native, {"name", "amount"})
+
+
+class TestNativeProcurementContents(unittest.TestCase):
+    """Run real snapshot code/hashes against physical versus Single metadata."""
+
+    def setUp(self):
+        self.queries, self.meta_reads = [], []
+        self.meta = {}
+        def metadata(name, single=False, child=False, virtual=False, fields=()):
+            def table_fields(include_computed=False):
+                self.meta_reads.append((name, include_computed))
+                return fields
+            self.meta[name] = types.SimpleNamespace(issingle=int(single), istable=int(child), is_virtual=int(virtual), get_table_fields=table_fields)
+        metadata("Purchase Order", fields=[Row(fieldname="items", options="Purchase Order Item", is_virtual=0)])
+        metadata("Purchase Order Item", child=True)
+        metadata("Global Defaults", single=True)
+        metadata("Buying Settings", single=True, fields=[Row(fieldname="owned_rules", options="Buying Rule", is_virtual=0)])
+        metadata("Buying Rule", child=True)
+        metadata("Stock Settings", single=True)
+        self.single_rows = [Row(doctype="Global Defaults", field="default_currency", value="CNY"),
+            Row(doctype="Buying Settings", field="pr_required", value="No"),
+            Row(doctype="Buying Settings", field="raw_note", value="  原始采购文字  "),
+            Row(doctype="Stock Settings", field="auto_reserve_stock", value="0"),
+            Row(doctype="Unlisted Settings", field="unlisted_flag", value="unchanged")]
+        self.tables = {"Purchase Order": [Row(name="PO", modified=datetime(2026, 10, 1, 8, 0), company="A")],
+            "Purchase Order Item": [Row(name="PO-L", parent="PO", parenttype="Purchase Order", parentfield="items", idx=1,
+                modified=datetime(2026, 10, 1, 8, 0), qty=Decimal("1.000000000000000001"))],
+            "Buying Rule": [Row(name="RULE", parent="Buying Settings", parenttype="Buying Settings", parentfield="owned_rules",
+                idx=1, raw_word="原始子字段")], "DefaultValue": [Row(name="DEFAULT", parent="USER", defkey="key", defvalue="value")]}
+        frappe = types.SimpleNamespace(db=types.SimpleNamespace(sql=self.sql,
+            exists=lambda kind, name: kind == "DocType" and name in self.meta,
+            table_exists=lambda kind: kind in self.tables), get_meta=self.meta.__getitem__)
+        namespace = {"frappe": frappe, "PARENTS": {"Purchase Order": ()}, "TABLES": {"Purchase Order": ("items", "Purchase Order Item")},
+            "EXTRAS": {}, "_native_contents": lambda: {"__Auth": "native-auth", "Series": "native-series"},
+            "datetime": datetime, "date": date, "timedelta": timedelta, "Decimal": Decimal, "hashlib": hashlib, "json": json}
+        load_functions("jifeng_erp/personnel_changes_validation.py", {"_digest", "_serialize"}, namespace)
+        load_functions("jifeng_erp/product_dictionary_validation.py", {"_sql_row_hash"}, namespace)
+        load_functions(HELPER, {"_contents"}, namespace)
+        self.snapshot, self.row_hash = namespace["_contents"], namespace["_sql_row_hash"]
+
+    def sql(self, query, as_dict):
+        self.queries.append(query)
+        self.assertTrue(as_dict)
+        if query == "SELECT * FROM `tabSingles` ORDER BY doctype, field":
+            return deepcopy(sorted(self.single_rows, key=lambda row: (row.doctype, row.field)))
+        kind = query.split("`tab", 1)[1].split("`", 1)[0]
+        if kind not in self.tables:
+            raise AssertionError("Single/virtual/uninstalled entity table requested: " + kind)
+        self.assertEqual(query, "SELECT * FROM `tab" + kind + "` ORDER BY name")
+        return deepcopy(sorted(self.tables[kind], key=lambda row: row.name))
+
+    def test_single_metadata_reads_complete_singles_and_real_children_without_nonexistent_single_tables(self):
+        result = self.snapshot()
+        self.assertEqual(result["Singles"], self.row_hash(sorted(self.single_rows, key=lambda row: (row.doctype, row.field))))
+        for kind in ("Global Defaults", "Buying Settings", "Stock Settings"):
+            self.assertEqual(result[kind], self.row_hash([row for row in self.single_rows if row.doctype == kind]))
+            self.assertFalse(any("`tab" + kind + "`" in query for query in self.queries))
+        self.assertEqual(result["Buying Rule"], self.row_hash(self.tables["Buying Rule"]))
+        self.assertEqual(result["DefaultValue"], self.row_hash(self.tables["DefaultValue"]))
+        self.assertEqual((result["__Auth"], result["Series"]), ("native-auth", "native-series"))
+        self.assertEqual(sum("`tabSingles`" in query for query in self.queries), 1)
+        self.assertIn(("Buying Settings", True), self.meta_reads)
+
+    def test_same_count_single_including_unlisted_raw_field_or_child_contents_change_is_detected(self):
+        before = self.snapshot()
+        for index, value in ((0, "USD"), (1, "Yes"), (2, "原始采购文字"), (4, "changed")):
+            with self.subTest(single=self.single_rows[index].doctype):
+                row, original = self.single_rows[index], self.single_rows[index].value
+                row["value"] = value
+                after = self.snapshot()
+                self.assertNotEqual(after["Singles"], before["Singles"])
+                if row.doctype in self.meta:
+                    self.assertNotEqual(after[row.doctype], before[row.doctype])
+                row["value"] = original
+        self.tables["Buying Rule"][0]["raw_word"] = "改动"
+        self.assertNotEqual(self.snapshot()["Buying Rule"], before["Buying Rule"])
+        self.tables["Purchase Order Item"][0]["qty"] = Decimal("1.000000000000000002")
+        self.assertNotEqual(self.snapshot()["Purchase Order Item"], before["Purchase Order Item"])
+
+    def test_virtual_parent_or_computed_child_not_silently_omitted_from_complete_sql_audit(self):
+        self.meta["Purchase Order"].is_virtual = 1
+        with self.assertRaisesRegex(AssertionError, "虚拟 DocType"):
+            self.snapshot()
+        self.meta["Purchase Order"].is_virtual = 0
+        for change in (lambda: setattr(self.meta["Buying Rule"], "is_virtual", 1),
+                       lambda: setattr(self.meta["Buying Rule"], "issingle", 1),
+                       lambda: setattr(self.meta["Buying Rule"], "istable", 0),
+                       lambda: self.meta["Buying Settings"].get_table_fields(True)[0].update(is_virtual=1)):
+            with self.subTest(change=change):
+                child = self.meta["Buying Rule"]
+                child.is_virtual, child.issingle, child.istable = 0, 0, 1
+                self.meta["Buying Settings"].get_table_fields(True)[0]["is_virtual"] = 0
+                change()
+                with self.assertRaisesRegex(AssertionError, "实体子表"):
+                    self.snapshot()
+
+    def test_missing_physical_parent_or_child_table_fails_rather_than_reduces_audit_scope(self):
+        for kind in ("Purchase Order", "Buying Rule"):
+            with self.subTest(kind=kind):
+                saved = self.tables.pop(kind)
+                try:
+                    with self.assertRaisesRegex(AssertionError, "缺少实体表"):
+                        self.snapshot()
+                finally:
+                    self.tables[kind] = saved
 
 
 class TestNativeProcurementNestedCleanup(unittest.TestCase):
