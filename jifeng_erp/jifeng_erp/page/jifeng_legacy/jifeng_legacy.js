@@ -166,6 +166,11 @@ const JIFENG_LIVE_ROUTES = {
 	日志: { 服务器操作日志: "Activity Log", 操作日志: "Activity Log" },
 };
 
+const JIFENG_LIVE_CATALOGS = {
+	物料: { 浏览: "物料" },
+	材料: { 浏览: "材料" },
+};
+
 const JIFENG_LIVE_PAGES = {
 	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers" },
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
@@ -401,6 +406,15 @@ class JifengLegacyWorkspace {
 	}
 
 	openPage(name, moduleName) {
+		const inventoryCatalog = JIFENG_LIVE_CATALOGS[moduleName]?.[name];
+		if (inventoryCatalog) {
+			if (!this.formalBridge || !window.JifengInventoryCatalog) {
+				frappe.msgprint(__("浏览页面未能加载，请刷新后重试。"));
+				return;
+			}
+			this.formalBridge.open({ title: name, module: moduleName, kind: "catalog", inventoryCatalog });
+			return;
+		}
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
 			const route = typeof livePage === "string" ? [livePage] : [livePage.name, livePage.mode];
