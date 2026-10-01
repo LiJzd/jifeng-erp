@@ -40,7 +40,8 @@ class Dialog {
 	hide() { this.hidden = true; this.on_hide?.(); }
 }
 class FileUploader {
-	constructor(options) { this.options = options; this.dialog = new Dialog(); this.uploader = { files: [{ private: true, file_obj: {} }] }; this.nativeWrites = 0; uploads.push(this); }
+	constructor(options) { this.options = options; this.dialog = new Dialog(); this.uploader = { files: [{ private: true, file_obj: {} }] }; this.nativeWrites = 0; this.nativeHidden = 0;
+		this.dialog.on_hide = () => { this.nativeHidden++; }; uploads.push(this); }
 	upload_files() { this.nativeWrites++; return Promise.resolve(); } // Native resolves before its HTTP response callback.
 }
 const window = { addEventListener(name, action) { listeners.set(action, name); }, removeEventListener(_, action) { listeners.delete(action); } };
@@ -132,13 +133,23 @@ async function main() {
 	bench.acceptCurrent(state); await confirmation.yes(); assert.equal(state.controls.display_name.value, " 另一人改名 "); assert.equal(bench.isDirty(), false);
 	assert.equal(calls.filter((call) => call.options.method.endsWith("save_archive")).length, posts); calls.at(-1).resolve([]); await tick();
 
+	// Bootstrap X hides the uploader directly, bypassing the overridden hide method.
+	const cancelling = bench.uploadImage(state, "profile_image"); calls.at(-1).resolve([attachment({ name: "OLDER" })]); await cancelling;
+	const cancelledUploader = uploads.at(-1); cancelledUploader.uploader.files = [];
+	const imagesBeforeCancel = JSON.stringify(state.imageValues);
+	cancelledUploader.dialog.hidden = true; cancelledUploader.dialog.on_hide();
+	assert.equal(cancelledUploader.nativeHidden, 1, "native hidden callback still runs");
+	assert.equal(cancelledUploader.nativeWrites, 0); assert.equal(bench.getCloseBlock(), "");
+	assert.equal(state.uploadUnresolved, false); assert.equal(state.saveButton.disabled, false);
+	assert.equal(JSON.stringify(state.imageValues), imagesBeforeCancel, "cancel without upload preserves both image values");
+
 	// Native upload promise resolves early: only exact File callback or explicit read-only adoption unlocks it.
 	const uploading = bench.uploadImage(state, "profile_image"); assert.equal(calls.at(-1).options.method, "jifeng_erp.product_archive.list_image_attachments");
 	calls.at(-1).resolve([attachment({ name: "OLDER" })]); await uploading; const uploader = uploads.at(-1);
 	assert.equal(uploader.options.make_attachments_public, 0); assert.equal(uploader.options.allow_toggle_private, false); assert.equal(uploader.options.disable_file_browser, true); assert.equal(uploader.options.allow_web_link, false);
 	assert.equal(uploader.options.docname, "PROFILE-1"); assert.equal(uploader.options.fieldname, "profile_image"); assert.equal(uploader.options.doctype, "Jifeng Product Profile");
 	await uploader.upload_files(); assert.match(bench.getCloseBlock(), /正在读取、保存或上传/); assert.equal(state.imageValues.profile_image, null, "early resolution is not an upload result");
-	uploader.dialog.hide(); assert.equal(state.uploadUnresolved, true); assert.equal(state.images.profile_image.resolveButton.hidden, false);
+	uploader.dialog.hidden = true; uploader.dialog.on_hide(); assert.equal(state.uploadUnresolved, true); assert.equal(state.images.profile_image.resolveButton.hidden, false);
 	const unknownUploadCount = uploader.nativeWrites; await uploader.upload_files(); assert.equal(uploader.nativeWrites, unknownUploadCount, "native upload cannot be retried after any POST attempt");
 	const none = bench.resolveUpload(state); calls.at(-1).resolve([attachment({ name: "OLDER" })]); await none; assert.ok(state.uploadUnresolved);
 	const candidates = bench.resolveUpload(state); calls.at(-1).resolve([attachment({ name: "OLDER" }), attachment()]); await candidates;

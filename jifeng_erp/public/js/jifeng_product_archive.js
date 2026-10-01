@@ -592,8 +592,21 @@ window.JifengProductArchive = class JifengProductArchive {
 				} catch { state.uploadUnresolved = true; this.freeze(state); return Promise.resolve(); }
 			};
 			const hide = uploader.dialog.hide.bind(uploader.dialog);
-			uploader.dialog.hide = () => { upload.open = false; if (upload.started && !upload.known) { state.uploadUnresolved = true; state.message.textContent = __("图片上传结果尚未确认，请核对上传结果。"); }
-				hide(); this.freeze(state); };
+			const finish = () => {
+				if (!upload.open || state.upload !== upload) return;
+				upload.open = false;
+				if (upload.started && !upload.known) {
+					state.uploadUnresolved = true; state.message.textContent = __("图片上传结果尚未确认，请核对上传结果。");
+				}
+				this.freeze(state);
+			};
+			// Bootstrap X/backdrop closes the modal without calling Dialog.hide.
+			// The native hidden lifecycle handles every close path and keeps its callback.
+			const onHide = uploader.dialog.on_hide;
+			uploader.dialog.on_hide = function (...args) {
+				try { onHide?.apply(this, args); } finally { finish(); }
+			};
+			uploader.dialog.hide = () => { finish(); hide(); };
 		} catch {
 			if (state.upload && !state.upload.started) { state.upload.open = false; state.upload = null; }
 			state.message.textContent = __("图片上传窗口未能打开，当前图片保持原状，请重试。");
