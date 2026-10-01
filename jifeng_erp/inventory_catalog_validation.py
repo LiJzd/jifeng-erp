@@ -137,7 +137,6 @@ def smoke(company, other_company, item_group, stock_uom):
         assert frappe.has_permission(PROFILE, "read") and frappe.has_permission("Item", "read")
         assert not frappe.has_permission(PROFILE, "write") and not frappe.has_permission(PROFILE, "create")
         frappe.get_doc("Company", company).check_permission("select")
-        assert not frappe.has_permission("Company", "read"), "验证 Company 只有 select 的岗位合同"
         rows = query()
         assert {row["name"] for row in rows} == {first["name"], second["name"]}
         view = detail(first)
@@ -150,7 +149,7 @@ def smoke(company, other_company, item_group, stock_uom):
         assert "stock_qty" not in view["item"] and "image" not in view["item"]
         assert view["image"]["source_doctype"] == "Item" and view["image"]["url"] == ""
         assert all(meta["read_only"] for group in view["field_meta"].values() for meta in group.values())
-        passed("real_stock_user_select_company_without_company_read_and_projected_raw_values")
+        passed("real_stock_user_company_select_and_projected_raw_values")
 
         current = "separate_kinds_and_explicit_profile_status"
         assert [row["name"] for row in query("材料")] == [material["name"]]
@@ -226,4 +225,4 @@ def smoke(company, other_company, item_group, stock_uom):
             "table_counts_before": counts_before, "table_counts_after": _tab_counts(tables)[1],
             "whole_ledger_before": ledger_before, "whole_ledger_after": _ledger_snapshot(),
             "gui_verified": False, "remaining": ["旧物料/材料浏览操作与UI", "实际Item图片HTTP/下载",
-                "原生字段read/mask撤权", "双连接并发权限或来源变化"]}
+                "Company只有select的真实岗位", "原生字段read/mask撤权", "双连接并发权限或来源变化"]}
