@@ -6,20 +6,37 @@ from jifeng_erp.workflow import recipe_totals
 
 
 class JifengProductProfile(Document):
+    def before_rename(self, old, new, merge=False):
+        # autoname field:item_code would let native force rename rewrite the
+        # frozen Item binding without going through validate().
+        frappe.throw("产品档案主键不能重命名，请修改档案原文名称")
+
+    def before_insert(self):
+        from jifeng_erp.product_archive import before_insert_profile
+
+        before_insert_profile(self)
+
     def validate(self):
         if not self.is_new():
             before = self.get_doc_before_save()
             if not before or any(before.get(field) != self.get(field) for field in ("company", "item_code")):
                 frappe.throw("已保存产品档案的公司和业务商品不能改绑")
+            if any(before.get(field) != self.get(field) for field in ("request_id", "request_digest", "creation_mode")):
+                frappe.throw("产品档案新建追溯身份不能修改")
+        else:
+            before = None
         item = self._check_reference("Item", self.item_code, "read")
         self._check_reference("Company", self.company)
         self._check_reference("Supplier", self.supplier)
-        if self.get("profile_image"):
-            # The existing archive contract requires a saved document, exact
-            # private File/field binding and the caller's native File.read.
-            from jifeng_erp.personnel_archive import _image
+        if any(self.get(field) for field in ("request_id", "creation_mode", "category", "category_detail")) or (
+                before and any(before.get(field) for field in ("category", "category_detail"))):
+            from jifeng_erp.product_archive import validate_record
 
-            _image(self, "profile_image", self.profile_image)
+            validate_record(self)
+        if self.get("profile_image") or self.get("patent_image"):
+            from jifeng_erp.product_archive import validate_images
+
+            validate_images(self)
         if self.bom:
             self._get_bom()
         for row in self.get("materials") or []:

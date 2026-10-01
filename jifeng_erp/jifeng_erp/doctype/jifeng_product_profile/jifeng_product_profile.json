@@ -100,13 +100,15 @@
   {"fieldname": "old_number", "fieldtype": "Data", "label": "旧号"},
   {"fieldname": "major_category", "fieldtype": "Data", "label": "大类", "in_list_view": 1},
   {"fieldname": "minor_category", "fieldtype": "Data", "label": "小类"},
+  {"fieldname": "category", "fieldtype": "Link", "label": "类别主项来源", "options": "Jifeng Product Category", "no_copy": 1, "description": "本系统明确类别关联；改选时仅快照大类名称，不推导旧代码、材质或单位。历史原文不随类别改名。"},
+  {"fieldname": "category_detail", "fieldtype": "Link", "label": "类别明细来源", "options": "Jifeng Product Category Detail", "no_copy": 1, "description": "显式选择本公司当前大类下未停用明细；仅快照小类名称。"},
   {"fieldname": "brand", "fieldtype": "Data", "label": "品牌"},
   {"fieldname": "style", "fieldtype": "Data", "label": "风格"},
   {"fieldname": "source", "fieldtype": "Data", "label": "来源"},
   {"fieldname": "design_section", "fieldtype": "Section Break", "label": "设计与专利"},
   {"fieldname": "shared_version", "fieldtype": "Data", "label": "共版"},
   {"fieldname": "patent_number", "fieldtype": "Data", "label": "专利号"},
-  {"fieldname": "patent_image", "fieldtype": "Attach Image", "label": "专利图片"},
+  {"fieldname": "patent_image", "fieldtype": "Attach Image", "label": "专利图片", "read_only_depends_on": "eval:doc.__islocal", "description": "先保存档案再上传精确绑定本字段的私有图片；未修改历史值可保留但不自动授权下载。"},
   {"fieldname": "designer", "fieldtype": "Data", "label": "设计员"},
   {"fieldname": "pattern_maker", "fieldtype": "Data", "label": "打版员"},
   {"fieldname": "modeler", "fieldtype": "Data", "label": "建模员"},
@@ -158,7 +160,10 @@
    "read_only": 1,
    "options": "Company:company:default_currency",
    "precision": "6"
-  }
+  },
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "新建请求身份", "hidden": 1, "read_only": 1, "unique": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "request_digest", "fieldtype": "Data", "label": "初始请求摘要", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "creation_mode", "fieldtype": "Select", "label": "业务商品创建来源", "options": "\nnew_item\nexisting_item\nnative_existing_item", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
  ],
  "field_order": [
   "identity_section",
@@ -182,6 +187,8 @@
   "old_number",
   "major_category",
   "minor_category",
+  "category",
+  "category_detail",
   "brand",
   "style",
   "source",
@@ -208,7 +215,10 @@
   "materials",
   "operations",
   "material_unit_cost",
-  "processing_unit_cost"
+  "processing_unit_cost",
+  "request_id",
+  "request_digest",
+  "creation_mode"
  ],
  "search_fields": "item_code,supplier_product_code,old_number,major_category,minor_category,patent_number,specification",
  "allow_import": 1

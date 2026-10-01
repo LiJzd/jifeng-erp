@@ -44,7 +44,9 @@ class TestCatalogProfiles(unittest.TestCase):
         self.references = {}
         self.frappe = types.ModuleType("frappe")
         self.frappe.get_doc = Mock(side_effect=lambda doctype, name: self.references[doctype, name])
-        self.frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
+        self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
+        self.frappe.PermissionError, self.frappe.DoesNotExistError = PermissionError, LookupError
+        self.frappe.get_all = Mock(return_value=[])
         self.frappe.whitelist = lambda **kwargs: lambda function: function
         self.frappe.db = types.SimpleNamespace(get_value=Mock())
         utils = types.ModuleType("frappe.utils")
@@ -66,12 +68,14 @@ class TestCatalogProfiles(unittest.TestCase):
                                       "jifeng_erp.personnel_separation": separation,
                                       "jifeng_erp.archive_versions": versions}):
             archive = load_module("archive_image_under_test", "jifeng_erp/personnel_archive.py")
+            product_archive = load_module("product_archive_image_under_test", "jifeng_erp/product_archive.py")
             access = load_module("jifeng_erp.catalog_access", "jifeng_erp/catalog_access.py")
             with patch.dict(sys.modules, {"jifeng_erp.catalog_access": access}):
                 self.mold_module = load_module("mold_under_test", "jifeng_erp/jifeng_erp/doctype/jifeng_mold/jifeng_mold.py")
                 self.plate_module = load_module("plate_under_test", "jifeng_erp/jifeng_erp/doctype/jifeng_plate/jifeng_plate.py")
                 self.profile_module = load_module("profile_under_test", "jifeng_erp/jifeng_erp/doctype/jifeng_product_profile/jifeng_product_profile.py")
-        archive_patch = patch.dict(sys.modules, {"jifeng_erp.personnel_archive": archive})
+        archive_patch = patch.dict(sys.modules, {"jifeng_erp.personnel_archive": archive,
+                                               "jifeng_erp.product_archive": product_archive})
         archive_patch.start()
         self.addCleanup(archive_patch.stop)
         self.access = access
@@ -362,15 +366,16 @@ class TestCatalogProfiles(unittest.TestCase):
 
     def test_profile_private_image_uses_exact_saved_profile_and_field_and_native_file_read(self):
         self.profile.profile_image = "/private/files/profile.png"
-        attachment = self.reference("File", "OWN-FILE")
-        self.frappe.db.get_value.return_value = attachment.name
+        attachment = self.private_file("OWN-FILE", self.profile.profile_image)
+        self.frappe.get_all.return_value = [attachment.name]
         self.profile.validate()
-        self.frappe.db.get_value.assert_called_once_with("File", {
+        self.frappe.get_all.assert_called_once_with("File", filters={
             "file_url": self.profile.profile_image, "is_private": 1,
             "attached_to_doctype": "Jifeng Product Profile", "attached_to_name": "ITEM",
             "attached_to_field": "profile_image",
-        }, "name")
-        attachment.check_permission.assert_called_once_with("read")
+        }, pluck="name", order_by="name", limit_page_length=0)
+        attachment.has_permission.assert_called_once_with("read")
+        attachment.is_downloadable.assert_called_once_with()
         self.assertEqual(self.profile.image, self.item.image)
         self.assertEqual(self.profile.profile_image, "/private/files/profile.png")
 
@@ -387,17 +392,46 @@ class TestCatalogProfiles(unittest.TestCase):
                                 ("/private/files/foreign.png", None)):
             with self.subTest(url=url):
                 self.profile.profile_image = url
-                self.frappe.db.get_value.return_value = attachment
-                with self.assertRaisesRegex(ValueError, "绑定当前档案字段的私有附件"):
+                self.frappe.get_all.return_value = []
+                with self.assertRaisesRegex(PermissionError, "精确绑定当前档案字段的私有附件"):
                     self.profile.validate()
         self.assertNotIn(call("File", "FILE"), self.frappe.get_doc.call_args_list)
 
     def test_profile_image_native_file_read_is_required_even_when_binding_matches(self):
         self.profile.profile_image = "/private/files/profile.png"
-        self.reference("File", "HIDDEN").check_permission.side_effect = PermissionError("hidden File")
-        self.frappe.db.get_value.return_value = "HIDDEN"
-        with self.assertRaisesRegex(PermissionError, "hidden File"):
+        self.private_file("HIDDEN", self.profile.profile_image).has_permission.return_value = False
+        self.frappe.get_all.return_value = ["HIDDEN"]
+        with self.assertRaisesRegex(PermissionError, "可读取和下载"):
             self.profile.validate()
+
+    def private_file(self, name, url, field="profile_image"):
+        attachment = self.reference("File", name, file_url=url, is_private=1,
+            attached_to_doctype="Jifeng Product Profile", attached_to_name=self.profile.name,
+            attached_to_field=field, has_permission=Mock(return_value=True),
+            is_downloadable=Mock(return_value=True), unique_url=url + "?_file=" + name)
+        attachment.get = lambda key: getattr(attachment, key, None)
+        return attachment
+
+    def test_profile_both_images_recheck_loaded_binding_and_download_permission(self):
+        for field in ("profile_image", "patent_image"):
+            self.profile.set(field, "/private/files/" + field + ".png")
+            attachment = self.private_file("IMAGE", self.profile.get(field), field)
+            self.frappe.get_all.return_value = [attachment.name]
+            attachment.attached_to_field = "wrong_field"
+            with self.subTest(field=field, case="binding"), self.assertRaises(PermissionError):
+                self.profile.validate()
+            attachment.attached_to_field = field
+            attachment.is_downloadable.return_value = False
+            with self.subTest(field=field, case="download"), self.assertRaises(PermissionError):
+                self.profile.validate()
+            self.profile.set(field, None)
+
+    def test_untouched_legacy_patent_url_stays_stored_without_image_authorization(self):
+        self.profile.patent_image = "https://example.invalid/historical.png"
+        self.profile._before_save.patent_image = self.profile.patent_image
+        self.profile.validate()
+        self.frappe.get_all.assert_not_called()
+        self.assertEqual(self.profile.patent_image, self.profile._before_save.patent_image)
 
     def test_hidden_item_and_company_are_rejected_before_profile_image_is_read(self):
         self.profile.profile_image = "/private/files/profile.png"
