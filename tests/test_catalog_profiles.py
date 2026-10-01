@@ -28,6 +28,9 @@ class Document:
     def is_new(self):
         return bool(self.get("__islocal"))
 
+    def get_doc_before_save(self):
+        return self.get("_before_save")
+
 
 def load_module(name, path):
     spec = importlib.util.spec_from_file_location(name, ROOT / path)
@@ -89,6 +92,8 @@ class TestCatalogProfiles(unittest.TestCase):
                                      item_code="ITEM", company="COMPANY", supplier=None, bom=None,
                                      materials=[], operations=[], image="old-image", list_price=0,
                                      blank_price=0, weight=0, silver_weight=0, stone_weight=0)
+        self.profile._before_save = Document()
+        self.profile._before_save.__dict__.update(item_code="ITEM", company="COMPANY")
 
     def reference(self, doctype, name, **values):
         reference = types.SimpleNamespace(name=name, check_permission=Mock(), **values)
@@ -228,6 +233,34 @@ class TestCatalogProfiles(unittest.TestCase):
         self.references["Company", "COMPANY"].check_permission.assert_called_once_with("select")
         self.assertEqual(self.profile.image, "/files/item.png")
         self.frappe.db.get_value.assert_not_called()
+
+    def test_existing_profile_cannot_rebind_company_or_business_item(self):
+        for field, value in (("company", "OTHER-COMPANY"), ("item_code", "OTHER-ITEM")):
+            previous = self.profile.get(field)
+            self.profile.set(field, value)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "不能改绑"):
+                self.profile.validate()
+            self.profile.set(field, previous)
+        self.frappe.get_doc.assert_not_called()
+        self.assertEqual(self.profile.image, "old-image")
+
+    def test_existing_profile_missing_saved_snapshot_is_rejected(self):
+        self.profile._before_save = None
+        with self.assertRaisesRegex(ValueError, "不能改绑"):
+            self.profile.validate()
+        self.frappe.get_doc.assert_not_called()
+
+    def test_new_profile_keeps_native_creation_without_previous_snapshot(self):
+        self.profile.set("__islocal", True)
+        self.profile._before_save = None
+        self.profile.validate()
+        self.item.check_permission.assert_called_once_with("read")
+
+    def test_product_identity_controls_are_readonly_after_native_save(self):
+        schema = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_product_profile/jifeng_product_profile.json").read_text(encoding="utf-8"))
+        fields = {field["fieldname"]: field for field in schema["fields"]}
+        for field in ("company", "item_code"):
+            self.assertEqual(fields[field]["read_only_depends_on"], "eval:!doc.__islocal")
 
     def test_profile_hidden_item_leaves_image_untouched(self):
         self.item.check_permission.side_effect = PermissionError("hidden item")

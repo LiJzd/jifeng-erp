@@ -669,6 +669,21 @@ def delta_smoke(company, item_group, stock_uom, other_company):
                  insert(doctype, item_code=native_items[3].name, company=other_company), frappe.PermissionError)
 
         frappe.set_user("Administrator")
+        profile_tables = {doctype, *(field.options for field in meta.get_table_fields())}
+
+        def profile_rows_hash():
+            return _digest({kind: frappe.get_all(kind, fields=["*"], order_by="name", limit_page_length=0)
+                            for kind in sorted(profile_tables | {"Version"})})
+
+        identity_before = profile_rows_hash()
+        rejected("saved_profile_company_rebinding_rejected_even_for_administrator", lambda:
+                 changed(document.name, company=other_company))
+        rejected("saved_profile_item_rebinding_rejected_even_for_administrator", lambda:
+                 changed(document.name, item_code=native_items[3].name))
+        assert profile_rows_hash() == identity_before, "身份改绑拒绝改变了档案父子行或 Version"
+        assert frappe.db.get_value(doctype, document.name, ["item_code", "company"]) == (
+            native_items[0].name, company)
+        checks.append("identity_rejections_keep_all_profiles_children_and_versions_unchanged")
         rejected("same_item_second_company_profile_still_unique_rejected", lambda:
                  insert(doctype, item_code=native_items[0].name, company=other_company), frappe.DuplicateEntryError)
         insert("User Permission", user=user.name, allow="Item", for_value=native_items[0].name,

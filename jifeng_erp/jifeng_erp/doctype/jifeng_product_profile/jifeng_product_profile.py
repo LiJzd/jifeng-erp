@@ -7,6 +7,10 @@ from jifeng_erp.workflow import recipe_totals
 
 class JifengProductProfile(Document):
     def validate(self):
+        if not self.is_new():
+            before = self.get_doc_before_save()
+            if not before or any(before.get(field) != self.get(field) for field in ("company", "item_code")):
+                frappe.throw("已保存产品档案的公司和业务商品不能改绑")
         item = self._check_reference("Item", self.item_code, "read")
         self._check_reference("Company", self.company)
         self._check_reference("Supplier", self.supplier)

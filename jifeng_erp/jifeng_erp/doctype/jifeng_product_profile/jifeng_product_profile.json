@@ -42,6 +42,7 @@
    "options": "Item",
    "reqd": 1,
    "unique": 1,
+   "read_only_depends_on": "eval:!doc.__islocal",
    "in_list_view": 1
   },
   {
@@ -56,6 +57,7 @@
    "fieldtype": "Link",
    "label": "公司",
    "options": "Company",
+   "read_only_depends_on": "eval:!doc.__islocal",
    "reqd": 1
   },
   {
