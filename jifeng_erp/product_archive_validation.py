@@ -350,7 +350,10 @@ def smoke(company, other_company, item_group, stock_uom):
 
         current = "native_company_and_item_permissions_hide_lists_receipts_and_forbid_extra_roles"
         frappe.set_user("Administrator")
-        insert("User Permission", user=item_scoped, allow="Item", for_value=unbound.name, apply_to_all_doctypes=1)
+        # Frappe checks Item links in both the Profile and its recipe children.
+        # Allow this exact product and its material, while hiding fresh Item.
+        for allowed_item in (unbound.name, component.name):
+            insert("User Permission", user=item_scoped, allow="Item", for_value=allowed_item, apply_to_all_doctypes=1)
         frappe.clear_cache(user=item_scoped)
         frappe.set_user(item_scoped)
         assert native(lambda: read_archive(linked["name"]))["name"] == linked["name"]
