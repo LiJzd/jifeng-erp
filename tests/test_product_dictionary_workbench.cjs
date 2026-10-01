@@ -211,7 +211,8 @@ async function main() {
 		assert.ok(productMenuNames.has(type), "use the actual visible product menu name");
 		workspace.openPage(type, "产品"); assert.equal(opened.at(-1).productDictionary, type); assert.equal(opened.at(-1).doctype, "Jifeng Product Dictionary");
 	}
-	assert.equal(opened.length, 3); workspace.addTab = (tab) => opened.push(tab); workspace.openPage("类别", "产品"); assert.equal(opened.at(-1).productDictionary, undefined);
+	assert.equal(opened.length, 3); workspace.openPage("类别", "产品");
+	assert.equal(opened.at(-1).productCategory, true); assert.equal(opened.at(-1).doctype, "Jifeng Product Category");
 	const bridge = Object.create(window.JifengClassicBridge.prototype);
 	bridge.frames = new Map([["WORD", { workbench: { isDirty: () => true, getCloseBlock: () => "保存结果未知" } }]]);
 	assert.equal(bridge.canClose("WORD"), false); assert.equal(bridge.closeBlock("WORD"), "保存结果未知");

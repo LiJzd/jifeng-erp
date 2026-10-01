@@ -181,6 +181,10 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	mount(host, spec) {
+		if (spec.productCategory) {
+			const workbench = new window.JifengProductCategory(host);
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		if (spec.productDictionary) {
 			const workbench = new window.JifengProductDictionary(host, spec.productDictionary);
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
