@@ -93,6 +93,11 @@ class TestSalesFulfillment(unittest.TestCase):
         for doctype, (fieldname, childtype, required, optional) in self.module.TABLES.items():
             self.schema(childtype, required | optional)
             self.metas[doctype][fieldname] = Record(fieldname=fieldname, fieldtype="Table", permlevel=0)
+        self.metas["Stock Entry"]["purpose"].options = "\n".join((
+            "Material Issue", "Material Receipt", "Material Transfer", "Material Transfer for Manufacture",
+            "Material Consumption for Manufacture", "Manufacture", "Repack", "Send to Subcontractor",
+            "Disassemble", "Receive from Customer", "Return Raw Material to Customer",
+            "Subcontracting Delivery", "Subcontracting Return"))
         Document.environment = self
         self.add("Company", "JF")
         self.add("Customer", "CUST")
@@ -133,7 +138,8 @@ class TestSalesFulfillment(unittest.TestCase):
         if doctype in self.module.TABLES:
             fieldname, childtype, _r, _o = self.module.TABLES[doctype]
             doc[fieldname] = [Record(deepcopy(item)) for (kind, _), item in self.documents.items()
-                              if kind == childtype and item.parent == name and item.parenttype == doctype]
+                              if kind == childtype and item.parent == name and item.parenttype == doctype
+                              and item.parentfield == fieldname]
         return doc
 
     @staticmethod
@@ -206,6 +212,28 @@ class TestSalesFulfillment(unittest.TestCase):
                       voucher_no="SI", against_voucher_type="Sales Invoice", against_voucher_no="SI",
                       amount=Decimal("80"), amount_in_account_currency=Decimal("40"), delinked=0) | changed
         return self.add(self.module.PLE, name, **values)
+
+    def manufacture(self, name="SE", flow="FLOW", **changed):
+        document = self.add("Stock Entry", name, **(dict(company="JF", docstatus=1, work_order=None,
+                            purpose="Manufacture", posting_date=date(2026, 9, 20), fg_completed_qty=2) | changed))
+        row = self.child("Stock Entry", name, name + "-FG", item_code="ITEM", is_finished_item=1,
+                         jf_flow_order=flow, qty=2, uom="Pair", stock_uom="Nos", transfer_qty=4)
+        return document, row
+
+    def material(self, flow="FLOW", item="RAW"):
+        if ("Item", item) not in self.documents:
+            self.add("Item", item)
+        return self.child(self.module.FLOW, flow, flow + "-MAT-" + item, item_code=item)
+
+    def other_manufacturing_order(self, name="SO-OTHER", customer="CUST-OTHER"):
+        if ("Customer", customer) not in self.documents:
+            self.add("Customer", customer)
+        self.add("Sales Order", name, company="JF", customer=customer, docstatus=1,
+                 status="To Deliver and Bill", transaction_date=date(2026, 10, 1), currency="CNY")
+        row = self.child("Sales Order", name, name + "-ROW", item_code="ITEM", qty=3, stock_uom="Nos")
+        flow = self.flow("FLOW-" + name, row.name)
+        flow.sales_order = name
+        return flow
 
     def test_read_and_query_preserve_native_per_line_units_and_no_arithmetic_or_writes(self):
         result = self.read()
@@ -395,6 +423,262 @@ class TestSalesFulfillment(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.read()
             work[field] = original
+
+    def test_independent_manufacture_preserves_exact_rows_units_dates_cancel_history_and_no_work_order(self):
+        self.flow()
+        self.flow("FLOW-B", "SO-ROW-2")
+        self.manufacture()
+        self.manufacture("SE-CANCELLED", "FLOW-B", docstatus=2)
+        result = self.read()
+        self.assertEqual(result["work_orders"], [])
+        entries = result["independent_manufacture_entries"]
+        self.assertEqual([entry["document"]["name"] for entry in entries], ["SE", "SE-CANCELLED"])
+        self.assertEqual([entry["document"]["docstatus"] for entry in entries], [1, 2])
+        self.assertEqual(entries[0]["document"]["posting_date"], "2026-09-20")
+        self.assertEqual([(entry["finished_items"][0]["jf_flow_order"], entry["finished_items"][0]["uom"],
+                           entry["finished_items"][0]["transfer_qty"]) for entry in entries],
+                         [("FLOW", "Pair", 4), ("FLOW-B", "Pair", 4)])
+        self.assertNotIn("net_produced_qty", result)
+        self.assertFalse(any(call.args[0] == "Job Card" for call in self.frappe.get_list.call_args_list))
+        for writer in (self.frappe.db.commit, self.frappe.db.set_value, self.frappe.new_doc, self.frappe.delete_doc):
+            writer.assert_not_called()
+
+    def test_shared_independent_manufacture_authorizes_other_order_and_customer_but_only_projects_exact_current_rows(self):
+        self.flow()
+        other = self.other_manufacturing_order()
+        self.manufacture()
+        self.child("Stock Entry", "SE", "SE-OTHER-FG", item_code="ITEM", is_finished_item=1,
+                   jf_flow_order=other.name, qty=3, stock_uom="Nos", transfer_qty=3)
+        result = self.read()
+        self.assertEqual([row["name"] for row in result["independent_manufacture_entries"][0]["finished_items"]], ["SE-FG"])
+        self.assertEqual([flow["name"] for flow in result["flows"]], ["FLOW"])
+        self.assertEqual(result["receivables"]["voucher_sources"][0]["document"]["customer"], "CUST")
+        queried = self.query()
+        self.assertEqual([entry["sales_order"]["customer"] for entry in queried], ["CUST", "CUST-OTHER"])
+        self.assertEqual([[row["name"] for row in entry["independent_manufacture_entries"][0]["finished_items"]]
+                          for entry in queried], [["SE-FG"], ["SE-OTHER-FG"]])
+
+    def test_hidden_companion_flow_order_exact_child_customer_material_or_unlinked_item_denies_whole_result(self):
+        self.flow()
+        other = self.other_manufacturing_order()
+        material = self.material(other.name)
+        self.manufacture()
+        self.child("Stock Entry", "SE", "SE-OTHER-FG", item_code="ITEM", is_finished_item=1, jf_flow_order=other.name)
+        self.add("Item", "UNLINKED")
+        self.child("Stock Entry", "SE", "SE-UNLINKED", item_code="UNLINKED", is_finished_item=0)
+        for doctype, name in ((self.module.FLOW, other.name), ("Sales Order", other.sales_order),
+                             ("Sales Order Item", other.sales_order_item), ("Customer", "CUST-OTHER"),
+                             ("Jifeng Material Line", material.name), ("Item", "RAW"), ("Item", "UNLINKED")):
+            self.list_denied.add((doctype, name))
+            with self.subTest(doctype=doctype), self.assertRaises(PermissionError) as caught:
+                self.read()
+            self.assertNotIn(name, str(caught.exception))
+            self.list_denied.clear()
+
+    def test_companion_flow_exact_parent_child_and_source_changed_semantics_are_preserved(self):
+        current = self.flow()
+        other = self.other_manufacturing_order()
+        _document, first = self.manufacture()
+        second = self.child("Stock Entry", "SE", "SE-OTHER-FG", item_code="ITEM", is_finished_item=1, jf_flow_order=other.name)
+        other.sales_order_item = "SO-ROW-2"
+        with self.assertRaises(ValueError):
+            self.read()
+        other.sales_order_item = "SO-OTHER-ROW"
+        self.add("Item", "CHANGED")
+        current.item_code = other.item_code = first.item_code = second.item_code = "CHANGED"
+        current.source_changed = other.source_changed = 1
+        self.assertEqual(self.read()["independent_manufacture_entries"][0]["finished_items"][0]["item_code"], "CHANGED")
+        other.source_changed = 0
+        with self.assertRaises(ValueError):
+            self.read()
+
+    def test_raw_material_only_association_is_authorized_but_not_current_order_finished_stock(self):
+        self.flow()
+        self.material()
+        other = self.other_manufacturing_order()
+        self.manufacture(flow=other.name)
+        self.child("Stock Entry", "SE", "SE-RAW", item_code="RAW", is_finished_item=0, jf_flow_order="FLOW", qty=4)
+        self.assertEqual(self.read()["independent_manufacture_entries"], [])
+        self.denied.add((self.module.FLOW, other.name, "read"))
+        with self.assertRaises(PermissionError):
+            self.read()
+
+    def test_supported_nonmanufacture_purposes_finished_flags_and_raw_issues_never_become_manufacture_output(self):
+        self.flow()
+        self.material()
+        document, row = self.manufacture()
+        for purpose in ("Disassemble", "Repack", "Subcontracting Delivery", "Subcontracting Return", "Material Receipt"):
+            document.purpose = purpose
+            with self.subTest(purpose=purpose):
+                self.assertEqual(self.read()["independent_manufacture_entries"], [])
+        row.item_code, row.is_finished_item = "RAW", 0
+        for purpose in ("Material Issue", "Material Transfer", "Material Consumption for Manufacture"):
+            document.purpose = purpose
+            with self.subTest(purpose=purpose):
+                self.assertEqual(self.read()["independent_manufacture_entries"], [])
+
+    def test_independent_manufacture_missing_or_changed_finished_flag_wrong_product_company_or_unknown_purpose_denies(self):
+        self.flow()
+        self.material()
+        document, row = self.manufacture()
+        baseline_document, baseline_row = deepcopy(document), deepcopy(row)
+        for target, changed in ((row, {"is_finished_item": 0}), (row, {"is_finished_item": None}),
+                                (row, {"item_code": "RAW"}), (document, {"company": "OTHER"}),
+                                (document, {"purpose": "UNKNOWN"}), (document, {"work_order": "MISSING"})):
+            target.update(changed)
+            with self.subTest(changed=changed), self.assertRaises((ValueError, PermissionError)):
+                self.read()
+            document.clear()
+            document.update(deepcopy(baseline_document))
+            row.clear()
+            row.update(deepcopy(baseline_row))
+
+    def test_multiple_different_finished_products_are_not_accepted_as_native_manufacture(self):
+        self.flow()
+        self.manufacture()
+        self.add("Item", "OTHER")
+        self.child("Stock Entry", "SE", "SE-OTHER-FG", item_code="OTHER", is_finished_item=1)
+        with self.assertRaises(ValueError):
+            self.read()
+
+    def test_precise_work_order_source_is_preserved_and_not_duplicated_as_independent_manufacture(self):
+        flow = self.flow()
+        self.add("Work Order", "WO", company="JF", docstatus=1, sales_order="SO", sales_order_item="SO-ROW-1",
+                 production_item="ITEM", jf_flow_order="FLOW")
+        flow.work_order = "WO"
+        document, row = self.manufacture(work_order="WO")
+        result = self.read()
+        self.assertEqual(result["independent_manufacture_entries"], [])
+        self.assertEqual(result["work_orders"][0]["manufacture_entries"][0]["finished_items"][0]["name"], row.name)
+        other = self.other_manufacturing_order()
+        self.add("Work Order", "WO-OTHER", company="JF", docstatus=1, sales_order=other.sales_order,
+                 sales_order_item=other.sales_order_item, production_item="ITEM", jf_flow_order=other.name)
+        document.work_order = "WO-OTHER"
+        with self.assertRaises(ValueError):
+            self.read()
+
+    def test_independent_parent_full_child_and_required_field_or_table_permissions_are_not_bypassed(self):
+        self.flow()
+        self.manufacture()
+        for doctype, name in (("Stock Entry", "SE"), ("Stock Entry Detail", "SE-FG")):
+            self.list_denied.add((doctype, name))
+            with self.subTest(doctype=doctype), self.assertRaises(PermissionError):
+                self.read()
+            self.list_denied.clear()
+            self.denied.add(("Stock Entry", "SE", "read"))
+            with self.assertRaises(PermissionError):
+                self.read()
+            self.denied.clear()
+        for doctype, field in (("Stock Entry", "purpose"), ("Stock Entry Detail", "is_finished_item"),
+                               (self.module.FLOW, "materials"), ("Stock Entry", "items")):
+            self.metas[doctype][field].mask = 1
+            with self.subTest(doctype=doctype, field=field), self.assertRaises(PermissionError):
+                self.read()
+            self.metas[doctype][field].mask = 0
+
+    def test_malformed_reverse_parent_field_or_parent_type_cannot_hide_a_flow_source(self):
+        self.flow()
+        _document, row = self.manufacture()
+        for field, value in (("parentfield", "unknown"), ("parenttype", "OTHER"), ("parent", "MISSING")):
+            original = row[field]
+            row[field] = value
+            with self.subTest(field=field), self.assertRaises((PermissionError, ValueError)):
+                self.read()
+            row[field] = original
+
+    def test_malformed_companion_or_unlinked_stock_child_cannot_hide_from_native_parent_loading(self):
+        self.flow()
+        other = self.other_manufacturing_order()
+        self.manufacture()
+        companion = self.child("Stock Entry", "SE", "SE-OTHER-FG", item_code="ITEM", is_finished_item=1, jf_flow_order=other.name)
+        self.add("Item", "UNLINKED")
+        unlinked = self.child("Stock Entry", "SE", "SE-UNLINKED", item_code="UNLINKED", is_finished_item=0)
+        for row in (companion, unlinked):
+            for field, value in (("parentfield", "unknown"), ("parenttype", "OTHER")):
+                original = row[field]
+                row[field] = value
+                # Both native parent loading and the typed child query omit
+                # this row. Only the complete raw parent closure detects it.
+                self.assertNotIn(row.name, [item.name for item in self.get_doc("Stock Entry", "SE").get("items")])
+                with self.subTest(row=row.name, field=field), self.assertRaises(PermissionError):
+                    self.read()
+                row[field] = original
+
+    def test_malformed_companion_flow_material_child_cannot_hide_from_native_flow_loading(self):
+        self.flow()
+        other = self.other_manufacturing_order()
+        material = self.material(other.name)
+        self.manufacture()
+        self.child("Stock Entry", "SE", "SE-OTHER-FG", item_code="ITEM", is_finished_item=1, jf_flow_order=other.name)
+        for field, value in (("parentfield", "unknown"), ("parenttype", "OTHER")):
+            original = material[field]
+            material[field] = value
+            self.assertEqual(self.get_doc(self.module.FLOW, other.name).materials, [])
+            with self.subTest(field=field), self.assertRaises(PermissionError):
+                self.read()
+            material[field] = original
+
+    def test_late_independent_parent_child_flow_counterpart_or_material_changes_without_modified_reject(self):
+        self.flow()
+        other = self.other_manufacturing_order()
+        material = self.material(other.name)
+        self.manufacture()
+        self.child("Stock Entry", "SE", "SE-OTHER-FG", item_code="ITEM", is_finished_item=1, jf_flow_order=other.name)
+        self.invoice()
+        baseline = deepcopy(self.documents)
+        for doctype, name, field, value in (("Stock Entry", "SE", "work_order", "MISSING"),
+                                          ("Stock Entry Detail", "SE-FG", "is_finished_item", 0),
+                                          ("Stock Entry Detail", "SE-FG", "jf_flow_order", other.name),
+                                          ("Stock Entry Detail", "SE-FG", "parentfield", "unknown"),
+                                          (self.module.FLOW, other.name, "sales_order_item", "SO-ROW-1"),
+                                          ("Sales Order Item", other.sales_order_item, "item_code", "RAW"),
+                                          ("Jifeng Material Line", material.name, "item_code", "ITEM")):
+            self.documents = deepcopy(baseline)
+            self.doc_hooks["Account"] = lambda _name, key=(doctype, name), field=field, value=value: self.documents[key].update({field: value})
+            with self.subTest(doctype=doctype, field=field), self.assertRaises((PermissionError, ValueError)):
+                self.read()
+        self.doc_hooks.clear()
+
+    def test_empty_reverse_query_rechecks_new_valid_or_malformed_flow_stock_sources(self):
+        self.flow()
+        self.invoice()
+        baseline = deepcopy(self.documents)
+        for malformed in (False, True):
+            self.documents = deepcopy(baseline)
+            fired = []
+            def insert(_name):
+                if fired:
+                    return
+                fired.append(True)
+                _document, row = self.manufacture()
+                if malformed:
+                    row.parentfield = "unknown"
+            self.doc_hooks["Account"] = insert
+            with self.subTest(malformed=malformed), self.assertRaises(PermissionError):
+                self.read()
+        self.doc_hooks.clear()
+
+    def test_final_manufacturing_source_reloads_and_native_queries_cannot_revoke_earlier_companion_sources(self):
+        self.flow()
+        other = self.other_manufacturing_order()
+        self.manufacture()
+        self.child("Stock Entry", "SE", "SE-OTHER-FG", item_code="ITEM", is_finished_item=1, jf_flow_order=other.name)
+        self.invoice()
+        actions = (lambda: self.denied.add(("Sales Order", other.sales_order, "read")),
+                   lambda: self.metas["Stock Entry Detail"]["qty"].update(mask=1),
+                   lambda: self.metas[self.module.FLOW]["materials"].update(mask=1))
+        for action in actions:
+            original_meta = deepcopy(self.metas)
+            loads = []
+            def revoke(_name, action=action):
+                loads.append(True)
+                if len(loads) == 2:
+                    action()
+            self.doc_hooks["Account"] = revoke
+            with self.assertRaises(PermissionError):
+                self.read()
+            self.metas, self.denied = original_meta, set()
+        self.doc_hooks.clear()
 
     def test_invoice_state_is_native_and_payment_ledger_is_unaggregated(self):
         self.invoice()

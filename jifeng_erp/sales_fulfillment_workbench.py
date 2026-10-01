@@ -52,6 +52,7 @@ PARENTS = {
 }
 QUANTITY = {"item_name", "qty", "uom", "stock_uom", "stock_qty", "conversion_factor"}
 TABLES = {
+    FLOW: ("materials", "Jifeng Material Line", CHILD | {"item_code"}, set()),
     SO: ("items", "Sales Order Item", CHILD | {"item_code"},
          QUANTITY | {"delivery_date", "delivered_qty", "billed_amt", "returned_qty", "jf_make_flow"}),
     DN: ("items", "Delivery Note Item", CHILD | {"item_code", "against_sales_order", "so_detail",
@@ -193,7 +194,7 @@ class _Graph:
         self.authorization = _authorization()
         self.reposts = []
 
-    def records(self, doctype, filters, required, optional=(), parenttype=None, complete=True):
+    def records(self, doctype, filters, required, optional=(), parenttype=None, complete=True, raw_filters=None):
         if parenttype:
             if parenttype not in TABLES or TABLES[parenttype][1] != doctype:
                 _invalid()
@@ -213,13 +214,14 @@ class _Graph:
             frappe.throw("履行来源较多，请缩小订单查询范围")
         if any(not set(required).issubset(row) for row in rows):
             _deny()
-        raw = frappe.get_all(doctype, filters=filters, fields=["*"], order_by="name asc",
+        raw_filters = dict(filters if raw_filters is None else raw_filters)
+        raw = frappe.get_all(doctype, filters=raw_filters, fields=["*"], order_by="name asc",
                              limit_page_length=SOURCE_LIMIT + 1) if complete else None
         if raw is not None and {row["name"] for row in raw} != {row["name"] for row in rows}:
             _deny()
         if len({row["name"] for row in rows}) != len(rows):
             _invalid()
-        self.queries.append((doctype, dict(filters), set(required), tuple(fields), parenttype,
+        self.queries.append((doctype, dict(filters), raw_filters, set(required), tuple(fields), parenttype,
                              _freeze(rows), _freeze(raw)))
         return rows
 
@@ -251,7 +253,8 @@ class _Graph:
             fieldname, childtype, child_required, child_optional = TABLES[doctype]
             _table(doctype, fieldname)
             children = self.records(childtype, {"parent": name, "parenttype": doctype, "parentfield": fieldname},
-                                    child_required, child_optional, doctype)
+                                    child_required, child_optional, doctype,
+                                    raw_filters={"parent": name} if doctype in ("Stock Entry", FLOW) else None)
             if {item.name for item in document.get(fieldname) or []} != {item["name"] for item in children}:
                 _invalid()
             actual = {item.name: item for item in document.get(fieldname) or []}
@@ -297,13 +300,13 @@ class _Graph:
                         _deny()
         # Recheck membership and native projections, including empty queries:
         # a new shipment/payment must not leave a formerly complete view stale.
-        for doctype, filters, required, fields, parenttype, state, raw_state in self.queries:
+        for doctype, filters, raw_filters, required, fields, parenttype, state, raw_state in self.queries:
             if not set(fields).issubset(_fields(doctype, required, fields, parenttype)):
                 _deny()
             options = {"parent_doctype": parenttype} if parenttype else {}
             current = frappe.get_list(doctype, filters=filters, fields=list(fields), order_by="name asc",
                                       limit_page_length=SOURCE_LIMIT + 1, **options)
-            raw = frappe.get_all(doctype, filters=filters, fields=["*"], order_by="name asc",
+            raw = frappe.get_all(doctype, filters=raw_filters, fields=["*"], order_by="name asc",
                                  limit_page_length=SOURCE_LIMIT + 1) if raw_state != _freeze(None) else None
             if _freeze(current) != state or _freeze(raw) != raw_state:
                 _deny()
@@ -322,9 +325,9 @@ class _Graph:
         # after its own query was checked. Recheck all raw source values and
         # memberships after those hooks, including changes without modified.
         # This is a serial consistency guard, not a concurrent snapshot claim.
-        for doctype, filters, _required, _fields_read, _parenttype, _state, raw_state in self.queries:
+        for doctype, _filters, raw_filters, _required, _fields_read, _parenttype, _state, raw_state in self.queries:
             if raw_state != _freeze(None):
-                raw = frappe.get_all(doctype, filters=filters, fields=["*"], order_by="name asc",
+                raw = frappe.get_all(doctype, filters=raw_filters, fields=["*"], order_by="name asc",
                                      limit_page_length=SOURCE_LIMIT + 1)
                 if _freeze(raw) != raw_state:
                     _deny()
@@ -380,6 +383,82 @@ def _resolve(graph, doctype, parent, child, visiting=None):
         visiting.remove(key)
 
 
+def _manufacturing_order_source(graph, order, detail):
+    # A shared stock voucher may contain another readable order/customer. Read
+    # its exact counterpart without changing the selected order's receivables
+    # scope. Nothing from this counterpart is added to the result DTO.
+    if not order or not detail:
+        _invalid()
+    customer = graph.customer
+    graph.customer = None
+    try:
+        document, row = graph.detail(SO, order, detail)
+        graph.source("Customer", document["customer"])
+        return document, row
+    finally:
+        graph.customer = customer
+
+
+def _manufacturing_flow_source(graph, name):
+    flow = graph.source(FLOW, name)
+    graph.source("Item", flow["item_code"])
+    for row in graph.children[FLOW, name]:
+        graph.source("Item", row["item_code"])
+    if flow["sales_order"] or flow["sales_order_item"]:
+        _order, detail = _manufacturing_order_source(graph, flow["sales_order"], flow["sales_order_item"])
+        if not flow["source_changed"] and flow["item_code"] != detail["item_code"]:
+            _invalid()
+    return flow
+
+
+def _manufacturing_work_source(graph, name):
+    work = graph.source("Work Order", name)
+    graph.source("Item", work["production_item"])
+    if work["jf_flow_order"]:
+        flow = _manufacturing_flow_source(graph, work["jf_flow_order"])
+        if (work["production_item"] != flow["item_code"]
+                or (work["sales_order"], work["sales_order_item"])
+                != (flow["sales_order"], flow["sales_order_item"])):
+            _invalid()
+    elif work["sales_order"] or work["sales_order_item"]:
+        _order, detail = _manufacturing_order_source(graph, work["sales_order"], work["sales_order_item"])
+        if work["production_item"] != detail["item_code"]:
+            _invalid()
+    return work
+
+
+def _manufacturing_stock_source(graph, name):
+    entry = graph.source("Stock Entry", name)
+    purpose = frappe.get_meta("Stock Entry").get_field("purpose")
+    if not purpose or not isinstance(purpose.options, str) or entry["purpose"] not in purpose.options.split("\n"):
+        _invalid()
+    work = _manufacturing_work_source(graph, entry["work_order"]) if entry["work_order"] else None
+    finished = []
+    for row in graph.children["Stock Entry", name]:
+        graph.source("Item", row["item_code"])
+        if row["is_finished_item"] not in (0, 1):
+            _invalid()
+        if row["is_finished_item"]:
+            finished.append(row)
+        if row["jf_flow_order"]:
+            if work and work["jf_flow_order"] and row["jf_flow_order"] != work["jf_flow_order"]:
+                _invalid()
+            flow = _manufacturing_flow_source(graph, row["jf_flow_order"])
+            materials = {item["item_code"] for item in graph.children[FLOW, flow["name"]]}
+            if row["item_code"] not in materials | {flow["item_code"]}:
+                _invalid()
+            if entry["purpose"] == "Manufacture":
+                if row["is_finished_item"] and row["item_code"] != flow["item_code"]:
+                    _invalid()
+    if entry["purpose"] == "Manufacture":
+        if not finished or len({row["item_code"] for row in finished}) != 1:
+            _invalid()
+        if work and any(row["item_code"] != work["production_item"]
+                        or row["jf_flow_order"] != work["jf_flow_order"] for row in finished):
+            _invalid()
+    return entry, finished
+
+
 def _manufacturing(graph, order, details, flows):
     names = set(graph.named("Work Order", {"sales_order": order}))
     names.update(graph.named("Work Order", {"sales_order_item": ["in", list(details)]}))
@@ -387,6 +466,29 @@ def _manufacturing(graph, order, details, flows):
         names.update(graph.named("Work Order", {"jf_flow_order": flow["name"]}))
         if flow["work_order"]:
             names.add(flow["work_order"])
+    # Discover all exact Flow rows, including raw material rows and malformed
+    # finished flags/purposes. Filtering to finished Manufacture rows here
+    # would let an edited flag or parent silently hide a reverse source.
+    reverse_filters = {"jf_flow_order": ["in", sorted(flows)]}
+    # Do not send an empty IN to native SQL: some native builders normalize it
+    # to an empty-string match. The complete Flow queries already guard a
+    # previously empty Flow scope against late additions.
+    candidates = graph.records("Stock Entry Detail", reverse_filters,
+                               TABLES["Stock Entry"][2], parenttype="Stock Entry", raw_filters=reverse_filters) if flows else []
+    independent = []
+    for name in sorted({row["parent"] for row in candidates}):
+        entry, finished = _manufacturing_stock_source(graph, name)
+        if entry["purpose"] != "Manufacture":
+            # Repack, Disassemble and subcontracting stock can legitimately
+            # carry finished flags, with different stock meanings.
+            continue
+        selected = [row for row in finished if row["jf_flow_order"] in flows]
+        if not selected:
+            continue  # Current Flow was only a raw material source.
+        if entry["work_order"]:
+            names.add(entry["work_order"])
+        else:
+            independent.append({"document": entry, "finished_items": selected})
     result = []
     for name in sorted(names):
         work = graph.source("Work Order", name)
@@ -404,16 +506,15 @@ def _manufacturing(graph, order, details, flows):
         graph.source("Item", work["production_item"])
         entries = []
         for entry_name in graph.named("Stock Entry", {"work_order": name, "purpose": "Manufacture"}):
-            entry = graph.source("Stock Entry", entry_name)
+            entry, finished = _manufacturing_stock_source(graph, entry_name)
             if entry["purpose"] != "Manufacture" or entry["work_order"] != name:
                 _invalid()
-            finished = [row for row in graph.children["Stock Entry", entry_name] if row["is_finished_item"]]
             if not finished or any(row["item_code"] != work["production_item"]
                                    or row["jf_flow_order"] != work["jf_flow_order"] for row in finished):
                 _invalid()
             entries.append({"document": entry, "finished_items": finished})
         result.append({"document": work, "manufacture_entries": entries})
-    return result
+    return result, independent
 
 
 def _shipments(graph, order, details, flows):
@@ -583,8 +684,10 @@ def _read(graph, name):
         graph.source("Item", flow["item_code"])
         flows[flow_name] = flow
     shipments = _shipments(graph, name, details, flows)
+    work_orders, independent = _manufacturing(graph, name, details, flows)
     result = {"company": graph.company, "sales_order": order, "items": list(details.values()),
-              "flows": list(flows.values()), "work_orders": _manufacturing(graph, name, details, flows),
+              "flows": list(flows.values()), "work_orders": work_orders,
+              "independent_manufacture_entries": independent,
               "delivery_notes": shipments[DN], "sales_invoices": shipments[SI],
               "receivables": _receivables(graph, name, [row["document"]["name"] for row in shipments[SI]]),
               "readonly": True, "can_write": False, "quantities_aggregated": False}
