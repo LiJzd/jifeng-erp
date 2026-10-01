@@ -429,6 +429,43 @@ def _profile_rollback(point, previous):
         raise AssertionError("产品档案验收回滚清理失败：" + ",".join(failures))
 
 
+def _profile_restore_caller(user, in_test, users, records, callbacks, context):
+    from jifeng_erp.personnel_changes_validation import _restore_callbacks
+    from jifeng_erp.personnel_separation_validation import _restore_local_context
+
+    try:
+        frappe.in_test = in_test
+        frappe.set_user(user)
+        for actor in users:
+            frappe.clear_cache(user=actor)
+        for kind, name in records:
+            # Native clear_document_cache adds after_commit/after_rollback
+            # callbacks. Finish all invalidations before restoring the caller.
+            frappe.clear_document_cache(kind, name)
+    finally:
+        _restore_callbacks(callbacks)
+        _restore_local_context(context)
+
+
+def _profile_audit(actions, primary=None):
+    """Run every rollback audit and preserve the first business failure."""
+    failures = []
+    for label, action in actions:
+        try:
+            result = action()
+            if result is False:
+                raise AssertionError(label)
+        except Exception as error:
+            error.add_note("产品原文回滚阶段：" + label)
+            failures.append((label, error))
+    if failures:
+        original = primary if primary is not None else failures[0][1]
+        for label, error in failures:
+            original.add_note("产品原文回滚审计失败：" + label + ":" + type(error).__name__ + ":" + str(error))
+        if primary is None:
+            raise original
+
+
 def delta_smoke(company, item_group, stock_uom, other_company):
     """One serial, rollback-only experiment for the six independent fields.
 
@@ -447,10 +484,10 @@ def delta_smoke(company, item_group, stock_uom, other_company):
     from pathlib import Path
 
     from jifeng_erp.personnel_changes_validation import (
-        _callbacks, _digest, _restore_callbacks, _tab_counts,
+        _callbacks, _digest, _tab_counts,
     )
     from jifeng_erp.personnel_separation import _atomic
-    from jifeng_erp.personnel_separation_validation import _local_context, _restore_local_context
+    from jifeng_erp.personnel_separation_validation import _local_context
 
     frappe.only_for("System Manager")
     assert frappe.db.db_type == "mariadb", "全表回滚审计需要当前 MariaDB 站点"
@@ -481,7 +518,8 @@ def delta_smoke(company, item_group, stock_uom, other_company):
         return {str(path.resolve()) for root in roots for path in root.glob(prefix + "*")}
 
     assert fixture_paths() == set(), "验收前已存在本次随机前缀文件"
-    evidence, current = {}, "fixtures"
+    evidence, current, primary = {}, "fixtures", None
+    generated_paths = set()
     _begin_rollback_only(point)
     try:
         frappe.in_test = True
@@ -649,38 +687,42 @@ def delta_smoke(company, item_group, stock_uom, other_company):
                     "native_file_rollback_callbacks_registered": all(
                         file.on_rollback in list(frappe.db.after_rollback._functions) for file in files)}
     except Exception as error:
+        primary = error
         error.add_note("产品原文 delta failed at gate: " + current)
         raise
     finally:
-        try:
+        def collect_records():
+            nonlocal generated_paths
             frappe.set_user("Administrator")
+            generated_paths = fixture_paths() | {str(Path(file.get_full_path()).resolve()) for file in files}
             for document in objects:
                 if document.name:
                     records.add((document.doctype, document.name))
                 records.update((row.doctype, row.name) for row in document.get_all_children() if row.name)
-            generated_paths = fixture_paths() | {str(Path(file.get_full_path()).resolve()) for file in files}
             urls = [file.file_url for file in files]
             if urls:
                 records.update(("File", name) for name in frappe.get_all("File",
                                filters={"file_url": ["in", urls]}, pluck="name"))
-        finally:
-            try:
-                _profile_rollback(point, callbacks_before)
-            finally:
-                _restore_callbacks(callbacks_before)
-                _restore_local_context(context_before)
-                frappe.in_test = original_test
-                frappe.set_user(original_user)
-                for actor in users:
-                    frappe.clear_cache(user=actor)
-                for kind, name in records:
-                    frappe.clear_document_cache(kind, name)
-            assert all(not frappe.db.exists(kind, name) for kind, name in records), "回滚后有夹具残留"
-            assert _tab_counts(tables)[1] == counts, "全站原生表记录数未恢复"
-            assert _digest(frappe.get_all("Item", fields=["*"], order_by="name", limit_page_length=0)) == item_before
-            assert _ledger_snapshot() == ledger_before, "全站 GL/SLE hash 未恢复"
-            assert fixture_paths() == set() and all(not Path(path).exists() for path in generated_paths), "原生回滚后私有图片磁盘残留"
-            assert _callbacks() == callbacks_before and _local_context() == context_before
+        try:
+            _profile_audit([
+                ("collect_fixture_records_and_paths", collect_records),
+                ("native_database_and_file_rollback", lambda: _profile_rollback(point, callbacks_before)),
+                ("cache_invalidation_then_restore_caller", lambda: _profile_restore_caller(
+                    original_user, original_test, users, records, callbacks_before, context_before)),
+                ("fixture_rows_absent", lambda: all(not frappe.db.exists(kind, name) for kind, name in records)),
+                ("all_native_table_counts_restored", lambda: _tab_counts(tables)[1] == counts),
+                ("all_item_fields_restored", lambda: _digest(frappe.get_all(
+                    "Item", fields=["*"], order_by="name", limit_page_length=0)) == item_before),
+                ("whole_gl_sle_hashes_restored", lambda: _ledger_snapshot() == ledger_before),
+                ("generated_private_public_file_paths_absent", lambda: fixture_paths() == set()
+                    and all(not Path(path).exists() for path in generated_paths)),
+                ("caller_callback_queues_restored", lambda: _callbacks() == callbacks_before),
+                ("caller_realtime_and_saving_context_restored", lambda: _local_context() == context_before),
+            ], primary=primary)
+        except Exception as error:
+            error.add_note("产品原文 delta final audit at gate: " + current)
+            error.add_note("已完成业务门：" + json.dumps(checks, ensure_ascii=False))
+            raise
     checks.append("rollback_all_records_versions_table_counts_item_ledgers_callbacks_and_generated_file_paths")
     return {"passed": True, "gate_count": len(checks), "checks": checks, "business_data": "rolled_back",
             "evidence": evidence, "table_counts_before": counts, "table_counts_after": _tab_counts(tables)[1],

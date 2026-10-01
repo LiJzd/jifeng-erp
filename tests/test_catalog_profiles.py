@@ -1,5 +1,7 @@
 """Catalog reference boundaries, without a database or additional HR grants."""
 
+import ast
+from copy import deepcopy
 import datetime
 import importlib.util
 import inspect
@@ -521,6 +523,103 @@ class TestCatalogRollbackGuard(unittest.TestCase):
         self.module._end_rollback_only.assert_called_once_with("point")
         prior.assert_not_called()
         self.assertEqual(native._callbacks(), previous)
+
+    def caller_context_environment(self):
+        class Flags(dict):
+            __getattr__ = dict.get
+            __setattr__ = dict.__setitem__
+
+        self.frappe.local = types.SimpleNamespace(_realtime_log=[{"event": "existing caller message"}])
+        self.frappe.flags = Flags(currently_saving=[("Existing", "CALLER")])
+        native = types.ModuleType("jifeng_erp.personnel_separation_validation")
+        native.deepcopy, native.frappe = deepcopy, self.frappe
+        tree = ast.parse((ROOT / "jifeng_erp/personnel_separation_validation.py").read_text(encoding="utf-8"))
+        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name in ("_local_context", "_restore_local_context")]
+        exec(compile(ast.Module(body=functions, type_ignores=[]), "native_caller_context", "exec"), native.__dict__)
+        return native
+
+    def test_native_cache_invalidation_callbacks_are_discarded_only_after_all_cleanup(self):
+        queues, context = self.rollback_environment(), self.caller_context_environment()
+        old_callback = Mock()
+        self.frappe.db.after_commit.add(old_callback)
+        callbacks_before, context_before = queues._callbacks(), context._local_context()
+        events = []
+        def set_user(user):
+            # Native set_user resets form/cache/role state; it does not remove
+            # realtime logs or saving flags. Those stay intact until restored.
+            self.frappe.form_dict = {}
+            events.append(("user", user))
+
+        def clear_user_cache(**values):
+            self.frappe.local._realtime_log.append({"event": "cleanup notification"})
+            events.append(("user_cache", values["user"]))
+
+        def clear_document_cache(doctype, name):
+            # Actual Frappe clear_document_cache performs immediate invalidation
+            # AND registers another invalidation in both transaction queues.
+            self.frappe.db.after_commit.add(Mock())
+            self.frappe.db.after_rollback.add(Mock())
+            self.frappe.flags.currently_saving.append((doctype, name))
+            events.append(("document_cache", doctype, name))
+
+        self.frappe.set_user, self.frappe.clear_cache = set_user, clear_user_cache
+        self.frappe.clear_document_cache = clear_document_cache
+        with patch.dict(sys.modules, {"jifeng_erp.personnel_changes_validation": queues,
+                                      "jifeng_erp.personnel_separation_validation": context}):
+            self.module._profile_restore_caller("CALLER", False, ["FIXTURE"],
+                [("File", "TEST-FILE")], callbacks_before, context_before)
+        self.assertEqual(events, [("user", "CALLER"), ("user_cache", "FIXTURE"),
+                                  ("document_cache", "File", "TEST-FILE")])
+        self.assertEqual(queues._callbacks(), callbacks_before)
+        self.assertEqual(context._local_context(), context_before)
+        self.assertFalse(self.frappe.in_test)
+        old_callback.assert_not_called()
+
+    def test_cache_invalidation_failure_still_preserves_caller_queues_and_context(self):
+        queues, context = self.rollback_environment(), self.caller_context_environment()
+        callbacks_before, context_before = queues._callbacks(), context._local_context()
+        self.frappe.set_user, self.frappe.clear_cache = Mock(), Mock()
+        def failed_invalidation(*args):
+            self.frappe.db.after_rollback.add(Mock())
+            self.frappe.local._realtime_log.clear()
+            self.frappe.flags.currently_saving.clear()
+            raise OSError("cache invalidation failed")
+
+        self.frappe.clear_document_cache = failed_invalidation
+        with patch.dict(sys.modules, {"jifeng_erp.personnel_changes_validation": queues,
+                                      "jifeng_erp.personnel_separation_validation": context}):
+            with self.assertRaisesRegex(OSError, "cache invalidation failed"):
+                self.module._profile_restore_caller("CALLER", True, [], [("File", "TEST-FILE")],
+                                                    callbacks_before, context_before)
+        self.assertEqual(queues._callbacks(), callbacks_before)
+        self.assertEqual(context._local_context(), context_before)
+
+    def test_final_audit_keeps_original_business_error_and_runs_remaining_audits(self):
+        original = PermissionError("original native business rejection")
+        later_audit = Mock(return_value=True)
+        with self.assertRaises(PermissionError) as caught:
+            try:
+                raise original
+            finally:
+                self.module._profile_audit([
+                    ("file cleanup", Mock(side_effect=OSError("blob not removed"))),
+                    ("ledger", lambda: False), ("all table counts", later_audit),
+                ], primary=original)
+        self.assertIs(caught.exception, original)
+        later_audit.assert_called_once()
+        self.assertTrue(any("file cleanup:OSError" in note for note in original.__notes__))
+        self.assertTrue(any("ledger:AssertionError" in note for note in original.__notes__))
+
+    def test_final_audit_reports_first_failure_when_business_finished_and_still_audits_everything(self):
+        original = OSError("native file cleanup failure")
+        last = Mock(return_value=True)
+        with self.assertRaises(OSError) as caught:
+            self.module._profile_audit([("file cleanup", Mock(side_effect=original)),
+                                        ("callback queues", lambda: False), ("disk paths", last)])
+        self.assertIs(caught.exception, original)
+        self.assertTrue(any("callback queues:AssertionError" in note for note in original.__notes__))
+        last.assert_called_once()
 
 
 if __name__ == "__main__":
