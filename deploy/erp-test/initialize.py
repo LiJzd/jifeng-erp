@@ -20,6 +20,7 @@ def main():
     def password(name):
         return Path("/run/secrets", name).read_text().strip()
     try:
+        frappe.init(SITE, new_site=True)
         _new_site(db_name=DB_NAME, site=SITE, db_root_username="root", db_root_password=password("db_root_password"), db_password=password("site_db_password"), admin_password=password("admin_password"), db_type="mariadb", db_host="db", db_port=3306, mariadb_user_host_login_scope="%", install_apps=["erpnext", "hrms", "jifeng_erp"])
         assert frappe.local.site == SITE and frappe.conf.db_name == DB_NAME
         assert frappe.get_installed_apps() == ["frappe", "erpnext", "hrms", "jifeng_erp"]
