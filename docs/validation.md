@@ -1,5 +1,24 @@
 # 验证记录
 
+## 2026-10-03 销售与订单客户档案
+
+销售“客户档案”、订单“客户”接同一服务器Profile API及界面组件，保留实际旧页19/17字段、各16列和编号只读；依据为`output/legacy-customer-archive-20261003-r1/report.md`。五种词典使用公司、模块、字段类型和实际版本，不把原生Customer主体类型当旧客户类型。姓名、手机、联系、税号、公司、折扣等按档案原文保存；已有档案编辑/停用只改Profile。当前公司与旧“公司”原文分开。新建使用原生Customer命名及实际创建权，也可显式关联已有客户；未自动合并同名资料，未给旧角色增加Customer写权。
+
+29项Python模型、2项资源模型通过；客户档案、客户词典及A/B363入口三份CJS、Ruff、三份JS语法和diff检查通过。独立复核修复末页减少的客户端页码clamp不兼容，并测试101→100条/第2→1页、1501条末页、缺行拒绝及空集合；这些仍是模型，不能作为真实浏览器或数据库大集合负载证明。控制器去未用import、仅新测试格式修正后29项再次通过。
+
+| 隔离批次 | 实际结果 | 保护与证据（本地忽略的output） |
+|---|---|---|
+| schema r1 | 引擎前置拒绝，无reload/DDL。 | 本地927表另有`__global_search` MyISAM，不能沿用外网两日志表的清单。独立物理只读检查确认目标DocType/table均不存在；`customer-archive-native-schema-20261003-r1/`及`customer-archive-native-schema-engine-inspect-20261003-r1.json`保留。 |
+| schema r2 | 实际驱动不支持`ping(reconnect=False)`，快照尾部失败；仍未尝试reload/DDL。 | 源码只verify，未重拷；三MyISAM读锁释放，保留`customer-archive-native-schema-20261003-r2/`。 |
+| schema r3 | 一次原生targeted reload并commit通过；927→928，只新增空`tabJifeng Customer Profile`。 | 有效本机DB/site/维护状态、目标物理表不存在、Module Def/角色已存在前置；全InnoDB物理READ ONLY/RR快照，独立连接持有全部三MyISAM READ LOCK并复核连接ID。现有非元数据表/Auth/账簿内容、列、索引全同；六元数据表只允许新parent，其他行及结构/索引相同。安装字段/序/权限逐声明核对；`customer-archive-native-schema-20261003-r3/`。 |
+| suite r3 | 真实角色11门通过，业务及审计完整回滚；另一个新连接928表内容、结构和索引全部一致。 | 主管只关联/改Profile、原生可创建岗位联合创建、五类型/公司/version、停用历史、Sales User静默只读、权限范围、UUID/摘要和双版本、新建第二文档失败及两层mask均验；`customer-archive-native-suite-20261003-r3/`。无外网、业务commit、权限扩张或Customer元数据改动。 |
+
+源码冻结清单为`customer-archive-native-source-20261003-r1.json`，SHA `72acbd22169f648240ca84f38887eff937fd3b87a1cbbde818e6e99bcc41ccb2`：10运行文件及10不变依赖。首次镜像前核三个既有bench文件等于HEAD，其余新文件不存在，旧字节已备份；后两schema批次不重拷。实际native源码导入核24项资源（15JS/9CSS）内容指纹，无DB连接、不算浏览器HTTP；见`customer-archive-native-assets-20261003-r1.json`。
+
+gpt-6-luna本次仅静态准备；专用CUA的Chrome inventory返回fetch失败，IAB没有可用标签/登录会话。未输入或输出凭据、未尝试被拒的原生屏幕/CDP通道，未启动预览、未浏览器保存。新A/B界面、只读控件、dirty-close、console/network及跨界面回读仍待GUI证明；11门为串行本地验证，双连接并发、旧编号/底层关系、历史导入、简拼/删除/打印、单据客户选择均未验收。
+
+本地registry VM实际363入口：235正式、9部分可用、101业务预览、13导航、5工具；两个通用原生Customer入口改为专用部分可用，未减少业务预览。外网保持`5aa4b3b`、237正式/3部分/105预览，本批未发布。收尾重新检查外网HTTP301、可信TLS登录页200及ping200/pong，每条实际连接按源IP/端口和目标核DIRECT，未登录或写业务；证据为`output/erp_external_https_health_20261003_r2.json`，不替代本次浏览器验收。第一版全模块正式可用目标仍未完成。
+
 ## 2026-10-03 客户字典发布停止与外网恢复
 
 当前外网交付仍为 `5aa4b3b`；本地 `0f84e22` 未发布。公开包及服务器本地候选文件不构成发布成功。未继续新 r2 候选的 prepare/quiesce，冻结助手仅有静态复审和模拟证据。

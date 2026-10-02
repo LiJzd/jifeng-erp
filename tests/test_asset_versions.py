@@ -20,12 +20,14 @@ def load_hooks(path):
 class TestAssetVersions(unittest.TestCase):
     def test_all_desk_assets_keep_paths_and_order_with_valid_content_revisions(self):
         hooks = load_hooks(ROOT / "hooks.py")
-        self.assertEqual((len(hooks.app_include_css), len(hooks.app_include_js)), (8, 14))
+        self.assertEqual((len(hooks.app_include_css), len(hooks.app_include_js)), (9, 15))
         self.assertTrue(urlsplit(hooks.app_include_js[0]).path.endswith("jifeng_classic_bridge.js"))
         self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_inventory_catalog.js?" in u),
                         next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_inventory_archive_list.js?" in u))
         self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_product_dictionary.js?" in u),
                         next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_customer_type.js?" in u))
+        self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_customer_archive.js?" in u),
+                        next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_workspace_core.js?" in u))
         for url in hooks.app_include_css + hooks.app_include_js:
             parsed = urlsplit(url)
             self.assertFalse(parsed.netloc)

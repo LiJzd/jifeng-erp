@@ -10,7 +10,7 @@ class Element {
 }
 let route = "jifeng-legacy";
 const messages = [], confirmations = [];
-const window = { addEventListener() {}, removeEventListener() {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {} };
+const window = { addEventListener() {}, removeEventListener() {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {}, JifengCustomerArchive: class {} };
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
@@ -73,6 +73,12 @@ assert.equal(dispatch(Modern, find("销售", "客户类型"))[0].spec.doctype, "
 for (const [module, name] of [["销售", "客户等级"], ["销售", "客户分类"], ["订单", "订单客户分类"], ["订单", "订单客户级别"]]) {
 	assert.equal(shared.availability(module, name), "partial");
 	assert.equal(dispatch(Modern, find(module, name))[0].spec.customerType, name);
+}
+for (const [module, name, kind] of [["销售", "客户档案", "销售客户"], ["订单", "客户", "订单客户"]]) {
+	assert.equal(shared.availability(module, name), "partial");
+	const spec = dispatch(Modern, find(module, name))[0].spec;
+	assert.equal(spec.customerArchive, kind);
+	assert.equal(spec.doctype, "Jifeng Customer Profile");
 }
 assert.equal(dispatch(Modern, find("销售", "日报表"))[0].spec.filters.from_date, "2026-10-02");
 
