@@ -1,6 +1,7 @@
 """Real XLSX serialization with native archive/source permission models; no DB."""
 
 from copy import deepcopy
+from contextlib import contextmanager
 from io import BytesIO
 import importlib.util
 from pathlib import Path
@@ -23,6 +24,33 @@ PLATING_HEADERS = (*HEADERS[:8], "户行", *HEADERS[9:], "停用", "操作", "�
 XML_NS = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
 
+class ModelDatabase:
+    """Two independent read views; no driver or native connection is loaded."""
+
+    def __init__(self, model, **parameters):
+        self.model = model
+        self.__dict__.update(parameters)
+        self.begin = Mock(side_effect=lambda **kwargs: self.action("begin", kwargs))
+        self.rollback = Mock(side_effect=lambda: self.action("rollback"))
+        self.close = Mock(side_effect=lambda: self.action("close"))
+        self.commit = Mock(side_effect=AssertionError("Read-only export must not commit"))
+
+    def action(self, name, parameters=None):
+        self.model.db_events.append((name, self, parameters))
+        if name in self.model.db_failures:
+            raise RuntimeError("Synthetic " + name + " failure")
+
+
+class DatabaseModule(types.ModuleType):
+    @property
+    def db(self):
+        return self.local.db
+
+    @db.setter
+    def db(self, value):
+        self.local.db = value
+
+
 def load_module(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -41,8 +69,41 @@ class TestPartnerArchiveExport(unittest.TestCase):
         self.addCleanup(self.env.doCleanups)
         self.env.setUp()
         self.P = self.env.module
+        self.db_events, self.read_events, self.db_failures = [], [], set()
+        self.old_view, self.fresh_read_failure = None, None
+        self.parameters = {"socket": "/synthetic/private-db.sock", "host": "synthetic-primary",
+                           "port": 13316, "user": "synthetic-export", "password": "synthetic-only",
+                           "cur_db_name": "synthetic-export-db"}
+        self.original_db = ModelDatabase(self, **self.parameters)
+        self.env.frappe.local.db = self.original_db
+        self.env.frappe.local.site = "synthetic-export.localhost"
+        self.env.frappe.conf = fixtures.Record(db_type="mariadb", db_socket=self.parameters["socket"],
+            db_host=self.parameters["host"], db_port=self.parameters["port"], db_user=self.parameters["user"],
+            db_password=self.parameters["password"], db_name=self.parameters["cur_db_name"])
+        self.env.frappe.local.conf = self.env.frappe.conf
+        self.env.frappe.__class__ = DatabaseModule
+        self.created_databases = []
+        self.database_factory = Mock(side_effect=self.new_database)
+        database = types.ModuleType("frappe.database")
+        database.get_db = self.database_factory
+        self.database_module = patch.dict(sys.modules, {"frappe.database": database})
+        self.database_module.start()
+        self.addCleanup(self.database_module.stop)
+        self.env.frappe.get_doc = Mock(side_effect=self.get_doc)
+        self.env.frappe.get_list = Mock(side_effect=self.get_list)
         self.env.metas[self.P.PROFILE].fields.append(fixtures.Record(fieldname="modified", fieldtype="Datetime"))
-        self.env.frappe.response = fixtures.Record()
+        model = self
+        class Response(fixtures.Record):
+            def update(response, *args, **kwargs):
+                content = dict(*args, **kwargs)
+                if "filecontent" in content:
+                    model.assertIs(model.env.frappe.local.db, model.original_db)
+                    fresh = model.created_databases[-1]
+                    fresh.rollback.assert_called_once_with()
+                    fresh.close.assert_called_once_with()
+                    model.db_events.append(("publish", model.env.frappe.local.db, None))
+                super().update(content)
+        self.env.frappe.response = Response()
         self.env.frappe._ = lambda text: text
         self.methods = []
         self.env.frappe.whitelist = lambda **kwargs: self.decorator(kwargs)
@@ -73,7 +134,47 @@ class TestPartnerArchiveExport(unittest.TestCase):
         self.methods.append(options)
         return lambda function: function
 
+    def new_database(self, **parameters):
+        self.db_events.append(("factory", self.env.frappe.local.db, None))
+        if "factory" in self.db_failures:
+            raise RuntimeError("Synthetic factory failure")
+        database = ModelDatabase(self, **parameters)
+        self.created_databases.append(database)
+        return database
+
+    def read_event(self, operation):
+        current = self.env.frappe.local.db
+        self.read_events.append((operation, current))
+        if current is not self.original_db and self.fresh_read_failure == operation:
+            raise RuntimeError("Synthetic final read failure")
+
+    @contextmanager
+    def records_for_connection(self):
+        committed = self.env.records
+        if self.old_view is not None and self.env.frappe.local.db is self.original_db:
+            self.env.records = self.old_view["records"]
+        try:
+            yield
+        finally:
+            self.env.records = committed
+
+    def get_doc(self, *args, **kwargs):
+        self.read_event("get_doc")
+        with self.records_for_connection():
+            document = self.env.get_doc(*args, **kwargs)
+        document["__read_database"] = self.env.frappe.local.db
+        return document
+
+    def get_list(self, *args, **kwargs):
+        self.read_event("get_list")
+        with self.records_for_connection():
+            return self.env.get_list(*args, **kwargs)
+
+    def freeze_original_read_view(self):
+        self.old_view = {"records": deepcopy(self.env.records), "auth": deepcopy(self.auth)}
+
     def get_all(self, doctype, filters=None, fields=None, **kwargs):
+        self.read_event("get_all")
         def matches(row):
             for field, value in (filters or {}).items():
                 if isinstance(value, list) and value[0] == "in":
@@ -82,7 +183,8 @@ class TestPartnerArchiveExport(unittest.TestCase):
                 elif row.get(field) != value:
                     return False
             return True
-        rows = [deepcopy(row) for row in self.auth.get(doctype, []) if matches(row)]
+        auth = self.old_view["auth"] if self.old_view is not None and self.env.frappe.local.db is self.original_db else self.auth
+        rows = [deepcopy(row) for row in auth.get(doctype, []) if matches(row)]
         if fields and fields != ["*"]:
             rows = [{field: row.get(field) for field in fields} for row in rows]
         return [self.fixtures.Record(row) for row in rows]
@@ -300,6 +402,7 @@ class TestPartnerArchiveExport(unittest.TestCase):
             name="SUP-HIDDEN", owner="different-synthetic-owner")
         self.add_profile(1, supplier="SUP-HIDDEN")
         permissions_before = deepcopy(self.auth)
+        self.freeze_original_read_view()
         original = self.fixtures.Document.has_permission
         def permission(document, action):
             if document.doctype == "Supplier" and document.name == "SUP-HIDDEN" and action == "read":
@@ -307,6 +410,8 @@ class TestPartnerArchiveExport(unittest.TestCase):
             return original(document, action)
         def gain_owner():
             self.env.records["Supplier", "SUP-HIDDEN"]["owner"] = self.env.frappe.session.user
+            self.assertNotEqual(self.env.frappe.get_doc("Supplier", "SUP-HIDDEN").owner,
+                                self.env.frappe.session.user)
         with patch.object(self.fixtures.Document, "has_permission", new=permission), \
              patch.object(self.P, "_checked_archives", wraps=self.P._checked_archives) as checked, \
              self.during_serialization(gain_owner), self.assertRaises((ValueError, PermissionError)):
@@ -314,6 +419,147 @@ class TestPartnerArchiveExport(unittest.TestCase):
         checked.assert_called_once_with("外发工厂", "Company A", "", "在用")
         self.assertEqual(self.env.records["Supplier", "SUP-HIDDEN"]["owner"], self.env.frappe.session.user)
         self.assertEqual(self.auth, permissions_before)
+        self.assert_no_binary()
+
+    def test_final_reads_use_independent_read_only_db_and_publish_after_restoration(self):
+        self.add_profile(1)
+        permissions = []
+        rechecks = []
+        original_permission = self.fixtures.Document.check_permission
+        original_recheck = self.P._recheck_archives
+        def permission(document, action):
+            if document.doctype == self.P.PROFILE and action == "export":
+                permissions.append((document.name, self.env.frappe.local.db, document["__read_database"]))
+            return original_permission(document, action)
+        def recheck(*args):
+            rechecks.append(self.env.frappe.local.db)
+            return original_recheck(*args)
+        def serialized():
+            self.assertIs(self.env.frappe.local.db, self.original_db)
+            self.db_events.append(("serialized", self.original_db, None))
+            self.read_events.append(("serialized", self.original_db))
+        with patch.object(self.fixtures.Document, "check_permission", new=permission), \
+             patch.object(self.P, "_recheck_archives", side_effect=recheck), self.during_serialization(serialized):
+            self.export()
+        self.database_factory.assert_called_once_with(**self.parameters)
+        fresh = self.created_databases[0]
+        self.assertIsNot(fresh, self.original_db)
+        fresh.begin.assert_called_once_with(read_only=True)
+        fresh.rollback.assert_called_once_with()
+        fresh.close.assert_called_once_with()
+        fresh.commit.assert_not_called()
+        self.assertEqual(rechecks, [self.original_db, fresh])
+        boundary = next(index for index, event in enumerate(self.read_events) if event[0] == "serialized")
+        final_reads = self.read_events[boundary + 1:]
+        self.assertTrue(final_reads)
+        self.assertTrue(all(database is fresh for _, database in final_reads))
+        self.assertTrue({"get_all", "get_doc", "get_list"}.issubset({name for name, _ in final_reads}))
+        for name in ("SYNTHETIC-000", "SYNTHETIC-001"):
+            self.assertIn((name, self.original_db, self.original_db), permissions)
+            self.assertIn((name, fresh, fresh), permissions)
+        self.assertEqual([name for name, _, _ in self.db_events],
+                         ["serialized", "factory", "begin", "rollback", "close", "publish"])
+        self.assertIs(self.env.frappe.local.db, self.original_db)
+        for operation in (self.original_db.begin, self.original_db.rollback, self.original_db.close, self.original_db.commit):
+            operation.assert_not_called()
+        self.worksheet()
+
+    def test_committed_raw_auth_profile_supplier_and_candidate_changes_escape_old_rr(self):
+        cases = (
+            lambda: self.auth["DocPerm"][0].update(export=0),
+            lambda: self.env.records[self.P.PROFILE, "SYNTHETIC-000"].update(notes="committed new text"),
+            lambda: self.env.records["Supplier", "SUP-A"].update(disabled=1),
+            lambda: self.add_profile(1),
+        )
+        for number, change in enumerate(cases):
+            with self.subTest(change=number):
+                records, auth = deepcopy(self.env.records), deepcopy(self.auth)
+                self.freeze_original_read_view()
+                auth_before = self.module._permission_state()
+                checked, names, query = self.P._checked_archives("外发工厂", "Company A", "", "在用")
+                def commit_change():
+                    change()
+                    # The old connection still sees its original RR snapshot.
+                    self.assertEqual(self.module._permission_state(), auth_before)
+                    self.assertEqual(self.env.frappe.get_list(self.P.PROFILE, **query), names)
+                    for document, supplier, view in checked:
+                        self.P._guard(document, supplier, view)
+                with self.during_serialization(commit_change), self.assertRaises((ValueError, PermissionError)):
+                    self.export()
+                self.assert_no_binary()
+                fresh = self.created_databases[-1]
+                fresh.begin.assert_called_once_with(read_only=True)
+                fresh.rollback.assert_called_once_with()
+                fresh.close.assert_called_once_with()
+                self.assertIs(self.env.frappe.local.db, self.original_db)
+                self.env.records, self.auth, self.old_view = records, auth, None
+
+    def test_factory_begin_final_read_and_cleanup_failures_restore_original_without_binary(self):
+        for failure in ("factory", "begin", "get_all", "get_doc", "get_list", "rollback", "close", "both_cleanup"):
+            with self.subTest(failure=failure):
+                self.db_events.clear()
+                self.created_databases.clear()
+                self.db_failures = {"rollback", "close"} if failure == "both_cleanup" else {failure}
+                self.fresh_read_failure = failure if failure.startswith("get_") else None
+                with self.assertRaises(RuntimeError):
+                    self.export()
+                self.assert_no_binary()
+                self.assertIs(self.env.frappe.local.db, self.original_db)
+                self.assertFalse(any(name == "publish" for name, _, _ in self.db_events))
+                if failure == "factory":
+                    self.assertEqual(self.created_databases, [])
+                else:
+                    fresh = self.created_databases[0]
+                    fresh.begin.assert_called_once_with(read_only=True)
+                    fresh.rollback.assert_called_once_with()
+                    fresh.close.assert_called_once_with()
+                    fresh.commit.assert_not_called()
+                self.original_db.rollback.assert_not_called()
+                self.original_db.close.assert_not_called()
+        self.db_failures.clear()
+        self.fresh_read_failure = None
+
+    def test_wrong_primary_root_and_incomplete_config_never_bind_or_create_db(self):
+        original_conf = dict(self.env.frappe.conf)
+        original_site = self.env.frappe.local.site
+        cases = [("attr", name, "different") for name in self.parameters]
+        cases += [("conf", "db_type", "postgres"), ("conf", "db_user", "RoOt"),
+                  ("conf", "db_user", ""), ("conf", "db_password", ""), ("conf", "db_name", ""),
+                  ("conf", "db_password", None), ("site", "site", "")]
+        for kind, key, value in cases:
+            with self.subTest(kind=kind, field=key):
+                self.database_factory.reset_mock()
+                self.env.frappe.conf.clear()
+                self.env.frappe.conf.update(original_conf)
+                self.original_db.__dict__.update(self.parameters)
+                self.env.frappe.local.site = original_site
+                if kind == "attr":
+                    setattr(self.original_db, key, value)
+                elif kind == "conf":
+                    self.env.frappe.conf[key] = value
+                    if key in {"db_user", "db_password", "db_name"}:
+                        setattr(self.original_db, {"db_user": "user", "db_password": "password", "db_name": "cur_db_name"}[key], value)
+                else:
+                    self.env.frappe.local.site = value
+                with self.assertRaises(ValueError):
+                    self.export()
+                self.database_factory.assert_not_called()
+                self.assertIs(self.env.frappe.local.db, self.original_db)
+                self.assert_no_binary()
+        self.env.frappe.conf.clear()
+        self.env.frappe.conf.update(original_conf)
+        self.original_db.__dict__.update(self.parameters)
+        self.env.frappe.local.site = original_site
+
+    def test_factory_reusing_request_db_rejected_without_touching_original_transaction(self):
+        self.database_factory.side_effect = None
+        self.database_factory.return_value = self.original_db
+        with self.assertRaises(ValueError):
+            self.export()
+        self.database_factory.assert_called_once_with(**self.parameters)
+        self.assertIs(self.env.frappe.local.db, self.original_db)
+        for operation in (self.original_db.begin, self.original_db.rollback, self.original_db.close, self.original_db.commit):
+            operation.assert_not_called()
         self.assert_no_binary()
 
     def test_checked_collection_once_exports_all_101_rows_without_paging(self):

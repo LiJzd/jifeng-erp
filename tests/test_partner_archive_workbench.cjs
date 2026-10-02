@@ -68,6 +68,25 @@ async function selectSupplier(value, state, name = "SUP-A", version = "2026-10-0
 async function changed(state, field, value) { await state.controls[field].set_value(value); }
 async function tick() { await new Promise(setImmediate); }
 
+async function missedCompanyEvents() {
+	const value = await bench();
+	value.companyControl.value = "Company B";
+	const queried = value.queryButton.events.get("click")(), queryCall = calls.at(-1);
+	assert.equal(queryCall.options.args.company, "Company B");
+	queryCall.resolve(page(queryCall, [archive("PROFILE-B", "Company B", false)])); await queried;
+	assert.equal(value.rows[0].name, "PROFILE-B");
+	const late = value.query(), lateCall = calls.at(-1);
+	value.companyControl.value = "Company C";
+	lateCall.resolve(page(lateCall, [archive("PROFILE-B", "Company B", false)])); await late;
+	assert.equal(value.total, null);
+	const count = calls.length; await value.openExisting("PROFILE-B"); assert.equal(calls.length, count);
+	const opened = value.openNew(), openCall = calls.at(-1);
+	assert.equal(openCall.options.args.company, "Company C");
+	value.companyControl.value = "Company D";
+	openCall.resolve(archive(null, "Company C")); await opened; assert.equal(value.editor, null);
+	value.destroy();
+}
+
 function statusChange(value, desired) { value.statusSelect.value = desired; return value.statusSelect.events.get("change")({ target: value.statusSelect }); }
 function frozenStatus(value, state = value.editor) {
 	assert.equal(value.statusSelect.disabled, true);
@@ -135,6 +154,7 @@ async function statusFilterEvents(kind) {
 }
 
 async function main() {
+	await missedCompanyEvents();
 	// Every tail style remains scoped to this table; both cells share the right offset width.
 	const styles = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, selector]) => /jfe-partner-(?:table|action|modify|delete)/.test(selector));
 	assert.equal(styles.length, 7);

@@ -18,6 +18,7 @@ const Archive = context.window.JifengPartnerArchive;
 function workbench() {
 	return Object.assign(Object.create(Archive.prototype), {
 		kind: "电镀厂", companyScope: "Company & A", search: { value: "原文=关键字" }, statusFilter: "全部", revision: 1,
+		companyControl: { value: "Company & A", get_value() { return this.value; } }, openRevision: 1,
 		disposed: false, opening: false, editor: null, exporting: false, exportController: null,
 		exportButton: {}, statusSelect: {}, status: { textContent: "" }, host: { replaceChildren() {} },
 	});
@@ -58,10 +59,23 @@ async function run() {
 	assert.equal(typeof finishBlob, "function");
 	value.cancelExport(); value.editor = {}; value.editor = null;
 	finishBlob({ size: 120 }); await late; assert.equal(downloads.length, 1);
+	// A native Link may update its input without calling df.onchange.
+	value.companyControl.value = "Company B";
+	const changedCompany = value.exportArchives();
+	assert.equal(new URL(requests.at(-1).url, "https://local.test").searchParams.get("company"), "Company B");
+	assert.equal(value.companyScope, "Company B");
+	respond(response()); await changedCompany; assert.equal(downloads.length, 2);
+	let finishRawBlob, rawBlobStarted;
+	const rawStarted = new Promise((resolve) => { rawBlobStarted = resolve; });
+	const rawChange = value.exportArchives();
+	respond({ ...response(), blob: () => new Promise((resolve) => { finishRawBlob = resolve; rawBlobStarted(); }) });
+	await rawStarted;
+	value.companyControl.value = "Company C";
+	finishRawBlob({ size: 120 }); await rawChange; assert.equal(downloads.length, 2);
 
 	const destroyed = workbench(), destroyedRequest = destroyed.exportArchives();
 	destroyed.destroy(); assert.equal(requests.at(-1).options.signal.aborted, true);
-	respond(response()); await destroyedRequest; assert.equal(downloads.length, 1);
+	respond(response()); await destroyedRequest; assert.equal(downloads.length, 2);
 	const before = requests.length;
 	value.editor = {}; await value.exportArchives(); assert.equal(requests.length, before);
 	console.log("partner archive export workbench: passed");

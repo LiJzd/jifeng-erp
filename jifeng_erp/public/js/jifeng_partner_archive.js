@@ -29,6 +29,7 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		this.host.classList.add("jfe-partner-archive"); this.host.replaceChildren();
 		const toolbar = this.element("div", undefined, "jfe-partner-toolbar"), company = this.element("div", undefined, "jfe-partner-company");
 		this.companyControl = this.control(company, "company", "公司", "Link", "Company", () => this.changeCompany());
+		this.companyControl.$input?.on?.("input.jifeng-partner-company change.jifeng-partner-company", () => this.changeCompany());
 		this.newButton = this.button("新增", () => this.openNew());
 		this.exportButton = this.button("导出", () => this.exportArchives());
 		this.exportButton.title = __("导出当前筛选的全部可见档案，最多1000条；需导出权限。");
@@ -70,6 +71,12 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		const desired = this.companyControl.get_value() || null;
 		if (desired === this.companyScope) return;
 		if (this.editor || this.opening) { this.settingCompany = true; try { await this.companyControl.set_value(this.companyScope); } finally { this.settingCompany = false; } return; }
+		this.syncCompany();
+	}
+	syncCompany() {
+		if (this.disposed || this.editor || this.opening) return;
+		const desired = this.companyControl.get_value() || null;
+		if (desired === this.companyScope) return;
 		this.companyScope = desired; this.revision++; this.openRevision++; this.clearResults(); this.status.textContent = __("公司已切换，请查询。");
 	}
 	cancelExport() {
@@ -88,6 +95,7 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 	pageNumber(value) { if (typeof value === "string" && /^[1-9][0-9]{0,3}$/.test(value)) value = Number(value); return Number.isInteger(value) && value >= 1 && value <= 1000 ? value : null; }
 	async query(target = 1) {
 		if (this.disposed || this.editor || this.opening) return;
+		this.syncCompany();
 		const page = this.pageNumber(target);
 		if (!this.companyScope || !page) { this.revision++; this.clearResults(); this.status.textContent = __(!this.companyScope ? "请选择公司。" : "请输入有效页码。"); return; }
 		const args = { kind: this.kind, company: this.companyScope, search: this.search.value, status: this.statusFilter, page, page_size: this.pageSize };
@@ -102,9 +110,11 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 			this.status.textContent = this.total ? __("查询完成。") : __("没有可见记录。");
 		} catch { if (this.current(sequence, args)) { this.clearResults(); this.status.textContent = __("查询未完成，请核对条件和权限后重试。"); } }
 	}
-	current(sequence, args) { return !this.disposed && sequence === this.revision && args.company === this.companyScope && args.search === this.search.value && args.status === this.statusFilter; }
+	current(sequence, args) { return !this.disposed && sequence === this.revision && args.company === this.companyScope && args.company === (this.companyControl.get_value() || null) && args.search === this.search.value && args.status === this.statusFilter; }
 	async exportArchives() {
-		if (this.disposed || this.editor || this.opening || this.exporting || !this.companyScope) return;
+		if (this.disposed || this.editor || this.opening || this.exporting) return;
+		this.syncCompany();
+		if (!this.companyScope) return;
 		const args = { kind: this.kind, company: this.companyScope, search: this.search.value, status: this.statusFilter };
 		const sequence = this.revision, controller = new AbortController();
 		this.exporting = true; this.exportController = controller; this.freezeStatus();
@@ -168,13 +178,15 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		}
 	}
 	async openNew() { return this.open(null); }
-	async openExisting(name) { if (!this.rows.some((row) => row.name === name)) return; return this.open(name); }
+	async openExisting(name) { this.syncCompany(); if (!this.rows.some((row) => row.name === name)) return; return this.open(name); }
 	async open(name) {
-		if (this.disposed || this.opening || this.editor || !this.companyScope) return;
+		if (this.disposed || this.opening || this.editor) return;
+		this.syncCompany();
+		if (!this.companyScope) return;
 		this.cancelExport();
 		const company = this.companyScope, sequence = ++this.openRevision; this.opening = true; this.freezeStatus();
 		try { const response = await this.call(name ? "read_archive" : "init_archive", { kind: this.kind, company, ...(name ? { name } : {}) });
-			if (this.disposed || sequence !== this.openRevision || company !== this.companyScope) return;
+			if (this.disposed || sequence !== this.openRevision || company !== this.companyScope || company !== (this.companyControl.get_value() || null)) return;
 			if (!this.validArchive(response.message, company, name)) throw new Error("Wrong archive scope");
 			await this.buildEditor(response.message);
 		} catch { if (!this.disposed && sequence === this.openRevision) this.status.textContent = __("工厂档案未能打开，请核对权限后重试。"); }
