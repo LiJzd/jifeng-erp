@@ -1048,6 +1048,119 @@ class TestProductArchive(unittest.TestCase):
                 call()
         self.assert_unchanged(before)
 
+    def pagination_records(self, count=205):
+        for index in range(count):
+            name = f"PAGED-{index:04d}"
+            self.add("Item", name, item_code=name, item_name="分页商品", item_group="Products", stock_uom="Nos")
+            self.add(PROFILE, name, company="JF", item_code=name, inactive=0, legacy_number=name,
+                     display_name="分页档案", display_uom="原文单位", legacy_remarks="<svg>字面原文</svg>")
+
+    def test_pagination_crosses_100_and_returns_stable_pages_and_full_checked_total(self):
+        self.pagination_records()
+        before = deepcopy((self.documents, self.versions))
+        pages = [self.module.query_archives("JF", search="PAGED-", page=page, page_size=100) for page in (1, 2, 3)]
+        self.assertEqual([len(page["rows"]) for page in pages], [100, 100, 5])
+        self.assertTrue(all(page["total"] == 205 and page["total_pages"] == 3 for page in pages))
+        names = [row["name"] for page in pages for row in page["rows"]]
+        self.assertEqual(names, sorted(names))
+        self.assertEqual(len(set(names)), 205)
+        self.assertEqual(len(self.module.list_archives("JF", search="PAGED-")), 205, "legacy array callers also lose the 100-row refusal")
+        self.assertTrue(all(call.kwargs["limit_page_length"] == 0 for call in self.frappe.get_list.call_args_list))
+        self.assert_unchanged(before)
+
+    def test_pagination_counts_native_visible_sources_and_preserves_field_projection(self):
+        self.pagination_records(105)
+        self.denied_names.add("PAGED-0104")
+        self.documents[(PROFILE, "PAGED-0103")]["inactive"] = 1
+        self.hidden[(PROFILE, "read")] = {"legacy_remarks"}
+        self.hidden[("Item", "read")] = {"stock_uom"}
+        page = self.module.query_archives("JF", search="PAGED-", page=2, page_size=100)
+        self.assertEqual((page["total"], len(page["rows"])), (103, 3))
+        self.assertNotIn("PAGED-0104", str(page))
+        for row in page["rows"]:
+            self.assertNotIn("legacy_remarks", row["profile"])
+            self.assertNotIn("stock_uom", row["item"])
+        self.assertEqual(self.module.query_archives("JF", search="PAGED-", include_inactive=True)["total"], 104)
+
+    def test_pagination_clamps_a_disappeared_last_page_and_empty_results(self):
+        self.pagination_records(101)
+        self.documents[(PROFILE, "PAGED-0100")]["inactive"] = 1
+        page = self.module.query_archives("JF", search="PAGED-", page="2", page_size="100")
+        self.assertEqual((page["requested_page"], page["page"], page["total"], page["total_pages"]), (2, 1, 100, 1))
+        page = self.module.query_archives("JF", search="unmatched", page=99, page_size=25)
+        self.assertEqual((page["page"], page["total"], page["total_pages"], page["rows"]), (1, 0, 0, []))
+
+    def test_pagination_rejects_ambiguous_page_arguments_before_listing(self):
+        for value in (None, True, False, 0, -1, 1.0, "01", "+1", " 1", "1.0", "1e2", 2147483648):
+            with self.subTest(page=value), self.assertRaises(ValueError):
+                self.module.query_archives("JF", page=value)
+        for value in (None, True, 0, 101, 1.0, "01", " 25", "25.0"):
+            with self.subTest(page_size=value), self.assertRaises(ValueError):
+                self.module.query_archives("JF", page_size=value)
+        self.frappe.get_list.assert_not_called()
+
+    def test_pagination_rechecks_off_page_item_and_permission_changes_before_exposing_total(self):
+        self.pagination_records(102)
+        real_pack, count = self.module._pack, 0
+
+        def changing_pack(profile, item, **options):
+            nonlocal count
+            result = real_pack(profile, item, **options)
+            count += 1
+            if count == 102:
+                self.documents[("Item", "PAGED-0101")]["modified"] = datetime(2026, 10, 1, 12)
+            return result
+
+        with patch.object(self.module, "_pack", changing_pack), self.assertRaises(PermissionError):
+            self.module.query_archives("JF", search="PAGED-", page=1, page_size=25)
+        count = 0
+
+        def revoked_pack(profile, item, **options):
+            nonlocal count
+            result = real_pack(profile, item, **options)
+            count += 1
+            if count == 102:
+                self.hidden[(PROFILE, "read")] = {"legacy_remarks"}
+            return result
+
+        with patch.object(self.module, "_pack", revoked_pack), self.assertRaises(PermissionError):
+            self.module.query_archives("JF", search="PAGED-", page=1, page_size=25)
+
+    def test_pagination_rechecks_entire_candidate_set_and_rejects_stale_native_projection(self):
+        real_list, count = self.get_list, 0
+
+        def changing_list(*args, **kwargs):
+            nonlocal count
+            count += 1
+            rows = real_list(*args, **kwargs)
+            if count == 1:
+                self.add("Item", "PAGED-NEW", item_code="PAGED-NEW", item_name="新商品", item_group="Products", stock_uom="Nos")
+                self.add(PROFILE, "PAGED-NEW", company="JF", item_code="PAGED-NEW", inactive=0, legacy_number="PAGED-NEW")
+            return rows
+
+        self.frappe.get_list.side_effect = changing_list
+        with self.assertRaises(PermissionError):
+            self.module.query_archives("JF")
+        self.frappe.get_list.side_effect = real_list
+        projected = Record(deepcopy(self.profile))
+        projected.display_name = "旧读取值"
+        self.forced_lists[PROFILE] = [projected]
+        with self.assertRaises(PermissionError):
+            self.module.query_archives("JF")
+
+    def test_pagination_keeps_guest_company_item_and_required_field_denials(self):
+        for change in (lambda: self.hidden.update({(PROFILE, "read"): {"item_code"}}),
+                       lambda: self.hidden.update({("Item", "read"): {"item_code"}}),
+                       lambda: self.document_denials.add(("Company", "JF", "select")),
+                       lambda: self.denials.add(("Item", "read"))):
+            change()
+            with self.assertRaises(PermissionError):
+                self.module.query_archives("JF")
+            self.hidden.clear(); self.document_denials.clear(); self.denials.clear()
+        self.frappe.session.user = "Guest"
+        with self.assertRaises(PermissionError):
+            self.module.query_archives("JF")
+
 
 if __name__ == "__main__":
     unittest.main()

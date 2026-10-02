@@ -1,5 +1,7 @@
 .jfe-inventory-catalog { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 5px; background: #fff; color: #555; }
 .jfe-inventory-catalog-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 14px 4px; }
+.jfe-inventory-archive-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 0 4px 8px; }
+.jfe-inventory-archive-actions select { margin-left: auto; border: 1px solid #d8d8d8; border-radius: 4px; padding: 4px 8px; }
 .jfe-inventory-catalog-toolbar > input { width: 390px; max-width: 100%; border: 1px solid #d8d8d8; border-radius: 4px; padding: 10px 12px; text-align: center; font-size: 16px; }
 .jfe-inventory-catalog-toolbar > input::placeholder { color: #a3a7ad; }
 .jfe-inventory-catalog-button { border: 0; background: transparent; padding: 5px 7px; color: #62666d; font-size: 15px; }

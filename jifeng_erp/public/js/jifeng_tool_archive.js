@@ -5,6 +5,7 @@ window.JifengToolArchive = class JifengToolArchive {
 		this.host = host; this.recordType = recordType; this.bridge = bridge; this.rows = []; this.revision = 0;
 		this.modeling = recordType === "modeling"; this.imageField = this.modeling ? "design_image" : "image"; this.imageLabel = this.modeling ? "设计原图" : "档案图片";
 		this.disposed = false; this.opening = false; this.editor = null; this.companyScope = null; this.changingCompany = false;
+		this.exporting = false; this.exportController = null;
 		this.title = this.modeling ? "版种建模" : recordType === "mold" ? "模具录入" : "版种录入"; this.doctype = this.modeling ? "Jifeng Plate Modeling" : recordType === "mold" ? "Jifeng Mold" : "Jifeng Plate";
 		this.identity = this.modeling ? "model_number" : recordType === "mold" ? "mold_no" : "plate_no"; this.inactive = this.modeling ? null : recordType === "mold" ? "scrapped" : "retired";
 		this.fields = this.modeling ? [["legacy_number", "编号"], ["model_number", "建模号"], ["product_code", "产品编号"], ["reference_unit_price", "单价"],
@@ -45,22 +46,51 @@ window.JifengToolArchive = class JifengToolArchive {
 			df: { fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), onchange: () => this.changeScope() } });
 		this.companyControl.$input.on("input.jfe-tool-archive-company change.jfe-tool-archive-company", () => this.changeScope());
 		this.search = this.element("input"); this.search.type = "text"; this.search.maxLength = 140; this.search.placeholder = __("关键词"); this.search.setAttribute("aria-label", __("关键词"));
-		this.search.addEventListener("input", () => { this.revision++; this.status.textContent = __("关键词已改变，请查询。"); });
+		this.search.addEventListener("input", () => { this.revision++; this.cancelExport(); this.status.textContent = __("关键词已改变，请查询。"); });
 		this.search.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.query(); } });
 		this.includeInactive = this.element("input"); this.includeInactive.type = "checkbox"; this.includeInactive.addEventListener("change", () => this.query());
 		const inactive = this.element("label"); inactive.hidden = this.modeling; inactive.append(this.includeInactive, this.element("span", __("包含报废")));
-		toolbar.append(this.button("新增", () => this.openEditor()), this.button("导出", null, "导出暂不可用"), this.button("导入", null, "导入暂不可用"),
+		this.exportButton = this.button("导出", () => this.exportArchives());
+		this.exportButton.title = __("按当前核实字段列导出当前筛选的全部可见已保存档案；需导出权限。");
+		toolbar.append(this.button("新增", () => this.openEditor()), this.exportButton, this.button("导入", null, "导入暂不可用"),
 			companyHost, this.search, this.button("查询", () => this.query()), inactive, this.button("打印", null, "打印暂不可用"));
 		this.status = this.element("p", __("请选择公司后查询，或新增档案。"), "jfe-tool-status"); this.status.setAttribute("role", "status");
 		this.scroller = this.element("div", undefined, "jfe-tool-scroll"); const table = this.element("table", undefined, "jfe-tool-table"), head = this.element("tr"), thead = this.element("thead");
 		for (const label of [...this.fields.map((row) => row[1]), this.imageLabel, "操作"]) head.append(this.element("th", __(label)));
-		thead.append(head); this.tbody = this.element("tbody"); table.append(thead, this.tbody); this.scroller.append(table); this.host.append(toolbar, this.status, this.scroller);
+		thead.append(head); this.tbody = this.element("tbody"); table.append(thead, this.tbody); this.scroller.append(table);
+		this.host.append(toolbar, this.element("p", __("导出按当前核实字段列生成 XLSX，包含当前筛选的全部可见已保存档案。"), "jfe-tool-status"), this.status, this.scroller); this.freezeExport();
+	}
+	freezeExport() { if (this.exportButton) this.exportButton.disabled = !!(!this.companyScope || this.disposed || this.changingCompany || this.opening || this.editor || this.exporting); }
+	cancelExport() { this.exportController?.abort(); this.exportController = null; this.exporting = false; this.freezeExport(); }
+	exportCurrent(sequence, args) { return !this.disposed && !this.editor && !this.opening && !this.changingCompany && sequence === this.revision &&
+		args.record_type === this.recordType && args.company === this.companyScope && args.company === (this.companyControl.get_value() || null) &&
+		args.search === this.search.value && args.include_inactive === (this.modeling ? "0" : this.includeInactive.checked ? "1" : "0"); }
+	async exportArchives() {
+		if (this.disposed || this.editor || this.opening || this.changingCompany || this.exporting) return;
+		if ((this.companyControl.get_value() || null) !== this.companyScope && !await this.changeScope()) return;
+		if (!this.companyScope || this.disposed || this.editor || this.opening || this.changingCompany) return;
+		const args = { record_type: this.recordType, company: this.companyScope, search: this.search.value, include_inactive: this.modeling ? "0" : this.includeInactive.checked ? "1" : "0" };
+		const sequence = this.revision, controller = new AbortController(); this.exporting = true; this.exportController = controller; this.freezeExport();
+		this.status.textContent = __("正在导出当前筛选的全部已保存档案…"); let url;
+		try {
+			const response = await fetch("/api/method/jifeng_erp.tool_archive_export.export_archives?" + new URLSearchParams(args),
+				{ method: "GET", credentials: "same-origin", headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, signal: controller.signal });
+			if (controller.signal.aborted || this.exportController !== controller || !this.exportCurrent(sequence, args)) return;
+			if (!response.ok || response.headers.get("Content-Type")?.split(";")[0].trim() !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") throw new Error("Archive export failed");
+			const file = await response.blob();
+			if (controller.signal.aborted || this.exportController !== controller || !this.exportCurrent(sequence, args)) return;
+			if (!file.size) throw new Error("Empty archive export");
+			url = URL.createObjectURL(file); const link = this.element("a"); link.href = url;
+			link.download = (this.modeling ? "版种建模" : this.recordType === "mold" ? "模具" : "版种") + "档案.xlsx";
+			document.body.append(link); link.click(); link.remove(); this.status.textContent = __("已生成当前筛选的完整档案文件。");
+		} catch { if (!controller.signal.aborted && this.exportController === controller && this.exportCurrent(sequence, args)) this.status.textContent = __("导出未完成，请核对筛选和导出权限后重试。"); }
+		finally { if (url) setTimeout(() => URL.revokeObjectURL(url), 1000); if (this.exportController === controller) { this.exportController = null; this.exporting = false; this.freezeExport(); } }
 	}
 	async changeScope() {
-		if (this.changingCompany || this.disposed) return false; const next = this.companyControl.get_value() || null; if (next === this.companyScope) return true;
+		if (this.changingCompany || this.disposed) return false; const next = this.companyControl.get_value() || null; if (next === this.companyScope) { this.freezeExport(); return true; }
 		const blocked = this.getCloseBlock();
-		if (!blocked) { this.rows = []; this.tbody.replaceChildren(); this.revision++; this.status.textContent = __("公司已改变，请查询。"); }
-		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; return true; }
+		if (!blocked) { this.cancelExport(); this.rows = []; this.tbody.replaceChildren(); this.revision++; this.status.textContent = __("公司已改变，请查询。"); }
+		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; this.freezeExport(); return true; }
 		this.changingCompany = true; try { await this.companyControl.set_value(this.companyScope); } finally { this.changingCompany = false; }
 		if (blocked) { frappe.msgprint(__(blocked)); return false; }
 		return this.discardFor(async () => { this.closeEditor(); this.companyScope = next; this.rows = []; this.tbody.replaceChildren(); this.revision++;
@@ -68,6 +98,7 @@ window.JifengToolArchive = class JifengToolArchive {
 	}
 	async query() {
 		if (this.disposed || this.changingCompany) return;
+		this.cancelExport();
 		if ((this.companyControl.get_value() || null) !== this.companyScope && !await this.changeScope()) return;
 		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
 		const company = this.companyScope, search = this.search.value, inactive = !!this.includeInactive.checked, sequence = ++this.revision;
@@ -96,7 +127,7 @@ window.JifengToolArchive = class JifengToolArchive {
 		if ((this.companyControl.get_value() || null) !== this.companyScope && (!await this.changeScope() || name)) return;
 		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
 		if (this.editor && !this.editor.closed) { this.editor.dialog.show(); return this.editor.dialog; }
-		this.opening = true; const company = this.companyScope, sequence = this.revision;
+		this.cancelExport(); this.opening = true; this.freezeExport(); const company = this.companyScope, sequence = this.revision;
 		try { const response = await this.call(name ? "read_record" : "init_record", name ? { name } : { company });
 			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
 			if (this.disposed || sequence !== this.revision || company !== this.companyScope || !this.changingCompany && company !== (this.companyControl.get_value() || null) || !this.validArchive(response.message, company, name) || !response.message.field_meta.company || !name && response.message.name) throw new Error("Wrong editor scope");
@@ -109,7 +140,7 @@ window.JifengToolArchive = class JifengToolArchive {
 			this.guardClose(state); dialog.show(); this.freeze(state); return dialog;
 		} catch { if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
 			const failed = this.editor; if (failed && !failed.nativeHide) { failed.closed = true; failed.dialog.hide(); this.editor = null; }
-			if (!this.disposed) this.status.textContent = __("档案未能打开，请重试。"); } finally { this.opening = false; }
+			if (!this.disposed) this.status.textContent = __("档案未能打开，请重试。"); } finally { this.opening = false; this.freezeExport(); }
 	}
 	buildEditor(state) {
 		const host = state.dialog.fields_dict.archive_layout.$wrapper.get(0); host.replaceChildren(); state.message = this.element("p", "", "jfe-tool-message"); state.message.setAttribute("role", "status");
@@ -193,8 +224,8 @@ window.JifengToolArchive = class JifengToolArchive {
 	guardClose(state) { state.nativeHide = state.dialog.hide.bind(state.dialog); state.dialog.hide = () => this.discardFor(() => this.closeEditor(), state);
 		state.dialog.$wrapper.modal({ backdrop: "static", keyboard: false, show: false }); state.dialog.get_close_btn().removeAttr("data-dismiss").on("click.tool-archive", () => state.dialog.hide());
 		state.dialog.$wrapper.on("keydown.tool-archive", (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); state.dialog.hide(); } });
-		state.dialog.on_hide = () => { state.closed = true; if (this.editor === state) this.editor = null; }; }
-	closeEditor() { const state = this.editor; if (!state || state.closed) return; state.closed = true; state.upload?.uploader?.dialog.hide(); state.nativeHide(); this.editor = null; }
+		state.dialog.on_hide = () => { state.closed = true; if (this.editor === state) this.editor = null; this.freezeExport(); }; }
+	closeEditor() { const state = this.editor; if (!state || state.closed) return; state.closed = true; state.upload?.uploader?.dialog.hide(); state.nativeHide(); this.editor = null; this.freezeExport(); }
 	requestID() { if (crypto.randomUUID) return crypto.randomUUID(); const bytes = crypto.getRandomValues(new Uint8Array(16)); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
 		const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(""); return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-"); }
 	async newDraft(state) { return this.discardFor(async () => { state.busy = true; this.freeze(state);
@@ -300,5 +331,5 @@ window.JifengToolArchive = class JifengToolArchive {
 					}, () => { state.confirming = false; this.freeze(state); }); })); panel.candidates.append(candidate); }
 		} catch { panel.candidates.append(this.element("p", __("上传结果核对失败，请稍后核对；不会重复上传。"))); } finally { state.busy = false; this.freeze(state); }
 	}
-	destroy() { this.disposed = true; this.revision++; window.removeEventListener("beforeunload", this.beforeUnload); if (this.editor && !this.editor.closed) this.closeEditor(); }
+	destroy() { this.disposed = true; this.revision++; this.cancelExport(); window.removeEventListener("beforeunload", this.beforeUnload); if (this.editor && !this.editor.closed) this.closeEditor(); }
 };

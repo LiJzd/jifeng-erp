@@ -19,7 +19,7 @@ from jifeng_erp.personnel_changes_validation import _callbacks, _restore_callbac
 from jifeng_erp.personnel_separation_validation import _local_context, _restore_local_context
 from jifeng_erp.product_archive import (
     COLLISION, PROFILE, init_archive, list_archives, list_category_choices, list_image_attachments,
-    read_archive, resolve_creation, save_archive,
+    query_archives, read_archive, resolve_creation, save_archive,
 )
 from jifeng_erp.product_category_validation import _native_contents as _category_contents
 from jifeng_erp.product_dictionary_validation import _document_snapshot, _sql_row_hash
@@ -381,6 +381,49 @@ def smoke(company, other_company, item_group, stock_uom):
         native(lambda: list_archives(company, search="仅改", include_inactive=True))
         native(lambda: resolve_creation(fresh_input["request_id"], company))
         assert _contents() == state
+        passed()
+
+        current = "native_product_pages_over_100_preserve_sources_permissions_counts_and_last_page"
+        # Exact synthetic prefix; every Item/Profile is created through native
+        # insert and collected by the existing whole-site rollback audit.
+        frappe.set_user("Administrator")
+        page_prefix = prefix + "-PAGE-"
+        page_names = []
+        for index in range(103):
+            item = insert("Item", item_code=page_prefix + f"{index:03d}", item_name="分页验收业务商品",
+                          item_group=item_group, stock_uom=stock_uom, is_stock_item=1)
+            profile = insert(PROFILE, company=company, item_code=item.name, inactive=int(index == 102),
+                             legacy_number=page_prefix + f"{index:03d}", display_name="分页验收原文档案",
+                             display_uom="独立原文单位", legacy_remarks="<svg>字面原文</svg>")
+            page_names.append(profile.name)
+        frappe.set_user(system)
+        state = _contents()
+        first = native(lambda: query_archives(company, page_prefix, page=1, page_size=100))
+        last = native(lambda: query_archives(company, page_prefix, page="2", page_size="100"))
+        assert (first["total"], last["total"], first["total_pages"], last["total_pages"]) == (102, 102, 2, 2)
+        assert (len(first["rows"]), len(last["rows"]), last["page"]) == (100, 2, 2)
+        assert [row["name"] for row in first["rows"] + last["rows"]] == sorted(page_names[:-1])
+        assert all(row["profile"]["display_uom"] == "独立原文单位" and row["item"]["stock_uom"] == stock_uom
+                   and row["profile"]["legacy_remarks"] == "<svg>字面原文</svg>" for row in last["rows"])
+        complete = native(lambda: query_archives(company, page_prefix, include_inactive=True, page=5, page_size=25))
+        assert (complete["total"], complete["total_pages"], complete["page"], len(complete["rows"])) == (103, 5, 5, 3)
+        clamped = native(lambda: query_archives(company, page_prefix, page=999, page_size=100))
+        assert clamped["requested_page"] == 999 and clamped["page"] == 2 and len(clamped["rows"]) == 2
+        empty = native(lambda: query_archives(company, page_prefix + "-absent", page=9))
+        assert (empty["page"], empty["total"], empty["total_pages"], empty["rows"]) == (1, 0, 0, [])
+        assert len(native(lambda: list_archives(company, page_prefix, include_inactive=True))) == 103
+        assert _contents() == state
+        frappe.set_user(item_scoped)
+        hidden_page = native(lambda: query_archives(company, page_prefix, include_inactive=True))
+        assert hidden_page["total"] == 0 and hidden_page["rows"] == []
+        assert not any(name in str(hidden_page) for name in page_names)
+        frappe.set_user(outside)
+        reject(lambda: query_archives(company, page_prefix), frappe.PermissionError, atomic=False)
+        frappe.set_user(system)
+        for options in ({"page": "01"}, {"page": True}, {"page_size": 101}, {"page_size": "1e2"}):
+            reject(lambda options=options: query_archives(company, page_prefix, **options))
+        assert _contents() == state
+        evidence["pagination"] = "103 native synthetic linked archives; full-source count, stable 100/2 and 25-row pages, stop filter, last-page clamp, Item User Permission and company denial; all query reads audited"
         passed()
     except Exception as error:
         primary = error

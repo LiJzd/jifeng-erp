@@ -715,3 +715,32 @@ Admin 实际离职 UI 三阶段完成：点“办理离职”并确认，唯一 
 Admin实际首轮 classic-bridge-qa-r1（457e5ae）证据：classic→人事档案父路由始终 jifeng-legacy，面包屑、iframe ready/Employee List、空筛选/无loading；新增大原生表单填合成值后×→否保留/是关闭；已有合成员工未保存输入切主页再返回仍保留，关闭标签否保留/是移除iframe；客户 QuickEntry 脏关闭受确认。两正式标签的iframe节点、子context及条件各自保留，上级面包屑正常，全屏/退全屏后 iframe 可见。pageerror0、业务保存/审核/取消POST0；仍有图片 /undefined 404及另列Socket.IO404。首轮指出人事浏览误有新增，576553e已隐藏/阻止该入口；原生 confirm先回调后隐藏，关闭下层延至microtask并防重复确认。1a4d08d将全屏目标升到documentElement以覆盖body中弹层。
 
 最终 classic-bridge-review（576553e hardreload）通过：人事浏览无新增、人事档案仍可新增，×→否保留、底部关闭→是丢弃后父 modal 数0、三个窗口 open_dialogs均0，新表单iframe卸载而原列表仍ready；已有合成员工未保存输入跨正式标签返回仍保留、确认关标签才移除iframe；客户 QuickEntry 精确弹层/原生标题及脏确认正确。documentElement全屏中表单/确认框均可见，关闭后列表正常，退全屏成功。业务 mutation POST0、pageerror0，图片404与Socket.IO404完整分列。完整576553e bench build退出0。独立 fresh connection 只读保护核验 whole Employee/全部子表、User/Auth/Profile/Role/UP、whole GL/SLE内容均与浏览器前相同，其他全部tab*计数一致；仅 Activity Log/Sessions各+49，未删登录记录或修改账簿。证据 classic-bridge-protected-after.json。旧字段顺序、图文视图、字典弹层及工资双击路径仍须独立适配，全模块交付未达成。
+
+
+## 外网交付后档案批次（2026-10-02，本地集成）
+
+外网继续运行冻结业务版本8858743；以下验证使用本地已有隔离站 `jifeng-plating-native-isolated.localhost`，不修改116测试服务器的镜像、业务或账号。文件同步先核bench干净88587438及每个旧文件SHA，再逐文件复制；补丁后的第二次同步核对上次收据SHA。所有私有工具和证据位于忽略的output，新增忽略Playwright自动生成的会话/截图目录，不提交凭据。
+
+实现范围：物料/材料档案由原生List改为独立列表，保留旧20/19数据列及操作/日期/修改人/修改日期/修改/删除列位置。默认全部档案，显式公司、关键词、状态、分页及滚动；新增/修改使用已有档案弹层，公司明确预填及既有公司只读，独立编辑权限来自原生服务。审计列读取当前ERP元数据而非推断旧审计用户，来源权限及原生get_list字段投影省略均保留；浏览组件的readonly/can_write=false合同不变。图片/图文、导入/导出/简拼/删除/打印等未完成入口仍禁用，列表保存提示用户打开档案保存。候选查询仍有1000上限，超过时需关键词缩小范围，不能称全量迁移容量已验。
+
+产品档案去除100条硬拒绝，新增25/50/100分页、可见总数、上/下页和跳页，保存后在原页刷新，最后有效页减少时回到合法页。总数来自完整授权Profile/Item集合及两次完整来源/字段权限复核，原list_archives数组合同保留。全集合复核成本随档案增长；没有并发或大规模性能验收，不能称原子数据库快照。
+
+模具/版种/建模新增当前公司、类型、筛选的已保存全集XLSX下载，分别11/10/8列，逐条使用既有授权DTO和原生export；生成文字单元格保留前导零、公式和HTML字面值，新独立只读MariaDB快照复核范围、来源、授权及字段，异常不返回附件。建模JSON只给既有System/Stock/Manufacturing Manager补export=1，与模具/版种一致；没有给只读角色或真实用户增加角色、删除权或CustomDocPerm。独立站仅reload该DocType并核语义变化只为三个export位，记录 `archive-schema-permissions-20261002.json`。旧XLSX模板未知，因此采用当前已核实字段列序，不声称旧模板完全一致；快照只保证首次一致性读取前的已提交状态。
+
+97项定向Python模型（产品52、库存档案25、库存列表4、工具导出16）及相关8组CJS通过。独立复审复现并关闭3个异步问题：保存时挂起查询的迟到旧结果、复制挂起后关页的孤儿窗口、初值set_values完成后失效条件仍开窗；真实组件生命周期回归覆盖scope/种类key、RPC/初值迟到、copy关闭阻挡及清理。产品原生16门包含103个rollback-only档案；库存15门包含真实Stock User/Stock Manager审计、公司范围、原生备注修改后列表值与修改账号。两组均actual exit0、全夹具回滚，fresh连接计数/账户/原有文档/GL/SLE哈希不变。收据 `archive-paging-native-20261002/classic-product_archive-native-result.json` 与 `classic-inventory_catalog-native-result.json`。
+
+工具原生r1仅验证空表5门，不计非空或岗位验收。为真实下载，本地隔离站注册 `JF-ARCHIVE-QA-20261002`，只新增本轮3工具、103产品、2库存和三个纯主管测试账号；合成材料没有库存/财务凭证，GL/SLE保持。夹具r1给Employee Link写普通姓名失败，r2把版种原文字量当数值失败；两次在总提交前失败并fresh核命名空间/User零残留，保留失败工具及收据。r3修夹具后一次原生业务commit成功，记录intent、身份、表计数变化和受限账号文件；没有修改原业务人员、角色或外网数据。工具r2真实9门通过：三个类型各1已保存记录、三个纯主管逐类导出、Stock User原生读取分享仍无export而整次拒绝、官方HTTP response builder与全部内容/权限/账簿恢复。只读角色临时夹具回滚；尚未验证真实请求中的并发撤权或超过100条已保存工具导出，后者模型106条通过。证据 `tool-export-native-20261002-r1.json`、`-r2.json` 和 `archive-qa-fixture-r3-20261002/receipt.json`。
+
+缓存单app构建r1的最后shell行CR导致tail工具退出1，实际build日志已完成；LF脚本r2完整exit0。构建提示默认redis_cache无法更新assets_json，隔离站私有Redis连接与clear-cache成功，静态文件已链接；不把警告删去。GUI预览最初nohup未保持进程；benchserve降权至jifengtest无法读root600隔离配置，文档404；改同一官方frappe.app.serve使用绝对sites_path，首次启动import先于cwd失败，修正后进程存活。副本原maintenance_mode=1导致503，仅此隔离配置改0并记SHA，保持scheduler disabled和mute_emails，HTTP login200/ping200后才开始GUI。
+
+纯Stock Manager实际A→B→A物料备注两次save_archive POST200：A写“QA A 列表保存验证”，B读到后写“QA B 列表保存验证”，A再读到B值。两套均26列、既有公司只读及未保存放弃回原备注通过。root独立原生after核仅目标Profile的notes/modified/modified_by变化、两个Version都只有notes；完整Item/Product/三工具/Employee/DocPerm/CustomDocPerm/UP/HasRole、其他库存及Auth共12组SHA与完整GL/SLE保持。证据 `archive-gui-native-before-20261002.json`、`archive-gui-native-after-20261002.json`。
+
+同一岗位A/B产品实际GUI均103条：每页100时100→3→100；改25后跳第5页3条。查看后关闭保持第5页、公司/关键词及3行，不额外查询或保存。A/B材料实际25列、公司/namespace唯一行、只读开窗关闭及模块上级/主页返回均保持条件与行，不重新查询；物料/材料滚轮后window.scrollY仍0，没有可用的非零纵向位置，因此不认定非零滚动恢复已验。菜单“模具录入”“版种录入”“版种建模”两版各一次实际GET导出，共六次HTTP200和真实下载。GUI只访问loopback，两条授权备注外没有其他业务保存。报告 `archive-batch-gui-20261002/report.md` 和 `sanitized.json` 保留最初端口故障及后续成功；局部截图只有页头，不作为列/行证据。
+
+root独立逐文件读回六个XLSX，分别11/10/8列和一行已保存合成资料，表头及全部值与夹具相同，A/B业务值一致；非空数据格均文字及格式@，保留前导零、=1+2、HTML原文和高精度单价，没有公式、超链接或外部关系。初次独立verifier误把复制Check的默认0当空，按实际字段声明修正预期后通过，未修改产品或下载文件。收据 `archive-downloads-independent-20261002.json` 含六文件SHA。GUI结束后精确停止本批PID2456，8000关闭；仅恢复副本maintenance_mode=1，其余配置语义与0600保持，JSON字节与原配置不同，未声称整文件字节恢复。受登记QA资料保留在副本，外网未变；收据 `archive-gui-preview-closed-20261002.json`。外网另一次只读实际DIRECT核验HTTP301、可信HTTPS登录200和ping200/pong，证书仍到2026-10-09UTC，`erp_external_https_health_archive_batch_20261002.json`；没有登录或切版本。
+
+增量发布只读复审确认：8858743到本批前HEAD没有业务目录差异，本批唯一schema为三个建模export位；未来候选由最终提交冻结、独立构建，只切五个应用容器并保留数据库/Redis/卷/原证书目录。原发布打包工具硬编码旧提交与目录，不能直接复跑；须新清单、DIRECT、站点备份和权限快照，targeted reload及clear-cache。当前本机Docker CLI存在但daemon不可达，新镜像/上传/切换尚未发生；不在2GB运行机重建。ecs-release-deploy所列Postgres/Vite工程参考不属于本ERP，按本仓库部署说明执行。106预览不阻塞此批增量发布，但仍是全模块交付缺口。
+
+旧销售词典补证只到四类分组，目标页未到达，拦截自动读取对卡片空白的影响未排除，不能当作旧系统无入口或词典已核实。临时旧站profile/截图删除遭自动审查拒绝，未换工具重试删除；本轮目录已限制当前用户/SYSTEM/Admin访问，保留受限证据，不纳入Git。其字段/编号/业务语义仍未知，未据此实现新字典。
+
+本批补现有正式映射的操作，不消除106业务预览，也不将239映射认定为模块全部通过。363入口、237正式、2工厂部分、106业务预览、13导航和5工具说明保持；第一版全模块目标继续。

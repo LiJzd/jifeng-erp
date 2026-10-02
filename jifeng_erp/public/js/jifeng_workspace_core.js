@@ -445,6 +445,9 @@ class JifengLegacyWorkspace {
 		}
 		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
 		if (liveDoctype) {
+			if (liveDoctype === "Jifeng Inventory Profile" && (!this.formalBridge || !window.JifengInventoryArchiveList)) {
+				frappe.msgprint(__("档案页面未能加载，请刷新后重试。")); return;
+			}
 			if (liveDoctype === "Jifeng Partner Profile") {
 				if (!this.formalBridge || !window.JifengPartnerArchive) {
 					frappe.msgprint(__("工厂档案页面未能加载，请刷新后重试。"));

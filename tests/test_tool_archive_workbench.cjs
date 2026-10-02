@@ -123,7 +123,8 @@ async function main() {
 	mold.includeInactive.checked = true; query = mold.query(); assert.equal(calls.at(-1).options.args.include_inactive, 1); calls.at(-1).resolve([]); await query;
 	const oldQuery = mold.query(), oldCall = calls.at(-1); mold.search.value = "new"; const latest = mold.query(); calls.at(-1).resolve([pack("mold")]); await latest;
 	oldCall.resolve([pack("mold", { name: "OLD" })]); await oldQuery; assert.equal(mold.rows[0].name, "MOLD-1", "stale query does not replace newer rows");
-	for (const bench of [mold, plate]) for (const label of ["导出", "导入", "打印"]) assert.ok(bench.host.descendants("button").find((node) => node.textContent === label).disabled);
+	for (const bench of [mold, plate]) { assert.equal(bench.exportButton.disabled, false); assert.match(bench.exportButton.title, /当前核实字段列/);
+		for (const label of ["导入", "打印"]) assert.ok(bench.host.descendants("button").find((node) => node.textContent === label).disabled); }
 	let dialog = await opening(mold), state = mold.editor;
 	assert.equal(state.form.descendants("label").map((node) => node.textContent).join("/"), "编号/模具/产品/数量/压模/日期/金额/说明/库位/报废/复制");
 	assert.ok(state.controls.legacy_number.readOnly); assert.ok(state.controls.mold_date.readOnly); assert.equal(state.controls.remark.tag, "input"); assert.equal(state.controls.remark.type, "text");

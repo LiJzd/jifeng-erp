@@ -330,6 +330,12 @@ class TestInventoryArchive(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.module.save_archive(self.existing_payload(profile={"notes": "拒绝"}))
 
+    def test_editor_company_scope_is_optional_for_existing_callers_and_rejects_mismatches(self):
+        self.assertEqual(self.module.read_archive("PROFILE", "物料")["name"], "PROFILE")
+        self.assertEqual(self.module.read_archive("PROFILE", "物料", "JF")["name"], "PROFILE")
+        with self.assertRaises(PermissionError):
+            self.module.read_archive("PROFILE", "物料", "OTHER")
+
     def test_field_permissions_and_unknown_fields_are_preserved(self):
         self.hidden[(self.module.PROFILE, "read")] = {"notes"}
         self.hidden[(self.module.PROFILE, "write")] = {"location"}

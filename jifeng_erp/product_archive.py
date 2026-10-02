@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import math
+import re
 from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
@@ -39,6 +40,7 @@ PROTECTED = {"company", "item_code", *RECEIPT}
 REQUIRED_PROFILE = {"name", "modified", "company", "item_code", "inactive"}
 REQUIRED_ITEM = {"name", "modified", "item_code"}
 COLLISION = "新建请求已使用或来源冲突，请只读核对，不自动重复保存"
+LIST_PAGE_SIZE = 100
 _CREATING = ContextVar("jifeng_product_archive_creation", default=None)
 _SERVER = object()
 
@@ -500,8 +502,7 @@ def list_category_choices(company, search=""):
     return result
 
 
-@frappe.whitelist()
-def list_archives(company, search="", include_inactive=False):
+def _list_archives(company, search, include_inactive):
     _login()
     _company(company)
     if not frappe.has_permission(PROFILE, "read"):
@@ -513,11 +514,13 @@ def list_archives(company, search="", include_inactive=False):
     readable = _columns(PROFILE, "read")
     filters = {"company": company, **({} if include_inactive else {"inactive": 0})}
     text = {"legacy_number", "legacy_code", "display_name", "old_number", "major_category", "minor_category"} & readable
+    if search and not text:
+        frappe.throw("没有读取关键词查询字段的权限", frappe.PermissionError)
     options = {"or_filters": [[field, "like", "%" + search + "%"] for field in sorted(text)]} if search else {}
     rows = frappe.get_list(PROFILE, filters=filters, fields=sorted((PROFILE_READ | REQUIRED_PROFILE) & readable),
-                           order_by="name asc", limit_page_length=101, **options)
-    if len(rows) > 100:
-        frappe.throw("产品档案较多，请输入关键词后查询")
+                           order_by="name asc", limit_page_length=0, **options)
+    if len({row.get("name") for row in rows}) != len(rows):
+        frappe.throw("产品档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
     result = []
     for row in rows:
         if not REQUIRED_PROFILE.issubset(row):
@@ -525,6 +528,20 @@ def list_archives(company, search="", include_inactive=False):
         profile, item = _documents(row.name)
         if profile.company != company or row.company != company or not include_inactive and profile.inactive:
             continue
+        for field in set(row) & (PROFILE_READ | REQUIRED_PROFILE):
+            current, original = profile.get(field), row[field]
+            df = profile.meta.get_field(field)
+            if field == "modified":
+                unchanged = same_version(current, _value(original))
+            elif df and df.fieldtype in ("Float", "Currency") and current is not None and original is not None:
+                try:
+                    unchanged = Decimal(str(current)) == Decimal(str(original))
+                except (InvalidOperation, ValueError, TypeError):
+                    unchanged = False
+            else:
+                unchanged = _value(current) == _value(original)
+            if not unchanged:
+                frappe.throw("产品档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
         # Native list field projection remains the source of scalar values.
         packed = _pack(profile, item)
         packed["profile"] = {field: packed["profile"][field] if field in IMAGES else _value(row[field])
@@ -532,6 +549,53 @@ def list_archives(company, search="", include_inactive=False):
         packed["profile_version"] = _value(row.modified)
         result.append(packed)
     return result
+
+
+@frappe.whitelist()
+def list_archives(company, search="", include_inactive=False):
+    """Retain the array contract for callers without the former 100-row cap."""
+    return _list_archives(company, search, include_inactive)
+
+
+def _page_integer(value, label, maximum):
+    if isinstance(value, str):
+        if not re.fullmatch(r"[1-9][0-9]{0,9}", value):
+            frappe.throw(f"请输入有效{label}")
+        value = int(value)
+    if type(value) is not int or not 1 <= value <= maximum:
+        frappe.throw(f"请输入有效{label}")
+    return value
+
+
+@frappe.whitelist()
+def query_archives(company, search="", include_inactive=False, page=1, page_size=LIST_PAGE_SIZE):
+    """Page complete authorized DTOs, with a request-local source recheck.
+
+    Native list projections remain authoritative. Count only fully checked
+    Profile/Item sources, then re-read the whole set, including off-page rows,
+    before returning a count or page. This is not an atomic database snapshot.
+    """
+    _login()
+    _company(company)
+    page = _page_integer(page, "页码", 2_147_483_647)
+    page_size = _page_integer(page_size, "每页条数", LIST_PAGE_SIZE)
+    include_inactive = _normalize(PROFILE, "inactive", include_inactive)
+    fields_before = {(doctype, permission): _columns(doctype, permission)
+                     for doctype in (PROFILE, "Item") for permission in ("read", "write")}
+    views = _list_archives(company, search, include_inactive)
+    verified = _list_archives(company, search, include_inactive)
+    if views != verified or any(_columns(*key) != fields for key, fields in fields_before.items()):
+        frappe.throw("产品档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
+    _company(company)
+    if not frappe.has_permission(PROFILE, "read"):
+        frappe.throw("没有读取产品档案权限", frappe.PermissionError)
+    total = len(views)
+    total_pages = (total + page_size - 1) // page_size
+    effective_page = min(page, max(1, total_pages))
+    start = (effective_page - 1) * page_size
+    return {"company": company, "search": search, "include_inactive": include_inactive,
+            "requested_page": page, "page": effective_page, "page_size": page_size,
+            "total": total, "total_pages": total_pages, "rows": views[start:start + page_size]}
 
 
 def _receipt(request_id, company):

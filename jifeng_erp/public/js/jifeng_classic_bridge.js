@@ -153,9 +153,9 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		return this.personnelEditor.open(name).catch(() => {});
 	}
 
-	openInventory(kind, name) {
+	openInventory(kind, name, options = {}) {
 		this.inventoryEditor ||= new window.JifengInventoryArchive(this);
-		return this.inventoryEditor.open(kind, name).catch(() => {});
+		return this.inventoryEditor.open(kind, name, null, options).catch(() => {});
 	}
 
 	openHRDictionary(type, name, company) {
@@ -187,6 +187,10 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	mount(host, spec) {
+		if (spec.inventoryArchive) {
+			const workbench = new window.JifengInventoryArchiveList(host, spec.inventoryArchive, this);
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		if (spec.partnerArchive) {
 			const workbench = new window.JifengPartnerArchive(host, spec.partnerArchive);
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };

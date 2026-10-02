@@ -16,6 +16,8 @@ from jifeng_erp.catalog_validation import (
 )
 from jifeng_erp.diagnostics import _begin_rollback_only
 from jifeng_erp.inventory_archive import save_archive
+from jifeng_erp.inventory_archive import read_archive as read_edit_archive
+from jifeng_erp.inventory_archive_list import query_archives as query_archive_list
 from jifeng_erp.inventory_catalog import PROFILE, list_archives, query_archives, read_archive
 from jifeng_erp.inventory_validation import _ledger_snapshot
 from jifeng_erp.personnel_changes_validation import _callbacks, _tab_counts
@@ -176,6 +178,20 @@ def smoke(company, other_company, item_group, stock_uom):
             assert result["rows"][0]["item_code"] == expected[index]["item_code"]
         passed("real_stock_user_checked_total_two_exact_pages_and_http_integer_text")
 
+        current = "real_archive_list_native_audit_readonly_permissions_and_company_scope"
+        archive_page = native(lambda: query_archive_list("物料", company, prefix, page_size=1))
+        assert (archive_page["total"], archive_page["total_pages"]) == (2, 2)
+        archive_row = archive_page["rows"][0]
+        native_profile = frappe.get_doc(PROFILE, archive_row["name"])
+        assert archive_row["audit"]["owner"] == native_profile.owner
+        assert archive_row["audit"]["modified_by"] == native_profile.modified_by
+        assert archive_row["audit"]["modified"] == archive_row["profile_version"]
+        assert archive_row["readonly"] and not archive_row["can_write"]
+        editor = native(lambda: read_edit_archive(first["name"], "物料", company))
+        assert not editor["can_write"]
+        rejected(lambda: read_edit_archive(first["name"], "物料", other_company))
+        passed("native_archive_list_audit_default_columns_readonly_dto_and_explicit_company_guard")
+
         current = "separate_kinds_and_explicit_profile_status"
         assert [row["name"] for row in query("材料")] == [material["name"]]
         assert [row["name"] for row in query("材料", status="停用")] == [stopped["name"]]
@@ -189,6 +205,21 @@ def smoke(company, other_company, item_group, stock_uom):
         assert frappe.has_permission(PROFILE, "write")
         assert query() and detail(first)["can_write"] is False
         passed("real_stock_manager_has_write_role_but_browse_returns_only_readonly_actions")
+
+        current = "real_manager_archive_edit_refresh_has_exact_native_modified_audit"
+        editor = native(lambda: read_edit_archive(first["name"], "物料", company))
+        assert editor["can_write"]
+        saved = native(lambda: save_archive({"kind": "物料", "name": editor["name"],
+            "profile_version": editor["profile_version"], "item_version": editor["item_version"],
+            "profile": {"notes": "列表刷新后保留的原文"}, "item": {}}))
+        changed = native(lambda: query_archive_list("物料", company, prefix, page=2, page_size=1))
+        whole = native(lambda: query_archive_list("物料", company, prefix))
+        displayed = next(row for row in whole["rows"] if row["name"] == saved["name"])
+        assert displayed["profile"]["notes"] == "列表刷新后保留的原文"
+        assert displayed["audit"]["modified_by"] == manager
+        assert displayed["audit"]["modified"] == displayed["profile_version"]
+        assert changed["page"] == 2 and changed["total"] == 2
+        passed("native_manager_edit_then_archive_list_reflects_saved_notes_and_exact_modified_user_version")
 
         current = "company_user_permission_isolation"
         for user, hidden_company, hidden in ((clerk, other_company, foreign), (outsider, company, first)):

@@ -12,3 +12,4 @@ site_config.json
 
 # Local validation evidence and login helpers contain private data.
 /output/
+/.playwright-cli/

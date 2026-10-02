@@ -13,6 +13,7 @@ const window = { JifengInventoryCatalog: class {
 	getCloseBlock() { return ""; }
 	destroy() { this.destroyed = (this.destroyed || 0) + 1; }
 } };
+window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element() };
 const frappe = { pages: { "jifeng-legacy": {} }, msgprint: message => messages.push(message) };
 const context = { window, document, frappe, __: text => text };
@@ -47,6 +48,21 @@ for (const kind of ["物料", "材料"]) {
 	assert.equal(bridge.frames.has(key), false);
 }
 assert.equal(instances.length, 2, "each kind has one dedicated read-only cached workbench");
+for (const kind of ["物料", "材料"]) {
+	workspace.openPage(kind + "档案", kind);
+	const key = `formal:${kind}:${kind}档案`, entry = bridge.frames.get(key);
+	assert.ok(entry.workbench instanceof window.JifengInventoryArchiveList);
+	assert.equal(entry.iframe, undefined, "archive actions use their own list, not an editable iframe fallback");
+	assert.equal(entry.workbench.kind, kind);
+	workspace.closeTab(key);
+}
+const savedList = window.JifengInventoryArchiveList;
+delete window.JifengInventoryArchiveList;
+const beforeArchive = workspace.tabs.length;
+workspace.openPage("物料档案", "物料");
+assert.equal(workspace.tabs.length, beforeArchive);
+assert.equal(messages.at(-1), "档案页面未能加载，请刷新后重试。");
+window.JifengInventoryArchiveList = savedList;
 const saved = window.JifengInventoryCatalog;
 delete window.JifengInventoryCatalog;
 const before = workspace.tabs.length;

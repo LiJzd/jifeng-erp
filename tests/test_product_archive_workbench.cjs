@@ -48,7 +48,7 @@ const window = { addEventListener(name, action) { listeners.set(action, name); }
 const document = { createElement: (tag) => new Element(tag) };
 const frappe = { pages: { "jifeng-legacy": {} }, ui: { Dialog, FileUploader, form: { make_control({ df }) {
 	return { df: { ...df }, $input: new Wrapper(), value: null, get_value() { return this.value; }, async set_value(value) { await Promise.resolve(); this.value = value; await df.onchange?.(); }, refresh() {} };
-} } }, call(options) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ options, resolve: (message) => resolve({ message }), reject }); return promise; },
+} } }, call(options) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ options, resolve: (message) => resolve({ message: options.method.endsWith(".query_archives") && Array.isArray(message) ? pageResult(options.args, message) : message }), reject }); return promise; },
 	msgprint(message) { messages.push(message); }, show_alert() {}, confirm(_, yes, no) { confirmation = { yes, no }; } };
 const context = { window, document, frappe, structuredClone, __: (text) => text, Uint8Array,
 	crypto: { getRandomValues: (bytes) => nodeCrypto.randomFillSync(bytes) } };
@@ -74,6 +74,12 @@ function pack(extra = {}) {
 }
 const category = { category: "CAT-1", category_detail: "DETAIL-1", category_code: "类别代码原文", major_name: "大类原文", minor_name: "小类原文", material: "不能自动带入的材质", owner_name: "不能自动带入的负责", region: "区域原文", abbreviation: "" };
 const attachment = (extra = {}) => ({ name: "FILE-1", file_name: "图片.png", file_url: "/private/files/image.png", unique_url: "/private/files/image.png?fid=FILE-1", creation: "2026-10-01T00:00:03", ...extra });
+function pageResult(args, rows, total = rows.length, changes = {}) {
+	const pages = Math.ceil(total / args.page_size);
+	return { company: args.company, search: args.search, include_inactive: args.include_inactive,
+		requested_page: args.page, page: Math.min(args.page, Math.max(1, pages)), page_size: args.page_size,
+		total, total_pages: pages, rows, ...changes };
+}
 async function opening(bench, archive = blank()) {
 	const pending = bench.openEditor(archive.name); assert.equal(calls.at(-1).options.method, "jifeng_erp.product_archive." + (archive.name ? "read_archive" : "init_archive"));
 	calls.at(-1).resolve(archive); const dialog = await pending;
@@ -118,8 +124,62 @@ async function companyScopeEvents() {
 	assert.equal(calls.length, reads + 1, "scope acceptance adds no query beyond the explicit query during confirmation");
 	bench.destroy();
 }
+function pageRow(index, extra = {}) {
+	const name = "PAGED-" + String(index).padStart(4, "0"), source = pack();
+	return pack({ name, item_code: name, profile: { ...source.profile, item_code: name }, item: { ...source.item, item_code: name }, ...extra });
+}
+async function paginationEvents() {
+	const bench = new window.JifengProductArchive(new Element()); await bench.companyControl.set_value("Company A");
+	assert.ok(bench.previous.disabled && bench.next.disabled); assert.equal(bench.pageSizeControl.value, "100");
+	const second = bench.query(2), secondCall = calls.at(-1), lastRow = pageRow(100);
+	assert.equal(secondCall.options.method, "jifeng_erp.product_archive.query_archives"); assert.equal(secondCall.options.args.page, 2);
+	secondCall.resolve(pageResult(secondCall.options.args, [lastRow], 101)); await second;
+	assert.equal(bench.page, 2); assert.equal(bench.total, 101); assert.equal(bench.totalPages, 2); assert.equal(bench.previous.disabled, false); assert.ok(bench.next.disabled);
+	bench.scroller.scrollTop = 170; bench.scroller.scrollLeft = 61;
+	await opening(bench, lastRow); const state = bench.editor, readsBeforeClose = calls.length; await state.dialog.hide();
+	assert.equal(bench.page, 2); assert.equal(calls.length, readsBeforeClose, "closing the editor keeps the same page without requerying");
+	assert.equal(bench.scroller.scrollTop, 170); assert.equal(bench.scroller.scrollLeft, 61);
+	await opening(bench, lastRow); const editing = bench.editor; editing.controls.inactive.checked = true;
+	const save = bench.save(editing); await tick(); const saveCall = calls.at(-1);
+	saveCall.resolve(pageRow(100, { profile_version: "2026-10-01T00:00:09", profile: { ...lastRow.profile, inactive: 1 } })); await save;
+	const refreshed = calls.at(-1); assert.equal(refreshed.options.method, "jifeng_erp.product_archive.query_archives");
+	assert.equal(refreshed.options.args.page, 2, "save refresh requests the page that was being edited");
+	const firstRows = Array.from({ length: 100 }, (_, index) => pageRow(index));
+	refreshed.resolve(pageResult(refreshed.options.args, firstRows, 100)); await tick();
+	assert.equal(bench.page, 1, "saving the last active row returns to the new last valid page"); assert.equal(bench.total, 100);
+	assert.equal(bench.scroller.scrollTop, 170); assert.equal(bench.scroller.scrollLeft, 61); assert.ok(!editing.unresolved);
+	bench.closeEditor();
+	const older = bench.query(1), olderCall = calls.at(-1), newer = bench.query(2), newerCall = calls.at(-1);
+	newerCall.resolve(pageResult(newerCall.options.args, [lastRow], 101)); await newer;
+	olderCall.resolve(pageResult(olderCall.options.args, firstRows, 101)); await older;
+	assert.equal(bench.page, 2); assert.equal(bench.rows[0].name, lastRow.name, "late first-page replies cannot replace a newer page");
+	const duplicate = bench.query(1), duplicateCall = calls.at(-1);
+	duplicateCall.resolve(pageResult(duplicateCall.options.args, [lastRow, lastRow], 2)); await duplicate;
+	assert.equal(bench.page, 2); assert.equal(bench.total, 101, "malformed totals or duplicate source identities do not replace the last valid page");
+	assert.match(bench.status.textContent, /查询失败/);
+	for (const page of [true, 0, -1, "01", " 1", "1.2", "1e2", 2147483648]) {
+		const count = calls.length; await bench.query(page); assert.equal(calls.length, count, "invalid page does not send a query");
+	}
+	bench.pageSizeControl.value = "25"; const resized = bench.pageSizeControl.events.get("change")(), resizedCall = calls.at(-1);
+	assert.equal(resizedCall.options.args.page, 1); assert.equal(resizedCall.options.args.page_size, 25);
+	assert.equal(bench.total, null, "page size invalidates old counts before querying");
+	resizedCall.resolve(pageResult(resizedCall.options.args, firstRows.slice(0, 25), 101)); await resized;
+	assert.equal(bench.page, 1); assert.equal(bench.totalPages, 5); assert.equal(bench.pageSize, 25);
+	const late = bench.query(2), lateCall = calls.at(-1); bench.search.value = "new filter"; bench.search.events.get("input")();
+	lateCall.resolve(pageResult(lateCall.options.args, firstRows.slice(25, 50), 101)); await late;
+	assert.equal(bench.total, null); assert.equal(bench.rows.length, 0, "changed filter rejects both late rows and count");
+	bench.search.value = ""; bench.search.events.get("input")();
+	await opening(bench, lastRow); const accepted = bench.editor, originalApply = bench.applyArchive; let finishApply;
+	const gate = new Promise((resolve) => { finishApply = resolve; });
+	bench.applyArchive = async (...args) => { await gate; return originalApply.apply(bench, args); };
+	const accepting = bench.accept(accepted, lastRow, "accepted"); bench.search.value = "later filter"; bench.search.events.get("input")();
+	const countBeforeFinish = calls.length; finishApply(); await accepting;
+	assert.equal(calls.length, countBeforeFinish, "save completion cannot start a stale refresh after newer filter input");
+	bench.applyArchive = originalApply; bench.closeEditor(); bench.destroy();
+}
 async function main() {
 	await companyScopeEvents();
+	await paginationEvents();
 	const openedRecipes = [], bench = new window.JifengProductArchive(new Element(), { open: (spec) => openedRecipes.push(spec) });
 	bench.companyScope = "Company A"; await bench.companyControl.set_value("Company A");
 	const query = bench.query(); assert.equal(calls.at(-1).options.args.include_inactive, 0); calls.at(-1).resolve([]); await query;
@@ -160,7 +220,7 @@ async function main() {
 	assert.ok(state.business.hidden); assert.equal(state.recipeButton.hidden, false); assert.equal(state.images.profile_image.uploadButton.disabled, false);
 	assert.equal(state.resolveButton.hidden, true); assert.equal(dialog.hidden, false, "save continues in the same popup");
 	// Complete the optional background list refresh started by accept without changing its query state.
-	assert.equal(calls.at(-1).options.method, "jifeng_erp.product_archive.list_archives"); calls.at(-1).resolve([pack({ profile: expectedProfile })]); await tick();
+	assert.equal(calls.at(-1).options.method, "jifeng_erp.product_archive.query_archives"); calls.at(-1).resolve([pack({ profile: expectedProfile })]); await tick();
 	assert.equal(bench.includeInactive.checked, true);
 
 	state.controls.display_name.value = " 本次改名 "; const failed = bench.save(state); await tick(); calls.at(-1).reject({ responseJSON: { exc_type: "TimestampMismatchError" } }); await failed;

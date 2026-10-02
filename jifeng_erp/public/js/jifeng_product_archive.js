@@ -4,6 +4,7 @@ window.JifengProductArchive = class JifengProductArchive {
 		this.host = host; this.disposed = false; this.revision = 0; this.opening = false; this.editor = null; this.rows = [];
 		this.bridge = bridge;
 		this.companyScope = null; this.changingCompany = false;
+		this.page = 1; this.pageSize = 100; this.total = null; this.totalPages = 0; this.pendingQuery = null;
 		this.fields = [["legacy_number", "编号"], ["legacy_code", "代码"], ["major_category", "大类"], ["minor_category", "小类"],
 			["old_number", "旧号"], ["brand", "品牌"], ["material", "材质"], ["shared_version", "共版"], ["patent_number", "专利号"],
 			["display_name", "名称"], ["source", "来源"], ["designer", "设计"], ["pattern_maker", "打版"], ["modeler", "建模"],
@@ -36,10 +37,10 @@ window.JifengProductArchive = class JifengProductArchive {
 		this.companyControl.$input.on("input.jfe-product-archive-company change.jfe-product-archive-company", () => this.changeScope());
 		this.search = this.element("input"); this.search.type = "text"; this.search.maxLength = 140;
 		this.search.placeholder = __("关键词"); this.search.setAttribute("aria-label", __("关键词"));
-		this.search.addEventListener("input", () => { this.revision++; this.status.textContent = __("关键词已改变，请查询。"); });
+		this.search.addEventListener("input", () => this.resetList("关键词已改变，请查询。"));
 		this.search.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.query(); } });
 		this.includeInactive = this.element("input"); this.includeInactive.type = "checkbox";
-		this.includeInactive.addEventListener("change", () => this.query());
+		this.includeInactive.addEventListener("change", () => { this.resetList("停用条件已改变，请查询。"); return this.query(1); });
 		const inactive = this.element("label", undefined, "jfe-product-archive-inactive"); inactive.append(this.includeInactive, this.element("span", __("包含停用")));
 		toolbar.append(this.button("新增", () => this.openEditor()), this.button("导出", null, "导出暂不可用"), this.button("导入", null, "导入暂不可用"),
 			companyHost, this.search, this.button("查询", () => this.query()), inactive, this.button("打印", null, "打印暂不可用"),
@@ -50,40 +51,90 @@ window.JifengProductArchive = class JifengProductArchive {
 		const thead = this.element("thead"), headings = this.element("tr");
 		for (const label of ["编号", "代码", "大类", "小类", "名称", "单位", "备注", "停用", "产品图片", "专利图片", "操作"]) headings.append(this.element("th", __(label)));
 		thead.append(headings); this.tbody = this.element("tbody"); table.append(thead, this.tbody); this.scroller.append(table);
-		this.host.append(toolbar, this.status, this.scroller);
+		const pager = this.element("div", undefined, "jfe-product-archive-toolbar"); pager.setAttribute("aria-label", __("产品档案分页"));
+		this.previous = this.button("上页", () => this.query(this.page - 1)); this.next = this.button("下页", () => this.query(this.page + 1));
+		this.pageLabel = this.element("span", "—"); this.pageLabel.setAttribute("aria-label", __("当前页"));
+		this.goto = this.element("input"); this.goto.type = "text"; this.goto.inputMode = "numeric"; this.goto.maxLength = 10;
+		this.goto.value = "1"; this.goto.setAttribute("aria-label", __("前往页码"));
+		this.goto.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.query(this.goto.value); } });
+		this.pageSizeControl = this.element("select"); this.pageSizeControl.setAttribute("aria-label", __("每页条数"));
+		for (const size of [25, 50, 100]) { const option = this.element("option", String(size)); option.value = String(size); this.pageSizeControl.append(option); }
+		this.pageSizeControl.value = String(this.pageSize);
+		this.pageSizeControl.addEventListener("change", () => {
+			const size = Number(this.pageSizeControl.value);
+			if (![25, 50, 100].includes(size)) { this.pageSizeControl.value = String(this.pageSize); return; }
+			this.pageSize = size; this.resetList("每页条数已改变，请查询。"); return this.query(1);
+		});
+		this.count = this.element("span", __("尚未查询"));
+		pager.append(this.previous, this.pageLabel, this.next, this.goto, this.button("前往", () => this.query(this.goto.value)),
+			this.element("span", __("每页")), this.pageSizeControl, this.element("span", __("条")), this.count);
+		this.host.append(toolbar, this.status, this.scroller, pager); this.renderPager();
+	}
+	resetList(message) {
+		this.revision++; this.pendingQuery = null; this.page = 1; this.total = null; this.totalPages = 0; this.rows = [];
+		this.tbody.replaceChildren(); this.goto.value = "1"; this.renderPager(); this.status.textContent = __(message);
+	}
+	renderPager() {
+		if (!this.previous) return;
+		this.previous.disabled = this.pendingQuery !== null || this.total === null || this.page <= 1;
+		this.next.disabled = this.pendingQuery !== null || this.total === null || this.page >= this.totalPages;
+		this.pageLabel.textContent = this.total === null ? "—" : this.page + " / " + Math.max(1, this.totalPages);
+		this.count.textContent = this.total === null ? __("尚未查询") : __("共") + " " + this.total + " " + __("条");
+	}
+	pageNumber(value) {
+		if (typeof value === "string") { if (!/^[1-9][0-9]{0,9}$/.test(value)) return null; value = Number(value); }
+		return Number.isInteger(value) && value >= 1 && value <= 2147483647 ? value : null;
 	}
 	async changeScope() {
 		if (this.changingCompany || this.disposed) return false;
 		const next = this.companyControl.get_value() || null;
 		if (next === this.companyScope) return true;
 		const blocked = this.getCloseBlock();
-		if (!blocked) { this.rows = []; this.tbody.replaceChildren(); this.revision++; this.status.textContent = __("公司已改变，请查询。"); }
+		if (!blocked) this.resetList("公司已改变，请查询。");
 		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; return true; }
 		this.changingCompany = true;
 		try { await this.companyControl.set_value(this.companyScope); } finally { this.changingCompany = false; }
 		if (blocked) { frappe.msgprint(__(blocked)); return false; }
 		return this.discardFor(async () => {
-			this.closeEditor(); this.companyScope = next; this.rows = []; this.tbody.replaceChildren(); this.revision++;
+			this.closeEditor(); this.companyScope = next; this.resetList("公司已改变，请查询。");
 			this.changingCompany = true;
 			try { await this.companyControl.set_value(next); } finally { this.changingCompany = false; }
 		});
 	}
-	async query() {
+	async query(page = 1) {
 		if (this.disposed || this.changingCompany) return;
 		if ((this.companyControl.get_value() || null) !== this.companyScope && !await this.changeScope()) return;
 		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
 		const company = this.companyScope, search = this.search.value || "", inactive = !!this.includeInactive.checked, sequence = ++this.revision;
-		if (!company) { this.status.textContent = __("请选择公司后查询。"); return; }
+		const requestedPage = this.pageNumber(page), args = { company, search, include_inactive: Number(inactive), page: requestedPage, page_size: this.pageSize };
+		if (!company || requestedPage === null) { this.pendingQuery = null; this.renderPager(); this.status.textContent = __(!company ? "请选择公司后查询。" : "请输入合法页码后查询。"); return; }
+		this.pendingQuery = sequence; this.renderPager();
 		const scroll = { top: this.scroller.scrollTop, left: this.scroller.scrollLeft }; this.status.textContent = __("正在查询…");
 		try {
-			const response = await this.call("list_archives", { company, search, include_inactive: Number(inactive) });
+			const response = await this.call("query_archives", args);
 			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
-			if (this.disposed || sequence !== this.revision || company !== this.companyScope || company !== (this.companyControl.get_value() || null) || search !== this.search.value || inactive !== !!this.includeInactive.checked) return;
-			if (!Array.isArray(response.message) || response.message.some((row) => !this.validArchive(row, company) || !row.name)) throw new Error("Wrong list scope");
-			this.rows = response.message; this.renderRows(); this.scroller.scrollTop = scroll.top; this.scroller.scrollLeft = scroll.left;
-			this.status.textContent = this.rows.length ? __("查询完成") + " · " + this.rows.length + __("条") : __("没有可见记录。");
+			if (!this.currentQuery(sequence, args)) return;
+			const result = response.message; if (!this.validPage(result, args)) throw new Error("Wrong list scope");
+			this.rows = result.rows; this.page = result.page; this.total = result.total; this.totalPages = result.total_pages; this.goto.value = String(this.page);
+			this.renderRows(); this.renderPager(); this.scroller.scrollTop = scroll.top; this.scroller.scrollLeft = scroll.left;
+			this.status.textContent = this.total ? (result.page === requestedPage ? __("查询完成") : __("页码超出当前范围，已返回最后一页")) + " · " + this.rows.length + __("条") : __("没有可见记录。");
 		} catch { if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
-			if (!this.disposed && sequence === this.revision && company === (this.companyControl.get_value() || null)) this.status.textContent = __("查询失败，当前列表未更新，请重新查询。"); }
+			if (this.currentQuery(sequence, args)) this.status.textContent = __("查询失败，当前列表未更新，请重新查询。"); }
+		finally { if (this.pendingQuery === sequence) { this.pendingQuery = null; this.renderPager(); } }
+	}
+	currentQuery(sequence, args) {
+		return !this.disposed && sequence === this.revision && args.company === this.companyScope && args.company === (this.companyControl.get_value() || null) &&
+			args.search === this.search.value && args.include_inactive === Number(this.includeInactive.checked) && args.page_size === this.pageSize;
+	}
+	validPage(result, args) {
+		if (!result || !["company", "search", "include_inactive", "page_size"].every((field) => result[field] === args[field]) ||
+			result.requested_page !== args.page || !Number.isSafeInteger(result.total) || result.total < 0 ||
+			!Number.isSafeInteger(result.total_pages) || result.total_pages !== Math.ceil(result.total / args.page_size) ||
+			result.page !== Math.min(args.page, Math.max(1, result.total_pages)) || !Array.isArray(result.rows)) return false;
+		const length = Math.min(args.page_size, Math.max(0, result.total - (result.page - 1) * args.page_size));
+		return result.rows.length === length && new Set(result.rows.map((row) => row?.name)).size === result.rows.length &&
+			result.rows.every((row) => this.validArchive(row, args.company) && typeof row.name === "string" && !!row.name &&
+				(args.include_inactive || !Number(row.profile.inactive)));
 	}
 	renderRows() {
 		this.tbody.replaceChildren();
@@ -423,9 +474,12 @@ window.JifengProductArchive = class JifengProductArchive {
 		finally { state.busy = false; this.freeze(state); if (state.unresolved) state.message.textContent = __("保存结果尚未确认，草稿已保留，请核对保存结果。"); }
 	}
 	async accept(state, archive, message) {
+		const refresh = { revision: this.revision, page: this.page, company: this.companyScope, search: this.search.value,
+			include_inactive: Number(this.includeInactive.checked), page_size: this.pageSize };
 		state.unresolved = false; state.conflict = null; state.candidate = null; state.requestId = null;
 		await this.applyArchive(state, archive); state.original = JSON.stringify(this.draft(state));
-		state.dialog.set_title(__("产品档案")); state.message.textContent = __(message); if (this.companyScope === archive.profile.company) this.query();
+		state.dialog.set_title(__("产品档案")); state.message.textContent = __(message);
+		if (this.companyScope === archive.profile.company && this.currentQuery(refresh.revision, refresh)) this.query(refresh.page);
 		frappe.show_alert({ message: __(message), indicator: "green" });
 	}
 	showConflict(state, archive) {

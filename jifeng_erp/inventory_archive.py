@@ -276,8 +276,12 @@ def init_archive(kind, company=None, copy_from=None, existing_item=None):
 
 
 @frappe.whitelist()
-def read_archive(name, kind):
+def read_archive(name, kind, company=None):
     profile, item = _documents(name, kind)
+    if company is not None:
+        _company(company)
+        if profile.company != company:
+            frappe.throw("档案不属于当前公司，请重新查询", frappe.PermissionError)
     return _pack(profile, item)
 
 
