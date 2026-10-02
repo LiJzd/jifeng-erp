@@ -173,5 +173,7 @@ def export_archives(kind, company, search="", status="在用"):
         if not checked and not frappe.has_permission(P.PROFILE, "export"):
             P._deny()
     # Publish only after complete authorization and successful DB cleanup.
-    frappe.response.update({"type": "binary", "content_type": CONTENT_TYPE,
+    # Frappe's binary builder forces application/octet-stream. The official
+    # download builder preserves the declared XLSX content type.
+    frappe.response.update({"type": "download", "content_type": CONTENT_TYPE,
         "filename": kind + "档案.xlsx", "display_content_as": "attachment", "filecontent": content})

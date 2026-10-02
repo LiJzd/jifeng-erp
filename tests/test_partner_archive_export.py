@@ -211,7 +211,7 @@ class TestPartnerArchiveExport(unittest.TestCase):
 
     def assert_no_binary(self):
         self.assertTrue("filecontent" not in self.env.frappe.response, "Refused export must not publish binary content")
-        self.assertNotEqual(self.env.frappe.response.get("type"), "binary")
+        self.assertNotIn(self.env.frappe.response.get("type"), ("binary", "download"))
 
     def during_serialization(self, change, events=None):
         original = Workbook.save
@@ -243,7 +243,7 @@ class TestPartnerArchiveExport(unittest.TestCase):
                     self.assertEqual(sheet.cell(2, 15).value, row["modified_by"])
                     self.assertEqual(sheet.cell(2, 16).value, row["modified"])
                 self.assertEqual(self.env.frappe.response["filename"], kind + "档案.xlsx")
-                self.assertEqual(self.env.frappe.response["type"], "binary")
+                self.assertEqual(self.env.frappe.response["type"], "download")
                 self.assertEqual(self.env.frappe.response["content_type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 self.assertEqual(self.env.frappe.response["display_content_as"], "attachment")
                 cells = [str(cell.value) for rows in sheet for cell in rows]

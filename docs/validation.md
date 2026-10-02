@@ -8,6 +8,12 @@
 
 公司漏通知及迟到响应反例的三组CJS已通过。18项导出模型、Ruff、编译与独立复审通过，包含原连接旧视图仍不变但fresh发现此前提交、最终复核全走fresh、开始/读取/回滚/关闭失败均恢复原连接并不发附件。缓存构建、独立副本SDK及真实HTTP/GUI续验继续；前次失败和58d6b19原SDK证据按历史保留，全模块目标及两工厂部分可用标记保持。
 
+修复提交 `6f1083c7a8292de25038c7f72083a9c28c10f2a4` 已本地同步WSL，缓存单app生产构建actual exit0，未安装/下载依赖。复用既有私有副本的新native r2实际exit0，四项原生检查和rollback/destroy返回均通过；Admin两个导出额外核原请求DB对象恢复，真实六参数匹配并成功建立只读事务。工具SHA256 `89753f0b6c8228bc038d3b5ab2b58ebece144c91c484b965ee93585e882545ae`，安全摘要 `output/factory-export-native-r2-20261002/actual-native4-proof.json` SHA256 `84b461914f99cd3305a1014ba0cead5bb7a6eecca69760fcf7795ca38a209f61`。这四项不是实际跨事务并发撤权证明，该场景此次只有模型覆盖。
+
+旧r2预览PID19781已精确停止且clone配置哈希恢复；新r3预览PID20305仅监听127.0.0.1:8020、threaded=True，无worker/scheduler，继续由Luna复用9235真实页面验证查询/下载及返回条件。原站web仍停止，未改变原站配置或连接原站数据库。
+
+真实GUI r4已证明公司选择修复有效，精确前缀查询唯一GET200、一行和19UI列。仅一次导出GET200但没有下载，安全响应头为application/octet-stream、声明长度5291、attachment/xlsx，无重定向；保留 `output/factory-export-gui-r4-20261002/report.md` 和合成行截图。安装官方 `frappe/utils/response.py` 的as_binary固定octet-stream而忽略content_type，故前端严格XLSX检查正确拒绝。现改官方download/as_raw，保留完整最终守门和严格MIME检查；18模型和Ruff再通过，实际响应builder/SDK与GUI复验待。没有放宽前端或重放r4请求。
+
 ## 2026-10-02 工厂档案全集导出（源码、构建与真实SDK）
 
 按旧工厂工具栏补“导出”，GET读取当前公司/kind/关键词/状态的完整可见结果，不只导出当前100条页面。共用原查询的加载和来源复核，分页仍100、完整候选上限仍1000；逐档案前后核原生export，未扩角色或schema。外发11业务列；电镀12业务列加创建人/日期/修改人/修改日期，不包含选择空列和修改/删除操作。所有值只取既有授权DTO，masked字段留空，无Supplier银行回退、内部ID或请求身份。末尾再核来源、原始权限输入和省略档案是否变得可读，变化整次拒绝。
