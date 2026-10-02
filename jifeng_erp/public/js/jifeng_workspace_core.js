@@ -148,14 +148,14 @@ const JIFENG_LIVE_ROUTES = {
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate", 版种建模: "Jifeng Plate Modeling", 建模: "Jifeng Plate Modeling" },
 	发镀: { 电镀厂: "Jifeng Partner Profile", 委外采购单: "Purchase Order", 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
 	外发: { 外发工厂: "Jifeng Partner Profile", 委外采购单: "Purchase Order", 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
-	销售: { 客户档案: "Customer", 销售订单: "Sales Order", 零售单记录: "POS Invoice", 零售开班: "POS Opening Entry", 零售结班: "POS Closing Entry", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
+	销售: { 客户类型: "Jifeng Customer Type", 客户档案: "Customer", 销售订单: "Sales Order", 零售单记录: "POS Invoice", 零售开班: "POS Opening Entry", 零售结班: "POS Closing Entry", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 费用登记单: "Jifeng Expense Voucher", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry", 费用登记查询: "Jifeng Expense Voucher" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
 	日志: { 服务器操作日志: "Activity Log", 操作日志: "Activity Log" },
 };
 
 // Server-backed entry whose available operations remain explicitly limited.
-const JIFENG_PARTIAL_ROUTES = { 发镀: { 电镀厂: true }, 外发: { 外发工厂: true } };
+const JIFENG_PARTIAL_ROUTES = { 发镀: { 电镀厂: true }, 外发: { 外发工厂: true }, 销售: { 客户类型: true } };
 
 const JIFENG_LIVE_CATALOGS = {
 	物料: { 浏览: "物料" },
@@ -445,6 +445,13 @@ class JifengLegacyWorkspace {
 		}
 		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
 		if (liveDoctype) {
+			if (liveDoctype === "Jifeng Customer Type") {
+				if (!this.formalBridge || !window.JifengCustomerType) {
+					frappe.msgprint(__("客户类型页面未能加载，请刷新后重试。")); return;
+				}
+				this.formalBridge.open({ title: name, module: moduleName, kind: "list", doctype: liveDoctype,
+					customerType: true, availability: "partial" }); return;
+			}
 			if (liveDoctype === "Jifeng Inventory Profile" && (!this.formalBridge || !window.JifengInventoryArchiveList)) {
 				frappe.msgprint(__("档案页面未能加载，请刷新后重试。")); return;
 			}

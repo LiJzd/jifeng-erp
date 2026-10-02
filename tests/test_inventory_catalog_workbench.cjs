@@ -69,6 +69,7 @@ async function main() {
 	assert.equal(bench.host.descendants("th").map((node) => node.textContent).join("/"), itemLabels);
 	assert.equal(materials.host.descendants("th").map((node) => node.textContent).join("/"), materialLabels);
 	assert.equal(bench.search.placeholder, "输入查询的关键字"); assert.equal(bench.statusFilter, "在用");
+	assert.equal(bench.goto.maxLength, 16);
 	assert.deepEqual(bench.host.descendants("button").map((node) => node.textContent), ["查询", "上页", "下页", "前往"]);
 	assert.equal(bench.isDirty(), false); assert.equal(bench.getCloseBlock(), "");
 	const noScope = new window.JifengInventoryCatalog(new Element(), "物料"), count = calls.length;
@@ -116,9 +117,31 @@ async function main() {
 	bench.goto.value = "3"; const outside = bench.goToPage(); calls.at(-1).reject(new Error("page outside current visible set")); await outside;
 	assert.equal(bench.rows.length, 0); assert.equal(bench.total, null); assert.equal(bench.count.textContent, "尚未查询"); assert.equal(bench.pageLabel.textContent, "—");
 	assert.match(bench.status.textContent, /合法页码/); assert.equal(bench.previous.disabled, true); assert.equal(bench.next.disabled, true);
-	for (const invalid of [true, false, 0, -1, 1.5, "01", " 1", "1 ", "+1", "1e0", "1001", ""]) {
+	for (const invalid of [true, false, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "01", " 1", "1 ", "1\n", "+1", "1e0", "9007199254740992", "9999999999999999", "10000000000000000", ""]) {
 		const before = calls.length; await bench.query(invalid); assert.equal(calls.length, before); assert.equal(bench.total, null);
 	}
+	for (const invalidSize of [true, 0, -1, 1.5, "1", 101, Number.MAX_SAFE_INTEGER + 1]) {
+		bench.pageSize = invalidSize; const before = calls.length; await bench.query();
+		assert.equal(calls.length, before); assert.equal(bench.total, null);
+	}
+	bench.pageSize = 100;
+	const largeRows = Array.from({ length: 1501 }, (_, index) => archive("物料", "Company A", "PROFILE-" + String(index).padStart(4, "0")));
+	await respond(bench, largeRows.slice(0, 100), 1501);
+	assert.equal(bench.total, 1501); assert.equal(bench.totalPages, 16); assert.equal(bench.rows.length, 100); assert.equal(bench.next.disabled, false);
+	bench.goto.value = "16"; const finalPage = bench.goToPage(), finalPageCall = calls.at(-1);
+	assert.equal(finalPageCall.options.args.page, 16); finalPageCall.resolve(pageReply(finalPageCall, largeRows.slice(1500), 1501)); await finalPage;
+	assert.equal(bench.rows[0].name, "PROFILE-1500"); assert.equal(bench.count.textContent, "共 1501 条");
+	assert.equal(bench.page, 16); assert.equal(bench.previous.disabled, false); assert.equal(bench.next.disabled, true);
+	bench.pageSize = 1;
+	await respond(bench, [archive("物料", "Company A", "PROFILE-10000")], 10001, "10001");
+	assert.equal(calls.at(-1).options.args.page, 10001); assert.equal(bench.pageLabel.textContent, "10001"); assert.equal(bench.total, 10001);
+	assert.equal(bench.next.disabled, true); assert.equal(bench.previous.disabled, false);
+	await respond(bench, [archive("物料", "Company A", "PROFILE-MAX")], Number.MAX_SAFE_INTEGER, String(Number.MAX_SAFE_INTEGER));
+	assert.equal(bench.page, Number.MAX_SAFE_INTEGER); assert.equal(bench.totalPages, Number.MAX_SAFE_INTEGER); assert.equal(bench.next.disabled, true);
+	bench.pageSize = 100;
+	await respond(bench, Array.from({ length: 91 }, (_, index) => archive("物料", "Company A", "PROFILE-BOUNDARY-" + index)), Number.MAX_SAFE_INTEGER, 90071992547410);
+	assert.equal(bench.totalPages, 90071992547410); assert.equal(bench.rows.length, 91); assert.equal(bench.next.disabled, true);
+	bench.pageSize = 1;
 	await respond(bench, [], 0); assert.equal(bench.count.textContent, "共 0 条"); assert.equal(bench.pageLabel.textContent, "1");
 
 	const old = bench.query(), oldCall = calls.at(-1); bench.search.value = "新词";
@@ -137,6 +160,9 @@ async function main() {
 
 	for (const change of [
 		(result) => result.total++, (result) => result.kind = "材料", (result) => result.company = "Other",
+		(result) => result.total = Number.MAX_SAFE_INTEGER + 1, (result) => result.total = "1", (result) => result.total = 1.5,
+		(result) => result.total_pages = Number.MAX_SAFE_INTEGER + 1, (result) => result.total_pages = "1", (result) => result.total_pages = 1.5,
+		(result) => result.page = Number.MAX_SAFE_INTEGER + 1, (result) => result.page_size = Number.MAX_SAFE_INTEGER + 1,
 		(result) => result.rows[0].profile.company = "Other", (result) => result.rows[0].profile.inactive = 1,
 		(result) => result.rows[0].field_meta.profile.list_price.read_only = false, (result) => delete result.rows[0].field_meta.profile.company,
 		(result) => result.rows[0].item.item_code = "Other", (result) => result.rows[0].can_write = true,

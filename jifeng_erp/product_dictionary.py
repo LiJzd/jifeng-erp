@@ -232,8 +232,10 @@ def _pack(document, *, unscoped=False):
         _fields(REQUIRED_READ, "read")
         values = {field: document.get(field) for field in FIELDS if field in _columns("read")}
     writable = _columns("write")
-    can_write = (frappe.has_permission(DOCTYPE, "create") if unscoped else
-                 document.has_permission("write" if existing else "create"))
+    # A capability probe must not enqueue a denial dialog for a valid reader.
+    # Frappe's wrapper maps throw=False to permissions.print_logs=False.
+    can_write = frappe.has_permission(DOCTYPE, "create" if unscoped or not existing else "write",
+                                     doc=None if unscoped else document, throw=False)
     editable = set(EDIT_FIELDS) if existing else set(FIELDS)
     mode = _mode(values.get("numbering_mode"))
     if mode == AUTO_MODE:

@@ -143,8 +143,9 @@ class TestInventoryCatalog(unittest.TestCase):
         return all(document.get(key) == value for key, value in filters.items())
 
     def get_list(self, doctype, filters, fields, limit_page_length, **kwargs):
+        start = kwargs.get("limit_start", 0)
         if doctype in self.forced_rows:
-            rows = deepcopy(self.forced_rows[doctype])
+            rows = deepcopy(self.forced_rows[doctype][start:start + limit_page_length])
         else:
             documents = [document for (kind, name), document in self.documents.items()
                          if kind == doctype and (doctype, name) not in self.list_denials and self.matches(document, filters)]
@@ -155,7 +156,7 @@ class TestInventoryCatalog(unittest.TestCase):
             documents.sort(key=lambda document: document.name)
             rows = [Record({field: doc.get(field) for field in fields if field not in (
                 self.hidden.get(doctype, set()) | self.projection_omissions.get(doctype, set()))})
-                for doc in documents[:limit_page_length]]
+                for doc in documents[start:start + limit_page_length]]
         if doctype in self.list_hooks:
             self.list_hooks[doctype]()
         return rows
@@ -212,29 +213,101 @@ class TestInventoryCatalog(unittest.TestCase):
                          self.frappe.new_doc, self.frappe.delete_doc):
             function.assert_not_called()
 
-    def test_true_pages_above_compatibility_limit_and_bounded_candidates(self):
+    def test_true_pages_above_compatibility_limit_and_duplicate_candidates(self):
         self.add_archives(101)
         with self.assertRaisesRegex(ValueError, "缩小查询范围"):
             self.query()
         result = self.page(page=2)
         self.assertEqual((result["total"], result["total_pages"], result["page"]), (102, 2, 2))
         self.assertEqual([row["name"] for row in result["rows"]], ["PROFILE-0100", "PROFILE-A"])
-        self.assertEqual(self.frappe.get_list.call_args_list[1].kwargs["limit_page_length"], 1001)
-        self.forced_rows[PROFILE] = [Record(name="OVERFLOW")] * 1001
+        self.assertEqual(self.frappe.get_list.call_args_list[1].kwargs["limit_page_length"], self.module.SCAN_BATCH_SIZE)
+        row = Record({field: self.profile.get(field) for field in self.module.PROFILE_FIELDS | self.module.PROFILE_REQUIRED})
+        self.forced_rows[PROFILE] = [row] * 1001
         self.frappe.get_doc.reset_mock()
-        with self.assertRaisesRegex(ValueError, "缩小查询范围"):
+        with self.assertRaises(PermissionError):
             self.page()
-        self.assertEqual([call.args[0] for call in self.frappe.get_doc.call_args_list], ["Company"])
+        self.assertTrue(all(call.args[0] == "Company" for call in self.frappe.get_doc.call_args_list))
+
+    def test_complete_scans_above_1000_have_true_totals_and_last_pages(self):
+        self.add_archives(1500)
+        self.add(PROFILE, "OTHER-COMPANY", company="OTHER", archive_kind="物料", item_code="ITEM-A", inactive=0)
+        self.add(PROFILE, "OTHER-KIND", company="JF", archive_kind="材料", item_code="ITEM-A", inactive=0)
+        result = self.page(page=16)
+        self.assertEqual((result["total"], result["total_pages"], result["page"]), (1501, 16, 16))
+        self.assertEqual([row["name"] for row in result["rows"]], ["PROFILE-A"])
+        calls = [call for call in self.frappe.get_list.call_args_list if call.args[0] == PROFILE]
+        self.assertEqual([call.kwargs["limit_start"] for call in calls], [0, 500, 1000, 1500] * 2)
+        for call in calls:
+            self.assertEqual(call.kwargs["order_by"], "name asc")
+            self.assertEqual(call.kwargs["limit_page_length"], 500)
+            self.assertEqual(call.kwargs["filters"], {"company": "JF", "archive_kind": "物料", "inactive": 0})
+            self.assertNotIn("ignore_permissions", call.kwargs)
+        result = self.page(page="1501", page_size="1")
+        self.assertEqual((result["total"], result["page"], result["rows"][0]["name"]), (1501, 1501, "PROFILE-A"))
+        self.assertTrue(all(call.args[0] == "File" for call in self.frappe.get_all.call_args_list))
+        for function in (self.frappe.db.sql, self.frappe.db.commit, self.frappe.db.set_value,
+                         self.frappe.new_doc, self.frappe.delete_doc):
+            function.assert_not_called()
+
+    def test_cross_batch_duplicate_projection_and_field_revocation_refuse_everything(self):
+        self.add_archives(501)
+        original = self.get_list
+
+        def duplicate(doctype, **kwargs):
+            if doctype == PROFILE and kwargs.get("limit_start") == 500:
+                kwargs["limit_start"] = 0
+            return original(doctype, **kwargs)
+
+        self.frappe.get_list.side_effect = duplicate
+        with self.assertRaises(PermissionError):
+            self.page()
+        self.assertFalse(any(call.args[0] == "Item" for call in self.frappe.get_doc.call_args_list))
+        self.frappe.get_list.side_effect = original
+        for change in (lambda: self.projection_omissions.update({PROFILE: {"display_name"}}),
+                       lambda: self.hidden.update({PROFILE: {"display_name"}})):
+            self.projection_omissions.clear()
+            self.hidden.clear()
+            self.list_hooks[PROFILE] = change
+            with self.assertRaises(PermissionError):
+                self.page()
+
+    def test_rescan_changes_to_membership_versions_and_skipped_sources_refuse_total(self):
+        self.add_archives(501)
+        baseline = deepcopy(self.documents)
+        for change in (
+                lambda: self.documents[PROFILE, "PROFILE-0000"].update(modified=datetime(2026, 10, 2)),
+                lambda: self.documents[PROFILE, "PROFILE-0000"].update(display_name="changed without modified"),
+                lambda: self.list_denials.add((PROFILE, "PROFILE-0000")),
+                lambda: self.doc_denials.add(("Item", "ITEM-0000", "read"))):
+            self.documents = deepcopy(baseline)
+            self.list_denials.clear()
+            self.doc_denials.clear()
+            calls = 0
+
+            def mutate_on_rescan():
+                nonlocal calls
+                calls += 1
+                if calls == 3:
+                    change()
+
+            self.list_hooks[PROFILE] = mutate_on_rescan
+            with self.assertRaises(PermissionError):
+                self.page(page=6)
 
     def test_page_numbers_are_strict_and_outside_visible_range_is_not_silently_clamped(self):
-        invalid = [True, False, 0, -1, 1.0, Decimal("1"), None, [], "", " 1", "1 ", "01", "+1", "1.0", "1e0", "1001"]
+        invalid = [True, False, 0, -1, 1.0, Decimal("1"), None, [], "", " 1", "1 ", "1\n", "01", "+1", "1.0", "1e0",
+                   self.module.MAX_SAFE_INTEGER + 1, str(self.module.MAX_SAFE_INTEGER + 1)]
         for value in invalid:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.page(page=value)
-        for value in invalid + [101, "101"]:
+        for value in invalid + [101, "101", 1001, "1001"]:
             with self.subTest(size=value), self.assertRaises(ValueError):
                 self.page(page_size=value)
         self.frappe.get_list.assert_not_called()
+        self.assertEqual(self.module._page_integer(str(self.module.MAX_SAFE_INTEGER), "页码", self.module.MAX_SAFE_INTEGER),
+                         self.module.MAX_SAFE_INTEGER)
+        with self.assertRaisesRegex(ValueError, "超过查询结果范围"):
+            self.page(page="1001")
         with self.assertRaisesRegex(ValueError, "超过查询结果范围"):
             self.page(page=2)
         empty = self.page(search="无此原文")

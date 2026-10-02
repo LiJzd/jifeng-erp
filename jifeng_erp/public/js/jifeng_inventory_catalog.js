@@ -53,7 +53,7 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 		this.previous = this.button("上页", () => this.query(this.page - 1));
 		this.pageLabel = this.element("span", "1", "jfe-inventory-catalog-current"); this.pageLabel.setAttribute("aria-label", __("当前页"));
 		this.next = this.button("下页", () => this.query(this.page + 1));
-		this.goto = this.element("input"); this.goto.type = "text"; this.goto.inputMode = "numeric"; this.goto.maxLength = 4;
+		this.goto = this.element("input"); this.goto.type = "text"; this.goto.inputMode = "numeric"; this.goto.maxLength = 16;
 		this.goto.value = "1"; this.goto.setAttribute("aria-label", __("前往页码"));
 		this.goto.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.goToPage(); } });
 		this.count = this.element("span", __("请选择公司后查询。"), "jfe-inventory-catalog-count");
@@ -79,8 +79,11 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 		this.count.textContent = this.total === null ? __("尚未查询") : __("共") + " " + this.total + " " + __("条");
 	}
 	pageNumber(value) {
-		if (typeof value === "string") { if (!/^[1-9][0-9]{0,3}$/.test(value)) return null; value = Number(value); }
-		return Number.isInteger(value) && value >= 1 && value <= 1000 ? value : null;
+		if (typeof value === "string") {
+			if (!/^[1-9][0-9]{0,15}$/.test(value) || String(Number(value)) !== value) return null;
+			value = Number(value);
+		}
+		return Number.isSafeInteger(value) && value >= 1 ? value : null;
 	}
 	goToPage() { return this.query(this.goto.value); }
 	async query(page = 1) {
@@ -89,7 +92,7 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 		const requestedPage = this.pageNumber(page), company = this.companyScope, search = this.search.value || "", status = this.statusFilter;
 		const sequence = ++this.revision, scroll = { top: this.scroller.scrollTop, left: this.scroller.scrollLeft };
 		this.closeDetail(); this.clearResults();
-		if (!company || requestedPage === null) {
+		if (!company || requestedPage === null || !Number.isSafeInteger(this.pageSize) || this.pageSize < 1 || this.pageSize > 100) {
 			this.status.textContent = __(!company ? "请选择公司后查询。" : "请输入合法页码后查询。"); return;
 		}
 		this.status.textContent = __("正在查询…");
@@ -115,12 +118,19 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 			args.search === this.search.value && args.status === this.statusFilter;
 	}
 	validPage(result, args) {
-		if (!result || result.readonly !== true || result.can_write !== false ||
+		if (!Number.isSafeInteger(args.page) || args.page < 1 || !Number.isSafeInteger(args.page_size) || args.page_size < 1 || args.page_size > 100 ||
+			!result || result.readonly !== true || result.can_write !== false ||
 			!["kind", "company", "search", "status", "page", "page_size"].every((field) => result[field] === args[field]) ||
-			!Number.isInteger(result.total) || result.total < 0 || result.total > 1000 ||
-			!Number.isInteger(result.total_pages) || result.total_pages !== Math.ceil(result.total / args.page_size) ||
+			!Number.isSafeInteger(result.page) || !Number.isSafeInteger(result.page_size) ||
+			!Number.isSafeInteger(result.total) || result.total < 0 ||
+			!Number.isSafeInteger(result.total_pages) || result.total_pages < 0 ||
 			args.page > Math.max(1, result.total_pages) || !Array.isArray(result.rows)) return false;
-		const length = Math.min(args.page_size, Math.max(0, result.total - (args.page - 1) * args.page_size));
+		const size = BigInt(args.page_size), total = BigInt(result.total);
+		const pages = total === 0n ? 0n : (total - 1n) / size + 1n, start = (BigInt(args.page) - 1n) * size;
+		if (result.total_pages !== Number(pages) || start > BigInt(Number.MAX_SAFE_INTEGER)) return false;
+		const offset = Number(start);
+		if (!Number.isSafeInteger(offset)) return false;
+		const length = Math.min(args.page_size, Math.max(0, result.total - offset));
 		return result.rows.length === length && new Set(result.rows.map((row) => row?.name)).size === result.rows.length &&
 			result.rows.every((row) => this.validArchive(row, args.company) &&
 				(args.status === "全部" || Boolean(row.profile.inactive) === (args.status === "停用")));

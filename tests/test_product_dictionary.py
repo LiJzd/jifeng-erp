@@ -232,7 +232,9 @@ class TestProductDictionary(unittest.TestCase):
         self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         self.frappe.whitelist = lambda **kwargs: lambda function: function
         self.frappe.flags, self.frappe.local = Record(), types.SimpleNamespace()
-        self.frappe.has_permission = Mock(side_effect=lambda dt, permission: permission not in self.role_denials)
+        self.frappe.has_permission = Mock(side_effect=lambda dt, permission, doc=None, throw=False:
+            permission not in self.role_denials and (doc is None or
+                doc.name not in self.document_denials and doc.company not in self.denied_companies))
         self.frappe.get_doc = Mock(side_effect=self.get_doc)
         self.frappe.new_doc = Mock(side_effect=self.new_doc)
         self.frappe.get_list = Mock(side_effect=self.get_list)
@@ -729,6 +731,31 @@ class TestProductDictionary(unittest.TestCase):
         self.assertFalse(self.documents)
         self.assertNotIn("currently_saving", self.frappe.flags)
         self.assertFalse(hasattr(self.frappe.local, "_realtime_log"))
+
+    def test_readonly_capability_probe_is_quiet_but_native_write_guard_still_denies(self):
+        archive = self.saved()
+        original = NativeDocument.has_permission
+        def native_noisy_permission(document, action):
+            allowed = original(document, action)
+            if not allowed:
+                self.frappe.local.message_log.append({"message": "native denial " + action})
+            return allowed
+        self.role_denials.update(("create", "write"))
+        self.frappe.local.message_log = []
+        before = deepcopy((self.documents, self.versions, self.series))
+        with patch.object(NativeDocument, "has_permission", native_noisy_permission):
+            archives = (self.module.init_dictionary("风格"), self.module.read_dictionary(archive["name"]))
+            self.assertTrue(all(not row["can_write"] for row in archives))
+            self.assertTrue(all(row["field_meta"]["value"]["read_only"] for row in archives))
+            self.assertEqual(self.frappe.local.message_log, [])
+            self.assertEqual((self.documents, self.versions, self.series), before)
+            with self.assertRaises(PermissionError):
+                self.module.init_dictionary("风格", "C-1")
+            self.assertIn({"message": "native denial create"}, self.frappe.local.message_log)
+            with self.assertRaises(PermissionError):
+                self.update(archive, remarks="unauthorized")
+            self.assertIn({"message": "native denial write"}, self.frappe.local.message_log)
+            self.assertEqual((self.documents, self.versions, self.series), before)
 
     def test_success_keeps_preexisting_and_new_native_commit_callbacks(self):
         def existing():

@@ -2,6 +2,7 @@
 window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends window.JifengInventoryCatalog {
 	constructor(host, kind, bridge) {
 		super(host, kind); this.bridge = bridge; this.statusFilter = "全部"; this.openingEditor = false;
+		this.exporting = false; this.exportController = null; this.freezeExport();
 	}
 	call(method, args) { return frappe.call({ method: "jifeng_erp.inventory_archive_list." + method, args }); }
 	build() {
@@ -12,6 +13,11 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 		toolbar.prepend(this.button("新增", () => this.openEditor(), "primary"));
 		const unavailable = this.element("div", undefined, "jfe-inventory-archive-actions");
 		for (const label of ["图片模式", "列表图文", "导出", "导入", "保存", "更新简拼", "打印"]) {
+			if (label === "导出") {
+				this.exportButton = this.button(label, () => this.exportArchives());
+				this.exportButton.title = __("导出当前公司、种类、关键词和状态的全部可见已保存档案；需导出权限。图片列为状态文字，旧导出模板尚未核实。");
+				unavailable.append(this.exportButton); continue;
+			}
 			const button = this.button(label, () => {}); button.disabled = true;
 			button.title = __(label === "保存" ? "请打开档案后保存。" : "此操作尚未开放。"); unavailable.append(button);
 		}
@@ -24,6 +30,40 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 			this.statusFilter = this.statusChoice.value; this.invalidate("档案状态已改变，请查询。");
 		});
 		unavailable.append(this.statusChoice); toolbar.after(unavailable);
+	}
+	freezeExport() { if (this.exportButton) this.exportButton.disabled = !!(!this.companyScope || this.disposed || this.openingEditor || this.exporting); }
+	renderPager() { super.renderPager(); this.freezeExport(); }
+	cancelExport() {
+		this.exportController?.abort(); this.exportController = null; this.exporting = false; this.freezeExport();
+	}
+	clearResults() { this.cancelExport(); super.clearResults(); }
+	async exportArchives() {
+		if (this.disposed || this.exporting || this.getCloseBlock()) return;
+		this.changeScope();
+		if (!this.companyScope) { frappe.msgprint(__("请选择公司后导出。")); return; }
+		const args = { kind: this.kind, company: this.companyScope, search: this.search.value, status: this.statusFilter };
+		const sequence = this.revision, controller = new AbortController();
+		const current = () => this.exportController === controller && !controller.signal.aborted &&
+			this.current(sequence, args) && !this.getCloseBlock();
+		this.exporting = true; this.exportController = controller; this.freezeExport();
+		this.status.textContent = __("正在导出当前筛选的全部已保存档案…");
+		let url;
+		try {
+			const response = await fetch("/api/method/jifeng_erp.inventory_archive_export.export_archives?" + new URLSearchParams(args),
+				{ method: "GET", credentials: "same-origin", headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, signal: controller.signal });
+			if (!current()) return;
+			if (!response.ok || response.headers.get("Content-Type")?.split(";")[0].trim() !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") throw new Error("Inventory export failed");
+			const file = await response.blob();
+			if (!current()) return;
+			if (!file.size) throw new Error("Empty inventory export");
+			url = URL.createObjectURL(file); const link = this.element("a");
+			link.href = url; link.download = this.kind + "档案.xlsx"; document.body.append(link); link.click(); link.remove();
+			this.status.textContent = __("已导出当前筛选的全部已保存档案；图片列为状态文字。");
+		} catch { if (current()) this.status.textContent = __("导出未完成，请核对筛选和导出权限后重试。"); }
+		finally {
+			if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+			if (this.exportController === controller) { this.exportController = null; this.exporting = false; this.freezeExport(); }
+		}
 	}
 	validArchive(row, company, name = null) {
 		return super.validArchive(row, company, name) && row.audit &&
@@ -72,9 +112,9 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 		if (name && !this.rows.some((row) => row.name === name)) return;
 		const current = () => !this.disposed && this.revision === sequence && company === this.companyScope &&
 			company === (this.companyControl.get_value() || null);
-		this.openingEditor = true;
+		this.cancelExport(); this.openingEditor = true; this.freezeExport();
 		try { await this.bridge.openInventory(this.kind, name, { company, isCurrent: current, listOwner: this }); }
-		finally { this.openingEditor = false; }
+		finally { this.openingEditor = false; this.freezeExport(); }
 	}
 	refreshSaved(archive) {
 		const pending = this.pendingScope;
@@ -91,4 +131,5 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 		if (active && [...active.values()].some((state) => state.listOwner === this && !state.closed)) return __("请先关闭档案录入窗口。");
 		return "";
 	}
+	destroy() { this.cancelExport(); super.destroy(); this.freezeExport(); }
 };

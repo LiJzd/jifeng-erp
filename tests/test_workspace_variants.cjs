@@ -10,7 +10,8 @@ class Element {
 }
 let route = "jifeng-legacy";
 const messages = [], confirmations = [];
-const window = { addEventListener() {}, removeEventListener() {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {} };
+const window = { addEventListener() {}, removeEventListener() {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {} };
+window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
 	session: { user: "Synthetic", user_fullname: "合成测试用户" },
@@ -36,6 +37,7 @@ assert.ok(entries.length > 300, "both views retain the complete existing menu");
 assert.equal(shared.availability("外发", "外发工厂"), "partial");
 assert.equal(shared.availability("发镀", "电镀厂"), "partial");
 assert.equal(shared.availability("物料", "浏览"), "formal");
+assert.equal(shared.availability("销售", "客户类型"), "partial");
 assert.equal(shared.availability("模具", "压模人"), "preview");
 assert.equal(shared.availability("总经理", "物料"), "navigation");
 assert.equal(shared.availability("插件", "打印插件"), "tool");
@@ -66,6 +68,8 @@ assert.deepEqual(dispatch(Modern, find("订单", "算料汇总"))[0].spec.route,
 assert.equal(dispatch(Modern, find("人事", "人事浏览"))[0].spec.hideCreate, true);
 assert.equal(dispatch(Modern, find("外发", "外发工厂"))[0].spec.partnerArchive, "外发工厂");
 assert.equal(dispatch(Modern, find("发镀", "电镀厂"))[0].spec.partnerArchive, "电镀厂");
+assert.equal(dispatch(Modern, find("销售", "客户类型"))[0].spec.customerType, true);
+assert.equal(dispatch(Modern, find("销售", "客户类型"))[0].spec.doctype, "Jifeng Customer Type");
 assert.equal(dispatch(Modern, find("销售", "日报表"))[0].spec.filters.from_date, "2026-10-02");
 
 const navigation = Workspace => {

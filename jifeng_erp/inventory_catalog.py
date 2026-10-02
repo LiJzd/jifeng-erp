@@ -2,7 +2,8 @@
 
 Archive units, reference prices and limits remain their saved values. This API
 does not calculate inventory, convert units or grant a write action. The
-bounded pagination counts only fully checked, readable Profile/Item sources.
+pagination counts the complete, checked readable Profile/Item sources. Fixed
+native query batches avoid an artificial business record limit.
 """
 
 from datetime import date, datetime
@@ -33,7 +34,8 @@ SEARCH_FIELDS = {"legacy_number", "legacy_code", "old_number", "display_name", "
 FILE_REQUIRED = {"name", "file_url", "is_private", "attached_to_doctype", "attached_to_name",
                  "attached_to_field"}
 LIMIT = 100
-CANDIDATE_LIMIT = 1000
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
+SCAN_BATCH_SIZE = 500
 
 
 def _value(value):
@@ -236,7 +238,7 @@ def _verify_output(packed, kind, company):
     return [view for view, _guard in packed]
 
 
-def _candidate_rows(kind, company, search, status, limit):
+def _candidate_query(kind, company, search, status):
     _scope(kind, company)
     if not isinstance(status, str) or status not in STATUSES:
         frappe.throw("请选择在用、停用或全部档案")
@@ -251,6 +253,12 @@ def _candidate_rows(kind, company, search, status, limit):
         frappe.throw("没有读取关键词查询字段的权限", frappe.PermissionError)
     options = {"or_filters": [[field, "like", "%" + search + "%"]
                               for field in sorted(search_fields)]} if search else {}
+    return fields, filters, options
+
+
+def _candidate_rows(kind, company, search, status, limit):
+    """Preserve the legacy bounded array endpoint, including overflow refusal."""
+    fields, filters, options = _candidate_query(kind, company, search, status)
     rows = frappe.get_list(PROFILE, filters=filters, fields=fields, order_by="name asc",
                            limit_page_length=limit + 1, **options)
     if len(rows) > limit:
@@ -260,14 +268,78 @@ def _candidate_rows(kind, company, search, status, limit):
     return rows
 
 
-def _checked_views(rows, kind, company, status):
+def _scan_candidate_rows(kind, company, search, status):
+    """Read the complete native permission-filtered set in fixed name order.
+
+    A second scan in _query_sources guards offset movement, projected values,
+    versions and permission changes within this request. It is not an atomic
+    database snapshot or a promise that arbitrarily large scans fit memory.
+    """
+    fields, filters, options = _candidate_query(kind, company, search, status)
+    rows, names, projection = [], set(), None
+    while True:
+        if _candidate_query(kind, company, search, status) != (fields, filters, options):
+            frappe.throw("库存档案字段或读取权限已变化，请重新查询", frappe.PermissionError)
+        batch = frappe.get_list(PROFILE, filters=filters, fields=fields, order_by="name asc",
+                                limit_start=len(rows), limit_page_length=SCAN_BATCH_SIZE, **options)
+        if len(batch) > SCAN_BATCH_SIZE:
+            frappe.throw("库存档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
+        for row in batch:
+            name = row.get("name")
+            keys = set(row)
+            if (not PROFILE_REQUIRED.issubset(keys) or not keys.issubset(fields)
+                    or not isinstance(name, str) or not name or name in names
+                    or row["company"] != company or row["archive_kind"] != kind
+                    or (status != "全部" and bool(row["inactive"]) != (status == "停用"))):
+                frappe.throw("库存档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
+            if projection is None:
+                projection = keys
+            elif keys != projection:
+                frappe.throw("库存档案来源字段投影已变化，请重新查询", frappe.PermissionError)
+            names.add(name)
+        rows.extend(batch)
+        if len(rows) > MAX_SAFE_INTEGER:
+            frappe.throw("库存档案数量超过安全整数范围，请重新查询")
+        # Recheck even an empty or final batch: a native query hook can change
+        # current permissions after the rows have been read.
+        if _candidate_query(kind, company, search, status) != (fields, filters, options):
+            frappe.throw("库存档案字段或读取权限已变化，请重新查询", frappe.PermissionError)
+        if len(batch) < SCAN_BATCH_SIZE:
+            return rows
+
+
+def _pack_rows(rows, kind, company, status):
     packed = []
     for row in rows:
         loaded = _load(row, kind, company, status)
         if loaded:
             profile, item, item_row = loaded
             packed.append(_pack(profile, item, row, item_row, kind, company))
-    return _verify_output(packed, kind, company)
+    return packed
+
+
+def _checked_views(rows, kind, company, status):
+    return _verify_output(_pack_rows(rows, kind, company, status), kind, company)
+
+
+def _query_sources(kind, company, search, status):
+    """Complete candidates and visible source guards for both list consumers."""
+    _scope(kind, company)
+    access = {doctype: _columns(doctype) for doctype in (PROFILE, "Item", "File")}
+    rows = _scan_candidate_rows(kind, company, search, status)
+    views = _checked_views(rows, kind, company, status)
+    fresh_rows = _scan_candidate_rows(kind, company, search, status)
+    if (len(rows) != len(fresh_rows)
+            or any({field: _value(value) for field, value in row.items()}
+                   != {field: _value(value) for field, value in fresh.items()}
+                   for row, fresh in zip(rows, fresh_rows))):
+        frappe.throw("库存档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
+    packed = _pack_rows(fresh_rows, kind, company, status)
+    if views != _verify_output(packed, kind, company):
+        frappe.throw("库存档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
+    if access != {doctype: _columns(doctype) for doctype in access}:
+        frappe.throw("库存档案字段或读取权限已变化，请重新查询", frappe.PermissionError)
+    return packed
 
 
 @frappe.whitelist()
@@ -281,7 +353,7 @@ def _page_integer(value, label, maximum):
     # HTTP form arguments may be decimal text. Do not coerce bools/floats,
     # whitespace, signed values, scientific notation or a truncated number.
     if isinstance(value, str):
-        if not re.fullmatch(r"[1-9][0-9]{0,3}", value):
+        if not re.fullmatch(r"[1-9][0-9]{0,15}", value):
             frappe.throw(f"请输入有效{label}")
         value = int(value)
     if type(value) is not int or not 1 <= value <= maximum:
@@ -293,14 +365,13 @@ def _page_integer(value, label, maximum):
 def query_archives(kind, company, search="", status="在用", page=1, page_size=LIMIT):
     """Count all checked visible sources, then slice; never count raw rows.
 
-    The full bounded readable candidate set is loaded and guarded even when
+    The complete readable candidate set is loaded and guarded even when
     only one page is returned. This is a request-local check, not an atomic
     database snapshot. Sources unreadable at query time never enter totals.
     """
-    page = _page_integer(page, "页码", CANDIDATE_LIMIT)
+    page = _page_integer(page, "页码", MAX_SAFE_INTEGER)
     page_size = _page_integer(page_size, "每页条数", LIMIT)
-    rows = _candidate_rows(kind, company, search, status, CANDIDATE_LIMIT)
-    views = _checked_views(rows, kind, company, status)
+    views = [view for view, _guard in _query_sources(kind, company, search, status)]
     total = len(views)
     total_pages = (total + page_size - 1) // page_size
     if page > max(1, total_pages):

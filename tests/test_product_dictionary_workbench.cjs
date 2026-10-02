@@ -29,6 +29,7 @@ class Wrapper {
 	prop(name, value) { this[name] = value; return this; }
 	find(selector) { return this.buttons.get(selector); }
 	get() { return this.element; }
+	remove() { this.element.remove(); return this; }
 }
 class Dialog {
 	constructor(config) {
@@ -267,4 +268,5 @@ async function main() {
 	assert.equal(stops, 1); assert.equal(createdFrame.removed, true); assert.equal(refreshes, 1);
 	console.log("Product dictionaries: nine columns, readonly provisional numbering, native scopes, mutable words, dirty/unknown close guards, read-only recovery and three classic routes passed (DOM/protocol models only).");
 }
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+module.exports = { Element, Dialog, context, window, frappe, calls, dialogs, messages, listeners, fieldMeta, pack, blank, listRow, tick };
+if (require.main === module) main().catch((error) => { console.error(error); process.exitCode = 1; });

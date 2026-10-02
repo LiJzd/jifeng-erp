@@ -1,5 +1,35 @@
 # 验证记录
 
+## 2026-10-02 最新批次：客户类型、库存全集导出与分页
+
+本批仍在本地，未部署到外网。直接执行当前 `jifeng_workspace_core.js` 的 registry VM，363入口实际分布为237正式、3部分可用、105业务预览、13导航、5工具；客户类型新增为部分可用，两工厂部分可用保持。A/B共用派发模型对363项入口通过。hooks实际读取14 JS/8 CSS，共22项内容指纹URL；新增客户类型脚本位于共用词典之后，库存专用列表仍位于浏览组件之后。历史的13 JS/21项官方资源证明仅对应上一批。
+
+本批最终定向Python模型122项通过：客户类型21、产品词典43、库存浏览41、专用列表7、库存导出8、资源指纹2。初批78项通过后，GUI能力探测修复新增1项客户模型并纳入43项产品词典回归，按唯一测试计数122。客户类型、产品词典、库存浏览/列表/导出和A/B363入口相关CJS通过，Ruff、6份JS语法及差异检查通过。库存浏览模型实际建立1501条候选，核完整批次、总数和最后页；导出模型建立1001条保存来源，核全集不受分页或旧1000上限截断。这些是无数据库模型，不是数据库大集合或请求耗时/内存容量验收。
+
+| 原生批次 | 已通过范围 | 凭证与限制 |
+| --- | --- | --- |
+| 库存导出r1，10门 | 两种档案的在用/停用/全部全集；既有Stock Manager的原生read/export及必要来源权限；Guest拒绝；完整来源、计数、账簿及调用上下文保持 | `output/inventory-export-native-20261002-r1.json`：passed、fresh_unchanged为真。该批仅核官方HTTP response builder；真实HTTP、只读岗位及GUI见10-03续验，并发撤权及负载容量未验。 |
+| 库存分页r2，15门 | 实际Stock User/Manager、两种档案及停用历史、公司/Item/Profile User Permission、两行分页与HTTP整数文本、专用列表原生审计字段、主管保存备注后准确Version/修改人、只读浏览与非法参数拒绝 | `output/inventory-paging-native-20261002-r2.json`：passed、fresh_unchanged为真，large_database_dataset_verified为假。新服务完整分批扫描和复扫是请求内来源守门，不是原子快照；未建立数据库1501条负载、跨库存页或末页收缩的新增GUI证明。 |
+| 客户类型r2，14门 | 实际Sales/System Manager创建修改与Version、公司/类型独立服务器分号、原生表单分号、新建请求核对、过期更新/不可变身份拒绝、Sales User只读、公司/词条User Permission、103行真实分页与空结果回退、停用历史、Admin删除及Guest拒绝、完整回滚 | `output/customer-type-native-20261002-r2.json`：passed、fresh_unchanged为真。r1失败保留；r2按站点实际Customer元数据修正验收预期，原生 `Company/Individual/Partnership` 保持，未改客户类型字段或授予Sales User写权。仅串行回滚实验；GUI见10-03续验，并发与负载未验。 |
+
+库存XLSX按显式公司、种类、关键词、状态导出已保存可读全集，物料20/材料19数据列，不含审计、操作、内部Item/Supplier ID及附件URL；Supplier只取授权原生 `supplier_name` 投影，空供方不补ID，图片仅已授权DTO状态，不嵌图。逐来源read/export、字段和File下载权限复核后，在独立只读新快照中再次核完整来源与集合；新快照只保证覆盖其首次一致性读取之前的提交，不承诺此后即时撤权。前导零、公式样文本和HTML保留字符串，无公式/外部链接；非法XML、非有限值、超Excel单元格或1048575数据行上限均整次拒绝、不截断。旧导出模板与嵌图规则未知，不能认定旧模板已复刻。前端参数快照、abort及迟到response/blob模型通过，实际下载范围见下方。
+
+客户类型旧证据来自受限 `output/legacy-customer-type-r3-20261002/report.md`：编号只读预填、名称/备注单行文本、停用默认关；第九列完整标签、修改弹层、旧编号及更新简拼算法仍未知。r4未放行未知Refresh初始化请求，没有新增这些语义证据。本系统编号为独立公司/类型规则，名称、备注、停用可持久保存；简拼仅保留原文，删除、更新简拼、打印及客户/销售凭证分类联动仍缺，入口保持部分可用。
+
+客户GUI夹具r1/r2的审计账目声明分别漏计正常原生Comment/Permission Log，提交前完整风险守门正确拒绝，均停止并独立确认回滚，不是业务保存失败；回执保留于 `output/customer-type-qa-fixture-20261002-r1/failed.json`、`-r2/failed.json`。r2另经独立新连接核919张已记录tab/Auth表完整行及计数、Customer元数据与GL/SLE保持。r3补精确5条Shared Comment和6条Permission Log的正常原生审计声明后，一次提交和独立fresh核验通过：104条客户词条（103条分页及1条CRUD）、3个纯岗位测试User、显示名称区别于内部ID的供方及精确只读分享；不在文档公开账号值。GUI前已冻结919表快照，临时预览仅监听loopback。
+
+### 2026-10-03 真实GUI、能力探测修复与独立后验
+
+实际Chrome由Luna执行，A/B客户类型103条分页及同一新增词条各一行回读通过。新建最初未采到客户端保存响应及POST载荷，未盲目重复：root从独立原生来源确认唯一正确的新记录、实际actor/类型/公司/备注和未停用状态、新记录Version为0，自己的服务器日志单次POST200与登记时间吻合，恢复证明后才继续一次已授权的CRUD备注修改。该次客户端200/响应体/actor已捕获，B→A各一行回读新备注；实际POST载荷仍未捕获，最终审计的重建载荷明确为派生证据，不能写成原始线上请求。早期未完成/结果未知及r4误报记录保留。
+
+Sales User只读详情曾触发不应出现的写权限不足消息，查明是 `Document.has_permission` 能力探测默认print_logs=True。`customer_type.py`、`product_dictionary.py`仅将能力探测改为文档范围的静默 `frappe.has_permission(..., throw=False)`，实际read/write/create守门、schema及岗位权限不变。客户21/产品词典43模型通过；原生静默r2实际核Sales User四调用无消息/can_write=False、真正写入/新建仍拒绝，Stock Manager两类产品词典init仍允许，来源/元数据/账簿/Series保持。首轮静默helper因回执结构KeyError在三检查后失败，原失败保留，修正helper的r2通过。修复后GUI r5 A/B详情read200、无误报、四个业务控件只读、Add/Save禁用，关闭后modal/backdrop均归零。r5的公司getByLabel探针因原控件无aria-label失败并回落空串，不能据此认定公司清空或缓存/筛选保持，非零滚动恢复也未证明。
+
+Stock Manager在A/B物料/材料四次真实HTTP200并保存XLSX；root直接独立解析下载的ZIP/XML，20/19表头及各1条已保存数据行、所有单元格字符串、无公式/超链接/media/外部关系、无内部商品/供方ID及附件URL通过；供方为区别于内部ID的授权显示名称。A/B同类表头及单元格值相同，ZIP SHA可能因打包时间而不同，不以整包SHA不同判断业务不一致。Stock User仅在A物料/B材料两路实际导出403、无下载；按钮仍enabled，拒绝来自服务器。证据 `output/customer-inventory-gui-qa-r3-20261002/report.sanitized.json`、同目录 `xlsx-independent-20261003.json`。未扩大为四路只读拒绝、真实大集合/并发负载或旧嵌图模板验收。
+
+root最终运行独立只读后验通过：准确两次业务写入（新增1条、备注修改1条），103条分页资料、原生Customer元数据、GL/SLE及全部敏感来源保持；仅六表允许已登记变化：QA登录的User/Activity Log/Sessions，以及Jifeng Customer Type/Series/Version。受限凭证 `output/customer-type-qa-fixture-20261002-r3/gui-native-after-validated.private.json` 保留响应缺采及载荷派生标识，不在公共文档公开账号或行值。preview r2 PID10207已精确停止、8000端口关闭，原配置字节/SHA、权限及mute/scheduler/maintenance恢复；同目录 `preview-closure-20261003-r2.json`。这次GUI和后验不等于全模块完成，也没有外网发布。
+
+外网冻结 `8858743` 仍为237正式、2部分可用、106业务预览。最新只读健康摘要 `output/erp_external_https_health_customer_inventory_20261002.json` 确认实际DIRECT、HTTP登录跳转301、可信IP TLS下登录200及ping200/pong；没有切换镜像、部署或迁移本批。全模块正式可用目标继续，以下保留此前验收和失败记录。
+
 ## 2026-10-02：外网 A/B 测试站实际部署
 
 在 `116.62.241.148` 的独立目录 `/opt/jifeng-erp-test` 部署 Compose 项目 `jifeng-erp-test`。两套入口为 `https://116.62.241.148/desk/jifeng-modern` 和 `https://116.62.241.148/desk/jifeng-legacy`，共用新建站点 `jifeng-erp-test.localhost` 与数据库 `jifeng_erp_test`。业务源码固定 `8858743800efe1836ac53f5c3de6644dab4e7923`；Frappe 16.35.0、ERPNext 16.36.0、HRMS 16.20.0 及完整生产资源由发布 manifest 固定。没有导入旧库、已有配置、登录会话或业务凭据，工程只做本地 Git 提交，未远程推送。

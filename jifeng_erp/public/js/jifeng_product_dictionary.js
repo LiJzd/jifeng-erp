@@ -1,7 +1,10 @@
 /* Product vocabulary workbench. Text never rewrites Product Profile or Item. */
 window.JifengProductDictionary = class JifengProductDictionary {
-	constructor(host, type) {
+	constructor(host, type, options = {}) {
 		this.host = host; this.type = type; this.revision = 0; this.disposed = false;
+		this.dictionaryOptions = options;
+		this.dictionaryApi = options.api || "jifeng_erp.product_dictionary";
+		this.dictionaryTitle = options.title || "产品" + type;
 		this.rows = []; this.editor = null; this.opening = false; this.readyArchive = null;
 		this.build();
 		this.beforeUnload = (event) => {
@@ -76,7 +79,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 
 	async initialize() {
 		try {
-			const response = await frappe.call({ method: "jifeng_erp.product_dictionary.init_dictionary",
+			const response = await frappe.call({ method: this.dictionaryApi + ".init_dictionary",
 				args: { dictionary_type: this.type, numbering_mode: "automatic_v1" } });
 			if (this.disposed) return false;
 			if (!response.message?.field_meta || response.message.dictionary_type !== this.type) throw new Error("Incomplete scope");
@@ -157,7 +160,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		this.opening = true; this.updateAddButton();
 		let initializingState;
 		try {
-			const response = await frappe.call({ method: "jifeng_erp.product_dictionary." + (name ? "read_dictionary" : "init_dictionary"),
+			const response = await frappe.call({ method: this.dictionaryApi + "." + (name ? "read_dictionary" : "init_dictionary"),
 				args: name ? { name, dictionary_type: this.type } : { dictionary_type: this.type, company, numbering_mode: "automatic_v1" }, freeze: true });
 			const archive = response.message;
 			if (this.disposed || this.company() !== company || !archive?.field_meta || archive.company !== company || archive.dictionary_type !== this.type ||
@@ -167,11 +170,11 @@ window.JifengProductDictionary = class JifengProductDictionary {
 				const df = archive.field_meta[fieldname];
 				return df ? [{ ...df, fieldname, label: __(labels[fieldname]), default: fieldname === "legacy_number" ? this.numberPolicy(archive).value : archive[fieldname] ?? null,
 					...(fieldname === "remarks" && df.fieldtype === "Small Text" ? { fieldtype: "Data", length: 65535 } : {}),
-					hidden: fieldname === "abbreviation" && !archive.name,
+					hidden: this.hiddenField(fieldname, archive),
 					...(fieldname === "legacy_number" ? { description: this.numberPolicy(archive).description } : {}),
 					read_only: !!(df.read_only || !archive.can_write || fieldname === "legacy_number") }] : [];
 			});
-			const dialog = new frappe.ui.Dialog({ title: __("产品" + this.type), fields, size: "large", no_submit_on_enter: true });
+			const dialog = new frappe.ui.Dialog({ title: __(this.dictionaryTitle + (this.dictionaryOptions.editorSuffix ? name ? "修改" : "新增" : "")), fields, size: "large", no_submit_on_enter: true });
 			const scope = this.element("p", __("公司：") + company, "jfe-product-dictionary-dialog-scope");
 			dialog.$body.prepend(scope);
 			const state = { archive, company, dialog, requestId: archive.name ? null : this.requestID(),
@@ -185,7 +188,13 @@ window.JifengProductDictionary = class JifengProductDictionary {
 			state.acceptButton = this.customAction(dialog, "采用已核对当前值", () => this.acceptCurrent(state), "jfe-product-adopt");
 			dialog.add_custom_action(__("关闭"), () => dialog.hide());
 			this.guardClose(state);
-			await dialog.set_values(this.values(state)); state.original = JSON.stringify(this.payload(state));
+			await dialog.set_values(this.values(state));
+			if (this.disposed || state.closed || this.editor !== state || this.company() !== company) {
+				state.closed = true; state.nativeHide(); dialog.$wrapper.remove();
+				if (this.editor === state) this.editor = null;
+				return;
+			}
+			state.original = JSON.stringify(this.payload(state));
 			this.freeze(state); dialog.show();
 			return dialog;
 		} catch {
@@ -206,13 +215,17 @@ window.JifengProductDictionary = class JifengProductDictionary {
 			state.archive.field_meta[field] ? field === "legacy_number" ? this.numberPolicy(state.archive).value : state.archive[field] ?? null : null]));
 	}
 
+	hiddenField(field, archive) {
+		return field === "abbreviation" && (!archive.name || !!this.dictionaryOptions.hideAbbreviation);
+	}
+
 	payload(state) {
 		const result = { company: state.company, dictionary_type: this.type };
 		if (state.archive.name) { result.name = state.archive.name; result.version = state.archive.version; }
 		else { result.request_id = state.requestId; result.numbering_mode = "automatic_v1"; }
 		for (const field of ["value", "remarks", "inactive", "abbreviation"]) {
 			const df = state.archive.field_meta[field], control = state.dialog.fields_dict[field];
-			if (control && df && !df.read_only && state.archive.can_write && (field !== "abbreviation" || state.archive.name)) {
+			if (control && df && !this.hiddenField(field, state.archive) && !df.read_only && state.archive.can_write) {
 				const value = control.get_value();
 				// HTML text inputs flatten line breaks. An untouched historical
 				// value must not be rewritten when another field is changed.
@@ -253,7 +266,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		for (const field of ["legacy_number", "value", "remarks", "inactive", "abbreviation"]) {
 			if (!state.dialog.fields_dict[field]) continue;
 			const df = state.archive.field_meta[field];
-			state.dialog.set_df_property(field, "hidden", !df || field === "abbreviation" && !state.archive.name);
+			state.dialog.set_df_property(field, "hidden", !df || this.hiddenField(field, state.archive));
 			state.dialog.set_df_property(field, "read_only", !!(state.busy || state.unresolved || state.confirming || !df || df.read_only || !state.archive.can_write || field === "legacy_number"));
 			if (field === "legacy_number") state.dialog.set_df_property(field, "description", this.numberPolicy(state.archive).description);
 		}
@@ -292,10 +305,10 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		state.candidate = structuredClone(this.payload(state)); state.conflict = null; state.review.replaceChildren();
 		state.busy = true; this.freeze(state);
 		try {
-			const response = await frappe.call({ method: "jifeng_erp.product_dictionary.save_dictionary",
-				args: { payload: state.candidate }, freeze: true, freeze_message: __("正在保存产品词典…") });
+			const response = await frappe.call({ method: this.dictionaryApi + ".save_dictionary",
+				args: { payload: state.candidate }, freeze: true, freeze_message: __("正在保存" + this.dictionaryTitle + "…") });
 			if (!this.matches(state, response.message)) { state.unresolved = true; return; }
-			await this.accept(state, response.message, "产品词典已保存");
+			await this.accept(state, response.message, this.dictionaryTitle + "已保存");
 		} catch (error) { state.unresolved = !this.definiteFailure(error); }
 		finally {
 			state.busy = false; this.freeze(state);
@@ -306,6 +319,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 	async accept(state, archive, message) {
 		state.archive = archive; state.requestId = null; state.unresolved = false; state.conflict = null;
 		state.review.replaceChildren(); await state.dialog.set_values(this.values(state));
+		if (this.disposed || state.closed || this.editor !== state) return;
 		state.original = JSON.stringify(this.payload(state));
 		if (this.company() === state.company) this.query();
 		frappe.show_alert({ message: __(message), indicator: "green" });
@@ -316,7 +330,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		state.busy = true; state.conflict = null; state.review.replaceChildren(); this.freeze(state);
 		try {
 			const candidate = state.candidate;
-			const response = await frappe.call({ method: "jifeng_erp.product_dictionary." + (candidate.name ? "read_dictionary" : "resolve_creation"),
+			const response = await frappe.call({ method: this.dictionaryApi + "." + (candidate.name ? "read_dictionary" : "resolve_creation"),
 				args: candidate.name ? { name: candidate.name, dictionary_type: this.type } :
 					{ request_id: candidate.request_id, dictionary_type: this.type, company: candidate.company }, freeze: true });
 			const archive = candidate.name ? response.message : response.message?.status === "found" ? response.message.archive : null;
@@ -366,10 +380,10 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		const reset = async () => {
 			state.busy = true; this.freeze(state);
 			try {
-				const response = await frappe.call({ method: "jifeng_erp.product_dictionary.init_dictionary",
+				const response = await frappe.call({ method: this.dictionaryApi + ".init_dictionary",
 					args: { dictionary_type: this.type, company: state.company, numbering_mode: "automatic_v1" }, freeze: true });
 				const archive = response.message;
-				if (!archive?.can_write || !archive.field_meta || archive.name || archive.version || archive.company !== state.company ||
+				if (this.disposed || state.closed || this.editor !== state || !archive?.can_write || !archive.field_meta || archive.name || archive.version || archive.company !== state.company ||
 					archive.dictionary_type !== this.type || archive.numbering_mode !== "automatic_v1") return;
 				const requestId = this.requestID();
 				state.archive = archive; state.requestId = requestId; state.candidate = null; state.conflict = null;
