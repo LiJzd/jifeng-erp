@@ -246,7 +246,8 @@ async function main() {
 	const frames = new Map([ ["mold", { workbench: mold }], ["plate", { workbench: plate }] ]);
 	assert.equal(bridgePrototype.canClose.call({ frames }, "plate"), true); assert.equal(bridgePrototype.closeBlock.call({ frames }, "plate"), "");
 	const mounted = bridgePrototype.mount.call(bridge, new Element(), { toolArchive: "mold" }); assert.equal(mounted.workbench.recordType, "mold"); mounted.stop();
-	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js"), "utf8") + "\nwindow.ToolWorkspace = JifengLegacyWorkspace;", context);
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_workspace_core.js"), "utf8"), context);
+	window.ToolWorkspace = window.JifengERPWorkspace.Workspace;
 	const dispatched = [], workspace = { formalBridge: { open: (spec) => dispatched.push(spec) } };
 	context.window.ToolWorkspace.prototype.openPage.call(workspace, "模具录入", "模具"); context.window.ToolWorkspace.prototype.openPage.call(workspace, "版种录入", "版种");
 	assert.equal(dispatched[0].toolArchive, "mold"); assert.equal(dispatched[1].toolArchive, "plate"); assert.equal(dispatched[0].doctype, "Jifeng Mold"); assert.equal(dispatched[1].doctype, "Jifeng Plate");

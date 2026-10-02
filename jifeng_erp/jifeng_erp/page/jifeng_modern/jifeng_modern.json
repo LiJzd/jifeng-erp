@@ -1,0 +1,52 @@
+{
+  "doctype": "Page",
+  "name": "jifeng-modern",
+  "page_name": "jifeng-modern",
+  "title": "集沣业务工作台",
+  "module": "Jifeng ERP",
+  "standard": "Yes",
+  "roles": [
+    {
+      "role": "Stock User"
+    },
+    {
+      "role": "Purchase User"
+    },
+    {
+      "role": "Purchase Manager"
+    },
+    {
+      "role": "Manufacturing User"
+    },
+    {
+      "role": "Stock Manager"
+    },
+    {
+      "role": "Item Manager"
+    },
+    {
+      "role": "Manufacturing Manager"
+    },
+    {
+      "role": "Sales User"
+    },
+    {
+      "role": "Sales Manager"
+    },
+    {
+      "role": "Accounts User"
+    },
+    {
+      "role": "Accounts Manager"
+    },
+    {
+      "role": "System Manager"
+    },
+    {
+      "role": "HR Manager"
+    },
+    {
+      "role": "HR User"
+    }
+  ]
+}

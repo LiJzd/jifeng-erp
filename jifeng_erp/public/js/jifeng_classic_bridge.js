@@ -51,7 +51,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	align() {
 		const active = this.workspace.activeKey;
 		const anchor = this.workspace.host.querySelector(".jfe-formal-anchor");
-		const visible = anchor && anchor.getClientRects().length && frappe.get_route()[0] === "jifeng-legacy";
+		const visible = anchor && anchor.getClientRects().length && frappe.get_route()[0] === (this.workspace.pageName || "jifeng-legacy");
 		for (const [key, entry] of this.frames) {
 			entry.container.hidden = !(visible && key === active);
 		}

@@ -144,8 +144,8 @@ async function main() {
 	nested.hide(); assert.equal(personnel.dictionaryDialogs.size, 0);
 
 	vm.runInNewContext(fs.readFileSync(path.join(__dirname,
-		"../jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js"), "utf8") +
-		"\nwindow.Workspace = JifengLegacyWorkspace;", context);
+		"../jifeng_erp/public/js/jifeng_workspace_core.js"), "utf8"), context);
+	window.Workspace = window.JifengERPWorkspace.Workspace;
 	const workspace = Object.create(window.Workspace.prototype);
 	const opened = []; workspace.formalBridge = { open(spec) { opened.push(spec); } };
 	for (const type of ["专长", "文化", "民族"]) {

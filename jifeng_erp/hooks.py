@@ -11,7 +11,8 @@ app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css",
                    "/assets/jifeng_erp/css/jifeng_product_archive.css",
                    "/assets/jifeng_erp/css/jifeng_inventory_catalog.css",
                    "/assets/jifeng_erp/css/jifeng_partner_archive.css",
-                   "/assets/jifeng_erp/css/jifeng_tool_archive.css"]
+                   "/assets/jifeng_erp/css/jifeng_tool_archive.css",
+                   "/assets/jifeng_erp/css/jifeng_modern.css"]
 app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jifeng_erp/js/jifeng_hr_dictionary.js",
                   "/assets/jifeng_erp/js/jifeng_personnel_archive.js",
                   "/assets/jifeng_erp/js/jifeng_inventory_archive.js",
@@ -20,7 +21,9 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_product_dictionary.js",
                   "/assets/jifeng_erp/js/jifeng_product_category.js",
                   "/assets/jifeng_erp/js/jifeng_product_archive.js",
-                  "/assets/jifeng_erp/js/jifeng_tool_archive.js"]
+                  "/assets/jifeng_erp/js/jifeng_tool_archive.js",
+                  "/assets/jifeng_erp/js/jifeng_workspace_core.js",
+                  "/assets/jifeng_erp/js/jifeng_modern_workspace.js"]
 before_request = "jifeng_erp.session_init.initialize_csrf"
 doctype_js = {
     "Sales Order": "public/js/jifeng_sales_order.js",

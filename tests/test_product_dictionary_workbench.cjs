@@ -213,7 +213,8 @@ async function main() {
 	const delayedQuery = bench.query(), delayedQueryCall = calls.at(-1); bench.destroy(); delayedQueryCall.resolve([listRow({ company: "Company B" })]); await delayedQuery;
 	assert.equal(bench.disposed, true); assert.equal(listeners.has(bench.beforeUnload), false);
 
-	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js"), "utf8") + "\nwindow.Workspace = JifengLegacyWorkspace; window.MenuModules = JIFENG_LEGACY_MODULES;", context);
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_workspace_core.js"), "utf8"), context);
+	window.Workspace = window.JifengERPWorkspace.Workspace; window.MenuModules = window.JifengERPWorkspace.modules;
 	const workspace = Object.create(window.Workspace.prototype), opened = []; workspace.formalBridge = { open(spec) { opened.push(spec); } };
 	const productMenuNames = new Set(window.MenuModules.find((module) => module.name === "产品").groups.flatMap((group) => group.items));
 	workspace.addTab = () => { throw new Error("visible product dictionary menu fell back to a local preview"); };

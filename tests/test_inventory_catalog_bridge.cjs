@@ -17,8 +17,8 @@ const document = { createElement: () => new Element() };
 const frappe = { pages: { "jifeng-legacy": {} }, msgprint: message => messages.push(message) };
 const context = { window, document, frappe, __: text => text };
 vm.runInNewContext(fs.readFileSync("jifeng_erp/public/js/jifeng_classic_bridge.js", "utf8"), context);
-vm.runInNewContext(fs.readFileSync("jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js", "utf8") +
-	"\nwindow.Workspace=JifengLegacyWorkspace;window.modules=JIFENG_LEGACY_MODULES;", context);
+vm.runInNewContext(fs.readFileSync("jifeng_erp/public/js/jifeng_workspace_core.js", "utf8"), context);
+window.Workspace = window.JifengERPWorkspace.Workspace; window.modules = window.JifengERPWorkspace.modules;
 
 const workspace = Object.create(window.Workspace.prototype);
 workspace.host = new Element(); workspace.tabs = [{ key: "home", title: "主页", kind: "home" }]; workspace.activeKey = "home";

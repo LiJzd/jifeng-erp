@@ -20,7 +20,8 @@ const frappe = { pages: { "jifeng-legacy": {} }, router: { on() {} }, get_route:
 const context = { window, document, frappe, __: (text) => text, ResizeObserver: class { observe() {} },
 	setInterval: () => 1, clearInterval() {} };
 for (const name of ["jifeng_classic_bridge", "jifeng_tool_archive"]) vm.runInNewContext(fs.readFileSync(path.join(__dirname, `../jifeng_erp/public/js/${name}.js`), "utf8"), context);
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js"), "utf8") + "\nwindow.Workspace = JifengLegacyWorkspace;", context);
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_workspace_core.js"), "utf8"), context);
+window.Workspace = window.JifengERPWorkspace.Workspace;
 
 const workspace = Object.create(window.Workspace.prototype);
 workspace.host = host; workspace.tabs = [{ key: "home", title: "主页", kind: "home" }]; workspace.activeKey = "home";

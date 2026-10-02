@@ -173,7 +173,8 @@ async function main() {
 	assert.equal(bench.panels.category.tbody.descendants("td").length, 6);
 
 	// The real visible menu mounts this workbench, never the previous local preview or an iframe list.
-	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js"), "utf8") + "\nwindow.Workspace = JifengLegacyWorkspace; window.MenuModules = JIFENG_LEGACY_MODULES;", context);
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_workspace_core.js"), "utf8"), context);
+	window.Workspace = window.JifengERPWorkspace.Workspace; window.MenuModules = window.JifengERPWorkspace.modules;
 	const workspace = Object.create(window.Workspace.prototype), opened = []; workspace.formalBridge = { open(spec) { opened.push(spec); } };
 	workspace.addTab = () => { throw new Error("visible category menu fell back to a local preview"); };
 	assert.ok(window.MenuModules.find((module) => module.name === "产品").groups.flatMap((group) => group.items).includes("类别"));

@@ -246,7 +246,8 @@ async function main() {
 	assert.ok(state.saveButton.disabled); assert.equal(state.controls.legacy_remarks.value, ""); await dialog.hide();
 
 	// Classic visible routes and native recipe route remain separate.
-	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/jifeng_erp/page/jifeng_legacy/jifeng_legacy.js"), "utf8") + "\nwindow.Workspace = JifengLegacyWorkspace;", context);
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_workspace_core.js"), "utf8"), context);
+	window.Workspace = window.JifengERPWorkspace.Workspace;
 	const workspace = Object.create(window.Workspace.prototype), opened = []; workspace.formalBridge = { open: (spec) => opened.push(spec), openCreate: (spec) => opened.push(spec) };
 	workspace.addTab = () => { throw new Error("old product entry fell back to a preview"); };
 	workspace.openPage("产品档案", "产品"); assert.equal(opened.at(-1).productArchive, true);
