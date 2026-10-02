@@ -74,7 +74,8 @@ services:
   scheduler:
     <<: *app
     command: [bench, schedule]
-    mem_limit: 128m
+    mem_limit: 256m
+    memswap_limit: 512m
     depends_on: [backend]
   websocket:
     <<: *app
