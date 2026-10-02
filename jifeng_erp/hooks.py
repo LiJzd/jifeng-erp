@@ -25,6 +25,20 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_tool_archive.js",
                   "/assets/jifeng_erp/js/jifeng_workspace_core.js",
                   "/assets/jifeng_erp/js/jifeng_modern_workspace.js"]
+
+
+def _content_versioned_assets(paths):
+    # Desk includes these files directly; the static server caches them for days.
+    from hashlib import sha256
+    from pathlib import Path
+
+    public = Path(__file__).parent / "public"
+    return [path + "?v=" + sha256((public / path.removeprefix("/assets/jifeng_erp/")).read_bytes()).hexdigest()[:16]
+            for path in paths]
+
+
+app_include_css = _content_versioned_assets(app_include_css)
+app_include_js = _content_versioned_assets(app_include_js)
 before_request = "jifeng_erp.session_init.initialize_csrf"
 doctype_js = {
     "Sales Order": "public/js/jifeng_sales_order.js",

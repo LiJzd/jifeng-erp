@@ -739,8 +739,14 @@ Admin实际首轮 classic-bridge-qa-r1（457e5ae）证据：classic→人事档�
 
 root独立逐文件读回六个XLSX，分别11/10/8列和一行已保存合成资料，表头及全部值与夹具相同，A/B业务值一致；非空数据格均文字及格式@，保留前导零、=1+2、HTML原文和高精度单价，没有公式、超链接或外部关系。初次独立verifier误把复制Check的默认0当空，按实际字段声明修正预期后通过，未修改产品或下载文件。收据 `archive-downloads-independent-20261002.json` 含六文件SHA。GUI结束后精确停止本批PID2456，8000关闭；仅恢复副本maintenance_mode=1，其余配置语义与0600保持，JSON字节与原配置不同，未声称整文件字节恢复。受登记QA资料保留在副本，外网未变；收据 `archive-gui-preview-closed-20261002.json`。外网另一次只读实际DIRECT核验HTTP301、可信HTTPS登录200和ping200/pong，证书仍到2026-10-09UTC，`erp_external_https_health_archive_batch_20261002.json`；没有登录或切版本。
 
-增量发布只读复审确认：8858743到本批前HEAD没有业务目录差异，本批唯一schema为三个建模export位；未来候选由最终提交冻结、独立构建，只切五个应用容器并保留数据库/Redis/卷/原证书目录。原发布打包工具硬编码旧提交与目录，不能直接复跑；须新清单、DIRECT、站点备份和权限快照，targeted reload及clear-cache。当前本机Docker CLI存在但daemon不可达，新镜像/上传/切换尚未发生；不在2GB运行机重建。ecs-release-deploy所列Postgres/Vite工程参考不属于本ERP，按本仓库部署说明执行。106预览不阻塞此批增量发布，但仍是全模块交付缺口。
+增量发布只读复审确认：8858743到本批前HEAD没有业务目录差异，本批唯一schema为三个建模export位；未来候选由最终提交冻结、独立构建，只切五个应用容器并保留数据库/Redis/卷/原证书目录。原发布打包工具硬编码旧提交与目录，不能直接复跑；须新清单、DIRECT、站点备份和权限快照，targeted reload及clear-cache。ecs-release-deploy所列Postgres/Vite工程参考不属于本ERP，按本仓库部署说明执行。106预览不阻塞此批增量发布，但仍是全模块交付缺口。
 
-旧销售词典补证只到四类分组，目标页未到达，拦截自动读取对卡片空白的影响未排除，不能当作旧系统无入口或词典已核实。临时旧站profile/截图删除遭自动审查拒绝，未换工具重试删除；本轮目录已限制当前用户/SYSTEM/Admin访问，保留受限证据，不纳入Git。其字段/编号/业务语义仍未知，未据此实现新字典。
+本批已本地提交19c33af；独立新namespace `output/erp-archive-19c33af-r1` 仅取此提交形成一应用depth-1 clean checkout和2,458,695字节app.tar.gz，468个regular成员逐SHA读回，去除remote/FETCH_HEAD/reflog/本机源路径，21个hooks静态路径实际存在；16个已验bench同步文件核对当前SHA和Git规范换行后内容相同。继承镜像固定8858743-test-r4及其实际ID、其他三应用/依赖不变，pyproject未变；候选Containerfile仅替换集沣应用并离线编译/导入，未执行build。源码/清单未含site配置、output、日志、凭据或数据库；没有传输。Docker Desktop CLI后台启动返回成功并出现pipe，但两次有限info仍超时，WSL docker-desktop仍Stopped；daemon可用和缓存镜像未建立。不在2GB运行机重建，新镜像/上传/切换未发生。保持当前外网基线及测试数据。
+
+本轮启动的Docker Desktop尝试一次正常后台stop，CLI返回Failed to stop且30秒未结束，随后只中断该CLI；没有全局kill、WSL shutdown或停止Ubuntu，未创建/删除镜像和容器。未声称Desktop进程已停止。运行检查收据 `archive-build-runtime-check-20261002.json` 保留失败状态；这个构建限制不代表外网服务失败，也不暂停其他模块开发。
+
+冻结候选独立复审实际核出缓存缺陷：Frappe Desk/include_script/include_style/bundled_asset对直引路径不加版本，而本站nginx assets缓存7天；站点clear-cache不能使已有浏览器重新取同URL，可能新列表组件与旧core/bridge等混用。现hooks为全部13 JS/8 CSS加入实际文件SHA前16位查询参数，保持顺序/路径；内容变化自动改URL，无需手工发布号。新增两项定向模型（包含同长度内容变化仅对应URL变化）及五项原登录钩子回归通过；本地官方Frappe _load_app_hooks和HTML formatter实际21文件校验，查询参数/指纹均保持，没有site/数据库连接，证据 `archive-asset-hooks-native-20261002.json`。没有重开GUI或冒称真实已缓存浏览器普通刷新已实测。旧19c33af源码候选因尚无此修复不能发布，后续重新冻结；另一个发布门是构建入口需实际inspect固定base ID并禁止pull及验证候选RootFS继承，manifest记录本身不等于执行了门。
+
+旧销售词典首轮只到四类分组，拦截自动读取对卡片空白的影响未排除，不能当作旧系统无入口。r2实际进入销售→基础资料→客户类型、打开新增后关闭返回；已见新增/更新简拼/查询/打印、空关键词、两个disabled页按钮、录入三个文本框（首框只读）及停用/保存/关闭。没有保存/查询列表行；表头及文本框可靠业务标签、默认状态/编号规则仍未知，未据控件ID猜映射。GetRowCount/GetTableDataWithOffset/GetTableRowData成功，未知Refresh POST及外域仍阻断，对完整性影响未排除。实际旧站DIRECT链/Chrome exe匹配，但controller无PID，不声称单连接与精确PID绑定。r2报告在受限 `legacy-sales-dictionary-r2-20261002/report.md`。首轮临时旧站profile/截图删除遭自动审查拒绝，未换工具重试删除；目录限制当前用户/SYSTEM/Admin访问，保留受限证据，不纳入Git。没有据未知字段实现新词典。
 
 本批补现有正式映射的操作，不消除106业务预览，也不将239映射认定为模块全部通过。363入口、237正式、2工厂部分、106业务预览、13导航和5工具说明保持；第一版全模块目标继续。
