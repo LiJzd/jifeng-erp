@@ -747,6 +747,8 @@ root独立逐文件读回六个XLSX，分别11/10/8列和一行已保存合成�
 
 冻结候选独立复审实际核出缓存缺陷：Frappe Desk/include_script/include_style/bundled_asset对直引路径不加版本，而本站nginx assets缓存7天；站点clear-cache不能使已有浏览器重新取同URL，可能新列表组件与旧core/bridge等混用。现hooks为全部13 JS/8 CSS加入实际文件SHA前16位查询参数，保持顺序/路径；内容变化自动改URL，无需手工发布号。新增两项定向模型（包含同长度内容变化仅对应URL变化）及五项原登录钩子回归通过；本地官方Frappe _load_app_hooks和HTML formatter实际21文件校验，查询参数/指纹均保持，没有site/数据库连接，证据 `archive-asset-hooks-native-20261002.json`。没有重开GUI或冒称真实已缓存浏览器普通刷新已实测。旧19c33af源码候选因尚无此修复不能发布，后续重新冻结；另一个发布门是构建入口需实际inspect固定base ID并禁止pull及验证候选RootFS继承，manifest记录本身不等于执行了门。
 
+缓存修复已提交ff541a0并在独立 `output/erp-archive-ff541a0-r3` 重冻：469个regular成员、2,464,602字节app.tar.gz、SHA256为5b3e415b134a276098844dbd7eb4f5e7062dbe0d85e0bc2c015be16bbee7bbc6。加载冻结hooks核21个实际query指纹/文件，避免旧AST collector遇到函数赋值失败；16个同期已验文件匹配最新hooks独立收据及原同步SHA。r2首次加载产生pycache，在归档边界被拒绝，partial/failed.json保留；r3仅加载时禁止写bytecode后通过，没有重写旧候选。新build_checked入口包含仅本地context、固定base实际ID/平台、候选tag必须不存在、禁止pull/network、前后base ID及候选RootFS基底前缀/继承Config守门，已有attempt禁止重复；脚本仅语法校验，未执行构建。新镜像、外网增量、真实缓存浏览器及真实构建守门仍未验，现有外网8858743和共享测试数据保持。
+
 旧销售词典首轮只到四类分组，拦截自动读取对卡片空白的影响未排除，不能当作旧系统无入口。r2实际进入销售→基础资料→客户类型、打开新增后关闭返回；已见新增/更新简拼/查询/打印、空关键词、两个disabled页按钮、录入三个文本框（首框只读）及停用/保存/关闭。没有保存/查询列表行；表头及文本框可靠业务标签、默认状态/编号规则仍未知，未据控件ID猜映射。GetRowCount/GetTableDataWithOffset/GetTableRowData成功，未知Refresh POST及外域仍阻断，对完整性影响未排除。实际旧站DIRECT链/Chrome exe匹配，但controller无PID，不声称单连接与精确PID绑定。r2报告在受限 `legacy-sales-dictionary-r2-20261002/report.md`。首轮临时旧站profile/截图删除遭自动审查拒绝，未换工具重试删除；目录限制当前用户/SYSTEM/Admin访问，保留受限证据，不纳入Git。没有据未知字段实现新词典。
 
 本批补现有正式映射的操作，不消除106业务预览，也不将239映射认定为模块全部通过。363入口、237正式、2工厂部分、106业务预览、13导航和5工具说明保持；第一版全模块目标继续。
