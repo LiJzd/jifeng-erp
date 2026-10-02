@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-02 旧账与销售跟踪绑定、应付原生 r1 诊断
+
+旧站在真实可见 iframe 中取得固定定义：财务电镀账的欠款直接绑定 `CW_DDQK.欠款`，超链接到电镀账明细，传值 `=D6 → PP`。缓存仅引用 `CW_DDQK`/`CW_DDQKDY`，没有公开 SQL、欠款公式或数据库关联键；不把供应商全部应付当成旧电镀欠款。已异步询问期初、品检扣款、付款、退货及其他采购的计入范围，其他工作继续。证据 `output/legacy-plating-ledger-binding-20261002/report.md`；没有手动查询或读取业务行，正常导航自动初始化请求及后续守卫收窄已如实记录。
+
+销售跟踪三模式均读取 `XS_JSKC`。部门/条码/库存直绑；标价/编号/小类/备注通过条码关联 `XS_SPXX`，品牌再由编号关联 `CP_DA.品牌`，两图片模式同链读取 `CP_DA.图片`。金额列未暴露绑定或公式，不能推算为库存乘售价。库存超链接静态配置含未执行的服务端命令“销售_跟踪”和销售跟踪记录弹窗（`=H6 → BH`、`=C6 → CK`）；未执行该命令、读取业务行或验证图片 HTTP。证据 `output/legacy-sales-tracking-binding-20261002/report.md`、`output/legacy-sales-tracking-modes-20261002/report.md`；这些是固定定义证据，不是销售跟踪完成验收。
+
+589c900 的应付适配原生 r1：新工具 24 项文件/mock 检查、Ruff、编译和实际 WSL 文件预检通过。root 实际 capture exit0；一次 launcher/child exit1，停在事务/业务夹具开始前的全表 InnoDB 断言，没有运行八项业务门。站点已有 `tabData Import Log`、`tabError Log`、`__global_search` 三张 MyISAM 表。独立 fresh verify 保留失败收据，`database_restored_diagnostic` 确认 926 表完整 SQL、23 元数据、所有结构/索引、原身份与停用夹具、Series 及完整 Error Log 队列（0）一致，rollback/destroy 和来源文件连续性完成；`native_gate_pass_established=false`。证据 `output/plating-payables-native-r1/`，不覆盖、不重发 r1，未读取过程日志正文。
+
+有限安装源码审计发现：普通 Document 保存同步调用 global search，可能当场写 Redis 搜索队列，连接错误还可能直接写 MyISAM 搜索表；`in_test=False` 和事务 callback 回滚不能隔离它。没有仅跳过搜索的 doc flag，只有站点配置开关。原生报表异常日志也可能直接写 MyISAM Error Log，不能概括为必然延迟队列。原站引擎/配置/队列未修改；不通过放宽断言、清队列或关闭日志来制造通过。下一步采用独立测试站隔离这些副作用后再验证；当前不计原生八门、HTTP/GUI或旧电镀账完成，未声称整个 Redis 恢复。当前 239 直接服务器映射、106 业务预览、237 正式徽标和 2 部分徽标保持，全模块目标未完成。
+
 ## 2026-10-02 电镀档案关联应付读取适配（源码和模型）
 
 新增单档案GET `plating_payables.read_payables(company,name,report_date)`：kind固定电镀厂，Supplier只由显式档案取得；返回既有只读档案投影和原生完整截止应付响应，不重算、汇总、分页或按电镀分类金额。公司只需select，原文联系/银行字段按既有read/mask投影，缺字段不补取；停用历史可读。查询前后比较Profile/Supplier完整状态和原始DocPerm/字段/角色/User Permission/Share输入，末尾再守门，来源或权限变化拒绝完整响应。原生异常原样传播。scope文字明确包含该供应商的全部业务，不将共享Supplier余额称为电镀专属欠款。
