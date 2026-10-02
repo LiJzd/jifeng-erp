@@ -101,18 +101,41 @@
   {
    "fieldname": "planned_qty",
    "fieldtype": "Float",
-   "label": "计划数量",
+   "label": "计划数量（库存单位）",
+   "description": "按下方商品库存单位填写；物料分析单件用量按一个商品库存单位计算。来源单位不明时，先明确核对计划库存数量。",
    "reqd": 1,
    "in_list_view": 1,
-   "precision": "6"
+   "precision": "9"
+  },
+  {
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "label": "计划库存单位",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "quantity_basis",
+   "fieldtype": "Data",
+   "label": "计划数量核对标记",
+   "hidden": 1,
+   "read_only": 1
   },
   {
    "fieldname": "source_qty",
    "fieldtype": "Float",
    "label": "源订单数量",
    "read_only": 1,
-   "precision": "6"
+   "precision": "9"
   },
+  {"fieldname": "source_uom", "fieldtype": "Link", "label": "源订单单位", "options": "UOM", "read_only": 1},
+  {"fieldname": "source_stock_uom", "fieldtype": "Link", "label": "源订单库存单位", "options": "UOM", "read_only": 1},
+  {"fieldname": "source_conversion_factor", "fieldtype": "Float", "label": "源订单库存换算系数", "precision": "9", "read_only": 1},
+  {"fieldname": "source_stock_qty", "fieldtype": "Float", "label": "源订单库存数量", "precision": "9", "read_only": 1},
+  {"fieldname": "source_stock_precision", "fieldtype": "Int", "label": "源订单库存数量精度", "hidden": 1, "read_only": 1},
+  {"fieldname": "stock_plan_confirmation_note", "fieldtype": "Small Text", "label": "计划单位核对说明", "read_only": 1},
+  {"fieldname": "stock_plan_confirmed_at", "fieldtype": "Datetime", "label": "计划单位核对时间", "read_only": 1},
+  {"fieldname": "stock_plan_confirmed_by", "fieldtype": "Link", "label": "计划单位核对人", "options": "User", "read_only": 1},
   {"fieldname": "source_item_code", "fieldtype": "Link", "label": "源订单商品", "options": "Item", "read_only": 1},
   {
    "fieldname": "source_status",
@@ -166,6 +189,7 @@
    "fieldname": "material_amount",
    "fieldtype": "Currency",
    "label": "预计材料费",
+   "description": "计划库存单位未核实时不重新试算；历史金额保留供核对。",
    "read_only": 1,
    "options": "Company:company:default_currency"
   },
@@ -173,6 +197,7 @@
    "fieldname": "processing_amount",
    "fieldtype": "Currency",
    "label": "预计加工费",
+   "description": "计划库存单位未核实时不重新试算；历史金额保留供核对。",
    "read_only": 1,
    "options": "Company:company:default_currency"
   },
@@ -221,7 +246,17 @@
   "profile",
   "bom",
   "planned_qty",
+  "stock_uom",
+  "quantity_basis",
   "source_qty",
+  "source_uom",
+  "source_stock_uom",
+  "source_conversion_factor",
+  "source_stock_qty",
+  "source_stock_precision",
+  "stock_plan_confirmation_note",
+  "stock_plan_confirmed_at",
+  "stock_plan_confirmed_by",
   "source_item_code",
   "source_status",
   "source_changed",

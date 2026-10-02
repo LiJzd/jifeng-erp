@@ -5,6 +5,7 @@ import pathlib
 import sys
 import types
 import unittest
+from decimal import Decimal
 from unittest.mock import patch
 
 
@@ -52,6 +53,7 @@ class TestMaterialIssue(unittest.TestCase):
         item_module.get_uom_conv_factor = lambda uom, stock_uom: None
         workflow = types.ModuleType("jifeng_erp.workflow")
         workflow.validate_flow_source = lambda flow: None
+        workflow.stock_plan_quantity = lambda flow: Decimal(str(flow.planned_qty))
         modules = {
             "frappe": frappe, "erpnext": erpnext, "erpnext.stock": stock,
             "erpnext.stock.doctype": stock_doctype,

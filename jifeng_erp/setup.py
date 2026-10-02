@@ -111,6 +111,10 @@ def install():
          "print_hide": 1, "allow_on_submit": 1,
          "description": "服务器记录员工原值与办理结果，用于核对后续变更及安全撤销。"},
     ]
+    for definitions in fields.values():
+        for field in definitions:
+            if field.get("fieldname") == "jf_flow_order" and field.get("options") == "Jifeng Flow Order":
+                field["search_index"] = 1
     create_custom_fields(fields, update=True)
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
@@ -346,7 +350,7 @@ def validate_flow_links(doc, method=None):
         if work_order.company != doc.company or work_order.production_item != doc.production_item:
             frappe.throw("报工单与生产工单的公司、商品不一致")
         if source_flow:
-            flow = frappe.get_doc("Jifeng Flow Order", source_flow)
+            flow = frappe.get_doc("Jifeng Flow Order", source_flow, for_update=True)
             flow.check_permission("read")
             if flow.company != doc.company or flow.item_code != doc.production_item:
                 frappe.throw("报工单与流程单的公司、商品不一致")
@@ -369,7 +373,14 @@ def validate_flow_links(doc, method=None):
     if doc.doctype == "Stock Entry" and doc.get("work_order"):
         work_order = frappe.get_doc("Work Order", doc.work_order)
         if work_order.get("jf_flow_order"):
-            work_flow = frappe.get_doc("Jifeng Flow Order", work_order.jf_flow_order)
+            if any(row.get("jf_flow_order") and row.jf_flow_order != work_order.jf_flow_order
+                   for row in doc.get("items") or []):
+                frappe.throw("生产工单库存明细不能关联其他流程单")
+            linked_names = {row.get("jf_flow_order") for row in doc.get("items") or [] if row.get("jf_flow_order")}
+            linked_names.add(work_order.jf_flow_order)
+            locked_work_flows = {name: frappe.get_doc("Jifeng Flow Order", name, for_update=True)
+                                 for name in sorted(linked_names)}
+            work_flow = locked_work_flows[work_order.jf_flow_order]
             work_flow.check_permission("read")
             if work_order.company != doc.company or work_flow.company != doc.company:
                 frappe.throw("生产工单、库存凭证与流程单公司不一致")
@@ -381,6 +392,13 @@ def validate_flow_links(doc, method=None):
                     frappe.throw("生产工单库存明细不能关联其他流程单")
                 if row.item_code in valid_items:
                     row.jf_flow_order = work_flow.name
+    # Use a common Flow lock for downstream writes and explicit plan-unit
+    # confirmation. Read all linked flows in stable order before row checks.
+    linked_flows = {row.get("jf_flow_order") for row in doc.get("items") or [] if row.get("jf_flow_order")}
+    if work_flow:
+        linked_flows.add(work_flow.name)
+    locked_flows = {name: frappe.get_doc("Jifeng Flow Order", name, for_update=True)
+                    for name in sorted(linked_flows)}
     for row in doc.get("items") or []:
         if not row.get("jf_flow_order"):
             continue
@@ -388,10 +406,12 @@ def validate_flow_links(doc, method=None):
                 and float(row.get("process_loss_qty") or 0) != 0):
             frappe.throw("关联流程单的委外退货只能退回实物，工艺损耗须为 0；原收货损耗保留。"
                          "若需冲回损耗，请先处理或更正原收货凭证。")
-        flow = work_flow if work_flow and row.jf_flow_order == work_flow.name else frappe.get_doc(
-            "Jifeng Flow Order", row.jf_flow_order
-        )
+        flow = locked_flows[row.jf_flow_order]
         flow.check_permission("read")
+        if doc.docstatus == 0 or doc.is_new() or getattr(doc, "_action", None) == "submit":
+            from jifeng_erp.workflow import stock_plan_quantity
+
+            stock_plan_quantity(flow)
         if flow.company != doc.company:
             frappe.throw("流程单与业务凭证公司不一致")
         if doc.doctype in ("Subcontracting Order", "Subcontracting Receipt") and flow.item_code != row.item_code:

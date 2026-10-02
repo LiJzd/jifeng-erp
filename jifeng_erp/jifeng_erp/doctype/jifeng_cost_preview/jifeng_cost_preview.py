@@ -9,6 +9,16 @@ from jifeng_erp.costing import CostingError, calculate
 
 class JifengCostPreview(Document):
     def validate(self):
+        # A new trial or a recalculation shares the Flow lock used when its
+        # inventory-unit plan is confirmed. Never divide by a sales-unit qty.
+        if self.flow_order:
+            from jifeng_erp.workflow import stock_plan_quantity
+
+            flow = frappe.get_doc("Jifeng Flow Order", self.flow_order, for_update=True)
+            flow.check_permission("read")
+            stock_plan_quantity(flow)
+            if flow.company != self.company or flow.item_code != self.item_code:
+                frappe.throw("试算单与流程单的公司、商品必须一致")
         try:
             result = calculate(
                 self.planned_qty,
@@ -72,8 +82,17 @@ class JifengCostPreview(Document):
     @frappe.whitelist()
     def load_flow_costs(self):
         self.check_permission("write")
-        flow = frappe.get_doc("Jifeng Flow Order", self.flow_order)
+        if self.is_new():
+            frappe.throw("请先保存试算单，再明确读取流程预计费用")
+        self.flags.for_update = True
+        frappe.db.get_value(self.doctype, self.name, "name", for_update=True)
+        self.reload()
+        self.check_permission("write")
+        flow = frappe.get_doc("Jifeng Flow Order", self.flow_order, for_update=True)
         flow.check_permission("read")
+        from jifeng_erp.workflow import stock_plan_quantity
+
+        stock_plan_quantity(flow)
         if self.batches:
             frappe.throw("已有回货批次，请核对费用后手动调整，避免覆盖当前试算")
         self.company, self.item_code, self.planned_qty = flow.company, flow.item_code, flow.planned_qty

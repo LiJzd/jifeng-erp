@@ -222,3 +222,16 @@ def validate_fulfillment_flow(document, method=None):
         # Revalidation on this server object must not mistake an inherited Flow
         # for a default when its precise source is subsequently changed.
         row.flags.jf_fulfillment_inherited_flow = _INHERITED_FLOW
+
+    # Quantity confirmation probes these children while holding the Flow lock.
+    # Take that same lock before native saves a tracked DN/SI row; untracked
+    # sales keep their existing handling. Stable order avoids cross-flow waits.
+    for name in sorted({row.get("jf_flow_order") for row in document.get("items") or []
+                        if row.get("jf_flow_order")}):
+        previous = cache[FLOW, name]
+        locked = frappe.get_doc(FLOW, name, for_update=True)
+        if not locked.has_permission("read"):
+            frappe.throw("没有完整读取销售来源单据或流程单的权限", frappe.PermissionError)
+        if any(locked.get(field) != previous.get(field) for field in
+               ("company", "item_code", "sales_order", "sales_order_item", "external_order", "external_line_id")):
+            frappe.throw("流程单来源已变化，请重新读取后核对销售单据")

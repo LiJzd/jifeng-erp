@@ -4,6 +4,10 @@ frappe.ui.form.on("Jifeng Cost Preview", {
         if (!name || (frm.doc.batches || []).length) return;
         const flow = await frappe.db.get_doc("Jifeng Flow Order", name);
         if (frm.doc.flow_order !== name) return;
+        if (!["stock_v1", "manual_verified_v1"].includes(flow.quantity_basis) || !flow.stock_uom) {
+            frappe.msgprint("所选流程单计划数量的库存单位尚未核对，请先打开流程单确认计划库存单位和数量。");
+            return;
+        }
         await frm.set_value({ company: flow.company, item_code: flow.item_code,
             flow_order_no: flow.name, external_order_no: flow.online_order_id,
             sales_order: flow.sales_order,

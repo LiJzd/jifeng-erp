@@ -23,7 +23,7 @@ class TestFulfillment(unittest.TestCase):
         frappe = types.ModuleType("frappe")
         frappe.PermissionError = PermissionError
         frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
-        frappe.get_doc = Mock(side_effect=lambda doctype, name: self.documents[(doctype, name)])
+        frappe.get_doc = Mock(side_effect=lambda doctype, name, **kwargs: self.documents[(doctype, name)])
         frappe.new_doc = Mock(side_effect=lambda doctype, **kwargs: Doc(
             doctype=doctype, __islocal=1, jf_flow_order=self.native_defaults.get(doctype)))
         def flow_names(doctype, filters, **kwargs):
@@ -92,6 +92,20 @@ class TestFulfillment(unittest.TestCase):
         self.assertEqual(row.jf_flow_order, "FLOW-2")
         self.frappe.get_all.assert_any_call("Jifeng Flow Order", filters={
             "sales_order": "SO", "sales_order_item": "SO-2"}, pluck="name", limit_page_length=0)
+        self.frappe.get_doc.assert_any_call("Jifeng Flow Order", "FLOW-2", for_update=True)
+
+    def test_flow_identity_changed_while_waiting_for_lock_refuses_save(self):
+        original = self.frappe.get_doc.side_effect
+
+        def read(doctype, name, **kwargs):
+            doc = original(doctype, name, **kwargs)
+            if doctype == "Jifeng Flow Order" and kwargs.get("for_update"):
+                return Doc({**doc, "sales_order_item": "SO-2"})
+            return doc
+
+        self.frappe.get_doc.side_effect = read
+        with self.assertRaisesRegex(ValueError, "来源已变化"):
+            self.validate(self.target(against_sales_order="SO", so_detail="SO-1"))
 
     def test_standalone_untracked_sales_preserve_native_values(self):
         document = self.target()

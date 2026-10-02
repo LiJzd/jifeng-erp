@@ -7,7 +7,7 @@ import frappe
 from erpnext.stock.doctype.item.item import get_uom_conv_factor
 
 from jifeng_erp.costing import CostingError, number
-from jifeng_erp.workflow import validate_flow_source
+from jifeng_erp.workflow import stock_plan_quantity, validate_flow_source
 
 
 TOLERANCE = Decimal("0.000001")
@@ -43,7 +43,7 @@ def _required_stock(flow):
     required = defaultdict(Decimal)
     units = {}
     try:
-        planned = number(flow.planned_qty, "计划数量")
+        planned = stock_plan_quantity(flow)
         for row in flow.materials:
             per_unit = number(row.qty_per_unit, "单件用量")
             if per_unit <= 0:

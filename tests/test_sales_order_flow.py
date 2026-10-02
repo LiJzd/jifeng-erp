@@ -5,6 +5,7 @@ import pathlib
 import sys
 import types
 import unittest
+from decimal import Decimal
 from unittest.mock import patch
 
 
@@ -34,6 +35,9 @@ class Record(dict):
 
     def reload(self):
         return self
+
+    def precision(self, field):
+        return 6
 
     def insert(self):
         prefix = "MR" if self.doctype == "Material Request" else "JF-FLOW"
@@ -82,17 +86,32 @@ class TestSalesOrderFlow(unittest.TestCase):
         self.order = Record(
             doctype="Sales Order", name="SO-0001", docstatus=1,
             status="To Deliver and Bill", company="JF",
-            items=[Record(name="ROW-1", item_code="RING", qty=10, jf_make_flow=1,
+            items=[Record(name="ROW-1", parent="SO-0001", parenttype="Sales Order", parentfield="items",
+                          item_code="RING", qty=10, uom="Nos", stock_uom="Nos", conversion_factor=1,
+                          stock_qty=10, jf_make_flow=1,
                           jf_requirements="刻字", jf_packaging="礼盒", jf_requirements_attachment=None),
-                   Record(name="ROW-2", item_code="SERVICE", qty=1, jf_make_flow=0)],
+                   Record(name="ROW-2", parent="SO-0001", parenttype="Sales Order", parentfield="items",
+                          item_code="SERVICE", qty=1, uom="Nos", stock_uom="Nos", conversion_factor=1,
+                          stock_qty=1, jf_make_flow=0)],
         )
         frappe = types.ModuleType("frappe")
         frappe.whitelist = lambda: lambda function: function
-        frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
+        frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
+        frappe.PermissionError = PermissionError
+        frappe.session = types.SimpleNamespace(user="Synthetic")
+        readable = {"name", "company", "docstatus", "status", "item_code", "planned_qty", "stock_uom",
+                    "quantity_basis", "qty", "uom", "conversion_factor", "stock_qty", "sales_order", "external_order",
+                    "source_qty", "source_uom", "source_stock_uom", "source_conversion_factor", "source_stock_qty",
+                    "source_stock_precision", "stock_plan_confirmation_note", "stock_plan_confirmed_at", "stock_plan_confirmed_by"}
+        model = types.ModuleType("frappe.model")
+        model.get_permitted_fields = lambda *args, **kwargs: readable
+        frappe.get_meta = lambda *args: types.SimpleNamespace(fields=[], get_permlevel_access=lambda **kwargs: [0],
+            get_field=lambda field: Record(fieldname=field, fieldtype="Table" if field == "items" else "Data",
+                                          options="Sales Order Item" if field == "items" else None, permlevel=0, mask=0))
         frappe.db = FakeDatabase(self.flows, self.requests)
         frappe.get_all = lambda doctype, **kwargs: list(self.work_orders if doctype == "Work Order" else self.flows)
 
-        def get_doc(doctype, name=None):
+        def get_doc(doctype, name=None, **kwargs):
             if isinstance(doctype, dict):
                 flow = Record(**doctype)
                 if doctype["doctype"] == "Material Request":
@@ -111,6 +130,8 @@ class TestSalesOrderFlow(unittest.TestCase):
                 return self.requests[name]
             if doctype == "BOM":
                 return self.bom
+            if doctype == "Item":
+                return Record(name=name, stock_uom="Nos")
             raise AssertionError(doctype)
 
         frappe.get_doc = get_doc
@@ -118,6 +139,9 @@ class TestSalesOrderFlow(unittest.TestCase):
         utils.add_days = lambda date, days: date
         utils.cint = lambda value: int(value or 0)
         utils.today = lambda: "2026-09-30"
+        native_patch = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils, "frappe.model": model})
+        native_patch.start()
+        self.addCleanup(native_patch.stop)
         with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils}):
             path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "workflow.py"
             spec = importlib.util.spec_from_file_location("sales_workflow_under_test", path)
@@ -137,6 +161,7 @@ class TestSalesOrderFlow(unittest.TestCase):
         name = self.workflow.create_sales_order_flows(self.order.name)[0]
         flow = self.flows[name]
         self.order.items[0].qty = 12
+        self.order.items[0].stock_qty = 12
         self.order.items[0].jf_requirements = "改刻字"
         self.workflow.refresh_sales_order_flows(self.order)
         self.assertEqual((flow.source_qty, flow.planned_qty), (12, 10))
@@ -156,6 +181,41 @@ class TestSalesOrderFlow(unittest.TestCase):
         self.assertEqual(len(names), 2)
         self.assertEqual(len(set(names)), 2)
         self.assertEqual({self.flows[name].sales_order_item for name in names}, {"ROW-1", "ROW-2"})
+
+    def test_sales_boxes_generate_stock_unit_plan_and_work_order(self):
+        row = self.order.items[0]
+        row.qty, row.uom, row.conversion_factor, row.stock_qty = 1, "Box", 12, 12
+        flow = self.flows[self.workflow.create_sales_order_flows(self.order.name)[0]]
+        self.assertEqual((flow.source_qty, flow.source_uom, flow.planned_qty, flow.stock_uom),
+                         (Decimal(1), "Box", Decimal(12), "Nos"))
+        flow.bom, flow.work_order, flow.source_changed = "BOM-1", None, 0
+        work = self.work_orders[self.workflow.make_work_order(flow)]
+        self.assertEqual(work.qty, 12)
+
+    def test_source_unit_or_factor_change_flags_review_with_same_sales_qty(self):
+        flow = self.flows[self.workflow.create_sales_order_flows(self.order.name)[0]]
+        row = self.order.items[0]
+        row.uom, row.conversion_factor, row.stock_qty = "Box", 12, 120
+        self.workflow.refresh_sales_order_flows(self.order)
+        self.assertEqual((flow.source_changed, flow.planned_qty, flow.source_stock_qty), (1, 10, 120))
+        self.assertEqual((flow.source_uom, flow.source_conversion_factor), ("Box", 12))
+
+    def test_missing_legacy_plan_unit_does_not_create_work_order(self):
+        flow = self.flows[self.workflow.create_sales_order_flows(self.order.name)[0]]
+        flow.bom, flow.source_changed = "BOM-1", 0
+        flow.pop("quantity_basis")
+        with self.assertRaisesRegex(ValueError, "库存单位"):
+            self.workflow.make_work_order(flow)
+        self.assertFalse(self.work_orders)
+
+    def test_sales_boxes_material_request_uses_inventory_plan_quantity(self):
+        row = self.order.items[0]
+        row.qty, row.uom, row.conversion_factor, row.stock_qty = 1, "Box", 12, 12
+        flow = self.flows[self.workflow.create_sales_order_flows(self.order.name)[0]]
+        flow.materials = [Record(item_code="SILVER", uom="g", qty_per_unit=2)]
+        flow.target_warehouse, flow.source_changed = "Stores - JF", 0
+        request = self.requests[self.workflow.make_material_request(flow)]
+        self.assertEqual(request.items[0]["qty"], 24)
 
     def test_draft_cannot_create_production_flow(self):
         self.order.docstatus = 0

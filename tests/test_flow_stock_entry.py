@@ -9,6 +9,10 @@ from unittest.mock import patch
 
 
 class Record(dict):
+    def __init__(self, **values):
+        super().__init__(values)
+        self.setdefault("docstatus", 0)
+
     def __getattr__(self, name):
         try:
             return self[name]
@@ -17,6 +21,9 @@ class Record(dict):
 
     def __setattr__(self, name, value):
         self[name] = value
+
+    def is_new(self):
+        return bool(self.get("__islocal", True))
 
     def check_permission(self, permission):
         return None
@@ -27,14 +34,14 @@ class TestFlowStockEntry(unittest.TestCase):
         self.flow = Record(name="FLOW-1", company="JF", item_code="RING",
                            materials=[Record(item_code="SILVER")])
         self.work_order = Record(company="JF", production_item="RING", jf_flow_order="FLOW-1")
-        self.entry = Record(doctype="Stock Entry", company="JF", work_order="WO-1", items=[
+        self.entry = Record(doctype="Stock Entry", docstatus=0, company="JF", work_order="WO-1", items=[
             Record(item_code="SILVER", jf_flow_order=None),
             Record(item_code="RING", jf_flow_order=None),
             Record(item_code="SCRAP", jf_flow_order=None),
         ])
         frappe = types.ModuleType("frappe")
         frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
-        frappe.get_doc = lambda doctype, name: {
+        frappe.get_doc = lambda doctype, name, **kwargs: {
             ("Work Order", "WO-1"): self.work_order,
             ("Jifeng Flow Order", "FLOW-1"): self.flow,
         }[(doctype, name)]
@@ -71,6 +78,11 @@ class TestFlowStockEntry(unittest.TestCase):
             spec = importlib.util.spec_from_file_location("flow_setup_under_test", path)
             self.setup = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.setup)
+        workflow = types.ModuleType("jifeng_erp.workflow")
+        workflow.stock_plan_quantity = lambda flow: 5
+        workflow_patch = patch.dict(sys.modules, {"jifeng_erp.workflow": workflow})
+        workflow_patch.start()
+        self.addCleanup(workflow_patch.stop)
 
     def test_work_order_flow_is_copied_to_material_and_finished_item(self):
         self.setup.validate_flow_links(self.entry)
@@ -162,7 +174,7 @@ class TestFlowStockEntry(unittest.TestCase):
     def test_subcontracting_transfer_inherits_source_flow(self):
         row = Record(item_code="SILVER", subcontracted_item="RING",
                      sco_rm_detail="SCO-RM-ROW", jf_flow_order=None)
-        entry = Record(doctype="Stock Entry", company="JF", subcontracting_order="SCO-1", items=[row])
+        entry = Record(doctype="Stock Entry", docstatus=0, company="JF", subcontracting_order="SCO-1", items=[row])
         self.setup.validate_flow_links(entry)
         self.assertEqual(row.jf_flow_order, "FLOW-1")
 

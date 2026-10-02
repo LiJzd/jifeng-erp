@@ -31,6 +31,9 @@ def _flow(name, company=None):
 def _open_source(flow):
     if flow.get("source_changed") or flow.get("source_status") in {"Cancelled", "Merged", "Split", "Closed"}:
         frappe.throw("流程单来源已变更或关闭，请先核对来源再安排生产")
+    from jifeng_erp.workflow import stock_plan_quantity
+
+    stock_plan_quantity(flow)
 
 
 def _allocated(flow_name, exclude_work=None, exclude_plan=None):
@@ -58,7 +61,20 @@ def _committed(work):
 
 class ProductionInstructionMixin:
     def get_production_items(self):
-        frappe.db.get_value("Production Plan", self.name, "name", for_update=True)
+        # Native make_work_order reloads a saved plan before entering here.
+        # Re-read with the parent/child locks after a possible lock wait, then
+        # reserve every tracked Flow in one order before allocation reads or
+        # native per-row factories. Different plan row orders must not dictate
+        # different Flow lock orders.
+        if self.is_new():
+            frappe.throw("请先保存生产计划，再生成工单")
+        self.flags.for_update = True
+        if not frappe.db.get_value("Production Plan", self.name, "name", for_update=True):
+            frappe.throw("生产计划已不存在，请重新查询")
+        self.reload()
+        self.check_permission("read")
+        for name in sorted({row.get("jf_flow_order") for row in self.po_items if row.get("jf_flow_order")}):
+            _flow(name, self.company)
         result = super().get_production_items()
         for row in self.po_items:
             if not row.get("jf_flow_order"):

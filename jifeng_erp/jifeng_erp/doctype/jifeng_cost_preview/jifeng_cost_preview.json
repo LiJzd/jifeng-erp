@@ -78,9 +78,10 @@
   {
    "fieldname": "planned_qty",
    "fieldtype": "Float",
-   "label": "订单数量",
+   "label": "计划数量（库存单位）",
    "reqd": 1,
-   "precision": "6"
+   "precision": "9",
+   "description": "本单计划数量与回货数量均使用商品库存单位；销售单位数量不能直接用作试算分母。"
   },
   {
    "fieldname": "costs_section",
@@ -197,6 +198,7 @@
   },
   {
    "fieldname": "flow_order",
+   "search_index": 1,
    "fieldtype": "Link",
    "label": "关联流程单",
    "options": "Jifeng Flow Order"

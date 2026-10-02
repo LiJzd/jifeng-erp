@@ -1,9 +1,7 @@
-from decimal import Decimal
-
 import frappe
 from frappe.utils import add_days, cint, today
 
-from jifeng_erp.costing import CostingError, number, receipt_batch_quantities
+from jifeng_erp.costing import CostingError, number
 from jifeng_erp.jushuitan import record_key
 
 MATERIAL_FIELDS = ("item_code", "item_name", "uom", "qty_per_unit", "unit_price", "supplier", "note")
@@ -79,9 +77,37 @@ def _sales_row_selected(row):
     return bool(cint(row.get("jf_make_flow")))
 
 
-def _sales_line_differs(flow, row):
+def _sales_quantity_snapshot(order, row):
+    from jifeng_erp.flow_quantity import FlowQuantityError, read_sales_quantity_snapshot
+
+    try:
+        return read_sales_quantity_snapshot(order, row)
+    except FlowQuantityError as exc:
+        frappe.throw(str(exc))
+
+
+def stock_plan_quantity(flow):
+    """Use the verified inventory-unit plan at all downstream creation gates."""
+    from jifeng_erp.flow_quantity import (
+        CONFIRMATION_FIELDS, SOURCE_FIELDS, FlowQuantityError, check_quantity_fields,
+        read_item_stock_uom, require_stock_plan,
+    )
+
+    try:
+        check_quantity_fields("Jifeng Flow Order", (
+            "name", "company", "item_code", "planned_qty", "stock_uom", "quantity_basis",
+            "sales_order", "external_order",
+        ) + SOURCE_FIELDS + CONFIRMATION_FIELDS)
+        return require_stock_plan(flow, read_item_stock_uom(flow.item_code))
+    except FlowQuantityError as exc:
+        frappe.throw(str(exc))
+
+
+def _sales_line_differs(flow, row, order):
+    from jifeng_erp.flow_quantity import source_snapshot_changed
+
     return (
-        number(flow.source_qty, "源订单数量") != number(row.qty, "销售订单数量")
+        source_snapshot_changed(flow, _sales_quantity_snapshot(order, row))
         or flow.source_item_code != row.item_code
         or (flow.source_requirements or "") != (row.get("jf_requirements") or "")
         or (flow.source_packaging or "") != (row.get("jf_packaging") or "")
@@ -104,6 +130,7 @@ def create_sales_order_flows(sales_order):
             continue
         if not row.item_code or number(row.qty, "销售订单数量") <= 0:
             frappe.throw("所选销售订单明细必须有商品且数量大于零")
+        quantity = _sales_quantity_snapshot(order, row)
         key = sales_order_flow_key(order.name, row.name)
         existing = frappe.db.get_value("Jifeng Flow Order", {"source_key": key}, "name")
         if existing:
@@ -118,7 +145,7 @@ def create_sales_order_flows(sales_order):
             "doctype": "Jifeng Flow Order", "source_key": key,
             "sales_order": order.name, "sales_order_item": row.name,
             "company": order.company, "item_code": row.item_code, "profile": profile,
-            "planned_qty": row.qty, "source_qty": row.qty,
+            "planned_qty": quantity["source_stock_qty"], **quantity,
             "source_item_code": row.item_code, "source_status": order.status,
             "source_requirements": row.get("jf_requirements"),
             "source_packaging": row.get("jf_packaging"),
@@ -163,8 +190,12 @@ def refresh_sales_order_flows(order, method=None):
             requirements = row.get("jf_requirements") or ""
             packaging = row.get("jf_packaging") or ""
             attachment = row.get("jf_requirements_attachment") or ""
-            changed = _sales_line_differs(flow, row) or (order.status == "Closed" and flow.source_status != "Closed")
-            flow.source_qty = row.qty
+            changed = _sales_line_differs(flow, row, order) or (order.status == "Closed" and flow.source_status != "Closed")
+            from jifeng_erp.flow_quantity import SOURCE_FIELDS
+
+            quantity = _sales_quantity_snapshot(order, row)
+            for field in SOURCE_FIELDS:
+                setattr(flow, field, quantity[field])
             flow.source_item_code = row.item_code
             flow.source_status = order.status
             flow.source_requirements = requirements
@@ -179,140 +210,31 @@ def refresh_sales_order_flows(order, method=None):
 
 @frappe.whitelist()
 def receipt_costs(flow_order):
-    flow = frappe.get_doc("Jifeng Flow Order", flow_order)
-    flow.check_permission("read")
-    if not frappe.has_permission("Subcontracting Receipt", "read"):
-        frappe.throw("没有委外收货单读取权限", frappe.PermissionError)
-    # Parent get_list respects company/user permissions; child rows alone do not.
-    parents = frappe.get_list("Subcontracting Receipt", filters=[
-        ["Subcontracting Receipt", "docstatus", "=", 1],
-        ["Subcontracting Receipt", "company", "=", flow.company],
-        ["Subcontracting Receipt Item", "jf_flow_order", "=", flow.name],
-    ], pluck="name", distinct=True, limit_page_length=0)
-    rows = frappe.get_all("Subcontracting Receipt Item", filters={
-        "parent": ["in", parents], "parenttype": "Subcontracting Receipt",
-        "jf_flow_order": flow.name, "item_code": flow.item_code,
-    }, fields=["parent", "qty", "rm_cost_per_qty", "service_cost_per_qty", "additional_cost_per_qty"]) if parents else []
-    result = [{
-        "receipt": r.parent, "qty": r.qty,
-        "material": Decimal(str(r.qty or 0)) * Decimal(str(r.rm_cost_per_qty or 0)),
-        "processing": Decimal(str(r.qty or 0)) * Decimal(str(r.service_cost_per_qty or 0)),
-        "other": Decimal(str(r.qty or 0)) * Decimal(str(r.additional_cost_per_qty or 0)),
-    } for r in rows]
-    return {"rows": result, "totals": {key: sum((r[key] for r in result), Decimal(0)) for key in ("material", "processing", "other")},
-            "currency": frappe.db.get_value("Company", flow.company, "default_currency")}
+    from jifeng_erp.flow_cost_sources import receipt_costs as read_costs
+
+    return read_costs(flow_order)
 
 
 @frappe.whitelist()
 def receipt_batch_candidates(flow_order):
-    """Offer posted receipt quantities for manual classification in a cost preview."""
-    flow = frappe.get_doc("Jifeng Flow Order", flow_order)
-    flow.check_permission("read")
-    if not frappe.has_permission("Subcontracting Receipt", "read"):
-        frappe.throw("没有委外收货单读取权限", frappe.PermissionError)
-    parents = frappe.get_list("Subcontracting Receipt", filters=[
-        ["Subcontracting Receipt", "docstatus", "=", 1],
-        ["Subcontracting Receipt", "company", "=", flow.company],
-        ["Subcontracting Receipt", "is_return", "=", 0],
-        ["Subcontracting Receipt Item", "jf_flow_order", "=", flow.name],
-    ], fields=["name", "posting_date"], distinct=True,
-        order_by="posting_date asc, name asc", limit_page_length=0)
-    if not parents:
-        return []
-    details = frappe.get_all("Subcontracting Receipt Item", filters={
-        "parent": ["in", [parent.name for parent in parents]],
-        "parenttype": "Subcontracting Receipt", "jf_flow_order": flow.name,
-        "item_code": flow.item_code,
-    }, fields=["name", "parent", "idx", "item_code", "qty", "rejected_qty", "process_loss_qty"])
-    originals = {detail.name: detail for detail in details}
-    return_filters = {"company": flow.company, "docstatus": 1, "is_return": 1,
-                      "return_against": ["in", [parent.name for parent in parents]]}
-    returns = frappe.get_list("Subcontracting Receipt", filters=return_filters,
-                              fields=["name", "return_against"], limit_page_length=0)
-    if len(returns) != frappe.db.count("Subcontracting Receipt", return_filters):
-        frappe.throw("无法完整读取来源单据的退货记录，请核对退货读取权限", frappe.PermissionError)
-    return_parents = {parent.name: parent.return_against for parent in returns}
-    return_details = frappe.get_all("Subcontracting Receipt Item", filters={
-        "parent": ["in", list(return_parents)], "parenttype": "Subcontracting Receipt",
-    }, fields=["parent", "subcontracting_receipt_item", "item_code", "jf_flow_order", "qty", "rejected_qty"]) if returns and originals else []
-    returned = {name: Decimal(0) for name in originals}
-    for detail in return_details:
-        if detail.subcontracting_receipt_item not in originals:
-            if not detail.subcontracting_receipt_item and detail.item_code == flow.item_code and detail.jf_flow_order in (None, "", flow.name):
-                frappe.throw("委外退货缺少来源收货明细，无法计算净回货数量，请先核对")
-            continue
-        source = originals[detail.subcontracting_receipt_item]
-        qty, rejected = Decimal(str(detail.qty or 0)), Decimal(str(detail.rejected_qty or 0))
-        if return_parents[detail.parent] != source.parent or detail.item_code != source.item_code or qty > 0 or rejected > 0:
-            frappe.throw("关联委外退货的商品、来源或数量异常，请先核对")
-        returned[source.name] -= qty + rejected
-    order = {parent.name: index for index, parent in enumerate(parents)}
-    rows = []
-    for detail in sorted(details, key=lambda row: (order[row.parent], row.idx)):
-        try:
-            quantities = receipt_batch_quantities(detail, returned[detail.name])
-        except CostingError as exc:
-            frappe.throw(f"委外收货 {detail.parent}：{exc}")
-        rows.append({
-            "receipt": detail.parent, "receipt_item": detail.name,
-            "company": flow.company, "item_code": flow.item_code,
-            **quantities,
-        })
-    return rows
+    """Read complete posted sources before offering manual batch classification."""
+    from jifeng_erp.flow_cost_sources import receipt_batch_candidates as read_batches
+
+    return read_batches(flow_order)
 
 
 @frappe.whitelist()
 def material_issue_costs(flow_order):
-    """Read posted Material Issue value from its stock ledger rows, not recipe prices."""
-    flow = frappe.get_doc("Jifeng Flow Order", flow_order)
-    flow.check_permission("read")
-    if not frappe.has_permission("Stock Entry", "read"):
-        frappe.throw("没有物料出库单读取权限", frappe.PermissionError)
-    parents = frappe.get_list("Stock Entry", filters=[
-        ["Stock Entry", "docstatus", "=", 1],
-        ["Stock Entry", "company", "=", flow.company],
-        ["Stock Entry", "stock_entry_type", "=", "Material Issue"],
-        ["Stock Entry Detail", "jf_flow_order", "=", flow.name],
-    ], pluck="name", distinct=True, limit_page_length=0)
-    details = frappe.get_all("Stock Entry Detail", filters={
-        "parent": ["in", parents], "parenttype": "Stock Entry", "jf_flow_order": flow.name,
-    }, fields=["name", "parent", "item_code"]) if parents else []
-    by_name = {row.name: row for row in details}
-    ledger = (frappe.get_all("Stock Ledger Entry", filters={
-        "voucher_type": "Stock Entry", "voucher_no": ["in", parents],
-        "voucher_detail_no": ["in", list(by_name)], "is_cancelled": 0,
-    }, fields=["voucher_no", "voucher_detail_no", "item_code", "actual_qty", "stock_value_difference"])
-        if by_name else [])
-    rows = []
-    for entry in ledger:
-        detail = by_name.get(entry.voucher_detail_no)
-        if not detail or detail.parent != entry.voucher_no or detail.item_code != entry.item_code:
-            continue
-        rows.append({
-            "issue": entry.voucher_no, "item_code": entry.item_code,
-            "qty": -Decimal(str(entry.actual_qty or 0)),
-            "material": -Decimal(str(entry.stock_value_difference or 0)),
-        })
-    return {"rows": rows, "totals": {"material": sum((row["material"] for row in rows), Decimal(0))},
-            "currency": frappe.db.get_value("Company", flow.company, "default_currency")}
+    from jifeng_erp.flow_cost_sources import material_issue_costs as read_costs
+
+    return read_costs(flow_order)
 
 
 @frappe.whitelist()
 def posted_flow_costs(flow_order):
-    """Keep direct issues and subcontracting receipt material costs as separate sources."""
-    issues = material_issue_costs(flow_order)
-    receipts = receipt_costs(flow_order)
-    return {
-        "issues": issues["rows"], "receipts": receipts["rows"],
-        "totals": {
-            "issue_material": issues["totals"]["material"],
-            "receipt_material": receipts["totals"]["material"],
-            "material": issues["totals"]["material"] + receipts["totals"]["material"],
-            "processing": receipts["totals"]["processing"],
-            "other": receipts["totals"]["other"],
-        },
-        "currency": issues["currency"],
-    }
+    from jifeng_erp.flow_cost_sources import posted_flow_costs as read_costs
+
+    return read_costs(flow_order)
 
 
 @frappe.whitelist()
@@ -337,7 +259,7 @@ def validate_flow_source(flow):
         if sales_order.docstatus != 1 or sales_order.status == "Closed":
             frappe.throw("销售订单已取消或关闭，不能生成采购申请")
         source_line = next((row for row in sales_order.items if row.name == flow.sales_order_item), None)
-        if not source_line or not _sales_row_selected(source_line) or _sales_line_differs(flow, source_line):
+        if not source_line or not _sales_row_selected(source_line) or _sales_line_differs(flow, source_line, sales_order):
             frappe.throw("销售订单明细已变化，请先核对流程单来源")
 
 
@@ -346,6 +268,7 @@ def make_work_order(flow):
     frappe.db.get_value(flow.doctype, flow.name, "name", for_update=True)
     flow.reload()
     validate_flow_source(flow)
+    planned = stock_plan_quantity(flow)
     if not flow.bom:
         frappe.throw("请先选择已提交且启用的生产 BOM")
     bom = frappe.get_doc("BOM", flow.bom)
@@ -373,7 +296,7 @@ def make_work_order(flow):
         "doctype": "Work Order", "company": flow.company,
         "production_item": flow.item_code, "bom_no": flow.bom,
         "track_semi_finished_goods": bom.get("track_semi_finished_goods") or 0,
-        "qty": flow.planned_qty, "sales_order": flow.sales_order,
+        "qty": float(planned), "sales_order": flow.sales_order,
         "sales_order_item": flow.sales_order_item, "jf_flow_order": flow.name,
     })
     work_order.get_items_and_operations_from_bom()
@@ -388,6 +311,7 @@ def make_material_request(flow):
     existing = frappe.db.get_value(flow.doctype, flow.name, "material_request", for_update=True)
     flow.reload()
     validate_flow_source(flow)
+    planned = stock_plan_quantity(flow)
     if existing and frappe.db.exists("Material Request", existing):
         request = frappe.get_doc("Material Request", existing)
         request.check_permission("read")
@@ -407,7 +331,7 @@ def make_material_request(flow):
         "doctype": "Material Request", "material_request_type": "Purchase",
         "company": flow.company, "schedule_date": add_days(today(), 1),
         "items": [{"item_code": r.item_code, "uom": r.uom,
-                   "qty": float(number(r.qty_per_unit, "用量") * number(flow.planned_qty, "计划数量")),
+                   "qty": float(number(r.qty_per_unit, "用量") * planned),
                    "schedule_date": add_days(today(), 1), "warehouse": flow.target_warehouse,
                    "jf_flow_order": flow.name} for r in flow.materials],
     })
