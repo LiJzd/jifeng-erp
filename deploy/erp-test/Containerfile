@@ -52,7 +52,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     redis-server=5:7.0.15-1~deb12u10 redis-tools=5:7.0.15-1~deb12u10
 COPY --from=builder --chown=frappe:frappe /home/frappe/frappe-bench /home/frappe/frappe-bench
 COPY deploy/ /opt/jifeng-deploy/
-RUN chmod 755 /opt/jifeng-deploy/entrypoint.sh
+RUN chmod 755 /opt/jifeng-deploy && chmod 644 /opt/jifeng-deploy/* \
+    && chmod 755 /opt/jifeng-deploy/entrypoint.sh
 USER frappe
 WORKDIR /home/frappe/frappe-bench
 ENTRYPOINT ["/opt/jifeng-deploy/entrypoint.sh"]
