@@ -1,5 +1,6 @@
 FROM ghcr.nju.edu.cn/frappe/base@sha256:624a00a498511f27513e8b01fb4397a46dcc68ff412f1c712cb67dd72face930 AS tls-runtime
 ENV HTTP_PROXY="" HTTPS_PROXY="" ALL_PROXY="" http_proxy="" https_proxy="" all_proxy=""
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1
 USER root
 RUN python3 -m venv /opt/certbot && /opt/certbot/bin/pip install --no-cache-dir certbot==5.4.0
 
@@ -7,9 +8,19 @@ FROM ghcr.nju.edu.cn/frappe/build@sha256:c2fa4d93055185974cdf8086a6fd54a075e93b0
 ENV HTTP_PROXY="" HTTPS_PROXY="" ALL_PROXY="" http_proxy="" https_proxy="" all_proxy=""
 ENV FRAPPE_DOCKER_BUILD=1
 ENV UV_CONCURRENT_DOWNLOADS=2 UV_CONCURRENT_INSTALLS=1 YARN_NETWORK_CONCURRENCY=2
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1
 USER root
 ADD --chown=frappe:frappe sources.tar.gz /opt/jifeng-sources/
+RUN test -d /opt/jifeng-sources/sources/frappe/.git && \
+    test -d /opt/jifeng-sources/sources/erpnext/.git && \
+    test -d /opt/jifeng-sources/sources/hrms/.git && \
+    test -d /opt/jifeng-sources/sources/jifeng_erp/.git && \
+    chown -R frappe:frappe /opt/jifeng-sources
 USER frappe
+RUN set -eu; for app in frappe erpnext hrms jifeng_erp; do \
+      test "$(stat -c %U /opt/jifeng-sources/sources/$app/.git)" = frappe; \
+      git ls-remote --heads --tags file:///opt/jifeng-sources/sources/$app jifeng-release-pinned; \
+    done
 RUN bench init --frappe-path=file:///opt/jifeng-sources/sources/frappe --frappe-branch=jifeng-release-pinned \
     --skip-assets --no-procfile --no-backups --skip-redis-config-generation /home/frappe/frappe-bench
 WORKDIR /home/frappe/frappe-bench
@@ -19,16 +30,19 @@ RUN bench get-app --skip-assets --branch=jifeng-release-pinned file:///opt/jifen
 COPY --chown=frappe:frappe overrides/erpnext-banking-yarn.lock apps/erpnext/banking/yarn.lock
 RUN cd apps/erpnext/banking && yarn install --frozen-lockfile --check-files
 ADD --chown=frappe:frappe assets.tar.gz /home/frappe/frappe-bench/
-RUN for app in frappe erpnext hrms jifeng_erp; do ln -s ../apps/$app/$app/public assets/$app; done && \
+USER root
+RUN chown -R frappe:frappe /home/frappe/frappe-bench
+USER frappe
+RUN set -eu; for app in frappe erpnext hrms jifeng_erp; do ln -s ../apps/$app/$app/public assets/$app; done; \
     for app in frappe erpnext hrms; do \
       link=apps/$app/$app/public/node_modules; \
       if [ -L "$link" ]; then test "$(readlink -f "$link")" = "/home/frappe/frappe-bench/apps/$app/node_modules"; \
       else ln -s ../../node_modules "$link"; fi; \
-    done && \
+    done; \
     if [ -d sites/assets ] && [ ! -L sites/assets ]; then \
       test ! -e /home/frappe/initial-generated-assets && mv sites/assets /home/frappe/initial-generated-assets; \
-    else test ! -e sites/assets && test ! -L sites/assets; fi && \
-    ln -s ../assets sites/assets && \
+    else test ! -e sites/assets && test ! -L sites/assets; fi; \
+    ln -s ../assets sites/assets; \
     printf '{}\n' > sites/common_site_config.json
 
 FROM tls-runtime
