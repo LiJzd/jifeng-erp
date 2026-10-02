@@ -49,6 +49,7 @@ services:
       redis-queue: {condition: service_started}
   backend:
     <<: *app
+    command: [/home/frappe/frappe-bench/env/bin/gunicorn, --chdir=/home/frappe/frappe-bench/sites, --bind=0.0.0.0:8000, --workers=1, --threads=2, --timeout=120, "--forwarded-allow-ips=*", "frappe.app:application"]
     mem_limit: 512m
     depends_on:
       db: {condition: service_healthy}
