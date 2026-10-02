@@ -158,7 +158,7 @@ async function main() {
 	assert.equal(value.host.descendants("th").map((node) => node.textContent).join("/"), "编号/名称/负责/手机/接货/电话/地址/备注/开户/户名/账号/修改/删除");
 	assert.deepEqual(Array.from(value.listFields, ([field]) => field), fields.slice(0, 11));
 	assert.match(value.scopeNotice.textContent, /部分可用/);
-	assert.deepEqual(value.host.descendants("button").map((node) => node.textContent), ["新增", "查询", "上页", "下页", "前往"]);
+	assert.deepEqual(value.host.descendants("button").map((node) => node.textContent), ["新增", "导出", "查询", "上页", "下页", "前往"]);
 	assert.equal(value.search.placeholder, "输入查询的关键字"); assert.equal(value.statusFilter, "在用");
 	const beforeNoScope = calls.length, empty = new window.JifengPartnerArchive(new Element()); await empty.ready; await empty.query(); assert.equal(calls.length, beforeNoScope);
 	await list(value);

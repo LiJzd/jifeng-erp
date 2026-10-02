@@ -357,14 +357,13 @@ def _page(value, maximum):
     return value
 
 
-@frappe.whitelist()
-def query_archives(kind, company, search="", status="在用", page=1, page_size=100):
+def _checked_archives(kind, company, search="", status="在用"):
+    """Load one complete visible filter set; callers may slice or export it."""
     _scope(kind, company)
     if status not in ("在用", "停用", "全部") or not isinstance(search, str) or len(search) > 140:
         frappe.throw("请输入有效关键词及档案状态")
     if not frappe.has_permission(PROFILE, "read") or not REQUIRED_READ.issubset(_columns(PROFILE, "read")):
         _deny()
-    page, page_size = _page(page, 1000), _page(page_size, 100)
     filters = {"company": company, "archive_kind": kind}
     if status != "全部":
         filters["inactive"] = int(status == "停用")
@@ -384,6 +383,11 @@ def query_archives(kind, company, search="", status="在用", page=1, page_size=
         if status != "全部" and bool(document.inactive) != (status == "停用"):
             frappe.throw("工厂档案状态已改变，请重新查询")
         checked.append((document, supplier, _pack(document, supplier, listing=True)))
+    _recheck_archives(kind, company, names, query, checked)
+    return checked, names, query
+
+
+def _recheck_archives(kind, company, names, query, checked):
     _scope(kind, company)
     if names != frappe.get_list(PROFILE, **query):
         frappe.throw("工厂档案范围已改变，请重新查询")
@@ -402,6 +406,12 @@ def query_archives(kind, company, search="", status="在用", page=1, page_size=
             _deny()
         if view != _pack(document, supplier, listing=True):
             frappe.throw("工厂档案字段或权限已改变，请重新查询")
+
+
+@frappe.whitelist()
+def query_archives(kind, company, search="", status="在用", page=1, page_size=100):
+    page, page_size = _page(page, 1000), _page(page_size, 100)
+    checked, _, _ = _checked_archives(kind, company, search, status)
     total = len(checked)
     total_pages = (total + page_size - 1) // page_size
     if page > max(1, total_pages):
