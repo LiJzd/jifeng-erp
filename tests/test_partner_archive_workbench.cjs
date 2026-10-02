@@ -87,6 +87,22 @@ async function missedCompanyEvents() {
 	value.destroy();
 }
 
+async function frozenCompanyRollback() {
+	const value = await bench(), opened = value.openNew(), openCall = calls.at(-1);
+	const setValue = value.companyControl.set_value.bind(value.companyControl);
+	let restore;
+	value.companyControl.set_value = (desired) => new Promise((resolve) => { restore = async () => { await setValue(desired); resolve(); }; });
+	value.companyControl.value = "Company B";
+	const rejectedChange = value.changeCompany();
+	assert.equal(value.settingCompany, true); assert.equal(value.companyScope, "Company A");
+	openCall.resolve(archive(null, "Company A")); await opened;
+	assert.equal(value.editor.company, "Company A"); assert.equal(value.editor.archive.profile.company, "Company A");
+	assert.equal(value.isDirty(), false);
+	await restore(); await rejectedChange;
+	assert.equal(value.companyControl.get_value(), "Company A"); assert.equal(value.settingCompany, false);
+	value.destroy();
+}
+
 function statusChange(value, desired) { value.statusSelect.value = desired; return value.statusSelect.events.get("change")({ target: value.statusSelect }); }
 function frozenStatus(value, state = value.editor) {
 	assert.equal(value.statusSelect.disabled, true);
@@ -155,6 +171,7 @@ async function statusFilterEvents(kind) {
 
 async function main() {
 	await missedCompanyEvents();
+	await frozenCompanyRollback();
 	// Every tail style remains scoped to this table; both cells share the right offset width.
 	const styles = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, selector]) => /jfe-partner-(?:table|action|modify|delete)/.test(selector));
 	assert.equal(styles.length, 7);

@@ -19,6 +19,7 @@ class Wrapper {
 	constructor(element = new Element()) { this.element = element; }
 	get() { return this.element; }
 	addClass() { return this; }
+	on(names, action) { for (const name of names.split(" ")) this.element.events.set(name.split(".")[0], action); return this; }
 }
 class Dialog {
 	constructor(config) {
@@ -30,7 +31,7 @@ class Dialog {
 	hide() { this.hidden = true; this.on_hide?.(); }
 }
 const frappe = { ui: { Dialog, form: { make_control({ df }) {
-	return { df, value: null, get_value() { return this.value; }, async set_value(value) { this.value = value; await df.onchange?.(); } };
+	return { df, $input: new Wrapper(new Element("input")), value: null, get_value() { return this.value; }, async set_value(value) { this.value = value; await df.onchange?.(); } };
 } } }, call(options) {
 	let resolve, reject; const pending = new Promise((yes, no) => { resolve = yes; reject = no; });
 	calls.push({ options, resolve: (message) => resolve({ message }), reject }); return pending;
@@ -72,6 +73,28 @@ async function main() {
 	assert.equal(bench.isDirty(), false); assert.equal(bench.getCloseBlock(), "");
 	const noScope = new window.JifengInventoryCatalog(new Element(), "物料"), count = calls.length;
 	await noScope.query(); assert.equal(calls.length, count); assert.match(noScope.status.textContent, /请选择公司/);
+	const silent = new window.JifengInventoryCatalog(new Element(), "物料");
+	silent.companyControl.value = "Company A"; // A real Link selection may not notify df.onchange.
+	await respond(silent, [archive()]); assert.equal(silent.companyScope, "Company A"); assert.equal(calls.at(-1).options.args.company, "Company A");
+	const inputCalls = calls.length; silent.companyControl.value = "Company B";
+	silent.companyControl.$input.element.events.get("input")();
+	assert.equal(silent.companyScope, "Company B"); assert.equal(silent.total, null); assert.equal(silent.rows.length, 0);
+	assert.equal(silent.tbody.children.length, 0); assert.equal(silent.page, 1); assert.equal(calls.length, inputCalls, "Company input never queries automatically");
+	await respond(silent, [archive("物料", "Company B")]);
+	const silentQuery = silent.query(), silentQueryCall = calls.at(-1);
+	silent.companyControl.value = "Company A"; silentQueryCall.resolve(pageReply(silentQueryCall, [archive("物料", "Company B")], 1)); await silentQuery;
+	assert.equal(silent.companyScope, "Company A"); assert.equal(silent.rows.length, 0); assert.equal(silent.total, null);
+	await respond(silent); const silentReadCalls = calls.length;
+	silent.companyControl.value = "Company B"; await silent.readDetail("PROFILE-A");
+	assert.equal(calls.length, silentReadCalls, "Opening an old row synchronizes and clears a silently changed scope"); assert.equal(silent.detail, null);
+	await respond(silent, [archive("物料", "Company B")]);
+	const silentDetail = silent.readDetail("PROFILE-A"), silentDetailCall = calls.at(-1), silentDialog = dialogs.at(-1);
+	silent.companyControl.value = "Company A"; silentDetailCall.resolve(archive("物料", "Company B")); await silentDetail;
+	assert.equal(silentDialog.hidden, true); assert.equal(silent.detail, null); assert.equal(silent.rows.length, 0);
+	assert.equal(silentDialog.fields_dict.inventory_detail.$wrapper.element.children.length, 0);
+	await respond(silent); const noScopeInputCalls = calls.length; silent.companyControl.value = null;
+	silent.companyControl.$input.element.events.get("change")();
+	assert.equal(silent.companyScope, null); assert.equal(silent.total, null); assert.equal(calls.length, noScopeInputCalls);
 	const first = await respond(bench);
 	assert.equal(first.options.method, "jifeng_erp.inventory_catalog.query_archives"); assert.equal(first.options.args.page_size, 100);
 	assert.equal(bench.count.textContent, "共 1 条"); assert.equal(bench.previous.disabled, true); assert.equal(bench.next.disabled, true);

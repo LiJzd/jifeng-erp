@@ -186,7 +186,7 @@ window.JifengPartnerArchive = class JifengPartnerArchive {
 		this.cancelExport();
 		const company = this.companyScope, sequence = ++this.openRevision; this.opening = true; this.freezeStatus();
 		try { const response = await this.call(name ? "read_archive" : "init_archive", { kind: this.kind, company, ...(name ? { name } : {}) });
-			if (this.disposed || sequence !== this.openRevision || company !== this.companyScope || company !== (this.companyControl.get_value() || null)) return;
+			if (this.disposed || sequence !== this.openRevision || company !== this.companyScope || !this.settingCompany && company !== (this.companyControl.get_value() || null)) return;
 			if (!this.validArchive(response.message, company, name)) throw new Error("Wrong archive scope");
 			await this.buildEditor(response.message);
 		} catch { if (!this.disposed && sequence === this.openRevision) this.status.textContent = __("工厂档案未能打开，请核对权限后重试。"); }

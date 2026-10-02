@@ -24,7 +24,7 @@ class Wrapper {
 	addClass() { return this; }
 	removeAttr() { return this; }
 	modal() { return this; }
-	on(event, action) { this.events.set(event, action); return this; }
+	on(events, action) { for (const event of events.split(" ")) this.events.set(event.split(".")[0], action); return this; }
 	prop(field, value) { this[field] = value; return this; }
 }
 class Dialog {
@@ -47,7 +47,7 @@ class FileUploader {
 const window = { addEventListener(name, action) { listeners.set(action, name); }, removeEventListener(_, action) { listeners.delete(action); } };
 const document = { createElement: (tag) => new Element(tag) };
 const frappe = { pages: { "jifeng-legacy": {} }, ui: { Dialog, FileUploader, form: { make_control({ df }) {
-	return { df: { ...df }, value: null, get_value() { return this.value; }, async set_value(value) { await Promise.resolve(); this.value = value; await df.onchange?.(); }, refresh() {} };
+	return { df: { ...df }, $input: new Wrapper(), value: null, get_value() { return this.value; }, async set_value(value) { await Promise.resolve(); this.value = value; await df.onchange?.(); }, refresh() {} };
 } } }, call(options) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ options, resolve: (message) => resolve({ message }), reject }); return promise; },
 	msgprint(message) { messages.push(message); }, show_alert() {}, confirm(_, yes, no) { confirmation = { yes, no }; } };
 const context = { window, document, frappe, structuredClone, __: (text) => text, Uint8Array,
@@ -80,7 +80,46 @@ async function opening(bench, archive = blank()) {
 	if (!archive.name) { assert.equal(calls.at(-1).options.method, "jifeng_erp.product_archive.list_category_choices"); calls.at(-1).resolve([category]); await tick(); }
 	return dialog;
 }
+async function companyScopeEvents() {
+	const bench = new window.JifengProductArchive(new Element()), initial = calls.length;
+	assert.equal(bench.companyControl.get_value(), null); assert.equal(calls.length, initial, "mount does not choose a company or query");
+	bench.companyControl.value = "Company A"; const first = bench.query(); await tick();
+	assert.equal(calls.length, initial + 1); assert.equal(calls.at(-1).options.args.company, "Company A"); calls.at(-1).resolve([pack()]); await first;
+	const input = (value) => { bench.companyControl.value = value; return bench.companyControl.$input.events.get("input")(); };
+	const idleSetter = bench.companyControl.set_value.bind(bench.companyControl); let idleSetterCalls = 0;
+	bench.companyControl.set_value = () => { idleSetterCalls++; throw new Error("idle company input must not call set_value"); };
+	const count = calls.length, changed = input("Company B"); assert.equal(bench.rows.length, 0, "raw input clears old rows before native onchange");
+	await changed; assert.equal(bench.companyScope, "Company B"); assert.equal(calls.length, count, "company input never automatically queries");
+	assert.equal(idleSetterCalls, 0, "idle typing never resets or validates the native Link"); assert.equal(bench.companyControl.get_value(), "Company B"); bench.companyControl.set_value = idleSetter;
+	const late = bench.query(), lateCall = calls.at(-1); bench.companyControl.value = "Company A";
+	lateCall.resolve([pack({ profile: { ...pack().profile, company: "Company B" } })]); await late;
+	assert.equal(bench.companyScope, "Company A"); assert.equal(bench.rows.length, 0, "silent changed company rejects a late query");
+	const beforeOpen = calls.length; bench.companyControl.value = "Company B"; await bench.openEditor("PROFILE-1");
+	assert.equal(calls.length, beforeOpen, "an old row cannot open after a silent company change"); assert.equal(bench.companyScope, "Company B");
+	bench.companyControl.value = null; await bench.companyControl.$input.events.get("change")(); await bench.query(); assert.equal(calls.length, beforeOpen, "clearing company does not query");
+	await bench.companyControl.set_value("Company A"); assert.equal(calls.length, beforeOpen, "native onchange does not query either");
+	const openingRead = bench.openEditor(), openingCall = calls.at(-1), nativeSet = bench.companyControl.set_value.bind(bench.companyControl); let restoreCompany;
+	bench.companyControl.set_value = (value) => new Promise((resolve) => { restoreCompany = async () => { await nativeSet(value); resolve(); }; });
+	const reverting = input("Company B"); assert.equal(bench.changingCompany, true); assert.equal(bench.companyControl.get_value(), "Company B");
+	openingCall.resolve(blank()); await openingRead;
+	assert.equal(bench.editor.company, "Company A", "pending native company reversion preserves the original opening"); assert.equal(bench.companyScope, "Company A");
+	await restoreCompany(); await reverting; bench.companyControl.set_value = nativeSet; assert.equal(bench.companyControl.get_value(), "Company A");
+	calls.at(-1).resolve([]); await tick(); bench.closeEditor();
+	const failedOpen = bench.openEditor(), failedCall = calls.at(-1); bench.companyControl.value = "Company B"; failedCall.reject(new Error("read failed")); await failedOpen;
+	assert.equal(bench.companyControl.get_value(), "Company A"); assert.equal(bench.editor, null, "failed opening also restores a silently changed company");
+	await opening(bench); const state = bench.editor; bench.closePicker(state); const reads = calls.length;
+	for (const flag of ["busy", "unresolved"]) { state[flag] = true; const revision = bench.revision; await input("Company B");
+		assert.equal(bench.editor, state); assert.equal(bench.revision, revision); assert.equal(bench.companyScope, "Company A"); assert.equal(bench.companyControl.get_value(), "Company A"); state[flag] = false; }
+	state.controls.display_name.value = "dirty"; const decline = input("Company B"); await tick(); confirmation.no(); await decline;
+	assert.equal(bench.editor, state); assert.equal(state.controls.display_name.value, "dirty"); assert.equal(bench.companyScope, "Company A");
+	const accept = input("Company B"); await tick(); const duringConfirm = bench.query(); calls.at(-1).resolve([pack()]); await duringConfirm;
+	assert.equal(bench.rows.length, 1); confirmation.yes(); await accept;
+	assert.equal(bench.editor, null); assert.equal(bench.companyScope, "Company B"); assert.equal(bench.rows.length, 0, "accepted discard clears rows rebuilt during confirmation");
+	assert.equal(calls.length, reads + 1, "scope acceptance adds no query beyond the explicit query during confirmation");
+	bench.destroy();
+}
 async function main() {
+	await companyScopeEvents();
 	const openedRecipes = [], bench = new window.JifengProductArchive(new Element(), { open: (spec) => openedRecipes.push(spec) });
 	bench.companyScope = "Company A"; await bench.companyControl.set_value("Company A");
 	const query = bench.query(); assert.equal(calls.at(-1).options.args.include_inactive, 0); calls.at(-1).resolve([]); await query;

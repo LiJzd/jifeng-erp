@@ -41,6 +41,7 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 		const companyHost = this.element("div", undefined, "jfe-inventory-catalog-company");
 		this.companyControl = frappe.ui.form.make_control({ parent: companyHost, render_input: true,
 			df: { fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), onchange: () => this.changeScope() } });
+		this.companyControl.$input?.on?.("input.jifeng-inventory-catalog-company change.jifeng-inventory-catalog-company", () => this.changeScope());
 		toolbar.append(this.search, this.button("查询", () => this.query(1), "primary"), companyHost);
 		this.status = this.element("p", __("请选择公司后查询。"), "jfe-inventory-catalog-status"); this.status.setAttribute("role", "status");
 		this.scroller = this.element("div", undefined, "jfe-inventory-catalog-scroll");
@@ -84,6 +85,7 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 	goToPage() { return this.query(this.goto.value); }
 	async query(page = 1) {
 		if (this.disposed) return;
+		this.changeScope();
 		const requestedPage = this.pageNumber(page), company = this.companyScope, search = this.search.value || "", status = this.statusFilter;
 		const sequence = ++this.revision, scroll = { top: this.scroller.scrollTop, left: this.scroller.scrollLeft };
 		this.closeDetail(); this.clearResults();
@@ -94,6 +96,7 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 		const args = { kind: this.kind, company, search, status, page: requestedPage, page_size: this.pageSize };
 		try {
 			const response = await this.call("query_archives", args);
+			this.changeScope();
 			if (!this.current(sequence, args)) return;
 			const result = response.message;
 			if (!this.validPage(result, args)) throw new Error("Incomplete inventory page");
@@ -102,11 +105,13 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 			this.scroller.scrollTop = scroll.top; this.scroller.scrollLeft = scroll.left;
 			this.status.textContent = this.total ? __("查询完成，双击行或按回车查看只读档案。") : __("没有可见记录。");
 		} catch {
+			this.changeScope();
 			if (this.current(sequence, args)) { this.clearResults(); this.status.textContent = __("查询未完成，请重新查询或输入合法页码。"); }
 		}
 	}
 	current(sequence, args) {
 		return !this.disposed && sequence === this.revision && args.kind === this.kind && args.company === this.companyScope &&
+			args.company === (this.companyControl.get_value() || null) &&
 			args.search === this.search.value && args.status === this.statusFilter;
 	}
 	validPage(result, args) {
@@ -170,6 +175,7 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 		}
 	}
 	async readDetail(name) {
+		this.changeScope();
 		if (this.disposed || !this.companyScope || !this.rows.some((row) => row.name === name)) return;
 		this.closeDetail();
 		const sequence = this.detailRevision, listRevision = this.revision, company = this.companyScope;
@@ -187,13 +193,15 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 		const args = { name, kind: this.kind, company };
 		try {
 			const response = await this.call("read_archive", args);
+			this.changeScope();
 			if (this.disposed || state.closed || this.detail !== state || sequence !== this.detailRevision ||
-				listRevision !== this.revision || company !== this.companyScope) return;
+				listRevision !== this.revision || company !== this.companyScope || company !== (this.companyControl.get_value() || null)) return;
 			if (!this.validArchive(response.message, company, name)) throw new Error("Incomplete archive detail");
 			this.renderDetail(state, response.message);
 		} catch {
+			this.changeScope();
 			if (!this.disposed && !state.closed && this.detail === state && sequence === this.detailRevision &&
-				listRevision === this.revision && company === this.companyScope) body.replaceChildren(this.element("p", __("档案未能读取，请关闭后重试。")));
+				listRevision === this.revision && company === this.companyScope && company === (this.companyControl.get_value() || null)) body.replaceChildren(this.element("p", __("档案未能读取，请关闭后重试。")));
 		}
 		return dialog;
 	}

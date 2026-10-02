@@ -33,6 +33,7 @@ window.JifengProductArchive = class JifengProductArchive {
 		const companyHost = this.element("div", undefined, "jfe-product-archive-company");
 		this.companyControl = frappe.ui.form.make_control({ parent: companyHost, render_input: true,
 			df: { fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), onchange: () => this.changeScope() } });
+		this.companyControl.$input.on("input.jfe-product-archive-company change.jfe-product-archive-company", () => this.changeScope());
 		this.search = this.element("input"); this.search.type = "text"; this.search.maxLength = 140;
 		this.search.placeholder = __("关键词"); this.search.setAttribute("aria-label", __("关键词"));
 		this.search.addEventListener("input", () => { this.revision++; this.status.textContent = __("关键词已改变，请查询。"); });
@@ -52,30 +53,37 @@ window.JifengProductArchive = class JifengProductArchive {
 		this.host.append(toolbar, this.status, this.scroller);
 	}
 	async changeScope() {
-		if (this.changingCompany || this.disposed) return;
+		if (this.changingCompany || this.disposed) return false;
 		const next = this.companyControl.get_value() || null;
-		if (next === this.companyScope) return;
+		if (next === this.companyScope) return true;
+		const blocked = this.getCloseBlock();
+		if (!blocked) { this.rows = []; this.tbody.replaceChildren(); this.revision++; this.status.textContent = __("公司已改变，请查询。"); }
+		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; return true; }
 		this.changingCompany = true;
 		try { await this.companyControl.set_value(this.companyScope); } finally { this.changingCompany = false; }
-		await this.discardFor(async () => {
+		if (blocked) { frappe.msgprint(__(blocked)); return false; }
+		return this.discardFor(async () => {
 			this.closeEditor(); this.companyScope = next; this.rows = []; this.tbody.replaceChildren(); this.revision++;
 			this.changingCompany = true;
 			try { await this.companyControl.set_value(next); } finally { this.changingCompany = false; }
-			await this.query();
 		});
 	}
 	async query() {
-		if (this.disposed) return;
+		if (this.disposed || this.changingCompany) return;
+		if ((this.companyControl.get_value() || null) !== this.companyScope && !await this.changeScope()) return;
+		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
 		const company = this.companyScope, search = this.search.value || "", inactive = !!this.includeInactive.checked, sequence = ++this.revision;
 		if (!company) { this.status.textContent = __("请选择公司后查询。"); return; }
 		const scroll = { top: this.scroller.scrollTop, left: this.scroller.scrollLeft }; this.status.textContent = __("正在查询…");
 		try {
 			const response = await this.call("list_archives", { company, search, include_inactive: Number(inactive) });
-			if (this.disposed || sequence !== this.revision || company !== this.companyScope || search !== this.search.value || inactive !== !!this.includeInactive.checked) return;
+			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			if (this.disposed || sequence !== this.revision || company !== this.companyScope || company !== (this.companyControl.get_value() || null) || search !== this.search.value || inactive !== !!this.includeInactive.checked) return;
 			if (!Array.isArray(response.message) || response.message.some((row) => !this.validArchive(row, company) || !row.name)) throw new Error("Wrong list scope");
 			this.rows = response.message; this.renderRows(); this.scroller.scrollTop = scroll.top; this.scroller.scrollLeft = scroll.left;
 			this.status.textContent = this.rows.length ? __("查询完成") + " · " + this.rows.length + __("条") : __("没有可见记录。");
-		} catch { if (!this.disposed && sequence === this.revision) this.status.textContent = __("查询失败，当前列表未更新，请重新查询。"); }
+		} catch { if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			if (!this.disposed && sequence === this.revision && company === (this.companyControl.get_value() || null)) this.status.textContent = __("查询失败，当前列表未更新，请重新查询。"); }
 	}
 	renderRows() {
 		this.tbody.replaceChildren();
@@ -101,25 +109,32 @@ window.JifengProductArchive = class JifengProductArchive {
 			["company", "item_code", "inactive"].every((field) => field in archive.profile && archive.field_meta.profile[field]));
 	}
 	async openEditor(name = null) {
-		if (this.disposed || this.opening) return;
+		if (this.disposed || this.opening || this.changingCompany) return;
+		if ((this.companyControl.get_value() || null) !== this.companyScope && (!await this.changeScope() || name)) return;
+		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
 		if (this.editor && !this.editor.closed) { this.editor.dialog.show(); return this.editor.dialog; }
-		this.opening = true;
+		this.opening = true; const sequence = this.revision;
 		try {
 			const company = this.companyScope;
 			const response = await this.call(name ? "read_archive" : "init_archive", name ? { name } : { company });
 			const archive = response.message;
-			if (this.disposed || !this.validArchive(archive, company, name) || !name && archive.name) throw new Error("Wrong archive scope");
+			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			if (this.disposed || sequence !== this.revision || company !== this.companyScope || !this.changingCompany && company !== (this.companyControl.get_value() || null) || !this.validArchive(archive, company, name) || !name && archive.name) throw new Error("Wrong archive scope");
 			const dialog = new frappe.ui.Dialog({ title: __(name ? "产品档案" : "产品档案新增"), size: "extra-large", no_submit_on_enter: true,
 				fields: [{ fieldname: "archive_layout", fieldtype: "HTML" }] });
 			dialog.$wrapper.addClass("jfe-product-archive-editor");
 			const state = { archive, dialog, requestId: name ? null : this.requestID(), company: archive.profile.company || null,
 				closed: false, busy: false, confirming: false, unresolved: false, candidate: null, conflict: null, picker: null,
 				imageValues: {}, upload: null, uploadUnresolved: false, controls: {}, itemControls: {}, selection: {} };
-			this.editor = state; this.buildEditor(state); await this.applyArchive(state, archive); this.guardClose(state);
+			this.editor = state; this.buildEditor(state); await this.applyArchive(state, archive);
+			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			if (this.disposed || sequence !== this.revision || company !== this.companyScope || !this.changingCompany && company !== (this.companyControl.get_value() || null)) throw new Error("Wrong archive scope");
+			this.guardClose(state);
 			dialog.show(); this.freeze(state);
 			if (!archive.name) this.openCategoryPicker(state).catch(() => { state.message.textContent = __("类别选择窗未能打开，请点击选择类别重试。"); });
 			return dialog;
 		} catch {
+			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
 			const failed = this.editor;
 			if (failed && !failed.nativeHide) { failed.closed = true; failed.dialog.hide(); this.editor = null; }
 			if (!this.disposed) this.status.textContent = __("产品档案未能打开，请重试。");

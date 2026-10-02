@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-10-02 共用档案组件公司范围同步
+
+实际工厂Company Link漏通知后，短源码审计发现库存浏览、模具/版种/建模共用Tool组件、产品档案也只依赖缓存公司。三个组件现接实际输入/变更，并在查询、详情或打开前后核实际控件；公司改变清旧结果而不自动查询，迟到原公司数据不接纳。Tool/Product无草稿的普通键入直接同步范围，不调用set_value复位控件或启动原生Link验证；已有草稿仍沿原确认/回退协议，opening/busy/unknown不改变范围和版本。
+
+独立复审补了两处异步边界：冻结状态下延期控件回退不能取消合法原公司打开；脏确认接受新公司时仍须再次清结果/增revision，防止确认期间旧公司查询重建列表。工厂也保留settingCompany回退期间原合法打开，CJS核原公司草稿不变。正常input的setter抛错反例、漏通知、迟到查询/详情/打开、脏确认和延期回退均通过。root定向执行七组CJS（库存浏览/bridge、Tool、Product、工厂/导出/bridge）全部exit0；未改后端、权限或schema。新三组件本轮尚无真实GUI证据，缓存构建及旧压模人页面补证继续，不计新增入口或全模块交付。
+
 ## 2026-10-02 工厂公司选择与导出最终快照修复
 
 真实GUI r3已进入电镀厂19列表格，但Company Link候选选中后，控件值与缓存companyScope不同，原生onchange未通知组件，查询提前返回、零档案请求和零下载。保留 `output/factory-export-gui-r3-20261002/report.md`，不把JS直接调用处理函数当成界面通过。组件现监听输入/变更，且查询、导出、打开前同步当前控件值；迟到查询、打开和下载再比较实际公司，原公司结果不会覆盖新条件。未增加默认公司或自动查询。
@@ -13,6 +19,12 @@
 旧r2预览PID19781已精确停止且clone配置哈希恢复；新r3预览PID20305仅监听127.0.0.1:8020、threaded=True，无worker/scheduler，继续由Luna复用9235真实页面验证查询/下载及返回条件。原站web仍停止，未改变原站配置或连接原站数据库。
 
 真实GUI r4已证明公司选择修复有效，精确前缀查询唯一GET200、一行和19UI列。仅一次导出GET200但没有下载，安全响应头为application/octet-stream、声明长度5291、attachment/xlsx，无重定向；保留 `output/factory-export-gui-r4-20261002/report.md` 和合成行截图。安装官方 `frappe/utils/response.py` 的as_binary固定octet-stream而忽略content_type，故前端严格XLSX检查正确拒绝。现改官方download/as_raw，保留完整最终守门和严格MIME检查；18模型和Ruff再通过，实际响应builder/SDK与GUI复验待。没有放宽前端或重放r4请求。
+
+`c0c5fea0094ef4971f54cc14c1f345ba0f3b10a6` 修download并已同步WSL。独立native r3实际exit0、五项及rollback/destroy通过，新增真实官方build_response证明正确XLSX MIME、attachment和内容字节一致；原SDK四项和原请求DB恢复仍通过。工具SHA256 `38fa0e164948750042a002ffb2530c37aa53d12cd6d943d023fbbd7a9e292619`，安全摘要 `output/factory-export-native-r3-20261002/actual-native5-proof.json` SHA256 `0c6309b452f2419753f1b63f2fc569dd18c684af9c93b88add1486b1abf45e85`。
+
+真实GUI r5仅再点一次导出，GET200/正确XLSX MIME及组件成功；Playwright未接收download事件，但Chrome已实际保存到Windows默认Downloads。精确文件创建/修改时间对应唯一响应结束、5291字节与声明及浏览器encoded/decoded body-size一致；未重发请求、改下载策略或运行探针。按原字节不覆盖复制 `output/factory-export-gui-r5-20261002/plating-filtered.xlsx`，SHA256 `ec0bc7b41f2a84f67d9917b488bec617ec00c3a6f487dc5a40ca2a2ebafa77a6`。Luna及root独立openpyxl核1数据行/16列、合成前缀、字符串账号前导0、字面HTML、无公式/超链接通过，只记录布尔与摘要。CLI事件缺失的具体原因没有独立证明，不把它当应用下载失败。
+
+实际主页→发镀→电镀厂往返保持同archive DOM、公司/关键词/状态、一行及19UI列，回航无新query_archives请求；报告 `output/factory-export-gui-r5-20261002/report.md`。root已精确停preview r4 PID20572并恢复clone配置哈希，原站未连接或修改。r3/r4/r5初始故障按历史保留，source18模型、缓存构建、SDK和真实HTTP/GUI这条导出链已完成；导入、删除、简拼、打印、迁移、未知旧条件及106业务预览仍未完成，两工厂部分标记保持。
 
 ## 2026-10-02 工厂档案全集导出（源码、构建与真实SDK）
 

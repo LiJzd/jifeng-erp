@@ -43,6 +43,7 @@ window.JifengToolArchive = class JifengToolArchive {
 		this.host.classList.add("jfe-tool-archive"); this.host.replaceChildren(); const toolbar = this.element("div", undefined, "jfe-tool-toolbar"), companyHost = this.element("div");
 		this.companyControl = frappe.ui.form.make_control({ parent: companyHost, render_input: true,
 			df: { fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), onchange: () => this.changeScope() } });
+		this.companyControl.$input.on("input.jfe-tool-archive-company change.jfe-tool-archive-company", () => this.changeScope());
 		this.search = this.element("input"); this.search.type = "text"; this.search.maxLength = 140; this.search.placeholder = __("关键词"); this.search.setAttribute("aria-label", __("关键词"));
 		this.search.addEventListener("input", () => { this.revision++; this.status.textContent = __("关键词已改变，请查询。"); });
 		this.search.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.query(); } });
@@ -56,21 +57,30 @@ window.JifengToolArchive = class JifengToolArchive {
 		thead.append(head); this.tbody = this.element("tbody"); table.append(thead, this.tbody); this.scroller.append(table); this.host.append(toolbar, this.status, this.scroller);
 	}
 	async changeScope() {
-		if (this.changingCompany || this.disposed) return; const next = this.companyControl.get_value() || null; if (next === this.companyScope) return;
+		if (this.changingCompany || this.disposed) return false; const next = this.companyControl.get_value() || null; if (next === this.companyScope) return true;
+		const blocked = this.getCloseBlock();
+		if (!blocked) { this.rows = []; this.tbody.replaceChildren(); this.revision++; this.status.textContent = __("公司已改变，请查询。"); }
+		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; return true; }
 		this.changingCompany = true; try { await this.companyControl.set_value(this.companyScope); } finally { this.changingCompany = false; }
+		if (blocked) { frappe.msgprint(__(blocked)); return false; }
 		return this.discardFor(async () => { this.closeEditor(); this.companyScope = next; this.rows = []; this.tbody.replaceChildren(); this.revision++;
-			this.changingCompany = true; try { await this.companyControl.set_value(next); } finally { this.changingCompany = false; } await this.query(); });
+			this.changingCompany = true; try { await this.companyControl.set_value(next); } finally { this.changingCompany = false; } });
 	}
 	async query() {
-		if (this.disposed) return; const company = this.companyScope, search = this.search.value, inactive = !!this.includeInactive.checked, sequence = ++this.revision;
+		if (this.disposed || this.changingCompany) return;
+		if ((this.companyControl.get_value() || null) !== this.companyScope && !await this.changeScope()) return;
+		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
+		const company = this.companyScope, search = this.search.value, inactive = !!this.includeInactive.checked, sequence = ++this.revision;
 		if (!company) { this.status.textContent = __("请选择公司后查询。"); return; }
 		const scroll = [this.scroller.scrollTop, this.scroller.scrollLeft]; this.status.textContent = __("正在查询…");
 		try { const response = await this.call("list_records", { company, search, include_inactive: inactive ? 1 : 0 });
-			if (this.disposed || sequence !== this.revision || company !== this.companyScope || search !== this.search.value || inactive !== !!this.includeInactive.checked) return;
+			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			if (this.disposed || sequence !== this.revision || company !== this.companyScope || company !== (this.companyControl.get_value() || null) || search !== this.search.value || inactive !== !!this.includeInactive.checked) return;
 			if (!Array.isArray(response.message) || response.message.some((row) => !this.validArchive(row, company) || !row.name)) throw new Error("Wrong list scope");
 			this.rows = response.message; this.renderRows(); [this.scroller.scrollTop, this.scroller.scrollLeft] = scroll;
 			this.status.textContent = this.rows.length ? __("查询完成") + " · " + this.rows.length + __("条") : __("没有可见记录。");
-		} catch { if (!this.disposed && sequence === this.revision) this.status.textContent = __("查询未完成，原列表已保留；记录超过100条时请缩小关键词后查询。"); }
+		} catch { if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			if (!this.disposed && sequence === this.revision && company === (this.companyControl.get_value() || null)) this.status.textContent = __("查询未完成，原列表已保留；记录超过100条时请缩小关键词后查询。"); }
 	}
 	renderRows() { this.tbody.replaceChildren(); for (const row of this.rows) { const tr = this.element("tr");
 		for (const [field] of this.fields) tr.append(this.element("td", field === "legacy_copy" || field === this.inactive ? row.values[field] ? __("是") : __("否") : row.values[field] ?? ""));
@@ -82,15 +92,23 @@ window.JifengToolArchive = class JifengToolArchive {
 		(archive.name ? typeof archive.name === "string" && typeof archive.version === "string" && !!archive.version : !archive.version) &&
 		(this.modeling ? ["company"] : ["company", this.identity, this.inactive]).every((field) => field in archive.values && (this.modeling || archive.field_meta[field]))); }
 	async openEditor(name = null) {
-		if (this.disposed || this.opening) return; if (this.editor && !this.editor.closed) { this.editor.dialog.show(); return this.editor.dialog; }
+		if (this.disposed || this.opening || this.changingCompany) return;
+		if ((this.companyControl.get_value() || null) !== this.companyScope && (!await this.changeScope() || name)) return;
+		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
+		if (this.editor && !this.editor.closed) { this.editor.dialog.show(); return this.editor.dialog; }
 		this.opening = true; const company = this.companyScope, sequence = this.revision;
 		try { const response = await this.call(name ? "read_record" : "init_record", name ? { name } : { company });
-			if (this.disposed || sequence !== this.revision || company !== this.companyScope || !this.validArchive(response.message, company, name) || !response.message.field_meta.company || !name && response.message.name) throw new Error("Wrong editor scope");
+			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			if (this.disposed || sequence !== this.revision || company !== this.companyScope || !this.changingCompany && company !== (this.companyControl.get_value() || null) || !this.validArchive(response.message, company, name) || !response.message.field_meta.company || !name && response.message.name) throw new Error("Wrong editor scope");
 			const dialog = new frappe.ui.Dialog({ title: __(this.title + (name ? "" : "新增")), size: "extra-large", no_submit_on_enter: true, fields: [{ fieldname: "archive_layout", fieldtype: "HTML" }] });
 			dialog.$wrapper.addClass("jfe-tool-editor"); const state = { dialog, archive: response.message, requestId: name ? null : this.requestID(), closed: false,
 				busy: false, confirming: false, unresolved: false, candidate: null, conflict: null, controls: {}, nativeControls: {}, cells: {}, upload: null, uploadUnresolved: false };
-			this.editor = state; this.buildEditor(state); await this.applyArchive(state, response.message); this.guardClose(state); dialog.show(); this.freeze(state); return dialog;
-		} catch { const failed = this.editor; if (failed && !failed.nativeHide) { failed.closed = true; failed.dialog.hide(); this.editor = null; }
+			this.editor = state; this.buildEditor(state); await this.applyArchive(state, response.message);
+			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			if (this.disposed || sequence !== this.revision || company !== this.companyScope || !this.changingCompany && company !== (this.companyControl.get_value() || null)) throw new Error("Wrong editor scope");
+			this.guardClose(state); dialog.show(); this.freeze(state); return dialog;
+		} catch { if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
+			const failed = this.editor; if (failed && !failed.nativeHide) { failed.closed = true; failed.dialog.hide(); this.editor = null; }
 			if (!this.disposed) this.status.textContent = __("档案未能打开，请重试。"); } finally { this.opening = false; }
 	}
 	buildEditor(state) {
