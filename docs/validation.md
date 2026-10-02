@@ -1,5 +1,27 @@
 # 验证记录
 
+## 2026-10-02：外网 A/B 测试站实际部署
+
+在 `116.62.241.148` 的独立目录 `/opt/jifeng-erp-test` 部署 Compose 项目 `jifeng-erp-test`。两套入口为 `https://116.62.241.148/desk/jifeng-modern` 和 `https://116.62.241.148/desk/jifeng-legacy`，共用新建站点 `jifeng-erp-test.localhost` 与数据库 `jifeng_erp_test`。业务源码固定 `8858743800efe1836ac53f5c3de6644dab4e7923`；Frappe 16.35.0、ERPNext 16.36.0、HRMS 16.20.0 及完整生产资源由发布 manifest 固定。没有导入旧库、已有配置、登录会话或业务凭据，工程只做本地 Git 提交，未远程推送。
+
+源码/资源包经实际 SSH 连接的 Mihomo DIRECT 链验证后上传并逐项核 SHA。官方 GHCR 直连大层中断后改用南京大学公开缓存，amd64 manifest digest 与官方一致；Python CDN 中断后改用阿里云 HTTPS PyPI，关键 wheel SHA 与官方一致。服务器实际出口、构建依赖与镜像传输直连核验保留；没有代理回退。当前镜像 `jifeng/erp-test:8858743-test-r4`，ID `sha256:543ecd7e7e51f5088659718cadb950f542a80bd8a17a5a8da92a3067e9372cff`。
+
+保留真实失败与修正：公开部署脚本初始权限阻止 frappe 读取；官方新建站点调用需要先 `frappe.init(..., new_site=True)`；种子预检的工作区名称应为“集沣生产协作”；Gunicorn 需要 sites 工作目录，worker 的逗号队列须为单个参数。前两次初始化及第一次种子未完成，均先独立核状态后再受控修复。初始化 r3、种子 r2 实际退出 0，独立原生连接确认设置完成、四个应用、测试账号 11 项业务角色且没有 System Manager、全部 10 个业务文档可读、2 名员工、3 个商品、两项工艺物料、订单草稿和两个 Page；GL Entry、Stock Ledger Entry 均为 0。依据为 `output/erp_shared_seed_native_proof_20261002.result.json`。
+
+最后一次镜像导出因小内存主机持续换页而受控停止；独立检查确认该子进程终止、构建退出 1/context canceled、未生成新镜像，保留日志。复用此前完整构建并验证的 r4 镜像，服务器 Compose 的 `bd0d25b` 修订明确覆盖 Gunicorn 参数与已修正的 worker 队列，不将未完成的导出认定为发布。部署文件逐版上传，旧文件与 SHA 保留；业务包未变化。
+
+外部标准 CA/IP SAN 校验通过，HTTP `/login` 为 301 指向 HTTPS，HTTPS `/login` 为 200、`/api/method/ping` 为 200/pong，精确连接实际 DIRECT。生产 IP 证书到期为 2026-10-09 00:38:58 UTC。独立自己的续期服务 staging dry-run 实际退出 0；生产未到期检查、nginx 重载 Result=success/ExecMainStatus=0，timer active/enabled，每天检查两次。没有额外生产签发，尚未经历实际到期窗口续期。依据为 `output/erp_external_https_health_20261002.json`、`output/erp_renew_job_poll_20261002.result.json`。原 `/etc/fstab`、`jf-sheet-preview.timer`、对应 service 的 SHA 保持，原 timer active/enabled。
+
+真实 Chrome 1366×900、新 profile、标准 TLS 校验、目标连接实际 DIRECT 后登录通过。A/B Page 均 HTTP 200，电镀厂各 19 列；通过原生 Company 候选选择测试公司，精确关键词与“全部”状态查询均 API/UI 一行。A 主页往返保持公司、关键词、状态和结果，没有额外查询。仅对唯一合成电镀厂的备注操作：A 一次保存 200 后 B 回读，B 一次保存 200 后 A 回读，均由正常页面完成，没有修改供应商或财务库存凭证。证据 `output/erp-qa-gui-20261002/report.md`、`evidence.jsonl` 及三张首页/回航截图。测试驱动早期关键词空格、控件歧义和 form payload 守卫失败按历史保留，未送达服务器的请求不算产品保存失败；没有重复未知保存。第一次实时 observer 仅见 WSS 打开，后续恢复后的只读复验在两套均确认 `frappe.realtime.socket.connected=true`、Engine.IO=open 和客户端 connect 事件，证明 namespace 已连接；没有单独记录原始 CONNECT ACK 帧，也不记录帧内容或 SID。只读复验最初等待登录跳转超时，没有采集该次 POST 状态，无法回溯；一次受控新会话明确登录成功并读取最终 B 备注，没有再次保存。
+
+独立 Docker 历史事件证明原 128 MiB scheduler 曾 OOM→exit137→重启，当前 OOMKilled=false 不能覆盖该历史。`fcca100` 将其 RAM 限额改为 256 MiB、RAM+swap 改为 512 MiB，只执行该服务 `up --no-deps`。实际退出 0，独立结果核 scheduler 新容器 running、restart0、同一镜像；其他七个容器 ID、状态、限额及重启元数据完整保持，未重新初始化或 seed。依据 `output/erp_scheduler_restart_readonly_20261002.result.json`、`output/erp_scheduler_fix_poll_20261002.result.json`。原一次性 `jf-sheet-preview.service` 为 inactive/static，上次执行 success/exit0，原 timer active/enabled；Docker 与自己的 swap unit 均 active/enabled。
+
+后续发现构建结束后 dockerd 仍占 RSS 644 MB、swap 3.59 GB。内核记录 global OOM 杀死旧 daemon PID235116，systemd 自动重启 Docker，八个服务均退出，数据库 exit0。受控仅执行已有八服务 `up --no-build`，没有初始化、种子或镜像构建；原恢复回执因要求所有容器 ID 完全相同而标 needs_inspection，保留该状态和第一轮断言失败。独立 r2 复核证明七个 ID 保持、仅 scheduler 再创建、全部镜像和按目标路径核对的数据卷保留，DB healthy、八服务 running/restart0，当前调度限额正确。随后新的原生连接确认最终 A/B 备注仍在，仅两个 Version 且均只改 notes、供应商关联保持、订单仍草稿、GL/SLE0、rollback/destroy 返回；外网 HTTPS 和只读新浏览器登录/实时连接再次通过。依据 `output/erp_daemon_state_readonly_20261002.result.json`、`output/erp_runtime_recover_verified_readonly_r2_20261002.result.json`、`output/erp_post_recovery_data_native_20261002.result.json`、`output/erp_final_service_states_readonly_r2_20261002.result.json`。backend 独立 cgroup failcnt/oom_kill 均为 0，峰值 284 MB 低于 512 MiB 限额，不把登录等待超时归因为内存上限。
+
+恢复后 daemon RSS/swap 继续增长，一次本机 Go GC 请求返回 200 且八个容器 ID 不变，但不能据此认定内存已归还。只读堆采样达到 2 MiB 上限，保留数字/函数名而不保存完整 profile，未取得尾部 MemStats，单次采样不证明泄漏。`318ce40` 增加 `GOMEMLIMIT=512MiB` 公开 systemd drop-in；原 daemon JSON 不存在，创建 live-restore 设置，经配置验证、reload 和实际 Docker info=true 后才仅重启 daemon。初始助手后置断言失败，原 needs_inspection 保留并未再次重启；独立新连接逐项确认 Go 环境、live-restore、containerd PID 保持及全部八个容器 ID/PID/StartedAt/重启数/运行状态一致。随后 fresh confirm 通过、DB healthy，daemon RSS 529346560 B、swap 9875456 B、主机 MemAvailable 369463296 B、SwapFree 4188303360 B。Go 设置是软限额，不能当作 RSS 硬限额或长时间稳定性保证。依据 `output/erp_docker_memory_tuning_verify_readonly_20261002.result.json`、`output/erp_docker_memory_tuning_confirm_readonly_20261002.result.json`；新配置及单位的原不存在状态、SHA、阶段和实际重启记录保留在服务器本项目目录。
+
+本次部署不能计为旧系统全模块完成：363 个入口中仍有 106 个业务预览，239 个直接映射中的 2 个工厂档案仍为部分可用。所有模块正式可用仍是总目标；本轮验证的合成档案往返不能代替全部模块业务验收，尚未做并发负载验证。
+
 ## 2026-10-02：A/B 工作台共用核心
 
 新增 A 开源优化工作台 `jifeng-modern`；B 仍为 `jifeng-legacy`。从原 Page 第 13 行起的常量及完整 Workspace 原样迁入公共核心，原体 138711 字节逐字核对一致。现代界面继承同一业务 class，只调整首页、导航、搜索与页面标签；桥接正式面板按所属 Page 路由判断可见性。两 Page 的 14 项访问角色相同。工作区提供两个入口，共用同一站点和数据。
