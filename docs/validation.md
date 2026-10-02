@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-02 电镀应付独立副本原生八门
+
+生产适配仍为589c900的相同字节；运行来源冻结于5d9d177。root通过已核实的本地MariaDB Unix socket建立单独数据库/账号和离线site，使用现有本地工具完整复制926表；复制后SQL、全部结构/索引及23项自身元数据与原站before相同，原站前后整对象相等。新账号只授副本库，密码仅在受限文件/内存；新目录0700、配置/结果0600，独立Redis仅开私有Unix socket。副本使用官方邮件、搜索和scheduler隔离配置，已有telemetry关闭；没有改变原站配置、引擎或队列，没有网络传输、HTTP、worker或scheduler。
+
+首次隔离r1实际exit1：child继承Windows仓库工作目录，Frappe Database构造先初始化相对日志路径而报FileNotFoundError，未连接数据库、开始事务或运行业务suite；保留原intent/result/真实退出收据。独立fresh核副本926表/结构/元数据/两个队列及全部来源，整对象与初始副本相同；原站完整fresh也相同。r2仅新增独立执行目录并固定child的原生sites工作目录，复用现有副本，不重建、不重复dump，不覆盖或重发失败r1。
+
+r2实际进程退出0，八门及rollback/destroy返回后才由root核验：Admin与原AP响应完全一致；真实Accounts User满足Company select=true/read=false并读取真实已提交PI/PLE来源；同Supplier两档案类型及另一个真实存在且Admin可select的Company仍整次隔离；停用历史、原银行文本和只读投影保持；银行mask省略字段而AP响应不变；Profile.supplier、Supplier.disabled、PLE.amount分别失权时整次拒绝并可恢复读取。夹具仅在副本创建1非库存Item、1已提交PI、1同供应商外发档案及临时岗位/权限；0新Supplier、0Payment Entry，没有重跑既有AP19/native17或改变生产函数。
+
+最后新的原站连接实际exit0，完整926表所有行（没有SID或业务排除）、结构/索引、23元数据、完整有序Error Log/global_search队列和来源文件与context.original_before整对象相等。root逐项绑定context、r2自SHA、实际exit receipt、八门、清理返回及前次失败/副本fresh依据后发布 `output/plating-payables-isolated-native-r2-20261002/actual-native8-proof.json`（SHA256 `ec3bd9226534dc3d6207af7472bdabaffcfc15f9ad2942abf91319604aa387b6`）。私有副本、Redis和原始证据离线保留；没有声称副本全部SQL/Redis恢复，Windows只复制无数据值的摘要proof，未复制数据库或私有context。
+
+此批证明新增应付适配的原生集成，不证明HTTP/GUI或旧电镀欠款公式。旧电镀账仍预览，覆盖数保持239直接映射、106业务预览、237正式徽标及2部分徽标。销售源码续审确认Product Profile已有品牌/小类/参考价/档案图片，原生Item也有多条码及UOM；缺旧XS_SPXX条码到产品的显式关联和销售部门库存粒度，不能重复分配Item库存或把参考价当旧标价。已异步询问条码粒度，金额和电镀欠款口径仍待；旧产品档案显示模式本次CLI超时未取证，不能推断该页无模式。全模块目标继续。
+
 ## 2026-10-02 旧账与销售跟踪绑定、应付原生 r1 诊断
 
 旧站在真实可见 iframe 中取得固定定义：财务电镀账的欠款直接绑定 `CW_DDQK.欠款`，超链接到电镀账明细，传值 `=D6 → PP`。缓存仅引用 `CW_DDQK`/`CW_DDQKDY`，没有公开 SQL、欠款公式或数据库关联键；不把供应商全部应付当成旧电镀欠款。已异步询问期初、品检扣款、付款、退货及其他采购的计入范围，其他工作继续。证据 `output/legacy-plating-ledger-binding-20261002/report.md`；没有手动查询或读取业务行，正常导航自动初始化请求及后续守卫收窄已如实记录。
