@@ -5,7 +5,31 @@
 - A：`/desk/jifeng-modern`，优化后的开源 ERP 界面。
 - B：`/desk/jifeng-legacy`，沿用旧系统菜单、列表和操作入口。
 
-本发布业务源码固定为 `8858743800efe1836ac53f5c3de6644dab4e7923`。Frappe 16.35.0、ERPNext 16.36.0、HRMS 16.20.0 的源码提交、完整已构建资源及 banking lock 的唯一覆盖记录在发布包 `manifest.json`。共用业务工作台核心，界面不各自计算或存储业务数据。
+当前业务源码固定为 `5aa4b3b9b252c1879c299850557750c666d8cb83`。原运行镜像基线源码为 `8858743800efe1836ac53f5c3de6644dab4e7923`，Frappe 16.35.0、ERPNext 16.36.0、HRMS 16.20.0 及其已构建资源保持固定。共用业务工作台核心，界面不各自计算或存储业务数据。
+
+## 2026-10-03 源码增量发布
+
+外网A/B已运行`5aa4b3b`：使用原`8858743-test-r4`镜像，backend、worker、scheduler、websocket、frontend五个服务只读挂载`releases/5aa4b3b-source-r1/app`。应用Python依赖未变；488个源码文件及22个内容指纹资源已在容器内核验。实际后端Git提交、五个只读挂载和八服务running/restart0/noOOM均复核，数据库healthy；外网可信TLS登录页/ping200，22个CSS/JS全部HTTP200且逐字节SHA与候选一致。真实浏览器验收另见验证记录，不把静态HTTP视为登录业务验收。
+
+本次Luna真实浏览器已登录A、切换B，核双方中文工作台、客户类型的同公司0行以及流程单/成本/员工补充档案列表，B费用登记单亦可打开；未保存的空销售订单已放弃。没有进行本次业务保存或导入；console/network/pageerror和本地截图受工具能力限制未取得，不报零错误。测试账号仍通过本地受限文件交接。
+
+升级前停止五个应用并在服务器私有目录完成原生数据库、公开/私有附件和配置备份；gzip/tar及SHA核验通过，不下载备份。四个自定义DocType按原生reload更新，11个既有流程Link仅原生set_value更新search_index并添加指定非唯一BTREE索引；生产/采购核心父表不整体同步。Stock Entry已有两处索引保持。每一步有私有started/done，DDL明确提交并用新连接核验；没有执行全站migrate、patch、install、初始化或seed。
+
+两个独立原生只读快照核918→919张tab*/Auth表：仅新增空`Jifeng Customer Type`，914张既有非元数据表完整旧列投影/行数相同，账号、GL/SLE、历史数量保持；四种元数据表只允许本次四DocType和11CF的明确变化，原列与旧索引保持。before证明SHA为`be004b285103a093b9ae4001b155548e9f2884fd608afbe9e57afecc17ea9849`，最终after-r4为`01dcce2fb2f7de9c7f32aab98844ef696ad41852051f99d2cb8faefaddb9f75f`。缓存清理另用物理MariaDB只读事务，原站点配置字节/权限精确恢复；数据库/Redis容器身份和挂载保持。
+
+候选检查的内存数字字符串、POSIX路径及挂载数组顺序误拒保留。Docker只读API后来超时，在核实已启用live-restore后恢复管理daemon，原八个容器身份/启动时间/重启数/镜像/挂载保持。升级首次预检查发现Purchase Order Item的其他原生结构漂移，在DDL前拒绝，随后改为指定索引更新；成功DDL只执行一次。后验工具保留HRMS Leave Control Panel重复逻辑键、异常帧行号及decimal零默认值格式的三轮失败，分别修正真实主键比较、准确异常帧、仅三列已批准scale6→9对应`0.000000→0.000000000`，没有改HRMS表、扩大允许业务差异或重跑DDL。
+
+以后启动或更新应用同时加载基线与源码覆盖文件：
+
+```bash
+docker compose --project-name jifeng-erp-test \
+  --project-directory /opt/jifeng-erp-test --env-file /opt/jifeng-erp-test/.env \
+  -f /opt/jifeng-erp-test/releases/8858743-r2/deploy/compose.yaml \
+  -f /opt/jifeng-erp-test/releases/5aa4b3b-source-r1/compose.source.yaml \
+  up -d --no-deps --no-build --pull never backend worker scheduler websocket frontend
+```
+
+`.env`继续选择固定运行镜像；实际业务版本由只读源码挂载和本次manifest确认。证书续期仍依赖原`8858743-r2/deploy`目录，该目录继续保留。源包、私有备份、操作证明和失败日志均留在服务器独立发布目录；仓库不包含账号、数据库或备份。本发布仍是共享测试站，105个业务预览与全模块验收缺口继续推进。
 
 ## 2026-10-02 实际发布
 

@@ -1,8 +1,28 @@
 # 验证记录
 
+## 2026-10-03 外网源码增量发布
+
+实际业务版本`5aa4b3b`，五个应用复用固定`8858743-test-r4`镜像并只读挂载新集沣应用；没有在2GB运行机重新构建。公开包2,643,099字节、488个regular文件，容器内逐SHA/所有权/只读挂载、Git及22个直引资源核验通过。上传前后核系统代理、空代理环境变量、运行中的Mihomo规则/TUN及当前SSH准确源端口，全部DIRECT；公开包/工具上传均远端SHA一致，无备份或数据库下载。
+
+| 阶段 | 实际结果 | 证据 |
+| --- | --- | --- |
+| 候选/管理服务恢复 | 候选原生只读488文件/22资源通过且未连接站点。Compose内存字节为字符串、Windows/POSIX模板路径和Mounts数组顺序的误拒保留。之后Docker inspect60秒超时；确认已加载live-restore后恢复daemon，原八容器ID/StartedAt/restart/image/mount保持，候选再按真实状态认证。 | `output/source-mount-candidate-certified-20261003-r1.json`、`source-mount-daemon-recovery-poll-20261003-r1.json`，原r1–r4候选失败留在服务器独立目录。 |
+| 原生备份/before | 五个应用退出、三个数据服务继续运行；服务器私有数据库/文件/配置备份经gzip/tar/SHA验证。918张tab*/Auth表完整before，待补丁0；证明SHA `be004b285103a093b9ae4001b155548e9f2884fd608afbe9e57afecc17ea9849`。 | 服务器`releases/5aa4b3b-source-r1/backup-before-r1`，备份未离开服务器。 |
+| 定向结构升级 | r1只读预检查拒绝Purchase Order Item非目标结构漂移，尚无DDL；r2四DocType原生reload、11CF仅search_index及指定索引，实际commit和新连接核成功。无full migrate/patch/install/seed/核心父表updatedb，原Stock Entry索引保持。 | 私有`targeted-schema-r1/result.json`失败、`targeted-schema-r2/result.json`成功；各项600 started/done及fresh-schema-proof。成功DDL未重跑。 |
+| after完整核对 | 首轮比较键漏掉HRMS Leave Control Panel的第二条同逻辑键DocField，改为非目标真实name主键；r2硬钉原异常帧行号误差，r3修正后仅三列decimal默认零字符串格式误拒。r4只接受三列已批准21,6→21,9附带`0.000000→0.000000000`，最终全部保护、结构、元数据和历史数量门通过。 | 918→919，仅新增空客户类型表；914既有非元数据表旧列完整行hash/计数及Auth/GL/SLE相同。原失败proof完整保留；最终after-r4 SHA `01dcce2fb2f7de9c7f32aab98844ef696ad41852051f99d2cb8faefaddb9f75f`。 |
+| 启动/外部HTTP | 清缓存用物理MariaDB只读事务，原config字节/权限恢复；只重建五个应用且真实RO源挂载，数据库/Redis实例不变。独立实际backend Git=5aa4b3b，八服务running/restart0/noOOM、DB healthy、原续期timer active/enabled。可信TLS登录200/ping200、HTTP301；全部22 CSS/JS外网HTTP200且完整SHA匹配候选。 | `output/source-mount-start-poll-20261003-r1.json`、`source-mount-post-deploy-runtime-20261003-r1.json`、`source-mount-health-after-20261003-r1.json`。HTTP健康不替代浏览器登录及业务验收。 |
+
+A/B两套仍使用同站点、同数据库、同业务代码及权限。363入口仍为237正式映射、3部分可用、105业务预览、13导航、5工具；本发布没有将业务预览升级为正式模块。新计划单位弹层真实GUI、双事务竞争、复杂成本分摊、数据库大集合负载和全模块正式验收继续待完成。浏览器外网验收结果另记如下。
+
+### 本次外网真实浏览器
+
+gpt-6-luna使用computer-use真实测试账号登录，A中文现代工作台、链接切换B中文旧工作台均成功。A/B客户类型显式选择测试公司后同为0条；生产流程单、成本试算及员工补充档案列表均正常加载为空，B费用登记单亦为空。B财务/人事中文菜单及A订单/销售/生产导航可见。订单录入打开原生未保存销售订单表单，未填字段、未保存，放弃并关闭；没有点击保存、提交、导入、删除或数量确认。空表和只读导航不替代真实业务闭环或原数据写入互通验收。
+
+CUA只能提供AX和会话内截图；另一个CDP工具出现MCP transport失败，未取得console/network/pageerror日志或安全导出的本地截图，不能声称这些错误计数为0。本次GUI依据保留的工具状态及子智能体脱敏报告，外部HTTP/22资源SHA由root独立验证。旧站只读资料和部署服务器权限没有因GUI扩大。
+
 ## 2026-10-03 最新批次：计划库存单位与正式成本来源
 
-本批本地未发布，外网仍为冻结`8858743`。新服务与原有四个成本接口共用业务代码；没有增加菜单正式入口，363入口的237正式/3部分/105预览/13导航/5工具保持。计划使用准确商品库存单位，销售来源保留原生数量、单位、换算系数、库存量及精度；外部/历史未知单位要求保存后的明确核对，不自动猜换算。核对记录是历史单位确认，单位已明确后的正常计划调整仍保留；销售凭证不改变原生数量/价格/估价。
+本批已以`5aa4b3b`更新外网；下列业务测试在本地隔离副本完成，外网发布核对见上节。新服务与原有四个成本接口共用业务代码；没有增加菜单正式入口，363入口的237正式/3部分/105预览/13导航/5工具保持。计划使用准确商品库存单位，销售来源保留原生数量、单位、换算系数、库存量及精度；外部/历史未知单位要求保存后的明确核对，不自动猜换算。核对记录是历史单位确认，单位已明确后的正常计划调整仍保留；销售凭证不改变原生数量/价格/估价。
 
 当前源码定向Python模型164项通过：数量与确认33、生产计划锁序5、费用来源23、回货批次16、销售来源13、配料7、库存锁序14、库存凭证11、销售交付34、试算8。Flow确认弹层CJS13场景通过，包含保存后读取、精确版本、空白数量输入、迟到/脏表单拒绝及结果未知时不重复写入。Ruff、两份JS语法与差异检查通过。Python模型运行时有既有pytest-asyncio默认fixture范围弃用提示，不影响结果，未为此改动无关配置。模型不替代实际双事务或新弹层GUI验收。
 
