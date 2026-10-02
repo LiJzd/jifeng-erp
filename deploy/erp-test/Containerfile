@@ -57,4 +57,4 @@ RUN chmod 755 /opt/jifeng-deploy && chmod 644 /opt/jifeng-deploy/* \
 USER frappe
 WORKDIR /home/frappe/frappe-bench
 ENTRYPOINT ["/opt/jifeng-deploy/entrypoint.sh"]
-CMD ["/home/frappe/frappe-bench/env/bin/gunicorn", "--bind=0.0.0.0:8000", "--workers=1", "--threads=2", "--timeout=120", "--forwarded-allow-ips=*", "frappe.app:application"]
+CMD ["/home/frappe/frappe-bench/env/bin/gunicorn", "--chdir=/home/frappe/frappe-bench/sites", "--bind=0.0.0.0:8000", "--workers=1", "--threads=2", "--timeout=120", "--forwarded-allow-ips=*", "frappe.app:application"]

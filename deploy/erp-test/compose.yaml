@@ -67,7 +67,7 @@ services:
       redis-queue: {condition: service_started}
   worker:
     <<: *app
-    command: [bench, worker, --queue, short,default,long]
+    command: [bench, worker, --queue, "short,default,long"]
     mem_limit: 512m
     depends_on: [backend]
   scheduler:
