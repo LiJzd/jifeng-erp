@@ -1,0 +1,7 @@
+*
+!sources.tar.gz
+!assets.tar.gz
+!overrides/
+!overrides/erpnext-banking-yarn.lock
+!deploy/
+!deploy/**

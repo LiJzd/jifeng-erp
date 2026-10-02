@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Jifeng ERP QA HTTPS certificate
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=300
+ExecStart=/bin/sh /opt/jifeng-erp-test/releases/8858743-r2/deploy/renew-certificate.sh

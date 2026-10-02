@@ -1,0 +1,125 @@
+name: jifeng-erp-test
+x-app: &app
+  image: jifeng/erp-test:${RELEASE_TAG}
+  pull_policy: never
+  restart: unless-stopped
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+    - logs:/home/frappe/frappe-bench/logs
+  networks: [erp]
+services:
+  db:
+    image: ghcr.nju.edu.cn/mariadb/mariadb@sha256:6be9eb4fdabe619abaabaf6192cf79239d296ec1456ce0678c6d9426b83ea512
+    pull_policy: never
+    restart: unless-stopped
+    mem_limit: 384m
+    environment:
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MARIADB_ROOT_HOST: "%"
+    secrets: [db_root_password]
+    command: [--character-set-server=utf8mb4, --collation-server=utf8mb4_unicode_ci, --innodb-buffer-pool-size=128M, --max-connections=50]
+    volumes: ["database:/var/lib/mysql"]
+    networks: [erp]
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  redis-cache:
+    <<: *app
+    command: [redis-server, --bind, 0.0.0.0, --protected-mode, "no", --save, "", --maxmemory, 48mb, --maxmemory-policy, allkeys-lru]
+    mem_limit: 96m
+  redis-queue:
+    <<: *app
+    command: [redis-server, --bind, 0.0.0.0, --protected-mode, "no", --appendonly, "yes", --dir, /data, --maxmemory, 96mb, --maxmemory-policy, noeviction]
+    user: root
+    mem_limit: 128m
+    volumes: ["queue:/data"]
+    entrypoint: []
+  initialize:
+    <<: *app
+    profiles: [tools]
+    restart: "no"
+    command: [env/bin/python, /opt/jifeng-deploy/initialize.py]
+    secrets: [db_root_password, site_db_password, admin_password]
+    mem_limit: 768m
+    depends_on:
+      db: {condition: service_healthy}
+      redis-cache: {condition: service_started}
+      redis-queue: {condition: service_started}
+  backend:
+    <<: *app
+    mem_limit: 512m
+    depends_on:
+      db: {condition: service_healthy}
+      redis-cache: {condition: service_started}
+      redis-queue: {condition: service_started}
+  seed:
+    <<: *app
+    profiles: [tools]
+    restart: "no"
+    command: [env/bin/python, /opt/jifeng-deploy/seed_test_data.py]
+    secrets: [qa_password]
+    mem_limit: 768m
+    depends_on:
+      db: {condition: service_healthy}
+      redis-cache: {condition: service_started}
+      redis-queue: {condition: service_started}
+  worker:
+    <<: *app
+    command: [bench, worker, --queue, short,default,long]
+    mem_limit: 512m
+    depends_on: [backend]
+  scheduler:
+    <<: *app
+    command: [bench, schedule]
+    mem_limit: 128m
+    depends_on: [backend]
+  websocket:
+    <<: *app
+    command: [node, apps/frappe/socketio.js]
+    mem_limit: 128m
+    depends_on: [backend]
+  acme-web:
+    <<: *app
+    profiles: [tools]
+    command: [nginx, -c, /opt/jifeng-deploy/nginx-acme.conf, -g, "daemon off;"]
+    user: root
+    ports: ["80:8080"]
+    volumes: ["./acme/webroot:/var/www/acme:ro"]
+    mem_limit: 64m
+  certbot:
+    <<: *app
+    profiles: [tools]
+    restart: "no"
+    user: root
+    entrypoint: [/opt/certbot/bin/certbot]
+    volumes:
+      - ./acme/webroot:/var/www/acme
+      - ./acme/certificates:/etc/letsencrypt
+      - ./acme/work:/var/lib/letsencrypt
+      - ./acme/logs:/var/log/letsencrypt
+  frontend:
+    <<: *app
+    command: [env/bin/python, /opt/jifeng-deploy/start_frontend.py]
+    user: root
+    mem_limit: 64m
+    environment: {PUBLIC_IP: "${PUBLIC_IP}"}
+    ports: ["80:8080", "443:8443"]
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites:ro
+      - ./acme/webroot:/var/www/acme:ro
+      - ./acme/certificates:/etc/letsencrypt:ro
+    depends_on: [backend, websocket]
+networks:
+  erp: {}
+volumes:
+  sites: {}
+  logs: {}
+  database: {}
+  queue: {}
+secrets:
+  db_root_password: {file: ./secrets/db_root_password}
+  site_db_password: {file: ./secrets/site_db_password}
+  admin_password: {file: ./secrets/admin_password}
+  qa_password: {file: ./secrets/qa_password}
