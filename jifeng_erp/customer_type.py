@@ -1,4 +1,4 @@
-"""Company-scoped sales customer types, independent of ERPNext legal types.
+"""Company-scoped customer dictionaries, independent of ERPNext legal types.
 
 The observed dialog contains number, name, remarks and inactive. The number is
 allocated independently by this system. Abbreviation generation, deletion and
@@ -19,7 +19,13 @@ from jifeng_erp.personnel_separation import _atomic
 
 
 DOCTYPE = "Jifeng Customer Type"
-TYPES = {"客户类型": "customer_type"}
+TYPES = {
+    "客户类型": "customer_type",
+    "客户等级": "customer_grade",
+    "客户分类": "customer_category",
+    "订单客户分类": "order_category",
+    "订单客户级别": "order_grade",
+}
 EDIT_FIELDS = ("value", "remarks", "inactive")
 IDENTITY = ("company", "dictionary_type")
 AUTO_MODE = "automatic_v1"
@@ -30,19 +36,19 @@ AUDIT_FIELDS = ("creation", "owner", "modified_by")
 _CREATING = ContextVar("jifeng_customer_type_creation", default=None)
 _SERVER = object()
 COLLISION = "新建请求已使用或身份冲突，请查询核对，不自动重复保存"
-CHANGED = "客户类型来源已变化，请重新核对"
+CHANGED = "客户词典来源已变化，请重新核对"
 BATCH_LENGTH = 200
 MAX_SAFE_INT = 9007199254740991
 
 
 def _login():
     if frappe.session.user == "Guest":
-        frappe.throw("请登录后操作客户类型", frappe.PermissionError)
+        frappe.throw("请登录后操作客户词典", frappe.PermissionError)
 
 
 def _type(dictionary_type):
     if not isinstance(dictionary_type, str) or dictionary_type not in TYPES:
-        frappe.throw("请选择客户类型词典")
+        frappe.throw("请选择客户词典类型")
 
 
 def _company(company):
@@ -53,7 +59,7 @@ def _company(company):
 
 def _name(name):
     if not isinstance(name, str) or not name or name != name.strip():
-        frappe.throw("请选择准确的客户类型词条编号")
+        frappe.throw("请选择准确的客户词典词条编号")
 
 
 def _columns(permission):
@@ -70,7 +76,7 @@ def _columns(permission):
 
 def _fields(fields, permission):
     if not set(fields).issubset(_columns(permission)):
-        frappe.throw("没有操作客户类型所需字段的权限", frappe.PermissionError)
+        frappe.throw("没有操作客户词典所需字段的权限", frappe.PermissionError)
 
 
 def _uuid(value):
@@ -93,9 +99,9 @@ def _normalize(field, value):
     if field != "value" and value in (None, ""):
         return value  # Preserve the supplied remarks spelling, including empty text.
     if not isinstance(value, str) or field == "value" and not value.strip():
-        frappe.throw("请填写有效客户类型名称原文")
+        frappe.throw("请填写有效客户词典名称原文")
     if field != "remarks" and len(value) > 140:
-        frappe.throw("客户类型名称不能超过一百四十个字符")
+        frappe.throw("客户词典名称不能超过一百四十个字符")
     return value
 
 
@@ -105,7 +111,7 @@ def _values(document):
 
 def _mode(value):
     if value not in (None, "", AUTO_MODE):
-        frappe.throw("请选择有效客户类型编号模式")
+        frappe.throw("请选择有效客户词典编号模式")
     return AUTO_MODE
 
 
@@ -135,15 +141,15 @@ def before_insert_dictionary(document):
     if document.get("legacy_number") not in (None, ""):
         frappe.throw("自动编号只能由服务器生成，不能指定编号")
     if document.get("abbreviation") not in (None, ""):
-        frappe.throw("客户类型简拼为只读原文，尚未实现更新")
+        frappe.throw("客户词典简拼为只读原文，尚未实现更新")
     if _CREATING.get() is document:
         _mode(document.get("numbering_mode"))
         _uuid(document.request_id)
         if document.request_digest != _digest(document.company, document.dictionary_type, _values(document)):
-            frappe.throw("客户类型新建请求校验不完整")
+            frappe.throw("客户词典新建请求校验不完整")
     else:
         if any(document.get(field) not in (None, "") for field in (*REQUEST_FIELDS, "numbering_mode")):
-            frappe.throw("客户类型新建追溯身份只能由服务器生成")
+            frappe.throw("客户词典新建追溯身份只能由服务器生成")
         document.numbering_mode = AUTO_MODE
         document.request_id = str(uuid4())
         document.request_digest = _digest(document.company, document.dictionary_type, _values(document))
@@ -162,20 +168,20 @@ def validate_dictionary(document):
     _company(document.company)
     _type(document.dictionary_type)
     if document.get("numbering_mode") != AUTO_MODE:
-        frappe.throw("客户类型编号模式只能由服务器生成，不能修改")
+        frappe.throw("客户词典编号模式只能由服务器生成，不能修改")
     _fields(REQUIRED_READ, "read")
     if document.is_new():
         document.check_permission("create")
         if document.__dict__.get("_jf_customer_type_server") is not _SERVER:
-            frappe.throw("客户类型新建追溯身份只能由服务器生成")
+            frappe.throw("客户词典新建追溯身份只能由服务器生成")
         _uuid(document.request_id)
         if document.request_digest != _digest(document.company, document.dictionary_type, _values(document)):
-            frappe.throw("客户类型新建请求校验不完整")
+            frappe.throw("客户词典新建请求校验不完整")
         generated = document.__dict__.get("_jf_customer_type_number")
         if not generated or generated[0] is not _SERVER or generated[1] != document.legacy_number:
             frappe.throw("自动编号只能由服务器生成，不能指定编号")
         if document.get("abbreviation") not in (None, ""):
-            frappe.throw("客户类型简拼为只读原文，尚未实现更新")
+            frappe.throw("客户词典简拼为只读原文，尚未实现更新")
         changed = {field for field in EDIT_FIELDS if document.get(field) not in (None, "")}
         changed.update((*IDENTITY, "value", "inactive"))
     else:
@@ -183,20 +189,20 @@ def validate_dictionary(document):
         before = document.get_doc_before_save()
         immutable = (*IDENTITY, *REQUEST_FIELDS, "numbering_mode", "legacy_number", "abbreviation")
         if not before or any(before.get(field) != document.get(field) for field in immutable):
-            frappe.throw("客户类型公司、类型、编号、简拼及新建追溯身份不能修改")
+            frappe.throw("客户词典公司、类型、编号、简拼及新建追溯身份不能修改")
         changed = {field for field in EDIT_FIELDS if before.get(field) != document.get(field)}
     _fields(changed, "read")
     _fields(changed, "write")
     for field in changed:
         if document.meta.get_field(field).read_only:
-            frappe.throw("没有修改该客户类型字段的权限", frappe.PermissionError)
+            frappe.throw("没有修改该客户词典字段的权限", frappe.PermissionError)
     for field in changed & set(EDIT_FIELDS):
         document.set(field, _normalize(field, document.get(field)))
 
 
 def prevent_delete(document):
     _login()
-    frappe.throw("客户类型删除尚未实现，请保留词条核对")
+    frappe.throw("客户词典删除尚未实现，请保留词条核对")
 
 
 def _version(value):
@@ -205,7 +211,7 @@ def _version(value):
 
 def _current(document, row):
     if not REQUIRED_READ.issubset(row):
-        frappe.throw("没有读取客户类型来源投影的权限", frappe.PermissionError)
+        frappe.throw("没有读取客户词典来源投影的权限", frappe.PermissionError)
     if any(document.get(field) != row[field] for field in ("name", *IDENTITY)) or not same_version(document.modified, _version(row["modified"])):
         frappe.throw(CHANGED)
 
@@ -218,7 +224,7 @@ def _projection(document):
     listed = frappe.get_list(DOCTYPE, filters={"name": document.name},
         fields=[field for field in requested if field in readable], limit_page_length=1)
     if not listed:
-        frappe.throw("没有读取该客户类型的权限", frappe.PermissionError)
+        frappe.throw("没有读取该客户词典的权限", frappe.PermissionError)
     _current(document, listed[0])
     # Full native documents are guards, never a source for omitted columns.
     return listed[0]
@@ -230,7 +236,7 @@ def _pack(document, *, unscoped=False):
         values = _projection(document)
     else:
         if not (frappe.has_permission(DOCTYPE, "read") if unscoped else document.has_permission("read")):
-            frappe.throw("没有读取客户类型的权限", frappe.PermissionError)
+            frappe.throw("没有读取客户词典的权限", frappe.PermissionError)
         _fields(REQUIRED_READ, "read")
         values = {field: document.get(field) for field in FIELDS if field in _columns("read")}
     writable = _columns("write")
@@ -290,7 +296,7 @@ def _scan(filters, options, readable, company, dictionary_type, include_inactive
             order_by="value asc, name asc", limit_start=start, limit_page_length=BATCH_LENGTH, **options)
         for row in listed:
             if not REQUIRED_READ.issubset(row):
-                frappe.throw("没有读取客户类型来源投影的权限", frappe.PermissionError)
+                frappe.throw("没有读取客户词典来源投影的权限", frappe.PermissionError)
             if row["name"] in seen or row["company"] != company or row["dictionary_type"] != dictionary_type or not include_inactive and row["inactive"]:
                 frappe.throw(CHANGED)
             seen.add(row["name"])
@@ -318,9 +324,9 @@ def list_dictionary(dictionary_type, company, search="", include_inactive=False,
     if page_length not in (25, 50, 100):
         frappe.throw("分页条数须为二十五、五十或一百")
     if not isinstance(search, str) or len(search) > 140:
-        frappe.throw("请输入有效客户类型关键词")
+        frappe.throw("请输入有效客户词典关键词")
     if not frappe.has_permission(DOCTYPE, "read"):
-        frappe.throw("没有读取客户类型的权限", frappe.PermissionError)
+        frappe.throw("没有读取客户词典的权限", frappe.PermissionError)
     _fields(REQUIRED_READ, "read")
     readable = _columns("read")
     filters = {"company": company, "dictionary_type": dictionary_type}
@@ -353,13 +359,13 @@ def read_dictionary(name, dictionary_type=None):
     _company(document.company)
     _type(document.dictionary_type)
     if dictionary_type is not None and document.dictionary_type != dictionary_type:
-        frappe.throw("词条类型与当前客户类型词典不一致")
+        frappe.throw("词条类型与当前客户词典不一致")
     return _pack(document)
 
 
 def _receipt(request_id, dictionary_type, company):
     if not frappe.has_permission(DOCTYPE, "read"):
-        frappe.throw("没有核对客户类型的权限", frappe.PermissionError)
+        frappe.throw("没有核对客户词典的权限", frappe.PermissionError)
     _fields(REQUIRED_READ | set(REQUEST_FIELDS), "read")
     receipt_fields = {"name", "modified", *IDENTITY, *REQUEST_FIELDS}
     listed = frappe.get_list(DOCTYPE, filters={"request_id": request_id, "company": company,
@@ -367,7 +373,7 @@ def _receipt(request_id, dictionary_type, company):
     if not listed:
         return None
     if not receipt_fields.issubset(listed[0]):
-        frappe.throw("没有读取客户类型新建回执投影的权限", frappe.PermissionError)
+        frappe.throw("没有读取客户词典新建回执投影的权限", frappe.PermissionError)
     document = frappe.get_doc(DOCTYPE, listed[0]["name"])
     document.check_permission("read")
     if (document.request_id, document.company, document.dictionary_type) != (request_id, company, dictionary_type) or any(
@@ -396,12 +402,12 @@ def save_dictionary(payload):
         try:
             payload = json.loads(payload)
         except (ValueError, TypeError):
-            frappe.throw("客户类型请求必须是有效对象")
+            frappe.throw("客户词典请求必须是有效对象")
     allowed = {"name", "version", "request_id", *IDENTITY, *EDIT_FIELDS, "numbering_mode"}
     if not isinstance(payload, dict) or not set(payload).issubset(allowed):
-        frappe.throw("客户类型请求包含不支持的参数；编号及简拼为只读")
+        frappe.throw("客户词典请求包含不支持的参数；编号及简拼为只读")
     if not set(IDENTITY).issubset(payload):
-        frappe.throw("请选择公司及客户类型词典")
+        frappe.throw("请选择公司及客户词典类型")
     _company(payload["company"])
     _type(payload["dictionary_type"])
     _mode(payload.get("numbering_mode"))
@@ -417,9 +423,9 @@ def save_dictionary(payload):
         document.check_permission("read")
         document.check_permission("write")
         if not same_version(document.modified, payload.get("version")):
-            frappe.throw("客户类型已由其他操作修改，请重读核对后保存", frappe.TimestampMismatchError)
+            frappe.throw("客户词典已由其他操作修改，请重读核对后保存", frappe.TimestampMismatchError)
         if tuple(document.get(field) for field in IDENTITY) != tuple(payload[field] for field in IDENTITY):
-            frappe.throw("客户类型公司、类型及新建追溯身份不能修改")
+            frappe.throw("客户词典公司、类型及新建追溯身份不能修改")
     else:
         if payload.get("version") not in (None, ""):
             frappe.throw("新增词条不能携带旧版本")
@@ -443,7 +449,7 @@ def save_dictionary(payload):
         _fields({*IDENTITY, "value", "inactive"}, "write")
     for field, value in updates.items():
         if document.meta.get_field(field).read_only:
-            frappe.throw("没有修改该客户类型字段的权限", frappe.PermissionError)
+            frappe.throw("没有修改该客户词典字段的权限", frappe.PermissionError)
         document.set(field, value)
     messages_before = list(getattr(frappe.local, "message_log", None) or [])
     collision = False

@@ -78,12 +78,48 @@ async function main() {
 	assert.equal(delayed.editor, null); assert.equal(openingState.dialog.hidden, true);
 	assert.equal(openingState.dialog.$wrapper.element.removed, true, "late field initialization cannot show an old-company dialog");
 	delayed.destroy();
+	for (const type of ["客户等级", "客户分类", "订单客户分类", "订单客户级别"]) {
+		const order = type.startsWith("订单");
+		const bridge = Object.create(window.JifengClassicBridge.prototype);
+		const entry = bridge.mount(new Element(), { customerType: type, title: type });
+		const typed = entry.workbench;
+		assert.equal(calls.at(-1).options.args.dictionary_type, type, "bridge forwards the exact dictionary identity");
+		calls.at(-1).resolve(empty({ dictionary_type: type, company: null, number_preview: null })); await entry.ready;
+		assert.equal(typed.host.descendants("th").map((e) => e.textContent).join("/"), order ?
+			"编号/名称/备注/简拼/停用/修改/删除" : "编号/名称/简拼/备注/停用/操作/日期/修改人/修改日期/修改/删除");
+		typed.companyControl.set_value("Company A");
+		calls.at(-1).resolve(result({ dictionary_type: type, total: 1, rows: [row({ dictionary_type: type })] })); await tick();
+		assert.equal(typed.tbody.descendants("td").length, order ? 7 : 11);
+		const wrong = typed.query(); calls.at(-1).resolve(result({ total: 1, rows: [row()] })); await wrong;
+		assert.equal(typed.rows.length, 0, "a response for customer type cannot populate another dictionary");
+		const opening = typed.openEditor();
+		assert.equal(calls.at(-1).options.args.dictionary_type, type);
+		calls.at(-1).resolve(empty({ dictionary_type: type })); await opening;
+		const typedState = typed.editor;
+		assert.equal(typedState.dialog.config.title, type + "新增");
+		assert.equal(typedState.dialog.config.fields.filter((f) => !f.hidden).map((f) => f.label).join("/"), "编号/名称/备注/停用");
+		await typedState.dialog.set_values({ value: type + "原文", remarks: "备注原文", inactive: 0 });
+		const saving = typed.save(typedState);
+		assert.equal(calls.at(-1).options.args.payload.dictionary_type, type);
+		assert.equal("legacy_number" in calls.at(-1).options.args.payload, false);
+		calls.at(-1).resolve(customer({ dictionary_type: type, value: type + "原文", remarks: "备注原文" })); await saving;
+		assert.equal(typedState.unresolved, false);
+		calls.at(-1).resolve(result({ dictionary_type: type })); await tick();
+		typedState.dialog.hide(); entry.stop();
+	}
 	const workspace = Object.create(window.JifengERPWorkspace.Workspace.prototype), opened = [];
 	workspace.formalBridge = { open: (spec) => opened.push(spec) }; workspace.addTab = () => { throw new Error("no local preview fallback"); };
-	workspace.openPage("客户类型", "销售"); assert.equal(opened[0].customerType, true); assert.equal(opened[0].availability, "partial");
+	workspace.openPage("客户类型", "销售"); assert.equal(opened[0].customerType, "客户类型"); assert.equal(opened[0].availability, "partial");
 	const component = window.JifengCustomerType; delete window.JifengCustomerType;
 	workspace.openPage("客户类型", "销售"); assert.equal(opened.length, 1); assert.match(messages.at(-1), /客户类型页面未能加载/);
 	window.JifengCustomerType = component;
-	console.log("Customer types: actual partial route, eleven columns, scoped pagination, four-field dialog, literal text, unknown-result recovery and no preview fallback passed (models).");
+	for (const [module, name] of [["销售", "客户等级"], ["销售", "客户分类"], ["订单", "订单客户分类"], ["订单", "订单客户级别"]]) {
+		workspace.openPage(name, module);
+		assert.equal(opened.at(-1).customerType, name); assert.equal(opened.at(-1).availability, "partial");
+		delete window.JifengCustomerType; const count = opened.length;
+		workspace.openPage(name, module); assert.equal(opened.length, count); assert.match(messages.at(-1), new RegExp(name + "页面未能加载"));
+		window.JifengCustomerType = component;
+	}
+	console.log("Five customer dictionaries: exact bridge identities, seven/eleven observed columns, four-field saves, scoped paging, cross-type response rejection, unknown-result recovery and no preview fallback passed (models).");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

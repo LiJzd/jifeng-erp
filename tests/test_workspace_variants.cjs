@@ -68,8 +68,12 @@ assert.deepEqual(dispatch(Modern, find("订单", "算料汇总"))[0].spec.route,
 assert.equal(dispatch(Modern, find("人事", "人事浏览"))[0].spec.hideCreate, true);
 assert.equal(dispatch(Modern, find("外发", "外发工厂"))[0].spec.partnerArchive, "外发工厂");
 assert.equal(dispatch(Modern, find("发镀", "电镀厂"))[0].spec.partnerArchive, "电镀厂");
-assert.equal(dispatch(Modern, find("销售", "客户类型"))[0].spec.customerType, true);
+assert.equal(dispatch(Modern, find("销售", "客户类型"))[0].spec.customerType, "客户类型");
 assert.equal(dispatch(Modern, find("销售", "客户类型"))[0].spec.doctype, "Jifeng Customer Type");
+for (const [module, name] of [["销售", "客户等级"], ["销售", "客户分类"], ["订单", "订单客户分类"], ["订单", "订单客户级别"]]) {
+	assert.equal(shared.availability(module, name), "partial");
+	assert.equal(dispatch(Modern, find(module, name))[0].spec.customerType, name);
+}
 assert.equal(dispatch(Modern, find("销售", "日报表"))[0].spec.filters.from_date, "2026-10-02");
 
 const navigation = Workspace => {

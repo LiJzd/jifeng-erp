@@ -26,7 +26,7 @@ from jifeng_erp.product_dictionary_validation import (
     _document_snapshot, _native_contents as _base_contents, _sql_row_hash,
 )
 from jifeng_erp.customer_type import (
-    AUTO_MODE, COLLISION, DOCTYPE, EDIT_FIELDS, IDENTITY, REQUEST_FIELDS, _columns, _series_key,
+    AUTO_MODE, COLLISION, DOCTYPE, EDIT_FIELDS, IDENTITY, REQUEST_FIELDS, TYPES, _columns, _series_key,
     init_dictionary, list_dictionary, read_dictionary, resolve_creation, save_dictionary,
 )
 
@@ -69,6 +69,9 @@ def smoke(company, other_company):
     assert all(meta.get_field(field).set_only_once for field in IDENTITY)
     assert {field.fieldname for field in meta.fields if field.unique} == {"request_id"}
     assert meta.get_field("legacy_number").read_only and meta.get_field("abbreviation").read_only
+    assert meta.get_field("dictionary_type").options.splitlines() == list(TYPES)
+    assert meta.get_field("dictionary_type").default == "客户类型"
+    assert len(TYPES) == len(set(TYPES.values())) == 5 and TYPES["客户类型"] == "customer_type"
     # Use the installed ERPNext source rather than a remembered option list.
     # This version includes Partnership alongside Company and Individual.
     source = json.loads(Path(frappe.get_app_path("erpnext", "selling", "doctype", "customer", "customer.json")).read_text(encoding="utf-8"))
@@ -286,6 +289,122 @@ def smoke(company, other_company):
         assert native(lambda: list_dictionary("客户类型", company, paging_prefix))["total"] == 102
         assert native(lambda: list_dictionary("客户类型", company, paging_prefix, include_inactive=True))["total"] == 103
         assert native(lambda: read_dictionary(stopped["name"]))["value"] == fixtures[0]["value"]
+        passed()
+
+        current = "all_new_customer_dictionary_types_sales_manager_lifecycle_and_versions"
+        frappe.set_user(managers["sales_manager"])
+        new_types = tuple(dictionary_type for dictionary_type in TYPES if dictionary_type != "客户类型")
+        for dictionary_type in new_types:
+            original = save(payload(dictionary_type=dictionary_type, value=prefix + "-EXT-LIFECYCLE",
+                                    remarks=" 原始客户词典备注 " + prefix))
+            assert original["dictionary_type"] == dictionary_type and original["inactive"] == 0
+            assert original["abbreviation"] in (None, "")
+            version_count = len(_versions(DOCTYPE, original["name"]))
+            changed = update(original, remarks=" 修改客户词典备注 " + prefix)
+            assert _version_has(frappe.get_doc(DOCTYPE, changed["name"]), "remarks")
+            rejected(lambda original=original: update(original, remarks="过时备注覆盖"),
+                     frappe.TimestampMismatchError, text="重读核对", atomic=True)
+            inactive = update(changed, inactive=1)
+            assert _version_has(frappe.get_doc(DOCTYPE, inactive["name"]), "inactive")
+            assert len(_versions(DOCTYPE, inactive["name"])) == version_count + 2
+            assert native(lambda inactive=inactive, dictionary_type=dictionary_type:
+                          read_dictionary(inactive["name"], dictionary_type)) == inactive
+            assert native(lambda dictionary_type=dictionary_type:
+                          list_dictionary(dictionary_type, company, prefix + "-EXT-LIFECYCLE"))["total"] == 0
+            listed = native(lambda dictionary_type=dictionary_type:
+                            list_dictionary(dictionary_type, company, prefix + "-EXT-LIFECYCLE", include_inactive=True))
+            assert {row["name"] for row in listed["rows"]} == {inactive["name"]}
+        passed()
+
+        current = "five_types_company_counters_and_identical_names_are_independent"
+        series_keys = {(scope, dictionary_type): _series_key(scope, dictionary_type)
+                       for scope in (company, other_company) for dictionary_type in TYPES}
+        assert len(set(series_keys.values())) == 10
+
+        def current_counters():
+            return {key: int(frappe.db.get_value("Series", series, "current", order_by="name") or 0)
+                    for key, series in series_keys.items()}
+
+        matrix, matrix_payloads = {}, {}
+        matrix_value = prefix + "-TYPE-MATRIX"
+        for scope, user in ((company, managers["sales_manager"]), (other_company, outsider)):
+            frappe.set_user(user)
+            for dictionary_type in TYPES:
+                before_counters = current_counters()
+                preview = native(lambda dictionary_type=dictionary_type, scope=scope:
+                                 init_dictionary(dictionary_type, scope))
+                assert preview["number_preview_is_provisional"] and current_counters() == before_counters
+                values = payload(company=scope, dictionary_type=dictionary_type, value=matrix_value,
+                                 remarks=" 同名词条独立备注 " + prefix)
+                archive = save(values)
+                assert archive["legacy_number"] == preview["number_preview"]
+                expected_counters = dict(before_counters)
+                expected_counters[(scope, dictionary_type)] += 1
+                assert current_counters() == expected_counters
+                listed = native(lambda dictionary_type=dictionary_type, scope=scope:
+                                list_dictionary(dictionary_type, scope, matrix_value))
+                assert listed["total"] == 1 and {row["name"] for row in listed["rows"]} == {archive["name"]}
+                assert all(row["company"] == scope and row["dictionary_type"] == dictionary_type for row in listed["rows"])
+                matrix[(scope, dictionary_type)], matrix_payloads[(scope, dictionary_type)] = archive, values
+        assert len({archive["name"] for archive in matrix.values()}) == 10
+        evidence["customer_dictionary_types"] = {"types": list(TYPES), "counter_scopes": len(series_keys),
+                                                "separate_same_name_records": len(matrix)}
+        passed()
+
+        current = "explicit_type_identity_and_cross_type_receipts_never_reuse_or_allocate"
+        frappe.set_user(managers["sales_manager"])
+        source_values = matrix_payloads[(company, "客户分类")]
+        source_archive = matrix[(company, "客户分类")]
+        contents = _contents()
+        assert save(source_values) == source_archive and _contents() == contents
+        for dictionary_type in TYPES:
+            if dictionary_type != "客户分类":
+                assert native(lambda dictionary_type=dictionary_type: resolve_creation(
+                    source_values["request_id"], dictionary_type, company)) == {"status": "not_found"}
+                rejected(lambda dictionary_type=dictionary_type: save_dictionary(
+                    source_values | {"dictionary_type": dictionary_type}), text=COLLISION, atomic=True)
+        assert _contents() == contents
+        assert native(lambda: resolve_creation(source_values["request_id"], "客户分类", company))["archive"] == source_archive
+        for dictionary_type in new_types:
+            archive = matrix[(company, dictionary_type)]
+            rejected(lambda archive=archive: read_dictionary(archive["name"], "客户类型"), text="不一致")
+            rejected(lambda archive=archive: update(archive, dictionary_type="客户类型"), text="不能修改", atomic=True)
+            document = frappe.get_doc(DOCTYPE, archive["name"])
+            document.dictionary_type = "客户类型"
+            rejected(document.save, text="不能修改")
+        passed()
+
+        current = "new_types_real_sales_user_quiet_readonly_and_company_restrictions"
+        frappe.set_user(clerk)
+        for dictionary_type in new_types:
+            archive = matrix[(company, dictionary_type)]
+            messages = list(getattr(frappe.local, "message_log", None) or [])
+            empty = native(lambda dictionary_type=dictionary_type: init_dictionary(dictionary_type))
+            scoped_empty = native(lambda dictionary_type=dictionary_type: init_dictionary(dictionary_type, company))
+            read = native(lambda archive=archive, dictionary_type=dictionary_type:
+                          read_dictionary(archive["name"], dictionary_type))
+            listed = native(lambda dictionary_type=dictionary_type:
+                            list_dictionary(dictionary_type, company, matrix_value))
+            assert not empty["can_write"] and not scoped_empty["can_write"] and not read["can_write"]
+            assert listed["total"] == 1 and list(getattr(frappe.local, "message_log", None) or []) == messages
+            rejected(lambda dictionary_type=dictionary_type: save_dictionary(payload(dictionary_type=dictionary_type)),
+                     frappe.PermissionError, atomic=True)
+            rejected(lambda archive=archive: update(archive, remarks="只读员工修改"), frappe.PermissionError, atomic=True)
+        frappe.set_user(managers["sales_manager"])
+        for dictionary_type in new_types:
+            foreign_archive, foreign_values = matrix[(other_company, dictionary_type)], matrix_payloads[(other_company, dictionary_type)]
+            for action in (
+                lambda dictionary_type=dictionary_type: init_dictionary(dictionary_type, other_company),
+                lambda dictionary_type=dictionary_type: list_dictionary(dictionary_type, other_company),
+                lambda dictionary_type=dictionary_type, foreign_archive=foreign_archive:
+                    read_dictionary(foreign_archive["name"], dictionary_type),
+                lambda dictionary_type=dictionary_type, foreign_values=foreign_values:
+                    resolve_creation(foreign_values["request_id"], dictionary_type, other_company),
+            ):
+                rejected(action, frappe.PermissionError)
+            rejected(lambda dictionary_type=dictionary_type: save_dictionary(
+                payload(company=other_company, dictionary_type=dictionary_type)), frappe.PermissionError, atomic=True)
+        assert _customer_metadata() == customer_meta_before
         passed()
 
         current = "invalid_names_flags_types_uuid_parameters_rejected_atomically"

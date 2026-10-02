@@ -4,6 +4,7 @@ import ast
 from copy import deepcopy
 from datetime import datetime, timedelta
 from functools import wraps
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -16,6 +17,13 @@ from uuid import uuid4
 
 ROOT = Path(__file__).parents[1]
 DOCTYPE = "Jifeng Customer Type"
+EXPECTED_TYPES = {
+    "客户类型": "customer_type",
+    "客户等级": "customer_grade",
+    "客户分类": "customer_category",
+    "订单客户分类": "order_category",
+    "订单客户级别": "order_grade",
+}
 SCHEMA = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_customer_type/jifeng_customer_type.json").read_text(encoding="utf-8"))
 
 
@@ -252,7 +260,8 @@ class CustomerTypeTest(unittest.TestCase):
         self.assertEqual((self.documents, self.versions, self.series), before)
 
     def test_atomic_post_save_failure_restores_native_records_series_and_existing_context(self):
-        marker = lambda: None
+        def marker():
+            return None
         self.db.after_commit.add(marker)
         self.frappe.flags.currently_saving = ["prior context"]
         before = deepcopy((self.documents, self.versions, self.series))
@@ -322,7 +331,8 @@ class CustomerTypeTest(unittest.TestCase):
         self.frappe.get_all.assert_not_called()
 
     def test_paging_counts_only_readable_and_search_filters_cannot_use_hidden_field(self):
-        a, b = self.saved(), self.saved(value="another")
+        self.saved()
+        b = self.saved(value="another")
         self.document_denials.add(b["name"])
         result = self.module.list_dictionary("客户类型", "C-1", search="001", include_inactive="1")
         self.assertEqual((result["total"], result["company"], result["dictionary_type"], result["search"], result["include_inactive"]),
@@ -461,6 +471,204 @@ class CustomerTypeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "删除尚未实现"):
             self.module.prevent_delete(self.get_doc(DOCTYPE, archive["name"]))
         self.assertIn(archive["name"], self.documents)
+
+    def test_five_dictionary_types_keep_schema_columns_default_and_permissions(self):
+        self.assertEqual(self.module.TYPES, EXPECTED_TYPES)
+        field = self.meta.get_field("dictionary_type")
+        self.assertEqual(field.options.splitlines(), list(EXPECTED_TYPES))
+        self.assertEqual((field.default, field.fieldtype, field.set_only_once), ("客户类型", "Select", 1))
+        columns = ["company", "dictionary_type", "legacy_number", "value", "remarks", "abbreviation",
+                   "inactive", "numbering_mode", "request_id", "request_digest"]
+        self.assertEqual(SCHEMA["field_order"], columns)
+        self.assertEqual([row["fieldname"] for row in SCHEMA["fields"]], columns)
+        self.assertEqual(SCHEMA["permissions"], [
+            {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+            {"role": "Sales Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+            {"role": "Sales User", "read": 1, "select": 1},
+        ])
+
+    def test_series_keys_fit_native_varchar100_without_changing_existing_scopes(self):
+        # The real native experiment found tabSeries.name is varchar(100).
+        # Company identifiers are hashed; even a full-length Unicode company
+        # name must fit without shortening or colliding with another scope.
+        companies = ("C-1", "集" * 140)
+        expected_lengths = {"客户类型": 91, "客户等级": 92, "客户分类": 95,
+                            "订单客户分类": 92, "订单客户级别": 89}
+        keys = [self.module._series_key(company, dictionary_type)
+                for company in companies for dictionary_type in EXPECTED_TYPES]
+        self.assertEqual(len(set(keys)), 10)
+        for company in companies:
+            for dictionary_type, expected_length in expected_lengths.items():
+                with self.subTest(company=company, dictionary_type=dictionary_type):
+                    key = self.module._series_key(company, dictionary_type)
+                    self.assertTrue(key.isascii())
+                    self.assertEqual(len(key), expected_length)
+                    self.assertLessEqual(len(key), 100)
+                    for original_type in ("客户类型", "客户等级", "客户分类"):
+                        original_key = "JF-CUST-T-N-" + hashlib.sha256(company.encode()).hexdigest() + "-" + EXPECTED_TYPES[original_type] + "-"
+                        self.assertEqual(self.module._series_key(company, original_type), original_key)
+
+    def test_company_and_type_counters_and_same_name_lists_are_independent(self):
+        original_key = "JF-CUST-T-N-" + hashlib.sha256(b"C-1").hexdigest() + "-customer_type-"
+        self.assertEqual(self.module._series_key("C-1", "客户类型"), original_key)
+        self.series[original_key] = 7
+        archives = {}
+        for company in ("C-1", "C-2"):
+            for dictionary_type, code in EXPECTED_TYPES.items():
+                with self.subTest(company=company, dictionary_type=dictionary_type):
+                    key = "JF-CUST-T-N-" + hashlib.sha256(company.encode()).hexdigest() + "-" + code + "-"
+                    self.assertEqual(self.module._series_key(company, dictionary_type), key)
+                    start = 8 if key == original_key else 1
+                    self.assertEqual(self.module.init_dictionary(dictionary_type, company)["number_preview"], str(start).zfill(3))
+                    rows = [self.saved(company=company, dictionary_type=dictionary_type, value="共同名称") for _ in range(2)]
+                    archives[(company, dictionary_type)] = rows
+                    self.assertEqual([row["legacy_number"] for row in rows], [str(start).zfill(3), str(start + 1).zfill(3)])
+                    self.assertEqual(self.module.init_dictionary(dictionary_type, company)["number_preview"], str(start + 2).zfill(3))
+        self.assertEqual(len(self.series), 10)
+        self.assertEqual(self.series[original_key], 9)
+        for (company, dictionary_type), rows in archives.items():
+            with self.subTest(company=company, dictionary_type=dictionary_type):
+                result = self.module.list_dictionary(dictionary_type, company, search="共同名称")
+                self.assertEqual(result["total"], 2)
+                self.assertEqual({row["name"] for row in result["rows"]}, {row["name"] for row in rows})
+                self.assertTrue(all((row["company"], row["dictionary_type"]) == (company, dictionary_type) for row in result["rows"]))
+
+    def test_cross_type_uuid_is_not_found_and_collision_rolls_back_without_receipt_reuse(self):
+        for dictionary_type in EXPECTED_TYPES:
+            with self.subTest(dictionary_type=dictionary_type):
+                payload = self.payload(dictionary_type=dictionary_type)
+                archive = self.module.save_dictionary(payload)
+                current = self.update(archive, remarks="后续备注")
+                before = deepcopy((self.documents, self.versions, self.series))
+                allocations = self.allocate.call_count
+                self.assertEqual(self.module.save_dictionary(payload), current)
+                self.assertEqual(self.allocate.call_count, allocations)
+                self.assertEqual(self.module.resolve_creation(payload["request_id"], dictionary_type, "C-1"),
+                                 {"status": "found", "archive": current})
+                for target_type in set(EXPECTED_TYPES) - {dictionary_type}:
+                    with self.subTest(target_type=target_type):
+                        self.assertEqual(self.module.resolve_creation(payload["request_id"], target_type, "C-1"), {"status": "not_found"})
+                        self.frappe.local.message_log = [{"message": "既有消息"}]
+                        with self.assertRaises(ValueError) as caught:
+                            self.module.save_dictionary(payload | {"dictionary_type": target_type})
+                        self.assertEqual(str(caught.exception), self.module.COLLISION)
+                        self.assertNotIn(archive["name"], str(caught.exception))
+                        self.assertEqual(self.frappe.local.message_log, [{"message": "既有消息"}])
+                        self.assertEqual((self.documents, self.versions, self.series), before)
+                self.assertEqual(self.module.resolve_creation(payload["request_id"], dictionary_type, "C-2"), {"status": "not_found"})
+                with self.assertRaisesRegex(ValueError, "身份冲突"):
+                    self.module.save_dictionary(payload | {"company": "C-2"})
+                self.assertEqual((self.documents, self.versions, self.series), before)
+
+    def test_explicit_type_read_and_native_or_api_identity_change_reject_wrong_dictionary(self):
+        for dictionary_type in EXPECTED_TYPES:
+            archive = self.saved(dictionary_type=dictionary_type)
+            self.assertEqual(self.module.read_dictionary(archive["name"], dictionary_type)["dictionary_type"], dictionary_type)
+            before = deepcopy((self.documents, self.versions, self.series))
+            for target_type in set(EXPECTED_TYPES) - {dictionary_type}:
+                with self.subTest(dictionary_type=dictionary_type, target_type=target_type):
+                    with self.assertRaisesRegex(ValueError, "词条类型.*不一致"):
+                        self.module.read_dictionary(archive["name"], target_type)
+                    with self.assertRaisesRegex(ValueError, "不能修改"):
+                        self.update(archive, dictionary_type=target_type)
+                    document = self.get_doc(DOCTYPE, archive["name"])
+                    document.dictionary_type = target_type
+                    with self.assertRaisesRegex(ValueError, "不能修改"):
+                        document.save()
+                    self.assertEqual((self.documents, self.versions, self.series), before)
+
+    def test_new_types_stale_version_and_masks_preserve_hidden_original_fields(self):
+        for dictionary_type in list(EXPECTED_TYPES)[1:]:
+            with self.subTest(dictionary_type=dictionary_type):
+                archive = self.saved(dictionary_type=dictionary_type, remarks=dictionary_type + " 私有备注")
+                current = self.update(archive, value="后续名称")
+                before = deepcopy((self.documents, self.versions, self.series))
+                with self.assertRaises(RuntimeError):
+                    self.update(archive, value="过期覆盖")
+                self.assertEqual((self.documents, self.versions, self.series), before)
+                self.assertTrue(self.frappe.get_doc.call_args_list[-1].kwargs.get("for_update"))
+                self.meta.get_field("remarks").mask = 1
+                self.assertNotIn("remarks", self.module.read_dictionary(current["name"], dictionary_type))
+                self.assertTrue(all("remarks" not in row for row in self.module.list_dictionary(dictionary_type, "C-1")["rows"]))
+                visible = self.module.save_dictionary({"name": current["name"], "version": current["version"],
+                    "company": "C-1", "dictionary_type": dictionary_type, "value": "可见字段修改"})
+                self.assertNotIn("remarks", visible)
+                self.assertEqual(self.documents[current["name"]]["remarks"], archive["remarks"])
+                before = deepcopy((self.documents, self.versions, self.series))
+                with self.assertRaises(PermissionError):
+                    self.update(visible, remarks="掩码字段写入")
+                self.assertEqual((self.documents, self.versions, self.series), before)
+                self.meta.get_field("remarks").mask = 0
+                for required in ("value", "dictionary_type"):
+                    self.meta.get_field(required).mask = 1
+                    try:
+                        for action in (lambda: self.module.read_dictionary(visible["name"], dictionary_type),
+                                       lambda: self.module.list_dictionary(dictionary_type, "C-1"),
+                                       lambda: self.update(visible, value="无权覆盖")):
+                            with self.subTest(required=required), self.assertRaises(PermissionError):
+                                action()
+                        self.assertEqual((self.documents, self.versions, self.series), before)
+                    finally:
+                        self.meta.get_field(required).mask = 0
+
+    def test_second_scan_type_drift_rejects_entire_new_type_query(self):
+        original = self.frappe.get_list.side_effect
+        counterparts = {"客户等级": "订单客户级别", "订单客户级别": "客户等级",
+                        "客户分类": "订单客户分类", "订单客户分类": "客户分类"}
+        for dictionary_type, counterpart in counterparts.items():
+            archive = self.saved(dictionary_type=dictionary_type)
+            calls = 0
+            def drift(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    self.documents[archive["name"]]["dictionary_type"] = counterpart
+                return original(*args, **kwargs)
+            before = deepcopy((self.versions, self.series))
+            self.frappe.get_list.side_effect = drift
+            try:
+                with self.subTest(dictionary_type=dictionary_type), self.assertRaisesRegex(ValueError, "来源已变化"):
+                    self.module.list_dictionary(dictionary_type, "C-1")
+                self.assertEqual(calls, 2)
+                self.assertEqual((self.versions, self.series), before)
+                self.assertEqual(self.documents[archive["name"]]["dictionary_type"], counterpart)
+            finally:
+                self.frappe.get_list.side_effect = original
+
+    def test_new_types_sales_user_capabilities_are_quiet_and_native_company_guards_remain(self):
+        archives = {dictionary_type: self.saved(dictionary_type=dictionary_type)
+                    for dictionary_type in list(EXPECTED_TYPES)[1:]}
+        original = Document.has_permission
+        def noisy_permission(document, action):
+            allowed = original(document, action)
+            if not allowed:
+                self.frappe.local.message_log.append({"message": "native denial " + action})
+            return allowed
+        self.role_denials.update(("create", "write", "export", "delete"))
+        self.denied_companies.add("C-2")
+        with patch.object(Document, "has_permission", noisy_permission):
+            for dictionary_type, archive in archives.items():
+                with self.subTest(dictionary_type=dictionary_type):
+                    self.frappe.local.message_log = []
+                    before = deepcopy((self.documents, self.versions, self.series))
+                    responses = (self.module.init_dictionary(dictionary_type), self.module.init_dictionary(dictionary_type, "C-1"),
+                                 self.module.read_dictionary(archive["name"], dictionary_type))
+                    self.assertTrue(all(not row["can_write"] for row in responses))
+                    self.assertTrue(all(row["field_meta"]["value"]["read_only"] for row in responses))
+                    self.assertEqual(self.module.list_dictionary(dictionary_type, "C-1")["total"], 1)
+                    self.assertEqual(self.frappe.local.message_log, [])
+                    for action in (lambda: self.saved(dictionary_type=dictionary_type),
+                                   lambda: self.update(archive, value="无权修改")):
+                        with self.assertRaises(PermissionError):
+                            action()
+                    self.assertEqual((self.documents, self.versions, self.series), before)
+                    for action in (lambda: self.module.init_dictionary(dictionary_type, "C-2"),
+                                   lambda: self.module.list_dictionary(dictionary_type, "C-2"),
+                                   lambda: self.module.resolve_creation(str(uuid4()), dictionary_type, "C-2"),
+                                   lambda: self.saved(dictionary_type=dictionary_type, company="C-2")):
+                        with self.assertRaisesRegex(PermissionError, "company permission"):
+                            action()
+                    self.assertEqual((self.documents, self.versions, self.series), before)
 
 
 if __name__ == "__main__":

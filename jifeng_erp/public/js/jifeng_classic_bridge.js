@@ -216,7 +216,8 @@ window.JifengClassicBridge = class JifengClassicBridge {
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
 		}
 		if (spec.customerType) {
-			const workbench = new window.JifengCustomerType(host);
+			const workbench = new window.JifengCustomerType(host,
+				spec.customerType === true ? "客户类型" : spec.customerType, spec.title);
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
 		}
 		const iframe = document.createElement("iframe");

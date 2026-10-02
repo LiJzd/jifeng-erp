@@ -1,7 +1,7 @@
-/* Sales customer types use their own records, separate from native Customer's legal types. */
+/* Customer vocabularies keep independent records, separate from native Customer's legal types. */
 window.JifengCustomerType = class JifengCustomerType extends window.JifengProductDictionary {
-	constructor(host) {
-		super(host, "客户类型", { api: "jifeng_erp.customer_type", title: "客户类型", hideAbbreviation: true, editorSuffix: true });
+	constructor(host, type = "客户类型", title = type) {
+		super(host, type, { api: "jifeng_erp.customer_type", title, hideAbbreviation: true, editorSuffix: true });
 	}
 
 	build() {
@@ -33,9 +33,11 @@ window.JifengCustomerType = class JifengCustomerType extends window.JifengProduc
 		this.limits = this.element("p", __("名称、备注和停用可保存；更新简拼、删除、打印暂不可用。"), "jfe-product-dictionary-limits");
 		this.status = this.element("p", __("正在读取权限…"), "jfe-product-dictionary-status"); this.status.setAttribute("role", "status");
 		this.scroller = this.element("div", undefined, "jfe-product-dictionary-scroll");
-		const table = this.element("table", undefined, "jfe-product-dictionary-table"); table.setAttribute("aria-label", __("客户类型"));
+		const table = this.element("table", undefined, "jfe-product-dictionary-table"); table.setAttribute("aria-label", __(this.dictionaryTitle));
 		const thead = this.element("thead"), headings = this.element("tr");
-		for (const label of ["编号", "名称", "简拼", "备注", "停用", "操作", "日期", "修改人", "修改时间", "修改", "删除"]) {
+		const labels = this.isOrderDictionary() ? ["编号", "名称", "备注", "简拼", "停用", "修改", "删除"] :
+			["编号", "名称", "简拼", "备注", "停用", "操作", "日期", "修改人", this.type === "客户类型" ? "修改时间" : "修改日期", "修改", "删除"];
+		for (const label of labels) {
 			const th = this.element("th", __(label)); th.scope = "col"; headings.append(th);
 		}
 		thead.append(headings); this.tbody = this.element("tbody"); table.append(thead, this.tbody); this.scroller.append(table);
@@ -50,6 +52,7 @@ window.JifengCustomerType = class JifengCustomerType extends window.JifengProduc
 	}
 
 	pageSize() { return Number(this.pageLength.value); }
+	isOrderDictionary() { return ["订单客户分类", "订单客户级别"].includes(this.type); }
 	changeScope() { this.start = 0; this.total = 0; this.loadedScope = null; this.updatePager(); super.changeScope(); }
 	updatePager() {
 		const page = this.total ? Math.floor(this.start / this.pageSize()) + 1 : 0;
@@ -90,10 +93,14 @@ window.JifengCustomerType = class JifengCustomerType extends window.JifengProduc
 
 	renderRow(row) {
 		const tr = this.element("tr");
-		for (const field of ["legacy_number", "value", "abbreviation", "remarks"]) tr.append(this.element("td", row[field] ?? ""));
+		const fields = this.isOrderDictionary() ? ["legacy_number", "value", "remarks", "abbreviation"] :
+			["legacy_number", "value", "abbreviation", "remarks"];
+		for (const field of fields) tr.append(this.element("td", row[field] ?? ""));
 		const inactive = this.element("td"), check = this.element("input"); check.type = "checkbox"; check.checked = !!Number(row.inactive); check.disabled = true;
 		check.setAttribute("aria-label", __("停用")); inactive.append(check); tr.append(inactive);
-		for (const field of ["owner", "creation", "modified_by", "version"]) tr.append(this.element("td", row[field] ?? ""));
+		if (!this.isOrderDictionary()) {
+			for (const field of ["owner", "creation", "modified_by", "version"]) tr.append(this.element("td", row[field] ?? ""));
+		}
 		const operation = this.element("td"); operation.append(this.button(this.readyArchive?.can_write ? "修改" : "查看", () => this.openEditor(row.name))); tr.append(operation);
 		const deletion = this.element("td"); deletion.append(this.button("删除", null, "删除尚未实现")); tr.append(deletion); this.tbody.append(tr);
 	}
