@@ -18,7 +18,8 @@ import frappe
 BENCH = Path("/home/frappe/frappe-bench")
 SITE = "jifeng-erp-test.localhost"
 DB_NAME = "jifeng_erp_test"
-SEED_NAMESPACE = "jifeng-qa-seed-r1"
+SEED_NAMESPACE = "jifeng-qa-seed-r2"
+WORKSPACE = "集沣生产协作"
 COMPANY = "集沣 QA 测试公司"
 QA_USER = "qa@jifeng.test"
 CUSTOMER = "QA 测试客户"
@@ -117,7 +118,7 @@ def preflight():
     require(bool(frappe.conf.mute_emails), "Test site must have mute_emails enabled")
     require(not frappe.conf.get("pulse_api_key") and not frappe.conf.get("pulse_force_enabled"), "Telemetry provider configured on QA site")
     for doctype, value in (("User", QA_USER), ("Item", "JF-QA-RAW-001"), ("Item", "JF-QA-RAW-002"),
-                          ("Item", "JF-QA-FG-001"), ("Workspace", "Jifeng ERP")):
+                          ("Item", "JF-QA-FG-001"), ("Workspace", WORKSPACE)):
         expected = doctype == "Workspace"
         require(bool(frappe.db.exists(doctype, value)) == expected, "Unexpected QA namespace or missing workspace: " + doctype)
     require(not frappe.db.exists("Customer", {"customer_name": CUSTOMER}), "QA customer already exists")
@@ -186,7 +187,7 @@ def seed_business(receipt, password):
     user = insert(receipt, {
         "doctype": "User", "email": QA_USER, "first_name": "业务测试主管", "enabled": 1,
         "user_type": "System User", "language": "zh", "time_zone": "Asia/Shanghai",
-        "send_welcome_email": 0, "default_workspace": "Jifeng ERP",
+        "send_welcome_email": 0, "default_workspace": WORKSPACE,
         "roles": [{"role": role} for role in ROLES],
     })
     update_password(user.name, password)
