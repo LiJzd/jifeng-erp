@@ -7,6 +7,16 @@
 
 当前业务源码固定为 `5aa4b3b9b252c1879c299850557750c666d8cb83`。原运行镜像基线源码为 `8858743800efe1836ac53f5c3de6644dab4e7923`，Frappe 16.35.0、ERPNext 16.36.0、HRMS 16.20.0 及其已构建资源保持固定。共用业务工作台核心，界面不各自计算或存储业务数据。
 
+## 2026-10-03 客户字典候选停止，恢复原测试版
+
+当前仍运行 `5aa4b3b`，启动命令继续使用下节的 `5aa4b3b-source-r1` 覆盖文件。`0f84e22` 公开候选包上传、488文件校验及服务器本地复制完成，但没有切换运行。第一次 prepare 因主机没有 Git 而失败；改为固定镜像内核验后，独立 prepare 完成。quiesce 的完整 before 因非 InnoDB 表拒绝，发生在任何客户字典元数据写入前。本轮完整 before 和四部件备份没有完成，没有执行 DDL、全站 migrate、reload 或 seed。
+
+回滚已实际完成：五个应用恢复旧源码只读挂载，站点配置原字节、所有权及权限恢复，三个数据服务保持。独立确认后端 Git 为 `5aa4b3b`、八个原生任务运行、maintenance=0。外部可信 HTTPS 登录页/ping 正常；受限账号接口登录及 A/B 认证后页面均200。这些检查不替代界面操作和全模块业务验收。
+
+外网919张来源/Auth表中只有 `tabData Import Log`、`tabError Log` 为 MyISAM；不能将其读取称为 InnoDB 一致性事务快照。新的独立读锁草案已审阅，实际探针启动超时、结果未知，未计通过；后续查询未见探针数据库连接残留。历史发布的表读取/hash结果保留，但不额外承诺 MyISAM 全库原子快照。
+
+本轮 Docker daemon 只重启一次，恢复时八个任务身份、PID/启动 tick 与保护配置保持；管理接口后来又超时，size 查询调用者仍未知。最新只读快照中 daemon RSS 约816 MiB、swap约987 MiB，`GOMEMLIMIT` 并非 RSS 硬上限，不能判定已稳定。本轮不继续新 r2 候选的 prepare/quiesce，所有失败和回滚证据保留。当前站点用于功能对照测试，尚未通过并发负载及全模块正式验收。
+
 ## 2026-10-03 源码增量发布
 
 外网A/B已运行`5aa4b3b`：使用原`8858743-test-r4`镜像，backend、worker、scheduler、websocket、frontend五个服务只读挂载`releases/5aa4b3b-source-r1/app`。应用Python依赖未变；488个源码文件及22个内容指纹资源已在容器内核验。实际后端Git提交、五个只读挂载和八服务running/restart0/noOOM均复核，数据库healthy；外网可信TLS登录页/ping200，22个CSS/JS全部HTTP200且逐字节SHA与候选一致。真实浏览器验收另见验证记录，不把静态HTTP视为登录业务验收。

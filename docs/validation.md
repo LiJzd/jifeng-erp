@@ -1,5 +1,23 @@
 # 验证记录
 
+## 2026-10-03 客户字典发布停止与外网恢复
+
+当前外网交付仍为 `5aa4b3b`；本地 `0f84e22` 未发布。公开包及服务器本地候选文件不构成发布成功。未继续新 r2 候选的 prepare/quiesce，冻结助手仅有静态复审和模拟证据。
+
+| 核验 | 实际结果 | 忽略目录证据 |
+|---|---|---|
+| 候选 | 488公开文件逐SHA解包通过；新r2目录仅服务器本地复制公开文件，运行未切换，未复制私有备份。 | `erp-customer-0f84-extract-20261003-r2.json`、`erp-customer-release-stage-20261003-r2.json` |
+| before失败 | 原生检查因 `non_snapshot_table` 拒绝，元数据未提交、无DDL；本轮完整before及四部分原生备份未完成，没有进入metadata阶段。 | `erp-customer-quiesce-diagnostic-20261003-r1.json` |
+| 引擎 | 919张来源/Auth表中仅Data Import Log、Error Log为MyISAM，数据库计划事件0；不改表引擎或删除日志。旧全表读取/hash证据不等于MyISAM获得事务快照。 | `erp-customer-engine-readonly-20261003-r1.json` |
+| 回滚 | 实际恢复五应用的5aa只读挂载、精确原配置；数据服务保持，物理只读缓存恢复通过，未执行元数据回滚SQL。 | `erp-customer-release-rollback-poll-20261003-r2.json` |
+| 管理与锁探针 | 单次daemon恢复后管理API再次超时；READ锁探针stdin启动超时、结果未知。后续native维护0，仅检查自身Query，无探针连接残留。不得计读锁通过或长期稳定。 | `erp-daemon-recovery-inspect-20261003-r3.json`、`erp-unknown-probe-inspect-20261003-r1.json` |
+| 恢复后运行 | 实际后端Git=5aa、八个原生任务RUNNING；daemon仍active但RSS836032 KiB/swap1011092 KiB。另有一个历史STOPPED工具任务，未当作业务服务。 | `erp-restored-runtime-readonly-20261003-r1.json` |
+| 外部HTTPS | HTTP301、可信TLS login200、ping200/pong；每个连接按准确源IP/端口及目的443/80核DIRECT。 | `erp_external_https_health_20261003_r1.json` |
+| 认证HTTP | 测试账号登录及get_logged_user正确。r1读取分块响应未读尽，下一请求报ResponseNotReady；r2完整读取后A/B认证页面均200且含集沣资源。GET退出403使脚本整体失败，退出未确认；不删除或重置其他会话。凭据及cookie仅RAM使用，未输出。 | `erp-authenticated-https-check-20261003-r1.json`、`erp-authenticated-https-check-20261003-r2.json` |
+| 本次浏览器 | gpt-6-luna发现旧A标签先500，刷新到登录页，无有效会话。受支持CUA缺少本地文件读取，无法在不把口令写入调用源码的前提下重登，未尝试未文档化桥接。未验本次A/B切换、保存、console/network或截图；既有成功浏览器证据按原范围保留。 | `customer-release-external-gui-20261003-r1/report.md`、`report.json` |
+
+上述文件均位于本地忽略目录 `output/`，服务器私有逐项证明仍保留于原发布目录。认证检查只产生登录活动/会话，不作全表内容保持证明。当前外网363入口仍为237正式映射、3部分可用、105业务预览、13导航、5工具；本地四个新词典入口及全模块正式验收继续待完成。
+
 ## 2026-10-03 本地客户字典增量
 
 销售客户等级/分类、订单客户分类/级别从业务预览接到同一客户词典API；各类型独立记录、计数及创建回执，原客户类型键、默认值、权限和Customer元数据保持。实际registry VM为363入口：237正式映射、7部分可用、101预览、13导航、5工具；四入口尚缺客户/单据联动、旧简拼/删除/打印，未计为全业务可用。外网仍运行`5aa4b3b`的3部分/105预览，本增量未部署。
