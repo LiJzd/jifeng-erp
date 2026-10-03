@@ -22,6 +22,42 @@ SPEC = importlib.util.spec_from_file_location(
 host = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(host)
 DIGEST = "a" * 64
+PACKAGE = {"source_files": 532, "archive_sha256": DIGEST, "archive_bytes": 3099538}
+
+
+def release_fixture():
+    manifest = {
+        "commit": host.NEW,
+        "previous_commit": host.OLD,
+        "base_image_tag": host.BASE_TAG,
+        "base_image_id": host.BASE_ID,
+        "release_kind": "read_only_source_bind_mount",
+        "runtime_services": list(host.RUNTIME),
+        "pyproject_unchanged_from_base": True,
+        "image_build": False,
+        "full_migrate": False,
+        "ddl_required": True,
+        "new_empty_doctypes": list(host.NEW_DOCTYPES),
+        "metadata_only_update": [],
+        "verified_doctype_js": deepcopy(host.DOCTYPE_JS),
+        **PACKAGE,
+    }
+    changes = {
+        "old_commit": host.OLD,
+        "new_commit": host.NEW,
+        "doctype": None,
+        "changes": {},
+    }
+    plan = {
+        "old_commit": host.OLD,
+        "new_commit": host.NEW,
+        "source_files": PACKAGE["source_files"],
+        "new_table_layout": {
+            "tab" + name: {"schema_sha256": DIGEST, "indexes_sha256": DIGEST}
+            for name in host.NEW_DOCTYPES
+        },
+    }
+    return manifest, changes, plan
 
 
 def container_fixture():
@@ -48,9 +84,166 @@ def container_fixture():
 
 
 class HostTests(unittest.TestCase):
-    def test_incoming_permissions_only_expose_audit_helper(self):
-        release, incoming, native, audit_path = (MagicMock() for unused in range(4))
-        release.__truediv__.return_value = incoming
+    def setUp(self):
+        self.package_patch = patch.object(host, "PACKAGE_PINS", deepcopy(PACKAGE))
+        self.public_patch = patch.object(
+            host, "PINS", {name: DIGEST for name in host.PUBLIC}
+        )
+        self.package_patch.start()
+        self.public_patch.start()
+        self.addCleanup(self.package_patch.stop)
+        self.addCleanup(self.public_patch.stop)
+
+    def test_release_scope_accepts_reviewed_package_without_widening_targets(self):
+        host.release_scope(*release_fixture())
+        self.assertEqual(host.OLD, "4d71c354d3f3f281d21d3d16b496bb6e5434e655")
+        self.assertEqual(host.NEW, "18e5835cfda4171ec691d5e701c8f42018b5448c")
+        self.assertEqual(host.RELEASE.name, "18e5835-source-r1")
+        self.assertEqual(host.OLD_OVERLAY.name, "compose.source.r2.yaml")
+        self.assertEqual(host.OVERLAY.name, "newcompose.source.r1.yaml")
+
+    def test_release_scope_rejects_existing_metadata_and_any_other_ddl(self):
+        for target, key, value in (
+            (0, "commit", "b" * 40),
+            (0, "source_files", 505),
+            (0, "full_migrate", True),
+            (0, "image_build", True),
+            (0, "new_empty_doctypes", ["Jifeng Customer Profile"]),
+            (0, "metadata_only_update", ["customer.label"]),
+            (1, "doctype", "Customer"),
+            (1, "changes", {"customer": {"read_only": {"old": 1, "new": 0}}}),
+            (2, "source_files", 533),
+            (2, "new_commit", "b" * 40),
+            (2, "path", "/opt/another-release"),
+            (2, "new_table_layout", {"tabCustomer": {}}),
+        ):
+            with self.subTest(target=target, key=key):
+                values = release_fixture()
+                values[target][key] = value
+                with self.assertRaises(RuntimeError):
+                    host.release_scope(*values)
+
+    def test_layout_pins_and_package_measurements_are_required(self):
+        for value in (None, {}, {"schema_sha256": DIGEST, "indexes_sha256": "bad"}):
+            with self.subTest(layout=value):
+                values = release_fixture()
+                values[2]["new_table_layout"]["tabJifeng Order Operation"] = value
+                with self.assertRaisesRegex(RuntimeError, "native_layout_pins"):
+                    host.release_scope(*values)
+        for key, value in (
+            ("source_files", True),
+            ("source_files", 505),
+            ("archive_bytes", 0),
+            ("archive_sha256", "not-a-hash"),
+        ):
+            with self.subTest(key=key, value=value):
+                pins = dict(PACKAGE, **{key: value})
+                with patch.object(host, "PACKAGE_PINS", pins):
+                    with self.assertRaisesRegex(RuntimeError, "package_pins_required"):
+                        host.package_pins_valid()
+
+    def test_prior_receipt_requires_same_package_and_plan(self):
+        receipt = {
+            "passed": True,
+            "phase": "prepare",
+            "commit": host.NEW,
+            "package_pins": deepcopy(PACKAGE),
+            "plan_sha256": DIGEST,
+        }
+        with patch.object(host, "read_json", return_value=receipt):
+            self.assertEqual(host.success("prepare"), receipt)
+            for key, value in (
+                ("package_pins", dict(PACKAGE, archive_bytes=1)),
+                ("plan_sha256", "b" * 64),
+            ):
+                changed = dict(receipt, **{key: value})
+                with patch.object(host, "read_json", return_value=changed):
+                    with self.assertRaisesRegex(RuntimeError, "prior_phase_not_passed"):
+                        host.success("prepare")
+
+    def test_overlay_replaces_old_tools_and_preserves_all_eight_services(self):
+        for changed in (None, "backend", "db", "unknown-service"):
+            with self.subTest(changed=changed):
+                prior = {
+                    "name": "jifeng-erp-test",
+                    "services": {
+                        name: {
+                            "image": host.BASE_TAG,
+                            "restart": "unless-stopped",
+                            "volumes": [
+                                {
+                                    "type": "bind",
+                                    "source": str(host.OLD_RELEASE / "app"),
+                                    "target": host.APP_TARGET,
+                                    "read_only": True,
+                                }
+                            ]
+                            if name in host.RUNTIME
+                            else [],
+                        }
+                        for name in host.RUNTIME + host.DATA
+                    },
+                }
+                for name in host.TOOLS:
+                    prior["services"][name] = {"old_backup": "old-private-only"}
+                if changed == "unknown-service":
+                    prior["services"][changed] = {"image": host.BASE_TAG}
+                overlay = {}
+
+                def written(path, content, mode):
+                    self.assertEqual(path, host.OVERLAY)
+                    self.assertEqual(mode, 0o644)
+                    overlay.update(json.loads(content))
+
+                def resolved(label, argv, **kwargs):
+                    self.assertTrue(kwargs["redact_output"])
+                    if label == "old-compose-config":
+                        return json.dumps(prior).encode()
+                    current = deepcopy(prior)
+                    for name, settings in overlay["services"].items():
+                        if name in host.RUNTIME:
+                            current["services"][name]["volumes"] = settings["volumes"]
+                        else:
+                            settings = deepcopy(settings)
+                            settings["mem_limit"] = 768 * 1024 * 1024
+                            settings["memswap_limit"] = 1024 * 1024 * 1024
+                            current["services"][name] = settings
+                    if changed in host.RUNTIME + host.DATA:
+                        current["services"][changed]["restart"] = "always"
+                    return json.dumps(current).encode()
+
+                with (
+                    patch.object(host, "write_new", side_effect=written),
+                    patch.object(host, "command", side_effect=resolved),
+                ):
+                    if changed:
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "existing_service_config_changed|compose_service_set_changed",
+                        ):
+                            host.make_overlay()
+                    else:
+                        host.make_overlay()
+                tool = overlay["services"]["erp-release-before"]
+                mounts = {item["target"]: item for item in tool["volumes"]}
+                self.assertEqual(
+                    mounts[host.APP_TARGET]["source"], str(host.OLD_RELEASE / "app")
+                )
+                self.assertEqual(
+                    mounts["/opt/source-release-backup"]["source"], str(host.PRIVATE)
+                )
+                self.assertFalse(mounts["/opt/source-release-backup"]["read_only"])
+                self.assertEqual(
+                    set(overlay["services"]), set(host.RUNTIME + host.TOOLS)
+                )
+
+    def test_incoming_permissions_only_chown_audit_plan_and_directory(self):
+        release, incoming, native, audit_path, plan = (
+            MagicMock() for unused in range(5)
+        )
+        release.__truediv__.side_effect = lambda name: (
+            incoming if name == "incoming" else plan
+        )
         incoming.lstat.return_value = SimpleNamespace(
             st_mode=0o40700, st_uid=0, st_gid=0
         )
@@ -58,6 +251,7 @@ class HostTests(unittest.TestCase):
             path.stat.return_value = SimpleNamespace(
                 st_mode=0o100600, st_uid=0, st_gid=0
             )
+        plan.stat.return_value = SimpleNamespace(st_mode=0o100644, st_uid=0, st_gid=0)
         with (
             patch.object(host, "RELEASE", release),
             patch.object(host, "NATIVE", native),
@@ -69,8 +263,65 @@ class HostTests(unittest.TestCase):
             host.incoming_permissions()
         self.assertEqual(
             [call.args for call in chown.call_args_list],
-            [(incoming, 1000, 1000), (audit_path, 1000, 1000)],
+            [(incoming, 1000, 1000), (audit_path, 1000, 1000), (plan, 1000, 1000)],
         )
+
+    def test_initial_plan_owner_mode_rejected_before_any_chown(self):
+        for owner, mode in ((1000, 0o100644), (0, 0o100600), (0, 0o100666)):
+            with self.subTest(owner=owner, mode=mode):
+                release, incoming, native, audit_path, plan = (
+                    MagicMock() for unused in range(5)
+                )
+                release.__truediv__.side_effect = lambda name: (
+                    incoming if name == "incoming" else plan
+                )
+                incoming.lstat.return_value = SimpleNamespace(
+                    st_mode=0o40700, st_uid=0, st_gid=0
+                )
+                for path in (native, audit_path):
+                    path.stat.return_value = SimpleNamespace(
+                        st_mode=0o100600, st_uid=0, st_gid=0
+                    )
+                plan.stat.return_value = SimpleNamespace(
+                    st_mode=mode, st_uid=owner, st_gid=owner
+                )
+                with (
+                    patch.object(host, "RELEASE", release),
+                    patch.object(host, "NATIVE", native),
+                    patch.object(host, "AUDIT", audit_path),
+                    patch.object(host, "read_regular", return_value=b"reviewed"),
+                    patch.object(host.os, "chown", create=True) as chown,
+                    patch.object(host, "private_directory"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "initial_plan_identity"):
+                        host.incoming_permissions()
+                chown.assert_not_called()
+
+    def test_ready_requires_exact_plan_owner_mode(self):
+        release, native, audit_path, plan = (MagicMock() for unused in range(4))
+        release.__truediv__.return_value = plan
+        native.stat.return_value = SimpleNamespace(st_mode=0o100600, st_uid=0, st_gid=0)
+        audit_path.stat.return_value = SimpleNamespace(
+            st_mode=0o100600, st_uid=1000, st_gid=1000
+        )
+        with (
+            patch.object(host, "RELEASE", release),
+            patch.object(host, "NATIVE", native),
+            patch.object(host, "AUDIT", audit_path),
+            patch.object(host, "read_regular", return_value=b"reviewed"),
+            patch.object(host, "private_directory"),
+        ):
+            plan.stat.return_value = SimpleNamespace(
+                st_mode=0o100644, st_uid=1000, st_gid=1000
+            )
+            host.incoming_ready()
+            for owner, mode in ((0, 0o100644), (1000, 0o100600)):
+                with self.subTest(owner=owner, mode=mode):
+                    plan.stat.return_value = SimpleNamespace(
+                        st_mode=mode, st_uid=owner, st_gid=owner
+                    )
+                    with self.assertRaisesRegex(RuntimeError, "ready_plan_identity"):
+                        host.incoming_ready()
 
     def test_python36_syntax_and_exact_phase_cli(self):
         ast.parse(
@@ -194,9 +445,10 @@ class HostTests(unittest.TestCase):
         result = {
             "passed": True,
             "mode": "before",
-            "protected_table_count": 927,
-            "total_table_count": 927,
+            "protected_table_count": 929,
+            "total_table_count": 929,
             "proof_sha256": DIGEST,
+            "plan_sha256": DIGEST,
             "backups": ["four-reviewed-parts"],
         }
         with (
@@ -212,18 +464,20 @@ class HostTests(unittest.TestCase):
         argv = command.call_args.args[1]
         self.assertIn("erp-release-before", argv)
         self.assertIn("--audit-sha", argv)
+        self.assertEqual(argv[argv.index("--plan-sha256") + 1], DIGEST)
         self.assertNotIn("--before-sha", argv)
         self.assertNotIn("bench", argv)
         proof.assert_called_once_with("before.json", DIGEST)
         backups.assert_called_once_with(result["backups"])
 
-    def test_native_apply_requires_sha_pinned_baseline_and_929(self):
+    def test_native_apply_requires_sha_pinned_baseline_and_931(self):
         result = {
             "passed": True,
             "mode": "apply",
-            "protected_table_count": 927,
-            "total_table_count": 929,
+            "protected_table_count": 929,
+            "total_table_count": 931,
             "proof_sha256": DIGEST,
+            "plan_sha256": DIGEST,
         }
         with (
             patch.object(host, "HELPER_PINS", {"audit": DIGEST}),
@@ -245,8 +499,16 @@ class HostTests(unittest.TestCase):
     def test_preflight_has_no_sql(self):
         result = {
             "passed": True,
-            "source_files": 505,
-            "hook_count": 25,
+            "source_files": PACKAGE["source_files"],
+            "hook_count": 28,
+            "doctype_js": {
+                "Sales Order": {
+                    "path": "app/jifeng_erp/public/js/jifeng_sales_order.js",
+                    "bytes": len(b"native"),
+                    "sha256": host.DOCTYPE_JS["Sales Order"]["sha256"],
+                }
+            },
+            "plan_sha256": DIGEST,
             "backup_implementation_verified": True,
             "sql_connected": False,
         }
@@ -259,11 +521,75 @@ class HostTests(unittest.TestCase):
             host.native("preflight")
         proof.assert_not_called()
 
+    def test_cache_requires_current_sales_order_form_without_gui_claim(self):
+        result = {
+            "passed": True,
+            "mode": "cache",
+            "protected_table_count": 929,
+            "total_table_count": 931,
+            "proof_sha256": DIGEST,
+            "plan_sha256": DIGEST,
+            "cache": {
+                "effective_hooks": 28,
+                "app_include_css": 10,
+                "app_include_js": 18,
+                "order_js_sha256": host.DOCTYPE_JS["Sales Order"]["sha256"],
+                "form_meta_js_sha256": DIGEST,
+                "source_current": True,
+                "cached_current": True,
+                "gui_tested": False,
+            },
+        }
+        with (
+            patch.object(host, "HELPER_PINS", {"audit": DIGEST}),
+            patch.object(host, "success", return_value={"before_sha256": DIGEST}),
+            patch.object(host, "command") as command,
+            patch.object(host, "read_regular", return_value=b"reviewed-native"),
+            patch.object(host, "proof_sha"),
+        ):
+            command.return_value = json.dumps(result).encode()
+            self.assertEqual(host.native("cache"), result)
+            for key, value in (
+                ("effective_hooks", 25),
+                ("order_js_sha256", "b" * 64),
+                ("form_meta_js_sha256", ""),
+                ("cached_current", False),
+                ("gui_tested", True),
+            ):
+                with self.subTest(key=key):
+                    changed = deepcopy(result)
+                    changed["cache"][key] = value
+                    command.return_value = json.dumps(changed).encode()
+                    with self.assertRaisesRegex(RuntimeError, "native_cache_form_meta"):
+                        host.native("cache")
+
+    def test_native_wrong_plan_receipt_fails_before_accepting_backup(self):
+        result = {
+            "passed": True,
+            "mode": "before",
+            "protected_table_count": 929,
+            "total_table_count": 929,
+            "proof_sha256": DIGEST,
+            "plan_sha256": "b" * 64,
+            "backups": [],
+        }
+        with (
+            patch.object(host, "HELPER_PINS", {"audit": DIGEST}),
+            patch.object(host, "command", return_value=json.dumps(result).encode()),
+            patch.object(host, "read_regular", return_value=b"reviewed-native"),
+            patch.object(host, "proof_sha") as proof,
+            patch.object(host, "backup_proof") as backups,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "native_full_inventory_proof"):
+                host.native("before", old=True)
+        proof.assert_not_called()
+        backups.assert_not_called()
+
     def common_phase_mocks(self, stack):
         records = []
         values = {"native": {"proof_sha256": DIGEST}, "before_sha256": DIGEST}
         for name, value in (
-            ("candidate", {"source_files": 505}),
+            ("candidate", {"source_files": PACKAGE["source_files"]}),
             ("old_source", None),
             ("manager_gate", "26.1.3"),
             ("success", values),
@@ -281,7 +607,6 @@ class HostTests(unittest.TestCase):
             ("containers", container_fixture()),
         ):
             stack.enter_context(patch.object(host, name, return_value=value))
-        stack.enter_context(patch.object(host, "PINS", {}))
         stack.enter_context(patch.object(host, "HELPER_PINS", {}))
         stack.enter_context(patch.object(host, "PHASE_DIR", Path("mock-phase")))
         stack.enter_context(
@@ -293,9 +618,15 @@ class HostTests(unittest.TestCase):
                 ),
             )
         )
-        host.read_json.side_effect = lambda path: (
-            {"sha256": DIGEST} if path.name == "overlay-sha.json" else {}
-        )
+
+        def receipt(path):
+            return {
+                "overlay-sha.json": {"sha256": DIGEST},
+                "public-pins.json": host.PINS,
+                "package-pins.json": host.PACKAGE_PINS,
+            }.get(path.name, {})
+
+        host.read_json.side_effect = receipt
         return records
 
     def test_every_phase_checks_candidate_before_action(self):
@@ -326,10 +657,28 @@ class HostTests(unittest.TestCase):
             self.assertFalse(failure["automatic_retry"])
             self.assertFalse(failure["automatic_rollback"])
 
+    def test_changed_package_after_prepare_blocks_native_and_config_mutation(self):
+        with ExitStack() as stack:
+            self.common_phase_mocks(stack)
+            prepared = dict(PACKAGE, archive_bytes=PACKAGE["archive_bytes"] + 1)
+            original_reader = host.read_json.side_effect
+            host.read_json.side_effect = lambda path: (
+                prepared if path.name == "package-pins.json" else original_reader(path)
+            )
+            native = stack.enter_context(patch.object(host, "native"))
+            command = stack.enter_context(patch.object(host, "command"))
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            self.assertEqual(host.phase("quiesce"), 1)
+            native.assert_not_called()
+            command.assert_not_called()
+            host.maintenance.assert_not_called()
+
     def test_changed_baseline_blocks_backup_and_release_mutations(self):
         with ExitStack() as stack:
             self.common_phase_mocks(stack)
-            host.old_source.side_effect = RuntimeError("baseline_source_content_changed")
+            host.old_source.side_effect = RuntimeError(
+                "baseline_source_content_changed"
+            )
             native = stack.enter_context(patch.object(host, "native"))
             command = stack.enter_context(patch.object(host, "command"))
             stack.enter_context(redirect_stdout(io.StringIO()))
@@ -393,10 +742,14 @@ class HostTests(unittest.TestCase):
             "--manifest-sha256",
             "--source-files-sha256",
             "--metadata-changes-sha256",
+            "--plan-sha256",
+            "--archive-sha256",
         ]
         argv = ["host", "prepare"]
         for flag in flags:
             argv.extend([flag, DIGEST])
+        argv.extend(["--archive-bytes", str(PACKAGE["archive_bytes"])])
+        argv.extend(["--source-files", str(PACKAGE["source_files"])])
         control, release = MagicMock(), MagicMock()
         control.exists.return_value = True
         release.is_dir.return_value, release.is_symlink.return_value = True, False

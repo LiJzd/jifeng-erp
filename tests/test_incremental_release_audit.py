@@ -21,7 +21,7 @@ ACTOR = "Administrator"
 
 
 def source_fixture():
-    commit = "4" * 40
+    commit = audit.NEW
     pack = "app/.git/objects/pack/pack-" + "a" * 40
     contents = {
         "app/.git/HEAD": (commit + "\n").encode(),
@@ -34,8 +34,14 @@ def source_fixture():
     for path in audit.SCHEMA_PATHS.values():
         contents[path] = (ROOT / path.removeprefix("app/")).read_bytes()
     hooks = []
-    for index in range(25):
-        relative = "js/resource_" + str(index) + ".js"
+    for index in range(audit.HOOK_COUNT):
+        suffix = ".css" if index < audit.CSS_COUNT else ".js"
+        relative = (
+            ("css/" if index < audit.CSS_COUNT else "js/")
+            + "resource_"
+            + str(index)
+            + suffix
+        )
         content = ("public resource " + str(index)).encode()
         contents["app/jifeng_erp/public/" + relative] = content
         hooks.append(
@@ -47,11 +53,16 @@ def source_fixture():
     plain_hooks = [url.split("?v=")[0] for url in hooks]
     contents["app/jifeng_erp/hooks.py"] = (
         "app_include_css = "
-        + repr(plain_hooks[:9])
+        + repr(plain_hooks[: audit.CSS_COUNT])
         + "\napp_include_js = "
-        + repr(plain_hooks[9:])
+        + repr(plain_hooks[audit.CSS_COUNT :])
+        + "\ndoctype_js = "
+        + repr(audit.DOCTYPE_JS)
         + "\n"
     ).encode()
+    contents["app/jifeng_erp/public/js/jifeng_sales_order.js"] = (
+        b"window.JifengOrderCustomerPicker = class JifengOrderCustomerPicker {};"
+    )
     manifest = {"commit": commit, "files": [], "hooks": hooks}
     inventory = {"app": {"kind": "directory", "mode": 0o755}}
     for path, content in sorted(contents.items()):
@@ -209,13 +220,7 @@ def delta_fixture():
                 row.update(parent=name, parenttype="DocType", parentfield=parentfield)
                 actual[parentfield].append(row)
         installed[name] = actual
-    patch = {
-        "dictionary_type": {
-            "label": {"old": "old label", "new": "new label"},
-            "options": {"old": "old options", "new": "new options"},
-        },
-        "value": {"description": {"old": "old description", "new": "new description"}},
-    }
+    patch = {}
     for idx, (field, changes) in enumerate(patch.items(), 1):
         row = full_row(
             {
@@ -252,7 +257,10 @@ def delta_fixture():
             "__default",
         }
     )
-    names |= {"fixture_table_" + str(index) for index in range(927 - len(names))}
+    names |= {
+        "fixture_table_" + str(index)
+        for index in range(audit.BEFORE_TABLES - len(names))
+    }
     tables = {
         name: {
             "engine": "MyISAM" if name in audit.MYISAM else "InnoDB",
@@ -318,7 +326,8 @@ class SourceAuditTests(unittest.TestCase):
         previous = deepcopy((self.manifest, self.inventory))
         result = self.verify()
         self.assertTrue(result["passed"])
-        self.assertEqual(result["hook_count"], 25)
+        self.assertEqual(result["hook_count"], 28)
+        self.assertIn("Sales Order", result["doctype_js"])
         for name, path in audit.SCHEMA_PATHS.items():
             self.assertEqual(
                 result["migration_hash"][name],
@@ -363,7 +372,7 @@ class SourceAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(audit.AuditError, "hook_fingerprint"):
             self.verify()
         self.manifest["hooks"].pop()
-        with self.assertRaisesRegex(audit.AuditError, "exact_25_hooks"):
+        with self.assertRaisesRegex(audit.AuditError, "exact_28_hooks"):
             self.verify()
 
     def test_unhashable_hook_rejected(self):
@@ -394,6 +403,64 @@ class SourceAuditTests(unittest.TestCase):
         with self.assertRaises(audit.AuditError):
             self.verify()
 
+    def test_previous_release_and_wrong_doctype_script_rejected(self):
+        self.manifest["commit"] = audit.OLD
+        with self.assertRaisesRegex(audit.AuditError, "new_release_commit_required"):
+            self.verify()
+        self.manifest["commit"] = audit.NEW
+        path = "app/jifeng_erp/hooks.py"
+        content = self.inventory[path]["content"].replace(
+            b"public/js/jifeng_sales_order.js", b"public/js/old_order.js"
+        )
+        self.inventory[path]["content"] = content
+        entry = next(item for item in self.manifest["files"] if item["path"] == path)
+        entry.update(bytes=len(content), sha256=hashlib.sha256(content).hexdigest())
+        with self.assertRaisesRegex(audit.AuditError, "sales_order_doctype_js"):
+            self.verify()
+
+
+class ReleasePlanTests(unittest.TestCase):
+    def setUp(self):
+        self.plan = {
+            "old_commit": audit.OLD,
+            "new_commit": audit.NEW,
+            "source_files": 532,
+            "new_table_layout": deepcopy(audit.APPROVED_NEW_TABLES),
+        }
+
+    def test_fixed_batch_and_reference_do_not_mutate_input(self):
+        previous = deepcopy(self.plan)
+        self.assertTrue(audit.verify_release_plan(self.plan)["passed"])
+        self.assertEqual(self.plan, previous)
+
+    def test_previous_release_count_and_unapproved_layout_rejected(self):
+        for key, value in (
+            ("new_commit", audit.OLD),
+            ("source_files", 505),
+            ("source_files", True),
+        ):
+            with self.subTest(key=key, value=value):
+                plan = deepcopy(self.plan)
+                plan[key] = value
+                with self.assertRaises(audit.AuditError):
+                    audit.verify_release_plan(plan)
+        self.plan["new_table_layout"]["tabJifeng Plating Color"]["schema_sha256"] = (
+            "0" * 64
+        )
+        with self.assertRaisesRegex(audit.AuditError, "approved_native_layout"):
+            audit.verify_release_plan(self.plan)
+
+    def test_arbitrary_target_and_source_path_rejected(self):
+        self.plan["source_path"] = "/elsewhere"
+        with self.assertRaises(audit.AuditError):
+            audit.verify_release_plan(self.plan)
+        self.plan.pop("source_path")
+        self.plan["new_table_layout"]["tabOperation"] = self.plan[
+            "new_table_layout"
+        ].pop("tabJifeng Order Operation")
+        with self.assertRaises(audit.AuditError):
+            audit.verify_release_plan(self.plan)
+
 
 class SnapshotAuditTests(unittest.TestCase):
     def setUp(self):
@@ -409,8 +476,8 @@ class SnapshotAuditTests(unittest.TestCase):
     def test_exact_batch_success_and_inputs_unchanged(self):
         previous = deepcopy(self.dto)
         result = self.verify()
-        self.assertEqual(result["before_tables"], 927)
-        self.assertEqual(result["after_tables"], 929)
+        self.assertEqual(result["before_tables"], 929)
+        self.assertEqual(result["after_tables"], 931)
         self.assertEqual(self.dto, previous)
 
     def test_global_missing_even_if_count_preserved(self):
@@ -443,13 +510,11 @@ class SnapshotAuditTests(unittest.TestCase):
 
     def test_wrong_added_table_even_same_count(self):
         tables = self.dto["after"]["tables"]
-        tables["tabJifeng Customer Profile Extra"] = tables.pop(
-            "tabJifeng Customer Profile"
-        )
+        tables["tabJifeng Plating Color Extra"] = tables.pop("tabJifeng Plating Color")
         self.reject("exact_added_tables")
 
     def test_nonempty_new_table_and_false_empty_hash(self):
-        table = self.dto["after"]["tables"]["tabJifeng Customer Profile"]
+        table = self.dto["after"]["tables"]["tabJifeng Plating Color"]
         table["rows"] = 1
         self.reject("empty_new_table")
         table["rows"], table["content_sha256"] = 0, "0" * 64
@@ -475,41 +540,30 @@ class SnapshotAuditTests(unittest.TestCase):
         self.dto["after"]["tables"]["tabDocType"]["rows"] += 1
         self.reject("metadata_partition_count")
 
-    def test_target_docfield_primary_key_or_owner_change(self):
-        baseline = deepcopy(self.dto)
-        for column in (
-            "name",
-            "owner",
-            "creation",
-            "idx",
-            "parentfield",
-            "permlevel",
-            "mask",
-        ):
-            with self.subTest(column=column):
-                self.dto = deepcopy(baseline)
-                self.dto["after"]["metadata"]["tabDocField"]["targets"]["value"][
-                    column
-                ] = "PRIVATE-SENTINEL"
-                self.reject("other_docfield_property_changed")
+    def test_existing_docfield_cannot_be_excluded_or_patched(self):
+        self.dto["docfield_changes"] = {
+            "value": {"description": {"old": "x", "new": "y"}}
+        }
+        self.reject("exact_keys:docfield_changes")
+        self.dto = delta_fixture()
+        self.dto["after"]["metadata"]["tabDocField"]["targets"]["value"] = {}
+        self.reject("exact_keys:tabDocField")
 
-    def test_patch_must_be_row_specific_and_exact(self):
-        row = self.dto["after"]["metadata"]["tabDocField"]["targets"]["value"]
-        row["label"] = "new label"
-        self.reject("other_docfield_property_changed")
-        row["label"] = "unchanged label"
-        row["description"] = "wrong description"
-        self.reject("exact_docfield_patch")
+    def test_existing_docfield_outside_changed(self):
+        self.dto["after"]["metadata"]["tabDocField"]["outside"]["sha256"] = "0" * 64
+        self.reject("outside_metadata_changed")
 
     def test_missing_full_column(self):
-        self.dto["after"]["metadata"]["tabDocField"]["targets"]["value"].pop("owner")
+        self.dto["after"]["metadata"]["tabDocField"]["new_parents"][audit.TARGETS[0]][
+            0
+        ].pop("owner")
         self.reject("exact_keys")
 
     def test_new_parent_wrong_scope(self):
         row = self.dto["after"]["metadata"]["tabDocField"]["new_parents"][
             audit.TARGETS[0]
         ][0]
-        row["parent"] = "Jifeng Customer Profile Extra"
+        row["parent"] = "Jifeng Plating Color Extra"
         self.reject("exact_new_parent_scope")
 
     def test_undeclared_permission_grant(self):
@@ -527,7 +581,7 @@ class SnapshotAuditTests(unittest.TestCase):
 
     def test_physical_unique_required_and_bound_to_table(self):
         indexes = self.dto["installed"][audit.TARGETS[0]]["indexes"]
-        indexes[:] = [row for row in indexes if row["Column_name"] != "binding_key"]
+        indexes[:] = [row for row in indexes if row["Column_name"] != "request_id"]
         self.reject("exact_unique_indexes")
 
     def test_prefix_unique_index_and_bool_sequence(self):
@@ -548,7 +602,7 @@ class SnapshotAuditTests(unittest.TestCase):
         self.reject("index_columns")
 
     def test_index_proof_changed(self):
-        self.dto["after"]["tables"]["tabJifeng Customer Profile"]["indexes_sha256"] = (
+        self.dto["after"]["tables"]["tabJifeng Plating Color"]["indexes_sha256"] = (
             "0" * 64
         )
         self.reject("installed_index_proof")
@@ -560,11 +614,19 @@ class SnapshotAuditTests(unittest.TestCase):
         self.reject("installed_full_rows_differ")
 
     def test_audit_actor_and_timestamp_exact(self):
-        row = self.dto["after"]["metadata"]["tabDocField"]["targets"]["value"]
+        row = self.dto["after"]["metadata"]["tabDocField"]["new_parents"][
+            audit.TARGETS[0]
+        ][0]
         row["modified_by"] = "unapproved actor"
-        self.reject("docfield_audit_fields")
+        self.dto["installed"][audit.TARGETS[0]]["fields"][0]["modified_by"] = (
+            "unapproved actor"
+        )
+        self.reject("new_metadata_audit")
         row["modified_by"], row["modified"] = ACTOR, END + timedelta(seconds=1)
-        self.reject("docfield_audit_fields")
+        self.dto["installed"][audit.TARGETS[0]]["fields"][0].update(
+            modified_by=ACTOR, modified=END + timedelta(seconds=1)
+        )
+        self.reject("new_metadata_audit")
 
     def test_native_wire_datetime_supported(self):
         self.dto = audit._wire(self.dto)

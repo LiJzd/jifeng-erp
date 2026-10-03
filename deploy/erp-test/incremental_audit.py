@@ -1,4 +1,4 @@
-"""Pure audits for the 5aa4b3b -> 4d71c35 ERP test release.
+"""Pure audits for the 4d71c35 -> 18e5835 ERP test release.
 
 No filesystem, SQL, process or network operations occur here. The caller must
 collect every physical table and exact SQL partitions from one protected
@@ -16,8 +16,24 @@ from pathlib import PurePosixPath
 import re
 
 
-TARGETS = ("Jifeng Customer Profile", "Jifeng Order Dictionary")
+OLD = "4d71c354d3f3f281d21d3d16b496bb6e5434e655"
+NEW = "18e5835cfda4171ec691d5e701c8f42018b5448c"
+TARGETS = ("Jifeng Plating Color", "Jifeng Order Operation")
 NEW_TABLES = {"tab" + name for name in TARGETS}
+BEFORE_TABLES, AFTER_TABLES = 929, 931
+HOOK_COUNT, CSS_COUNT, JS_COUNT = 28, 10, 18
+DOCTYPE_JS = {"Sales Order": "public/js/jifeng_sales_order.js"}
+UNIQUE_FIELDS = {TARGETS[0]: {"request_id"}, TARGETS[1]: {"operation", "request_id"}}
+APPROVED_NEW_TABLES = {
+    "tabJifeng Plating Color": {
+        "schema_sha256": "0b55b268de89ee896c6282851091d93c059712f7b7ef844c005951af244515da",
+        "indexes_sha256": "acae09d143fc6c3fac87c1edf105055b1fc771d85ebc6ec1e704c7b124e92d38",
+    },
+    "tabJifeng Order Operation": {
+        "schema_sha256": "ea038802a4d21eba4310f2009f8239a1f2997d8b100648b8f5d3e97809ee575c",
+        "indexes_sha256": "9e584f38328034f6b04596cd1fac42c6aaa2732bd1df84ec4a85a6187480fcc0",
+    },
+}
 MYISAM = {"tabData Import Log", "tabError Log", "__global_search"}
 META = {
     "tabDocType": None,
@@ -27,7 +43,7 @@ META = {
     "tabDocType Link": "links",
     "tabDocType State": "states",
 }
-PATCHES = {"dictionary_type": {"label", "options"}, "value": {"description"}}
+PATCHES = {}
 SCHEMA_PATHS = {
     name: "app/jifeng_erp/jifeng_erp/doctype/"
     + name.lower().replace(" ", "_")
@@ -162,8 +178,31 @@ def _path(value):
     return path
 
 
+def verify_release_plan(plan):
+    """Pin this batch and the separately measured isolated native SQL reference."""
+    _keys(
+        plan,
+        {"old_commit", "new_commit", "source_files", "new_table_layout"},
+        "release_plan",
+    )
+    _require(
+        plan["old_commit"] == OLD and plan["new_commit"] == NEW, "release_plan_commits"
+    )
+    _require(
+        type(plan["source_files"]) is int and plan["source_files"] > 505,
+        "new_release_source_files",
+    )
+    _keys(plan["new_table_layout"], NEW_TABLES, "new_table_layout")
+    for name, layout in plan["new_table_layout"].items():
+        _keys(layout, {"schema_sha256", "indexes_sha256"}, name)
+        for value in layout.values():
+            _hash(value, "approved_layout_hash")
+    _require(plan["new_table_layout"] == APPROVED_NEW_TABLES, "approved_native_layout")
+    return {"passed": True, "source_files": plan["source_files"]}
+
+
 def verify_source_manifest(manifest, observed_inventory):
-    """Check {commit, files:[path,bytes,sha256,mode], hooks:[25 URLs]}.
+    """Check {commit, files:[path,bytes,sha256,mode], hooks:[28 URLs]}.
 
     Inventory includes app and all descendants: directories {kind,mode}, files
     {kind,mode,content:bytes}. Modes and SHA are measured, never defaulted. The
@@ -171,8 +210,8 @@ def verify_source_manifest(manifest, observed_inventory):
     """
     _keys(manifest, {"commit", "files", "hooks"}, "source_manifest")
     _require(
-        isinstance(manifest["commit"], str) and COMMIT.fullmatch(manifest["commit"]),
-        "commit_required",
+        manifest["commit"] == NEW,
+        "new_release_commit_required",
     )
     _require(
         isinstance(manifest["files"], list) and isinstance(observed_inventory, dict),
@@ -271,10 +310,10 @@ def verify_source_manifest(manifest, observed_inventory):
     hooks = manifest["hooks"]
     _require(
         isinstance(hooks, list)
-        and len(hooks) == 25
+        and len(hooks) == HOOK_COUNT
         and all(isinstance(url, str) for url in hooks)
-        and len(set(hooks)) == 25,
-        "exact_25_hooks",
+        and len(set(hooks)) == HOOK_COUNT,
+        "exact_28_hooks",
     )
     for url in hooks:
         _require(
@@ -292,28 +331,68 @@ def verify_source_manifest(manifest, observed_inventory):
     _require(hooks_path in expected, "source_hooks_missing")
     try:
         tree = ast.parse(observed_inventory[hooks_path]["content"])
-        declared = {}
+        declared, doctype_js = {}, None
         for statement in tree.body:
-            if isinstance(statement, ast.Assign) and isinstance(
-                statement.value, ast.List
-            ):
+            if isinstance(statement, ast.Assign):
                 for target in statement.targets:
-                    if isinstance(target, ast.Name) and target.id in {
-                        "app_include_css",
-                        "app_include_js",
-                    }:
+                    if (
+                        isinstance(target, ast.Name)
+                        and target.id
+                        in {
+                            "app_include_css",
+                            "app_include_js",
+                        }
+                        and isinstance(statement.value, ast.List)
+                    ):
                         _require(
                             target.id not in declared, "source_hooks_duplicate_list"
                         )
                         declared[target.id] = ast.literal_eval(statement.value)
+                    if isinstance(target, ast.Name) and target.id == "doctype_js":
+                        _require(doctype_js is None, "source_doctype_js_duplicate")
+                        doctype_js = ast.literal_eval(statement.value)
     except (SyntaxError, ValueError, UnicodeError):
         raise AuditError("source_hooks_literal_lists") from None
     _keys(declared, {"app_include_css", "app_include_js"}, "source_hooks")
+    _require(
+        len(declared["app_include_css"]) == CSS_COUNT
+        and len(declared["app_include_js"]) == JS_COUNT,
+        "exact_10_css_18_js",
+    )
+    _require(
+        all(
+            isinstance(path, str) and path.endswith(".css")
+            for path in declared["app_include_css"]
+        )
+        and all(
+            isinstance(path, str) and path.endswith(".js")
+            for path in declared["app_include_js"]
+        ),
+        "source_hook_asset_types",
+    )
     _require(
         declared["app_include_css"] + declared["app_include_js"]
         == [url.split("?v=")[0] for url in hooks],
         "exact_source_hook_list",
     )
+    _require(
+        isinstance(doctype_js, dict)
+        and all(doctype_js.get(name) == path for name, path in DOCTYPE_JS.items()),
+        "sales_order_doctype_js_hook",
+    )
+    form_scripts = {}
+    for name, relative in DOCTYPE_JS.items():
+        path = "app/jifeng_erp/" + relative
+        _require(
+            path in expected and expected[path]["bytes"] > 0,
+            "doctype_js_source_missing",
+            name,
+        )
+        form_scripts[name] = {
+            "path": path,
+            "bytes": expected[path]["bytes"],
+            "sha256": expected[path]["sha256"],
+        }
     schemas, hashes, migrations = {}, {}, {}
     for name, path in SCHEMA_PATHS.items():
         _require(path in expected, "target_schema_missing", name)
@@ -328,7 +407,8 @@ def verify_source_manifest(manifest, observed_inventory):
     return {
         "passed": True,
         "source_files": len(expected),
-        "hook_count": 25,
+        "hook_count": HOOK_COUNT,
+        "doctype_js": form_scripts,
         "schemas": schemas,
         "schema_sha256": hashes,
         "migration_hash": migrations,
@@ -522,9 +602,7 @@ def verify_new_definitions(schemas, installed):
                 )
                 _definition_row(row, declared, parentfield, name)
         uniques = {field["fieldname"] for field in fields if field.get("unique")}
-        expected = (
-            {"request_id", "binding_key"} if name == TARGETS[0] else {"request_id"}
-        )
+        expected = UNIQUE_FIELDS[name]
         _require(uniques == expected, "exact_unique_fields", name)
         _indexes(name, actual["indexes"], uniques)
     return {"passed": True, "new_doctypes": list(TARGETS)}
@@ -666,10 +744,10 @@ def verify_snapshot_delta(
     actor,
     migration_hash,
 ):
-    """Verify exactly 927 -> 929 physical tables and this batch's metadata delta.
+    """Verify exactly 929 -> 931 physical tables and this batch's metadata delta.
 
-    Metadata outside hashes exclude only the two new parent names and the exact
-    two old DocField primary keys. Every owned row contains all SQL columns.
+    Metadata outside hashes exclude only the two new parent names. All existing
+    DocField rows remain protected. Every owned row contains all SQL columns.
     Callers provide stable column/index hashes and sorted full-row content hashes.
     No input is modified; rejection never exposes row values.
     """
@@ -683,8 +761,8 @@ def verify_snapshot_delta(
             isinstance(value, str) and MD5.fullmatch(value), "migration_md5_required"
         )
     verify_new_definitions(schemas, installed)
-    _snapshot(before, 927)
-    _snapshot(after, 929)
+    _snapshot(before, BEFORE_TABLES)
+    _snapshot(after, AFTER_TABLES)
     _require(
         not NEW_TABLES & set(before["tables"])
         and set(after["tables"]) == set(before["tables"]) | NEW_TABLES,
@@ -765,8 +843,8 @@ def verify_snapshot_delta(
     _new_metadata(after, schemas, installed, migration_hash, start, end, actor)
     return {
         "passed": True,
-        "before_tables": 927,
-        "after_tables": 929,
+        "before_tables": BEFORE_TABLES,
+        "after_tables": AFTER_TABLES,
         "new_empty_tables": sorted(NEW_TABLES),
         "myisam": sorted(MYISAM),
     }

@@ -17,13 +17,13 @@ import subprocess
 import sys
 
 ROOT = Path("/opt/jifeng-erp-test")
-RELEASE = ROOT / "releases/4d71c35-source-r1"
-OLD_RELEASE = ROOT / "releases/5aa4b3b-source-r1"
+RELEASE = ROOT / "releases/18e5835-source-r1"
+OLD_RELEASE = ROOT / "releases/4d71c35-source-r1"
 BASE = ROOT / "releases/8858743-r2/deploy/compose.yaml"
-OLD_OVERLAY = OLD_RELEASE / "compose.source.yaml"
-OVERLAY = RELEASE / "compose.source.r2.yaml"
-CONTROL = RELEASE / "incremental-control-r2"
-PRIVATE = RELEASE / "private-backup-r2"
+OLD_OVERLAY = OLD_RELEASE / "compose.source.r2.yaml"
+OVERLAY = RELEASE / "newcompose.source.r1.yaml"
+CONTROL = RELEASE / "incremental-control-r1"
+PRIVATE = RELEASE / "private-backup-r1"
 SITE = "jifeng-erp-test.localhost"
 SITES = Path("/var/lib/docker/volumes/jifeng-erp-test_sites/_data")
 CONFIG = SITES / SITE / "site_config.json"
@@ -31,15 +31,26 @@ BENCH = "/home/frappe/frappe-bench"
 APP_TARGET = BENCH + "/apps/jifeng_erp"
 NATIVE = RELEASE / "incoming/incremental_native.py"
 AUDIT = RELEASE / "incoming/incremental_audit.py"
-OLD = "5aa4b3b9b252c1879c299850557750c666d8cb83"
-NEW = "4d71c354d3f3f281d21d3d16b496bb6e5434e655"
+OLD = "4d71c354d3f3f281d21d3d16b496bb6e5434e655"
+NEW = "18e5835cfda4171ec691d5e701c8f42018b5448c"
 BASE_TAG = "jifeng/erp-test:8858743-test-r4"
 BASE_ID = "sha256:543ecd7e7e51f5088659718cadb950f542a80bd8a17a5a8da92a3067e9372cff"
 RUNTIME = ("backend", "worker", "scheduler", "websocket", "frontend")
 DATA = ("db", "redis-cache", "redis-queue")
-PUBLIC = ("manifest.json", "source-files.json", "metadata-changes.json")
-ARCHIVE_SHA = "515a82bed89fd627d59123daa932a97f26ed6795be604e60fef3eeede692a54e"
-ARCHIVE_BYTES = 2821789
+PUBLIC = (
+    "manifest.json",
+    "source-files.json",
+    "metadata-changes.json",
+    "native-release-plan.json",
+)
+NEW_DOCTYPES = ("Jifeng Plating Color", "Jifeng Order Operation")
+DOCTYPE_JS = {
+    "Sales Order": {
+        "path": "public/js/jifeng_sales_order.js",
+        "sha256": "fb5f17e51a63c42a21addf34f5ce6f13ac5941ab68466d2a7e69ee855543f4c4",
+    }
+}
+TOOLS = ("erp-release-before", "erp-release-candidate")
 PHASES = ("prepare", "quiesce", "metadata", "verify", "start")
 PROTECTED = (
     ROOT / ".env",
@@ -55,6 +66,7 @@ PROTECTED = (
 )
 PINS = {}
 HELPER_PINS = {}
+PACKAGE_PINS = {}
 PHASE_DIR = None
 
 
@@ -287,9 +299,8 @@ def make_overlay():
         "compose_top_level_changed",
     )
     require(
-        set(new["services"])
-        == (set(old["services"]) - {"erp-before", "erp-migrate"})
-        | {"erp-release-before", "erp-release-candidate"},
+        set(old["services"]) == set(RUNTIME + DATA + TOOLS)
+        and set(new["services"]) == set(RUNTIME + DATA + TOOLS),
         "compose_service_set_changed",
     )
     for name, source in (
@@ -316,12 +327,13 @@ def make_overlay():
             == (6 if name == "erp-release-before" else 5)
             and mounts[APP_TARGET]["source"] == str(source)
             and mounts[APP_TARGET]["read_only"]
+            and mounts["/opt/source-release"]["source"] == str(RELEASE)
             and mounts["/opt/source-release"]["read_only"]
             and mounts["/opt/source-release-backup"]["source"] == str(PRIVATE)
             and not mounts["/opt/source-release-backup"].get("read_only", False),
             "release_tool_mount_scope_changed",
         )
-    for name in set(old["services"]) - {"erp-before", "erp-migrate"}:
+    for name in RUNTIME + DATA:
         prior, actual = (
             copy.deepcopy(old["services"][name]),
             copy.deepcopy(new["services"][name]),
@@ -351,7 +363,7 @@ def make_overlay():
 
 def replace_config(data):
     metadata = read_json(CONTROL / "original-config.json")
-    temporary = CONFIG.with_name("site_config.incremental-source.tmp")
+    temporary = CONFIG.with_name("site_config.18e5835-source-r1.tmp")
     write_new(temporary, data, metadata["mode"])
     os.chown(temporary, metadata["uid"], metadata["gid"])
     os.replace(temporary, CONFIG)
@@ -458,27 +470,22 @@ def containers(label):
     return result
 
 
-def candidate():
+def package_pins_valid():
     require(
-        set(PINS) == set(PUBLIC)
-        and all(sha(RELEASE / name) == digest for name, digest in PINS.items()),
-        "public_package_pin_changed",
+        set(PACKAGE_PINS) == {"source_files", "archive_sha256", "archive_bytes"}
+        and type(PACKAGE_PINS["source_files"]) is int
+        and PACKAGE_PINS["source_files"] > 505
+        and type(PACKAGE_PINS["archive_bytes"]) is int
+        and PACKAGE_PINS["archive_bytes"] > 0
+        and isinstance(PACKAGE_PINS["archive_sha256"], str)
+        and re.fullmatch(r"[0-9a-f]{64}", PACKAGE_PINS["archive_sha256"]),
+        "reviewed_package_pins_required",
     )
-    require(
-        {"host": sha(Path(__file__)), "native": sha(NATIVE), "audit": sha(AUDIT)}
-        == HELPER_PINS,
-        "helper_source_changed",
-    )
-    for path in (NATIVE, AUDIT):
-        read_regular(path)
-        require(stat.S_IMODE(path.stat().st_mode) == 0o600, "incoming_helper_mode")
-    archive = RELEASE / "incoming/app.tar.gz"
-    read_regular(archive)
-    require(
-        sha(archive) == ARCHIVE_SHA and archive.stat().st_size == ARCHIVE_BYTES,
-        "incoming_archive_pin_changed",
-    )
-    manifest = read_json(RELEASE / "manifest.json")
+
+
+def release_scope(manifest, changes, plan):
+    """Only package measurements are injectable; release and DDL scope is fixed."""
+    package_pins_valid()
     require(
         manifest["commit"] == NEW
         and manifest["previous_commit"] == OLD
@@ -495,39 +502,77 @@ def candidate():
         "candidate_release_contract",
     )
     require(
-        manifest["source_files"] == 505
-        and manifest["archive_sha256"] == ARCHIVE_SHA
-        and manifest["archive_bytes"] == ARCHIVE_BYTES
+        manifest["source_files"] == PACKAGE_PINS["source_files"]
+        and manifest["archive_sha256"] == PACKAGE_PINS["archive_sha256"]
+        and manifest["archive_bytes"] == PACKAGE_PINS["archive_bytes"]
         and manifest["ddl_required"] is True
-        and manifest["new_empty_doctypes"]
-        == ["Jifeng Customer Profile", "Jifeng Order Dictionary"]
-        and set(manifest["metadata_only_update"])
-        == {"dictionary_type.label", "dictionary_type.options", "value.description"},
+        and manifest["new_empty_doctypes"] == list(NEW_DOCTYPES)
+        and manifest["metadata_only_update"] == []
+        and manifest["verified_doctype_js"] == DOCTYPE_JS,
         "candidate_incremental_scope",
     )
-    changes = read_json(RELEASE / "metadata-changes.json")
     require(
-        set(changes) == {"doctype", "old_commit", "new_commit", "changes"}
-        and changes["doctype"] == "Jifeng Customer Type"
-        and changes["old_commit"] == OLD
-        and changes["new_commit"] == NEW
-        and set(changes["changes"]) == {"dictionary_type", "value"}
-        and set(changes["changes"]["dictionary_type"]) == {"label", "options"}
-        and set(changes["changes"]["value"]) == {"description"},
-        "candidate_metadata_patch_scope",
+        changes
+        == {"old_commit": OLD, "new_commit": NEW, "doctype": None, "changes": {}},
+        "candidate_metadata_changes_must_be_empty",
     )
-    for fields in changes["changes"].values():
+    require(
+        set(plan) == {"old_commit", "new_commit", "source_files", "new_table_layout"}
+        and plan["old_commit"] == OLD
+        and plan["new_commit"] == NEW
+        and type(plan["source_files"]) is int
+        and plan["source_files"] == PACKAGE_PINS["source_files"]
+        and isinstance(plan["new_table_layout"], dict)
+        and set(plan["new_table_layout"])
+        == {"tab" + doctype for doctype in NEW_DOCTYPES},
+        "candidate_native_release_plan_scope",
+    )
+    for layout in plan["new_table_layout"].values():
         require(
-            all(
-                set(change) == {"old", "new"}
-                and all(isinstance(value, str) for value in change.values())
-                for change in fields.values()
+            isinstance(layout, dict)
+            and set(layout) == {"schema_sha256", "indexes_sha256"}
+            and all(
+                isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in layout.values()
             ),
-            "candidate_metadata_patch_values",
+            "candidate_native_layout_pins_required",
         )
+
+
+def candidate():
+    for name in PUBLIC:
+        read_regular(RELEASE / name)
+    require(
+        set(PINS) == set(PUBLIC)
+        and all(sha(RELEASE / name) == digest for name, digest in PINS.items()),
+        "public_package_pin_changed",
+    )
+    require(
+        {"host": sha(Path(__file__)), "native": sha(NATIVE), "audit": sha(AUDIT)}
+        == HELPER_PINS,
+        "helper_source_changed",
+    )
+    for path in (NATIVE, AUDIT):
+        read_regular(path)
+        require(stat.S_IMODE(path.stat().st_mode) == 0o600, "incoming_helper_mode")
+    package_pins_valid()
+    archive = RELEASE / "incoming/app.tar.gz"
+    read_regular(archive)
+    require(
+        sha(archive) == PACKAGE_PINS["archive_sha256"]
+        and archive.stat().st_size == PACKAGE_PINS["archive_bytes"],
+        "incoming_archive_pin_changed",
+    )
+    manifest = read_json(RELEASE / "manifest.json")
+    release_scope(
+        manifest,
+        read_json(RELEASE / "metadata-changes.json"),
+        read_json(RELEASE / "native-release-plan.json"),
+    )
     records = read_json(RELEASE / "source-files.json")
     require(
-        len(records) == 505 and len({item["path"] for item in records}) == 505,
+        len(records) == PACKAGE_PINS["source_files"]
+        and len({item["path"] for item in records}) == PACKAGE_PINS["source_files"],
         "source_manifest_count",
     )
     expected = set()
@@ -589,16 +634,36 @@ def candidate():
             )
     require(actual == expected, "source_file_set_changed")
     hooks = manifest["verified_direct_hook_paths"]
-    require(len(hooks) == 25 and len(set(hooks)) == 25, "direct_hook_count")
+    require(len(hooks) == 28 and len(set(hooks)) == 28, "direct_hook_count")
+    extensions = []
     for url in hooks:
         require(
             re.fullmatch(r"/assets/jifeng_erp/[^?]+\?v=[0-9a-f]{16}", url),
             "direct_hook_url",
         )
         relative, version = url[len("/assets/jifeng_erp/") :].split("?v=")
+        path = PurePosixPath(relative)
+        require(
+            path.as_posix() == relative
+            and not path.is_absolute()
+            and "\\" not in relative
+            and not any(part in {"..", "."} for part in path.parts)
+            and path.suffix in {".js", ".css"},
+            "direct_hook_path_scope",
+        )
+        extensions.append(path.suffix)
         require(
             sha(source / "jifeng_erp/public" / relative)[:16] == version,
             "direct_hook_fingerprint",
+        )
+    require(
+        extensions.count(".js") == 18 and extensions.count(".css") == 10,
+        "direct_hook_resource_types",
+    )
+    for info in DOCTYPE_JS.values():
+        require(
+            sha(source / "jifeng_erp" / info["path"]) == info["sha256"],
+            "sales_order_doctype_js_source_changed",
         )
     return manifest
 
@@ -649,7 +714,9 @@ def success(phase_name):
     require(
         value.get("passed") is True
         and value.get("phase") == phase_name
-        and value.get("commit") == NEW,
+        and value.get("commit") == NEW
+        and value.get("package_pins") == PACKAGE_PINS
+        and value.get("plan_sha256") == PINS["native-release-plan.json"],
         "prior_phase_not_passed",
     )
     return value
@@ -682,8 +749,16 @@ def incoming_permissions():
             (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (0, 0, 0o600),
             "incoming_initial_helper_identity",
         )
+    plan = RELEASE / "native-release-plan.json"
+    read_regular(plan)
+    info = plan.stat()
+    require(
+        (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (0, 0, 0o644),
+        "incoming_initial_plan_identity",
+    )
     os.chown(incoming, 1000, 1000)
     os.chown(AUDIT, 1000, 1000)
+    os.chown(plan, 1000, 1000)
     private_directory(incoming)
 
 
@@ -697,6 +772,13 @@ def incoming_ready():
             == (owner, owner, 0o600),
             "incoming_ready_helper_identity",
         )
+    plan = RELEASE / "native-release-plan.json"
+    read_regular(plan)
+    info = plan.stat()
+    require(
+        (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (1000, 1000, 0o644),
+        "incoming_ready_plan_identity",
+    )
 
 
 def proof_sha(name, digest):
@@ -748,7 +830,8 @@ def backup_proof(parts):
         completed
         == {
             "parts": parts,
-            "physical_tables": 927,
+            "physical_tables": 929,
+            "plan_sha256": PINS["native-release-plan.json"],
             "three_myisam_locked_through_dump": True,
         },
         "backup_locked_full_snapshot_proof",
@@ -769,6 +852,8 @@ def native(mode, old=False):
         mode,
         "--audit-sha",
         HELPER_PINS["audit"],
+        "--plan-sha256",
+        PINS["native-release-plan.json"],
     ]
     if mode not in {"preflight", "before"}:
         baseline = success("quiesce")["before_sha256"]
@@ -779,12 +864,22 @@ def native(mode, old=False):
     )
     require(result.get("passed") is True, "native_phase_not_passed")
     if mode == "preflight":
+        form_scripts = {
+            name: {
+                "path": "app/jifeng_erp/" + info["path"],
+                "bytes": len(read_regular(RELEASE / "app/jifeng_erp" / info["path"])),
+                "sha256": info["sha256"],
+            }
+            for name, info in DOCTYPE_JS.items()
+        }
         require(
             result
             == {
                 "passed": True,
-                "source_files": 505,
-                "hook_count": 25,
+                "source_files": PACKAGE_PINS["source_files"],
+                "hook_count": 28,
+                "doctype_js": form_scripts,
+                "plan_sha256": PINS["native-release-plan.json"],
                 "backup_implementation_verified": True,
                 "sql_connected": False,
             },
@@ -793,8 +888,9 @@ def native(mode, old=False):
     else:
         require(
             result.get("mode") == mode
-            and result.get("protected_table_count") == 927
-            and result.get("total_table_count") == (927 if mode == "before" else 929),
+            and result.get("plan_sha256") == PINS["native-release-plan.json"]
+            and result.get("protected_table_count") == 929
+            and result.get("total_table_count") == (929 if mode == "before" else 931),
             "native_full_inventory_proof",
         )
         proof_sha(
@@ -803,6 +899,20 @@ def native(mode, old=False):
         )
         if mode == "before":
             backup_proof(result["backups"])
+        elif mode == "cache":
+            cache = result["cache"]
+            require(
+                cache.get("effective_hooks") == 28
+                and cache.get("app_include_css") == 10
+                and cache.get("app_include_js") == 18
+                and cache.get("order_js_sha256") == DOCTYPE_JS["Sales Order"]["sha256"]
+                and isinstance(cache.get("form_meta_js_sha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", cache["form_meta_js_sha256"])
+                and cache.get("source_current") is True
+                and cache.get("cached_current") is True
+                and cache.get("gui_tested") is False,
+                "native_cache_form_meta_proof",
+            )
     return result
 
 
@@ -831,6 +941,8 @@ def phase(name):
         "full_migrate": False,
         "automatic_retry": False,
         "automatic_rollback": False,
+        "package_pins": copy.deepcopy(PACKAGE_PINS),
+        "plan_sha256": PINS["native-release-plan.json"],
     }
     record(PHASE_DIR / "started.json", state)
     try:
@@ -881,12 +993,13 @@ def phase(name):
                 .decode()
                 .strip()
             )
-            require(actual == OLD, "live_backend_not_5aa")
+            require(actual == OLD, "live_backend_not_reviewed_baseline")
             incoming_permissions()
             make_overlay()
             state["preflight"] = native("preflight")
             record(CONTROL / "public-pins.json", PINS)
             record(CONTROL / "helper-pins.json", HELPER_PINS)
+            record(CONTROL / "package-pins.json", PACKAGE_PINS)
             record(CONTROL / "overlay-sha.json", {"sha256": sha(OVERLAY)})
             state["source_files"] = manifest["source_files"]
         else:
@@ -899,6 +1012,7 @@ def phase(name):
             require(
                 PINS == read_json(CONTROL / "public-pins.json")
                 and HELPER_PINS == read_json(CONTROL / "helper-pins.json")
+                and PACKAGE_PINS == read_json(CONTROL / "package-pins.json")
                 and {"sha256": sha(OVERLAY)} == read_json(CONTROL / "overlay-sha.json"),
                 "prepare_pins_changed",
             )
@@ -1025,8 +1139,12 @@ def main():
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--source-files-sha256", required=True)
     parser.add_argument("--metadata-changes-sha256", required=True)
+    parser.add_argument("--plan-sha256", required=True)
+    parser.add_argument("--archive-sha256", required=True)
+    parser.add_argument("--archive-bytes", required=True, type=int)
+    parser.add_argument("--source-files", required=True, type=int)
     args = parser.parse_args()
-    global PINS, HELPER_PINS, PHASE_DIR
+    global PINS, HELPER_PINS, PACKAGE_PINS, PHASE_DIR
     HELPER_PINS = {
         "host": args.reviewed_host_sha256,
         "native": args.reviewed_native_sha256,
@@ -1039,9 +1157,16 @@ def main():
                 args.manifest_sha256,
                 args.source_files_sha256,
                 args.metadata_changes_sha256,
+                args.plan_sha256,
             ),
         )
     )
+    PACKAGE_PINS = {
+        "source_files": args.source_files,
+        "archive_sha256": args.archive_sha256,
+        "archive_bytes": args.archive_bytes,
+    }
+    package_pins_valid()
     require(
         all(
             re.fullmatch(r"[0-9a-f]{64}", value)

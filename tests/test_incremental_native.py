@@ -1,8 +1,12 @@
 """Failure cleanup matters: never leave the three nontransactional tables locked."""
 
 from contextlib import nullcontext
+from copy import deepcopy
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -103,3 +107,176 @@ def test_single_connection_cannot_claim_separate_myisam_lock_proof():
         with native.protected_reads():
             pytest.fail("A shared connection must never enter the protected body")
     assert main.closed
+
+
+@pytest.mark.parametrize("change", ["old_batch", "doctype", "patch", "extra", None])
+def test_metadata_change_scope_is_empty_and_specific_to_this_batch(change):
+    native = load_native()
+    value = {
+        "old_commit": native.OLD,
+        "new_commit": native.NEW,
+        "doctype": None,
+        "changes": {},
+    }
+    previous = deepcopy(value)
+    if change == "old_batch":
+        value["new_commit"] = native.OLD
+    elif change == "doctype":
+        value["doctype"] = "Jifeng Customer Type"
+    elif change == "patch":
+        value["changes"]["value"] = {"description": {"old": "x", "new": "y"}}
+    elif change == "extra":
+        value["target"] = "Operation"
+    if change:
+        with pytest.raises(RuntimeError, match="zero_existing_metadata_changes"):
+            native.verify_changes(value)
+    else:
+        native.verify_changes(value)
+        assert value == previous
+
+
+def test_only_two_new_doctypes_can_reload_and_source_is_rechecked(monkeypatch):
+    native = load_native()
+    native.audit = SimpleNamespace(
+        TARGETS=("Jifeng Plating Color", "Jifeng Order Operation"), PATCHES={}
+    )
+    native.release_plan = {"frozen": True}
+    native.plan_sha256 = "a" * 64
+    observed = []
+    monkeypatch.setattr(
+        native, "load_release_plan", lambda pin: dict(native.release_plan)
+    )
+    monkeypatch.setattr(native, "candidate", lambda: observed.append("verified_source"))
+    native.frappe = SimpleNamespace(
+        reload_doc=lambda *args, **kwargs: observed.append((args, kwargs))
+    )
+    native.apply_new_doctypes()
+    assert observed == [
+        "verified_source",
+        (("jifeng_erp", "doctype", "jifeng_plating_color"), {"force": True}),
+        "verified_source",
+        (("jifeng_erp", "doctype", "jifeng_order_operation"), {"force": True}),
+    ]
+    native.audit.TARGETS = ("Operation", "Jifeng Order Operation")
+    with pytest.raises(RuntimeError, match="fixed_new_doctype_scope"):
+        native.apply_new_doctypes()
+    assert len(observed) == 4
+
+
+@pytest.mark.parametrize(
+    "change", ["previous_count", "wrong_source", "wrong_mapping", None]
+)
+def test_package_count_and_native_order_script_have_one_frozen_source(change):
+    native = load_native()
+    native.audit = SimpleNamespace(
+        DOCTYPE_JS={"Sales Order": "public/js/jifeng_sales_order.js"}
+    )
+    native.release_plan = {"source_files": 532}
+    definition = {
+        "source_files": 532,
+        "doctype_js": {"Sales Order": {"sha256": "a" * 64}},
+    }
+    manifest = {
+        "commit": native.NEW,
+        "source_files": 532,
+        "verified_doctype_js": {
+            "Sales Order": {
+                "path": "public/js/jifeng_sales_order.js",
+                "sha256": "a" * 64,
+            }
+        },
+    }
+    files = [None] * 532
+    if change == "previous_count":
+        manifest["source_files"] = 505
+    elif change == "wrong_source":
+        definition["doctype_js"]["Sales Order"]["sha256"] = "b" * 64
+    elif change == "wrong_mapping":
+        manifest["verified_doctype_js"]["Sales Order"]["path"] = "public/js/old.js"
+    if change:
+        with pytest.raises(RuntimeError):
+            native.verify_candidate_metadata(manifest, files, definition)
+    else:
+        native.verify_candidate_metadata(manifest, files, definition)
+
+
+@pytest.mark.parametrize(
+    "change", ["hook_order", "old_form", "cached_form", "duplicate", None]
+)
+def test_effective_hooks_and_actual_formmeta_must_share_current_source(
+    tmp_path, monkeypatch, change
+):
+    native = load_native()
+    native.ROOT = tmp_path
+    native.audit = SimpleNamespace(
+        TARGETS=("Jifeng Plating Color", "Jifeng Order Operation"),
+        CSS_COUNT=10,
+        JS_COUNT=18,
+        DOCTYPE_JS={"Sales Order": "public/js/jifeng_sales_order.js"},
+    )
+    relative = "app/jifeng_erp/public/js/jifeng_sales_order.js"
+    source = tmp_path / relative
+    source.parent.mkdir(parents=True)
+    script = "window.JifengOrderCustomerPicker = class JifengOrderCustomerPicker {};"
+    source.write_bytes(script.encode())
+    definition = {
+        "doctype_js": {
+            "Sales Order": {
+                "path": relative,
+                "sha256": hashlib.sha256(script.encode()).hexdigest(),
+            }
+        }
+    }
+    css = ["/assets/jifeng_erp/css/" + str(index) + ".css?v=x" for index in range(10)]
+    js = ["/assets/jifeng_erp/js/" + str(index) + ".js?v=x" for index in range(18)]
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"verified_direct_hook_paths": css + js})
+    )
+    if change == "hook_order":
+        js[0], js[1] = js[1], js[0]
+    meta_js = "old" if change == "old_form" else script
+    if change == "duplicate":
+        meta_js += script
+    cache_js = "old cached" if change == "cached_form" else meta_js
+    invalidated, cleared = [], []
+    native.frappe = SimpleNamespace(
+        clear_cache=lambda **kwargs: cleared.append(kwargs),
+        client_cache=SimpleNamespace(
+            delete_value=invalidated.append, get_value=lambda key: {"__js": cache_js}
+        ),
+        get_hooks=lambda name, *args: {
+            "app_include_css": css,
+            "app_include_js": js,
+            "doctype_js": {"Sales Order": ["public/js/jifeng_sales_order.js"]},
+        }[name],
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "frappe.desk.form.meta",
+        SimpleNamespace(get_meta=lambda name: {"__js": meta_js}),
+    )
+    if change:
+        with pytest.raises(RuntimeError):
+            native.verify_cached_assets(definition)
+    else:
+        result = native.verify_cached_assets(definition)
+        assert result["effective_hooks"] == 28
+        assert result["source_current"] and result["cached_current"]
+        assert result["gui_tested"] is False
+    assert cleared == [
+        {"doctype": "Jifeng Plating Color"},
+        {"doctype": "Jifeng Order Operation"},
+    ]
+    assert invalidated == ["app_hooks", "doctype_form_meta::Sales Order"]
+
+
+def test_previous_batch_apply_receipt_cannot_validate_current_delta():
+    native = load_native()
+    native.plan_sha256 = "a" * 64
+    native.audit = SimpleNamespace(
+        verify_snapshot_delta=lambda *args: pytest.fail("old receipt reached verifier")
+    )
+    with pytest.raises(RuntimeError, match="apply_receipt_release_identity"):
+        native.verify_delta(
+            {}, {}, {}, {}, {"commit": native.OLD, "plan_sha256": "b" * 64}
+        )

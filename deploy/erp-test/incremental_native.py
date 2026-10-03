@@ -1,7 +1,7 @@
 """One-use Frappe phases for the shared A/B test site's incremental release.
 
 Called from the pinned image with an explicit old or candidate source mount.
-Only apply modifies SQL: two existing DocFields and two new empty DocTypes.
+Only apply modifies SQL: two new empty DocTypes and their own metadata.
 No full migrate, fixture import, data seed, backup cleanup or automatic retry.
 """
 
@@ -27,8 +27,8 @@ DATABASE = "jifeng_erp_test"
 BENCH = Path("/home/frappe/frappe-bench")
 ROOT = Path("/opt/source-release")
 PRIVATE = Path("/opt/source-release-backup")
-OLD = "5aa4b3b9b252c1879c299850557750c666d8cb83"
-NEW = "4d71c354d3f3f281d21d3d16b496bb6e5434e655"
+OLD = "4d71c354d3f3f281d21d3d16b496bb6e5434e655"
+NEW = "18e5835cfda4171ec691d5e701c8f42018b5448c"
 NATIVE_PINS = {
     "frappe/utils/backups.py": "04647dc5d8abc6f7b7a2e59086949405c3de1f5ae70c120a4a75dc58a2064a76",
     "frappe/database/mariadb/database.py": "0eaae7d449c560dcd0fa6ef56686bcfe2eb10a474f21c62c282617cf3c3fb3b9",
@@ -42,19 +42,9 @@ SEQUENCES = {
     "pwa_notification_id_seq",
     "web_form_list_column_id_seq",
 }
-# Approved native SQL layouts from the isolated 4d71-compatible installation.
-# The hashes include all physical columns/types/null/defaults and stable indexes.
-# They are independent of the new SQL rows being verified on the external site.
-APPROVED_NEW_TABLES = {
-    "tabJifeng Customer Profile": {
-        "schema_sha256": "c621d0ef4488eb6caa2a08944774da1bd0c6818482449b32499849bbedc169ad",
-        "indexes_sha256": "5bb0a1a4f9f52c91c728ecfa438bd9cab5bff8e16b3bddd58decbe06080b23b3",
-    },
-    "tabJifeng Order Dictionary": {
-        "schema_sha256": "e80d875480928e8ca211f007f364f44a00f7fd5f1cd4a5136ca4e20f78272a45",
-        "indexes_sha256": "4d090ad91ad0493b423e3e9d612fa0c5381a2d2a43693e096ed265ca3fafef86",
-    },
-}
+# Loaded only from the SHA-pinned plan; audit also checks the independent native
+# reference. Never derive expected physical layouts from this external database.
+APPROVED_NEW_TABLES = {}
 
 
 def require(condition, rule):
@@ -80,6 +70,66 @@ def load_audit(expected_sha):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_release_plan(expected_sha):
+    path = ROOT / "native-release-plan.json"
+    info = path.lstat()
+    require(
+        stat.S_ISREG(info.st_mode)
+        and (info.st_uid, info.st_gid) == (1000, 1000)
+        and stat.S_IMODE(info.st_mode) == 0o644
+        and sha(path) == expected_sha,
+        "release_plan_file_pin",
+    )
+    plan = json.loads(path.read_bytes())
+    audit.verify_release_plan(plan)
+    return plan
+
+
+def verify_changes(changes):
+    require(
+        isinstance(changes, dict)
+        and set(changes) == {"old_commit", "new_commit", "doctype", "changes"}
+        and changes["old_commit"] == OLD
+        and changes["new_commit"] == NEW
+        and changes["doctype"] is None
+        and changes["changes"] == {},
+        "zero_existing_metadata_changes",
+    )
+
+
+def verify_candidate_metadata(manifest, files, definition):
+    require(
+        manifest["commit"] == NEW
+        and manifest["source_files"] == release_plan["source_files"]
+        and len(files) == release_plan["source_files"]
+        and definition["source_files"] == release_plan["source_files"],
+        "candidate_release_identity",
+    )
+    require(
+        manifest.get("verified_doctype_js")
+        == {
+            "Sales Order": {
+                "path": audit.DOCTYPE_JS["Sales Order"],
+                "sha256": definition["doctype_js"]["Sales Order"]["sha256"],
+            }
+        },
+        "candidate_sales_order_source_pin",
+    )
+
+
+def apply_new_doctypes():
+    require(
+        tuple(audit.TARGETS) == ("Jifeng Plating Color", "Jifeng Order Operation")
+        and audit.PATCHES == {},
+        "fixed_new_doctype_scope",
+    )
+    for target in audit.TARGETS:
+        require(load_release_plan(plan_sha256) == release_plan, "release_plan_changed")
+        candidate()
+        slug = target.lower().replace(" ", "_")
+        frappe.reload_doc("jifeng_erp", "doctype", slug, force=True)
 
 
 def decode(value):
@@ -155,11 +205,16 @@ def candidate():
             }
     manifest = json.loads((ROOT / "manifest.json").read_bytes())
     require(
-        manifest["commit"] == NEW and manifest["source_files"] == 505,
+        manifest["commit"] == NEW
+        and manifest["source_files"] == release_plan["source_files"],
         "candidate_release_identity",
     )
     files = json.loads((ROOT / "source-files.json").read_bytes())
-    return audit.verify_source_manifest(
+    require(
+        isinstance(files, list) and len(files) == release_plan["source_files"],
+        "candidate_source_file_count",
+    )
+    definition = audit.verify_source_manifest(
         {
             "commit": NEW,
             "files": [dict(row, mode=0o644) for row in files],
@@ -167,6 +222,8 @@ def candidate():
         },
         observed,
     )
+    verify_candidate_metadata(manifest, files, definition)
+    return definition
 
 
 def runtime(expected):
@@ -316,16 +373,6 @@ def collect():
                 for parent in audit.TARGETS
             }
             targets = {}
-            if name == "tabDocField":
-                for field in audit.PATCHES:
-                    selected = [
-                        item
-                        for item in rows
-                        if item["parent"] == "Jifeng Customer Type"
-                        and item["fieldname"] == field
-                    ]
-                    require(len(selected) == 1, "old_docfield_exact_identity")
-                    targets[field] = selected[0]
             owned_names = {
                 item["name"] for items in parents.values() for item in items
             } | {item["name"] for item in targets.values()}
@@ -419,7 +466,7 @@ def backup(before):
                         table = match.group(1).replace("``", "`")
                         require(table not in names, "backup_duplicate_table")
                         names.add(table)
-            require(names == set(before["tables"]), "backup_all_927_physical_tables")
+            require(names == set(before["tables"]), "backup_all_929_physical_tables")
         elif part.endswith("files"):
             with tarfile.open(path, "r:gz") as archive:
                 for member in archive:
@@ -445,6 +492,10 @@ def backup(before):
 
 
 def verify_delta(before, after, installed, definition, intent):
+    require(
+        intent.get("plan_sha256") == plan_sha256 and intent.get("commit") == NEW,
+        "apply_receipt_release_identity",
+    )
     return audit.verify_snapshot_delta(
         before,
         after,
@@ -458,16 +509,86 @@ def verify_delta(before, after, installed, definition, intent):
     )
 
 
+def verify_cached_assets(definition):
+    """Verify effective hooks and native FormMeta; this is not a GUI test."""
+    for target in audit.TARGETS:
+        frappe.clear_cache(doctype=target)
+    frappe.client_cache.delete_value("app_hooks")
+    key = "doctype_form_meta::Sales Order"
+    frappe.client_cache.delete_value(key)
+    css = [
+        url
+        for url in frappe.get_hooks("app_include_css")
+        if url.startswith("/assets/jifeng_erp/")
+    ]
+    js = [
+        url
+        for url in frappe.get_hooks("app_include_js")
+        if url.startswith("/assets/jifeng_erp/")
+    ]
+    expected = json.loads((ROOT / "manifest.json").read_bytes())[
+        "verified_direct_hook_paths"
+    ]
+    require(
+        len(css) == audit.CSS_COUNT
+        and len(js) == audit.JS_COUNT
+        and css + js == expected,
+        "runtime_28_hooks",
+    )
+    path = definition["doctype_js"]["Sales Order"]["path"]
+    source = ROOT / path
+    require(
+        sha(source) == definition["doctype_js"]["Sales Order"]["sha256"],
+        "order_script_source_pin",
+    )
+    require(
+        audit.DOCTYPE_JS["Sales Order"]
+        in frappe.get_hooks("doctype_js", {}).get("Sales Order", []),
+        "runtime_sales_order_doctype_js",
+    )
+    from frappe.desk.form.meta import get_meta
+
+    script = source.read_bytes().decode("utf-8")
+    meta_js = get_meta("Sales Order").get("__js") or ""
+    cached = frappe.client_cache.get_value(key)
+    require(
+        bool(script)
+        and script in meta_js
+        and meta_js.count(
+            "window.JifengOrderCustomerPicker = class JifengOrderCustomerPicker"
+        )
+        == 1
+        and get_meta("Sales Order").get("__js") == meta_js
+        and cached is not None
+        and cached.get("__js") == meta_js,
+        "native_sales_order_form_meta_current",
+    )
+    return {
+        "effective_hooks": len(css) + len(js),
+        "app_include_css": len(css),
+        "app_include_js": len(js),
+        "order_js_sha256": sha(source),
+        "form_meta_js_sha256": hashlib.sha256(meta_js.encode("utf-8")).hexdigest(),
+        "source_current": True,
+        "cached_current": True,
+        "gui_tested": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "mode", choices=("preflight", "before", "apply", "verify", "cache")
     )
     parser.add_argument("--audit-sha", required=True)
+    parser.add_argument("--plan-sha256", required=True)
     parser.add_argument("--before-sha")
     args = parser.parse_args()
-    global audit, frappe
+    global audit, frappe, release_plan, plan_sha256, APPROVED_NEW_TABLES
     audit = load_audit(args.audit_sha)
+    plan_sha256 = args.plan_sha256
+    release_plan = load_release_plan(plan_sha256)
+    APPROVED_NEW_TABLES = release_plan["new_table_layout"]
     runtime(OLD if args.mode == "before" else NEW)
     definition = candidate()
     if args.mode == "preflight":
@@ -475,8 +596,10 @@ def main():
             json.dumps(
                 {
                     "passed": True,
-                    "source_files": 505,
-                    "hook_count": 25,
+                    "source_files": release_plan["source_files"],
+                    "hook_count": audit.HOOK_COUNT,
+                    "doctype_js": definition["doctype_js"],
+                    "plan_sha256": plan_sha256,
                     "backup_implementation_verified": True,
                     "sql_connected": False,
                 }
@@ -490,7 +613,10 @@ def main():
         and stat.S_IMODE(info.st_mode) == 0o700,
         "private_audit_directory",
     )
-    record(args.mode + "-started.json", {"mode": args.mode, "commit": NEW})
+    record(
+        args.mode + "-started.json",
+        {"mode": args.mode, "commit": NEW, "plan_sha256": plan_sha256},
+    )
     os.chdir(BENCH / "sites")
     import frappe
 
@@ -500,8 +626,11 @@ def main():
     result = {
         "passed": False,
         "mode": args.mode,
-        "protected_table_count": 927,
-        "total_table_count": 927 if args.mode == "before" else 929,
+        "protected_table_count": audit.BEFORE_TABLES,
+        "total_table_count": audit.BEFORE_TABLES
+        if args.mode == "before"
+        else audit.AFTER_TABLES,
+        "plan_sha256": plan_sha256,
         "full_migrate": False,
         "automatic_retry": False,
     }
@@ -519,22 +648,17 @@ def main():
         )
         frappe.set_user("Administrator")
         changes = json.loads((ROOT / "metadata-changes.json").read_bytes())
-        require(
-            changes["old_commit"] == OLD
-            and changes["new_commit"] == NEW
-            and changes["doctype"] == "Jifeng Customer Type",
-            "metadata_patch_identity",
-        )
+        verify_changes(changes)
         with redirect_stdout(capture), redirect_stderr(capture):
             if args.mode == "before":
                 with protected_reads():
                     before, _ = collect()
                     require(
-                        len(before["tables"]) == 927
+                        len(before["tables"]) == audit.BEFORE_TABLES
                         and not (audit.NEW_TABLES & set(before["tables"])),
-                        "baseline_927_no_new_tables",
+                        "baseline_929_no_new_tables",
                     )
-                    audit._snapshot(before, 927)
+                    audit._snapshot(before, audit.BEFORE_TABLES)
                     for table in audit.META:
                         require(
                             all(
@@ -544,15 +668,6 @@ def main():
                                 ].values()
                             ),
                             "new_metadata_absent",
-                        )
-                    for field, properties in changes["changes"].items():
-                        require(
-                            all(
-                                before["metadata"]["tabDocField"]["targets"][field][key]
-                                == patch["old"]
-                                for key, patch in properties.items()
-                            ),
-                            "baseline_old_docfield_values",
                         )
                     result["proof_sha256"] = record("before.json", before)
                     result["backups"] = backup(before)
@@ -564,13 +679,15 @@ def main():
                     "backup-completed.json",
                     {
                         "parts": result["backups"],
-                        "physical_tables": 927,
+                        "physical_tables": audit.BEFORE_TABLES,
+                        "plan_sha256": plan_sha256,
                         "three_myisam_locked_through_dump": True,
                     },
                 )
             else:
                 require(args.before_sha, "baseline_sha_required")
                 before = read_proof("before.json", args.before_sha)
+                audit._snapshot(before, audit.BEFORE_TABLES)
                 current, installed = snapshot()
                 if args.mode == "apply":
                     require(current == before, "baseline_changed_before_apply")
@@ -600,20 +717,11 @@ def main():
                             "start": start,
                             "changes": changes["changes"],
                             "new_doctypes": list(audit.TARGETS),
+                            "commit": NEW,
+                            "plan_sha256": plan_sha256,
                         },
                     )
-                    for field, properties in changes["changes"].items():
-                        frappe.db.set_value(
-                            "DocField",
-                            before["metadata"]["tabDocField"]["targets"][field]["name"],
-                            {key: patch["new"] for key, patch in properties.items()},
-                            modified=start,
-                            modified_by="Administrator",
-                        )
-                    for target in audit.TARGETS:
-                        candidate()
-                        slug = target.lower().replace(" ", "_")
-                        frappe.reload_doc("jifeng_erp", "doctype", slug, force=True)
+                    apply_new_doctypes()
                     frappe.db.commit()
                     end = now_datetime()
                     record(
@@ -623,6 +731,8 @@ def main():
                             "start": start,
                             "end": end,
                             "changes": changes["changes"],
+                            "commit": NEW,
+                            "plan_sha256": plan_sha256,
                         },
                     )
                     current, installed = snapshot()
@@ -632,30 +742,7 @@ def main():
                 )
                 if args.mode == "cache":
                     with protected_reads():
-                        for target in ("Jifeng Customer Type", *audit.TARGETS):
-                            frappe.clear_cache(doctype=target)
-                        frappe.clear_cache()
-                        from frappe.website.utils import clear_website_cache
-
-                        clear_website_cache()
-                        hooks = frappe.get_hooks("app_include_css") + frappe.get_hooks(
-                            "app_include_js"
-                        )
-                        hooks = [
-                            url
-                            for url in hooks
-                            if url.startswith("/assets/jifeng_erp/")
-                        ]
-                        require(
-                            len(hooks) == 25
-                            and set(hooks)
-                            == set(
-                                json.loads((ROOT / "manifest.json").read_bytes())[
-                                    "verified_direct_hook_paths"
-                                ]
-                            ),
-                            "runtime_25_hooks",
-                        )
+                        result["cache"] = verify_cached_assets(definition)
                     fresh, _ = snapshot()
                     require(fresh == current, "cache_changed_database")
                 result["proof_sha256"] = record("after-" + args.mode + ".json", current)
