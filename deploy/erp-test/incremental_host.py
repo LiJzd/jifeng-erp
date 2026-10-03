@@ -21,16 +21,16 @@ RELEASE = ROOT / "releases/18e5835-source-r1"
 OLD_RELEASE = ROOT / "releases/4d71c35-source-r1"
 BASE = ROOT / "releases/8858743-r2/deploy/compose.yaml"
 OLD_OVERLAY = OLD_RELEASE / "compose.source.r2.yaml"
-OVERLAY = RELEASE / "newcompose.source.r1.yaml"
-CONTROL = RELEASE / "incremental-control-r1"
-PRIVATE = RELEASE / "private-backup-r1"
+OVERLAY = RELEASE / "newcompose.source.r2.yaml"
+CONTROL = RELEASE / "incremental-control-r2"
+PRIVATE = RELEASE / "private-backup-r2"
 SITE = "jifeng-erp-test.localhost"
 SITES = Path("/var/lib/docker/volumes/jifeng-erp-test_sites/_data")
 CONFIG = SITES / SITE / "site_config.json"
 BENCH = "/home/frappe/frappe-bench"
 APP_TARGET = BENCH + "/apps/jifeng_erp"
-NATIVE = RELEASE / "incoming/incremental_native.py"
-AUDIT = RELEASE / "incoming/incremental_audit.py"
+NATIVE = RELEASE / "incoming-r2/incremental_native.py"
+AUDIT = RELEASE / "incoming-r2/incremental_audit.py"
 OLD = "4d71c354d3f3f281d21d3d16b496bb6e5434e655"
 NEW = "18e5835cfda4171ec691d5e701c8f42018b5448c"
 BASE_TAG = "jifeng/erp-test:8858743-test-r4"
@@ -51,6 +51,7 @@ DOCTYPE_JS = {
     }
 }
 TOOLS = ("erp-release-before", "erp-release-candidate")
+BASE_TOOLS = ("acme-web", "certbot", "initialize", "seed")
 PHASES = ("prepare", "quiesce", "metadata", "verify", "start")
 PROTECTED = (
     ROOT / ".env",
@@ -299,8 +300,8 @@ def make_overlay():
         "compose_top_level_changed",
     )
     require(
-        set(old["services"]) == set(RUNTIME + DATA + TOOLS)
-        and set(new["services"]) == set(RUNTIME + DATA + TOOLS),
+        set(old["services"]) == set(RUNTIME + DATA + BASE_TOOLS + TOOLS)
+        and set(new["services"]) == set(RUNTIME + DATA + BASE_TOOLS + TOOLS),
         "compose_service_set_changed",
     )
     for name, source in (
@@ -333,7 +334,7 @@ def make_overlay():
             and not mounts["/opt/source-release-backup"].get("read_only", False),
             "release_tool_mount_scope_changed",
         )
-    for name in RUNTIME + DATA:
+    for name in RUNTIME + DATA + BASE_TOOLS:
         prior, actual = (
             copy.deepcopy(old["services"][name]),
             copy.deepcopy(new["services"][name]),
@@ -363,7 +364,7 @@ def make_overlay():
 
 def replace_config(data):
     metadata = read_json(CONTROL / "original-config.json")
-    temporary = CONFIG.with_name("site_config.18e5835-source-r1.tmp")
+    temporary = CONFIG.with_name("site_config.18e5835-source-r2.tmp")
     write_new(temporary, data, metadata["mode"])
     os.chown(temporary, metadata["uid"], metadata["gid"])
     os.replace(temporary, CONFIG)
@@ -735,7 +736,7 @@ def private_directory(path):
 def incoming_permissions():
     # Native source is fed by root stdin. Only audit.py must be readable by
     # the UID1000 tool. The whole release is a read-only bind in that tool.
-    incoming = RELEASE / "incoming"
+    incoming = RELEASE / "incoming-r2"
     info = incoming.lstat()
     require(
         stat.S_ISDIR(info.st_mode)
@@ -753,17 +754,16 @@ def incoming_permissions():
     read_regular(plan)
     info = plan.stat()
     require(
-        (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (0, 0, 0o644),
+        (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (1000, 1000, 0o644),
         "incoming_initial_plan_identity",
     )
     os.chown(incoming, 1000, 1000)
     os.chown(AUDIT, 1000, 1000)
-    os.chown(plan, 1000, 1000)
     private_directory(incoming)
 
 
 def incoming_ready():
-    private_directory(RELEASE / "incoming")
+    private_directory(RELEASE / "incoming-r2")
     for path, owner in ((NATIVE, 0), (AUDIT, 1000)):
         read_regular(path)
         info = path.stat()

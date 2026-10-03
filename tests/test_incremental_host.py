@@ -100,7 +100,11 @@ class HostTests(unittest.TestCase):
         self.assertEqual(host.NEW, "18e5835cfda4171ec691d5e701c8f42018b5448c")
         self.assertEqual(host.RELEASE.name, "18e5835-source-r1")
         self.assertEqual(host.OLD_OVERLAY.name, "compose.source.r2.yaml")
-        self.assertEqual(host.OVERLAY.name, "newcompose.source.r1.yaml")
+        self.assertEqual(host.OVERLAY.name, "newcompose.source.r2.yaml")
+        self.assertEqual(host.CONTROL.name, "incremental-control-r2")
+        self.assertEqual(host.PRIVATE.name, "private-backup-r2")
+        self.assertEqual(host.NATIVE.parent.name, "incoming-r2")
+        self.assertEqual(host.AUDIT.parent.name, "incoming-r2")
 
     def test_release_scope_rejects_existing_metadata_and_any_other_ddl(self):
         for target, key, value in (
@@ -161,8 +165,16 @@ class HostTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "prior_phase_not_passed"):
                         host.success("prepare")
 
-    def test_overlay_replaces_old_tools_and_preserves_all_eight_services(self):
-        for changed in (None, "backend", "db", "unknown-service"):
+    def test_overlay_preserves_four_base_tools_and_all_eight_runtime_services(self):
+        real_compose = host.compose
+        for changed in (
+            None,
+            "backend",
+            "db",
+            *host.BASE_TOOLS,
+            "unknown-service",
+            "default-profiles",
+        ):
             with self.subTest(changed=changed):
                 prior = {
                     "name": "jifeng-erp-test",
@@ -181,7 +193,7 @@ class HostTests(unittest.TestCase):
                             if name in host.RUNTIME
                             else [],
                         }
-                        for name in host.RUNTIME + host.DATA
+                        for name in host.RUNTIME + host.DATA + host.BASE_TOOLS
                     },
                 }
                 for name in host.TOOLS:
@@ -197,6 +209,15 @@ class HostTests(unittest.TestCase):
 
                 def resolved(label, argv, **kwargs):
                     self.assertTrue(kwargs["redact_output"])
+                    if "--profile" not in argv:
+                        defaults = deepcopy(prior)
+                        defaults["services"] = {
+                            name: prior["services"][name]
+                            for name in host.RUNTIME + host.DATA
+                        }
+                        return json.dumps(defaults).encode()
+                    self.assertEqual(argv.count("--profile"), 1)
+                    self.assertEqual(argv[argv.index("--profile") + 1], "tools")
                     if label == "old-compose-config":
                         return json.dumps(prior).encode()
                     current = deepcopy(prior)
@@ -208,13 +229,22 @@ class HostTests(unittest.TestCase):
                             settings["mem_limit"] = 768 * 1024 * 1024
                             settings["memswap_limit"] = 1024 * 1024 * 1024
                             current["services"][name] = settings
-                    if changed in host.RUNTIME + host.DATA:
+                    if changed in host.RUNTIME + host.DATA + host.BASE_TOOLS:
                         current["services"][changed]["restart"] = "always"
                     return json.dumps(current).encode()
 
                 with (
                     patch.object(host, "write_new", side_effect=written),
                     patch.object(host, "command", side_effect=resolved),
+                    patch.object(
+                        host,
+                        "compose",
+                        side_effect=lambda path: (
+                            real_compose(path)[:-2]
+                            if changed == "default-profiles"
+                            else real_compose(path)
+                        ),
+                    ),
                 ):
                     if changed:
                         with self.assertRaisesRegex(
@@ -237,12 +267,14 @@ class HostTests(unittest.TestCase):
                     set(overlay["services"]), set(host.RUNTIME + host.TOOLS)
                 )
 
-    def test_incoming_permissions_only_chown_audit_plan_and_directory(self):
+    def test_incoming_permissions_preserve_existing_plan_and_only_chown_new_helpers(
+        self,
+    ):
         release, incoming, native, audit_path, plan = (
             MagicMock() for unused in range(5)
         )
         release.__truediv__.side_effect = lambda name: (
-            incoming if name == "incoming" else plan
+            incoming if name == "incoming-r2" else plan
         )
         incoming.lstat.return_value = SimpleNamespace(
             st_mode=0o40700, st_uid=0, st_gid=0
@@ -251,7 +283,9 @@ class HostTests(unittest.TestCase):
             path.stat.return_value = SimpleNamespace(
                 st_mode=0o100600, st_uid=0, st_gid=0
             )
-        plan.stat.return_value = SimpleNamespace(st_mode=0o100644, st_uid=0, st_gid=0)
+        plan.stat.return_value = SimpleNamespace(
+            st_mode=0o100644, st_uid=1000, st_gid=1000
+        )
         with (
             patch.object(host, "RELEASE", release),
             patch.object(host, "NATIVE", native),
@@ -263,17 +297,17 @@ class HostTests(unittest.TestCase):
             host.incoming_permissions()
         self.assertEqual(
             [call.args for call in chown.call_args_list],
-            [(incoming, 1000, 1000), (audit_path, 1000, 1000), (plan, 1000, 1000)],
+            [(incoming, 1000, 1000), (audit_path, 1000, 1000)],
         )
 
     def test_initial_plan_owner_mode_rejected_before_any_chown(self):
-        for owner, mode in ((1000, 0o100644), (0, 0o100600), (0, 0o100666)):
+        for owner, mode in ((0, 0o100644), (1000, 0o100600), (1000, 0o100666)):
             with self.subTest(owner=owner, mode=mode):
                 release, incoming, native, audit_path, plan = (
                     MagicMock() for unused in range(5)
                 )
                 release.__truediv__.side_effect = lambda name: (
-                    incoming if name == "incoming" else plan
+                    incoming if name == "incoming-r2" else plan
                 )
                 incoming.lstat.return_value = SimpleNamespace(
                     st_mode=0o40700, st_uid=0, st_gid=0

@@ -61,7 +61,7 @@ def quote(value):
 
 
 def load_audit(expected_sha):
-    path = ROOT / "incoming/incremental_audit.py"
+    path = ROOT / "incoming-r2/incremental_audit.py"
     require(
         stat.S_ISREG(path.lstat().st_mode) and sha(path) == expected_sha,
         "audit_source_pin",

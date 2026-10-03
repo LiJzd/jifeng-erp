@@ -20,6 +20,23 @@ def load_native():
     return module
 
 
+def test_audit_loader_uses_only_new_incoming_namespace_and_sha(tmp_path, monkeypatch):
+    native = load_native()
+    monkeypatch.setattr(native, "ROOT", tmp_path)
+    current = tmp_path / "incoming-r2"
+    previous = tmp_path / "incoming"
+    current.mkdir()
+    previous.mkdir()
+    source = b"NAMESPACE = 'fresh-r2'\n"
+    (current / "incremental_audit.py").write_bytes(source)
+    stale_source = b"NAMESPACE = 'used-r1'\n"
+    (previous / "incremental_audit.py").write_bytes(stale_source)
+    module = native.load_audit(hashlib.sha256(source).hexdigest())
+    assert module.NAMESPACE == "fresh-r2"
+    with pytest.raises(RuntimeError, match="audit_source_pin"):
+        native.load_audit(hashlib.sha256(stale_source).hexdigest())
+
+
 class Cursor:
     def __init__(self, owner):
         self.owner = owner
