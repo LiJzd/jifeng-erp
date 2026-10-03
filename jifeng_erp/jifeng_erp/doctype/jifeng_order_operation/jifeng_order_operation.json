@@ -1,0 +1,58 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Order Operation",
+ "module": "Jifeng ERP",
+ "autoname": "hash",
+ "title_field": "operation",
+ "search_fields": "operation",
+ "track_changes": 1,
+ "sort_field": "sequence",
+ "sort_order": "ASC",
+ "field_order": ["operation", "sequence", "request_id", "request_digest"],
+ "fields": [
+  {
+   "fieldname": "operation",
+   "fieldtype": "Link",
+   "label": "共用工序",
+   "options": "Operation",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 1,
+   "set_only_once": 1,
+   "in_list_view": 1,
+   "description": "关联所有公司共用的原生工序；在共用工序页面建立后不能改绑。"
+  },
+  {
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "label": "页面顺序",
+   "reqd": 1,
+   "default": "0",
+   "in_list_view": 1,
+   "description": "非负整数，仅控制共用工序页面排列；不改变物料清单、生产工单或报工的执行顺序。"
+  },
+  {
+   "fieldname": "request_id",
+   "fieldtype": "Data",
+   "label": "新建请求身份",
+   "unique": 1,
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1
+  },
+  {
+   "fieldname": "request_digest",
+   "fieldtype": "Data",
+   "label": "新建请求摘要",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1
+  }
+ ],
+ "permissions": [
+  {"role": "Manufacturing User", "read": 1, "select": 1, "create": 1, "write": 1},
+  {"role": "Manufacturing Manager", "read": 1, "select": 1, "create": 1, "write": 1}
+ ]
+}

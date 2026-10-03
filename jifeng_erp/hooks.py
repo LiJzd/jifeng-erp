@@ -6,6 +6,7 @@ app_email = "erp@example.invalid"
 app_license = "GPL-3.0-or-later"
 required_apps = ["erpnext", "hrms"]
 app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css",
+                   "/assets/jifeng_erp/css/jifeng_order_operations.css",
                    "/assets/jifeng_erp/css/jifeng_product_dictionary.css",
                    "/assets/jifeng_erp/css/jifeng_product_category.css",
                    "/assets/jifeng_erp/css/jifeng_product_archive.css",
@@ -24,6 +25,7 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_customer_type.js",
                   "/assets/jifeng_erp/js/jifeng_order_dictionary.js",
                   "/assets/jifeng_erp/js/jifeng_plating_color.js",
+                  "/assets/jifeng_erp/js/jifeng_order_operations.js",
                   "/assets/jifeng_erp/js/jifeng_customer_archive.js",
                   "/assets/jifeng_erp/js/jifeng_product_category.js",
                   "/assets/jifeng_erp/js/jifeng_product_archive.js",

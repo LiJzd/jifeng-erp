@@ -232,6 +232,10 @@ window.JifengClassicBridge = class JifengClassicBridge {
 			const workbench = new window.JifengPlatingColor(host);
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
 		}
+		if (spec.orderOperations) {
+			const workbench = new window.JifengOrderOperations(host);
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		const iframe = document.createElement("iframe");
 		iframe.className = "jfe-formal-iframe";
 		iframe.title = spec.title;

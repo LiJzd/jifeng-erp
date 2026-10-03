@@ -1,0 +1,15 @@
+.jfe-order-operations { font-size: 12px; }
+.jfe-order-operations-scope { color: var(--text-muted); margin: 4px 0; }
+.jfe-order-operations-scroll { overflow: auto; }
+.jfe-order-operations-table { border-collapse: collapse; width: 100%; min-width: 920px; }
+.jfe-order-operations-table th, .jfe-order-operations-table td { border: 1px solid var(--border-color); padding: 4px; white-space: nowrap; vertical-align: top; }
+.jfe-order-operations-table th { background: var(--subtle-fg); }
+.jfe-order-operations-table input { width: 100%; min-width: 90px; border: 1px solid transparent; background: transparent; padding: 2px; }
+.jfe-order-operations-table input:focus { border-color: var(--primary); outline: none; background: var(--control-bg); }
+.jfe-order-operations-table input[readonly] { color: var(--text-muted); cursor: default; }
+.jfe-order-operations-table th:nth-child(1) { width: 70px; }
+.jfe-order-operations-table th:nth-child(2) { width: 170px; }
+.jfe-order-operations-table th:nth-child(3) { width: 220px; }
+.jfe-order-operations-footer { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.jfe-order-operations-review table { border-collapse: collapse; margin: 8px 0; }
+.jfe-order-operations-review td, .jfe-order-operations-review th { border: 1px solid var(--border-color); padding: 6px; white-space: pre-wrap; }

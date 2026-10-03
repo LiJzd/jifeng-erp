@@ -1,5 +1,29 @@
 # 验证记录
 
+## 2026-10-03 最新本地增量：共用订单工序
+
+原站依据为 `output/legacy-order-operations-20261003-r1/report.md/json`：8列顺序/工序/备注/操作/日期/修改人/修改日期/删除，六行后有空白行，前三格单击编辑；没有标准新增/保存工具栏。没有输入或提交，旧保存触发未知。新组件保留结构，明确行内保存/取消，已有原生工序名只读。使用全局 ERPNext Operation，独立 `Jifeng Order Operation` 保存页面顺序和永久创建回执；不改原生工序权限、表结构或BOM/生产行序。原生 description 空值采用名称是当前原生规则。
+
+31 后端模型、2 资源模型、工序/A-B/订单词典/镀色四份客户端协议及JS语法检查通过；Python3.13 AST/Ruff通过。新增回归覆盖查询在飞时保存成功不被旧响应覆盖、各行差异独立、TimestampMismatch明确拒绝后保留草稿并能只读核对；确定版本冲突即使当前字段已相同，也必须明确采用，不误报本次保存成功。模型不能代替实际GUI。
+
+| 步骤 | 实际结果 | 忽略目录证据 |
+| --- | --- | --- |
+| 原站再取证 | 真实授权登录下仅观察行内控件；没有新增、删除或保存，退出再读仍六行，不推定自动保存。 | `legacy-order-operations-20261003-r1/report.md/json` |
+| 源码冻结及镜像 | 10运行文件、16原依赖，旧字节保留；本地文件镜像，无网络。r1与每次修正独立保留，r4最终pins SHA `6f3e8c64483e5c6da449ece03810254ffb7d9fdc40572967e656897e456c7b85`。 | `order-operations-native-source-20261003-r1.json`及r2/r3/r4；同名源备份目录 |
+| schema r1 | 一次定向reload+commit，930→931，仅新增空排序/回执表与本DocType元数据；六元数据表目标外及所有旧业务/Auth/账簿内容、结构、索引全同。 | `order-operations-native-schema-20261003-r1/` |
+| suite r1拒绝及独立诊断 | 原生新建把total_operation_time从None规范化为float，保护拒绝；诊断只返回变化字段名和类型，真实创建后回滚，两次独立fresh931全同。修正仅新Doc/空子工序/该值None时预置原生0.0，再冻结保护；旧工序保护保持。 | `order-operations-native-suite-20261003-r1/`、`order-operations-native-creation-diag-20261003-r1/`、`order-operations-native-source-20261003-r2/` |
+| suite r2/r3验收器修正 | r2通过两制造岗位与公司共享后，未保存Link文档缺原生_action使验收器报错；r3通过11门后，原生关联User Permission过滤回执为missing与原期望抛错不符。分别只修验收器合法save action及严格missing/null/输入UUID契约，每次fresh931全同。 | `order-operations-native-suite-20261003-r2/`、r3及对应r3/r4源码备份；不是把业务失败直接当通过 |
+| suite r4 | 22真实原生门通过，全部业务、审计、临时权限/元数据夹具回滚，独立新连接931物理对象内容/结构/索引全同。 | `order-operations-native-suite-20261003-r4/`，`passed=true`、`fresh_unchanged=true` |
+| 资源及有效hooks | 18JS/10CSS共28资源，镜像与本地逐字节/SHA及URL指纹相同；预览中仅失效app_hooks键，实际有效hooks逐URL同源码，缓存操作fresh931全同。没有HTTP资源或浏览器加载证明。 | `order-operations-native-assets-20261003-r1.json`、`order-operations-hooks-cache-20261003-r1/` |
+| GUI r1/r2未验收 | gpt-6-luna用允许的CUA读取Chrome库存，返回Unable to load browser request-header policy；一次文档支持的IAB创建返回Browser is not available: iab。未打开ERP、登录或进行草稿编辑，不能计A/B可见列、取消、共享保存、截图或console/network通过。 | `order-operations-gui-20261003-r1/report.md/json`、r2；r1父目录原件保留、逐SHA复制，见`order-operations-gui-report-copy-20261003-r1.json` |
+| 关闭及独立后验 | 按本轮PID/tick关闭预览，8000关闭，配置原字节/owner/mode恢复；整段预览与缓存后至关闭两个比较均931全同，业务/元数据/Auth/角色/账簿内容、结构、索引保持，无worker/scheduler或外网操作。 | WSL私有`order-operations-preview-20261003-r1/stopped.json`、`order-operations-gui-closure-audit-20261003-r1/` |
+
+r4实际涵盖纯Manufacturing User/Manager创建、描述和排序的原生Version、不同Company User Permission共读全局工序、原生Link验证与实际search_link、顺序单独修改保留原生父子全行及原生Version、备注修改保留其它属性、两个版本失效原子拒绝、UUID原始摘要/重复POST拒绝/只读回查、原生改名传播、排序原生表单禁止伪造/改绑/删除、103条同序分页、Operation及映射User Permission、真实mask/readonly、先保存原生后排序Select/mandatory失败完整回滚、陈旧总工时的非请求变化拒绝、Sales User/Guest拒绝及严格payload。
+
+生产/BOM/Job Card/商品工艺和工资父子表、元数据、GL/SLE保持，原生文件SHA保持。Link验证使用未持久化引用文档及真实选择查询；工资operation实际是Data，不能称完整工资或生产链路通过。改名使用原生支持的rebuild_search=False，没有搜索重建验收。物理核验包含六InnoDB序列，READ ONLY/RR一致快照与独立连接的三个MyISAM READ锁；未全migrate/seed、扩原生权限或外网写入。这里只是串行实验，没有多事务并发或负载证明。
+
+当前本地363入口为235正式映射、13部分可用、97业务预览、13导航、5工具，28资源。工序保持部分可用，旧自动保存、此页改名/删除、历史迁移及完整GUI业务验收继续；外网仍4d71c35的11部分/99预览，本批与镀色未发布。下方较早批次保留当时数字，以本节为当前本地状态。
+
 ## 2026-10-03 最新本地增量：订单镀色
 
 原站结构依据为`output/legacy-plating-color-20261003-r2/report.md/json`：订单/产品两个URL外观一致，但没有业务查询或共用底层证明；13列和“产品镀色新增”六字段已观察。编号灰色且AX不可编辑，色系是普通文本，代码占位为“代码生成条码时用”；旧必填/保存/编号/简拼算法未验证。本批只绑定订单入口，产品入口仍预览。当前规则要求名称非空，编号采用公司/类型独立服务器计数，简拼只读；代码/色系保留原文，不改Customer、Item或Sales Order。
