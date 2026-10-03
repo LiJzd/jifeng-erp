@@ -89,6 +89,52 @@ class TestWageWorkbench(unittest.TestCase):
                 "piece_rate": 3 if job_card else 0, "hours": 1, "hourly_rate": 4,
                 "extra_amount": 0, "notes": "合成单元测试"}
 
+    def test_history_reference_pair_preserves_exact_request_and_changes_reject_reuse(self):
+        self.payload["rows"][0].update(piece_rate_reference="OLD-1",
+                                      piece_rate_reference_version="2026-09-01 09:00:00.000001")
+        result = self.module.save_drafts(self.payload)
+        self.assertEqual(self.persisted[0].piece_rate_reference, "OLD-1")
+        self.assertEqual(self.persisted[0].piece_rate_reference_version, "2026-09-01 09:00:00.000001")
+        self.assertEqual(self.module.save_drafts(copy.deepcopy(self.payload))["wages"], result["wages"])
+        self.payload["rows"][0]["piece_rate_reference_version"] = "2026-09-02 09:00:00"
+        with self.assertRaisesRegex(ValueError, "内容已变化"):
+            self.module.save_drafts(self.payload)
+
+    def test_history_reference_payload_rejects_missing_half_or_unknown_fields(self):
+        for values in ({"piece_rate_reference": "OLD-1"},
+                       {"piece_rate_reference_version": "2026-09-01 09:00:00"},
+                       {"piece_rate_reference": "OLD-1", "piece_rate_reference_version": "2026-09-01 09:00:00", "default_rate": 1}):
+            payload = copy.deepcopy(self.payload)
+            payload["rows"][0].update(values)
+            with self.assertRaisesRegex(ValueError, "完整填写"):
+                self.module.save_drafts(payload)
+        self.assertFalse(self.persisted)
+
+    def test_new_amendment_rejects_fresh_quote_then_clears_exact_original_copy(self):
+        for doctype in ("Jifeng Wage Entry", "Jifeng Wage Allocation"):
+            source = Doc(doctype=doctype, name="OLD", docstatus=2,
+                         workbench_request_key=None, workbench_request_fingerprint=None,
+                         employee="E-1", piece_rate=3, piece_rate_reference="H1",
+                         piece_rate_reference_version="2026-09-01 09:00:00", wage_entry=None)
+            source.employees = [Doc(**{field: getattr(source, field) for field in
+                ("employee", "piece_rate", "piece_rate_reference", "piece_rate_reference_version", "wage_entry")})]
+            self.frappe.get_doc = Mock(return_value=source)
+            new = Doc(doctype=doctype, amended_from="OLD", flags=Doc(),
+                      workbench_request_key=None, workbench_request_fingerprint=None,
+                      piece_rate=3, piece_rate_reference="H2", piece_rate_reference_version="2026-09-02 09:00:00")
+            new.employees = [Doc(employee="E-1", wage_entry=None, piece_rate=3,
+                piece_rate_reference="H2", piece_rate_reference_version="2026-09-02 09:00:00")]
+            action = self.module.prepare_wage_amendment if doctype == "Jifeng Wage Entry" else self.module.prepare_allocation_amendment
+            with self.assertRaisesRegex(ValueError, "先保存修改草稿"):
+                action(new)
+            target = new if doctype == "Jifeng Wage Entry" else new.employees[0]
+            target.piece_rate_reference, target.piece_rate_reference_version = source.piece_rate_reference, source.piece_rate_reference_version
+            action(new)
+            self.assertIsNone(target.piece_rate_reference)
+            self.assertIsNone(target.piece_rate_reference_version)
+            self.assertEqual(target.piece_rate, 3)
+            self.assertEqual(source.piece_rate_reference, "H1")
+
     def get_doc(self, doctype, name=None, **kwargs):
         if isinstance(doctype, dict):
             doc = Doc(**doctype, flags=types.SimpleNamespace(), docstatus=0)

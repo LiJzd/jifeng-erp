@@ -11,7 +11,7 @@
  "field_order": [
   "employee", "employee_name", "company", "operation", "work_date", "payroll_date",
   "flow_order", "work_order", "job_card", "wage_allocation", "wage_allocation_employee", "salary_component", "calculation_section",
-  "quantity", "stock_uom", "piece_rate", "piece_amount", "hours", "hourly_rate",
+  "quantity", "stock_uom", "piece_rate", "piece_rate_reference", "piece_rate_reference_version", "piece_amount", "hours", "hourly_rate",
   "time_amount", "extra_amount", "total_amount", "notes", "piece_worker_qualified", "piece_worker_qualification_status", "piece_worker_qualification_source", "piece_worker_qualification_version", "amended_from", "workbench_request_key", "workbench_request_fingerprint"
  ],
  "fields": [
@@ -31,6 +31,8 @@
   {"fieldname": "quantity", "fieldtype": "Float", "label": "计件数量", "precision": "6", "default": "0"},
   {"fieldname": "stock_uom", "fieldtype": "Link", "label": "计件单位", "options": "UOM"},
   {"fieldname": "piece_rate", "fieldtype": "Currency", "label": "计件工价", "precision": "6", "options": "Company:company:default_currency", "default": "0"},
+  {"fieldname": "piece_rate_reference", "fieldtype": "Data", "label": "历史工价来源", "read_only": 1, "no_copy": 1, "description": "明确调用历史工价后记录原计薪编号；审核保留本次采用的工价。"},
+  {"fieldname": "piece_rate_reference_version", "fieldtype": "Data", "label": "历史工价来源版本", "read_only": 1, "hidden": 1, "no_copy": 1},
   {"fieldname": "piece_amount", "fieldtype": "Currency", "label": "计件金额", "options": "Company:company:default_currency", "read_only": 1},
   {"fieldname": "hours", "fieldtype": "Float", "label": "计时小时", "precision": "6", "default": "0"},
   {"fieldname": "hourly_rate", "fieldtype": "Currency", "label": "计时单价", "precision": "6", "options": "Company:company:default_currency", "default": "0"},

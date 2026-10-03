@@ -7,6 +7,7 @@ from jifeng_erp.wage_allocation import (
     validate_allocation_cancel,
 )
 from jifeng_erp.wage_workbench import prepare_allocation_amendment
+from jifeng_erp.wage_rate_references import guard_cancelled_allocation_snapshot
 
 
 class JifengWageAllocation(Document):
@@ -21,6 +22,7 @@ class JifengWageAllocation(Document):
 
     def before_cancel(self):
         validate_allocation_cancel(self)
+        guard_cancelled_allocation_snapshot(self)
 
     @frappe.whitelist()
     def make_wages(self):

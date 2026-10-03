@@ -30,6 +30,7 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_product_category.js",
                   "/assets/jifeng_erp/js/jifeng_product_archive.js",
                   "/assets/jifeng_erp/js/jifeng_tool_archive.js",
+                  "/assets/jifeng_erp/js/jifeng_wage_rates.js",
                   "/assets/jifeng_erp/js/jifeng_workspace_core.js",
                   "/assets/jifeng_erp/js/jifeng_modern_workspace.js"]
 

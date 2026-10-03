@@ -8,6 +8,7 @@ import frappe
 from frappe.utils import getdate
 from jifeng_erp.payroll import nonnegative
 from jifeng_erp.piece_workers import require_piece_worker
+from jifeng_erp.wage_rate_references import REFERENCE_FIELDS
 
 
 WAGE = "Jifeng Wage Entry"
@@ -184,7 +185,7 @@ def save_drafts(payload):
     if not isinstance(rows, list) or not 1 <= len(rows) <= 20:
         frappe.throw("每次请保存一至二十道工序")
     for row in rows:
-        if not isinstance(row, dict) or set(row) != ROW_FIELDS:
+        if not isinstance(row, dict) or set(row) not in (ROW_FIELDS, ROW_FIELDS | set(REFERENCE_FIELDS)):
             frappe.throw("请完整填写每道工序及其来源核对信息")
         if not row["operation"] or not row["work_date"]:
             frappe.throw("每道录入需要工作日期和工序")
@@ -217,6 +218,7 @@ def save_drafts(payload):
     for index, row in enumerate(rows):
         values = {field: payload[field] for field in ("company", "employee", "payroll_date", "salary_component")}
         values.update({field: row[field] for field in EDIT_FIELDS if field in row})
+        values.update({field: row[field] for field in REFERENCE_FIELDS if field in row})
         frappe.get_doc("Operation", row["operation"]).check_permission("select")
         if row["job_card"]:
             card, work = resolved[row["job_card"]]
@@ -286,6 +288,7 @@ def authorize_native_restore(doc):
         frappe.throw("没有核对原工资删除记录的权限", frappe.PermissionError)
     doc.check_permission("read")
     identity = ("name", *EDIT_FIELDS, "job_card", "work_order", "flow_order",
+                *REFERENCE_FIELDS,
                 "workbench_request_key", "workbench_request_fingerprint")
     if not any(all((getattr(doc, field, None) or "") == (snapshot.get(field) or "") for field in identity)
                for snapshot in _deleted_requests(key.split(":", 1)[0])):
@@ -318,10 +321,16 @@ def prepare_wage_amendment(doc):
     if (key or fingerprint) and (key != (source.workbench_request_key or "")
             or fingerprint != (source.workbench_request_fingerprint or "")):
         frappe.throw("修改单的工资录入请求必须来自原已取消单据")
+    current_reference = tuple(getattr(doc, field, None) or "" for field in REFERENCE_FIELDS)
+    copied_reference = tuple(getattr(source, field, None) or "" for field in REFERENCE_FIELDS)
+    if any(current_reference) and current_reference != copied_reference:
+        frappe.throw("请先保存修改草稿，再调用历史工价")
     # Desk's from_amend copy keeps no_copy fields. The original batch receipt
     # stays on the cancelled source; the amendment has its own native identity.
     doc.workbench_request_key = None
     doc.workbench_request_fingerprint = None
+    for field in REFERENCE_FIELDS:
+        setattr(doc, field, None)
 
 
 def prepare_allocation_amendment(doc):
@@ -330,9 +339,16 @@ def prepare_allocation_amendment(doc):
         return
     _child_fields(source, "employees", ("employee", "wage_entry"))
     originals = {row.employee: row.wage_entry or "" for row in source.employees}
+    original_rows = {row.employee: row for row in source.employees}
     for row in doc.employees:
         if row.wage_entry and row.wage_entry != originals.get(row.employee):
             frappe.throw("修改分配单的计薪引用必须来自原已取消单据")
+        current_reference = tuple(getattr(row, field, None) or "" for field in REFERENCE_FIELDS)
+        copied_reference = tuple(getattr(original_rows.get(row.employee), field, None) or "" for field in REFERENCE_FIELDS)
+        if any(current_reference) and current_reference != copied_reference:
+            frappe.throw("请先保存修改草稿，再调用历史工价")
         # Generated references are recreated against the new parent and row.
         # They are not authority for generate_wages, which queries native docs.
         row.wage_entry = None
+        for field in REFERENCE_FIELDS:
+            setattr(row, field, None)

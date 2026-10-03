@@ -5,6 +5,7 @@ from frappe.utils import getdate
 from jifeng_erp.payroll import active_additional_salary, wage_amounts
 from jifeng_erp.piece_workers import bind_piece_worker
 from jifeng_erp.wage_allocation import validate_wage_source
+from jifeng_erp.wage_rate_references import guard_cancelled_wage_snapshot, validate_wage_reference
 from jifeng_erp.wage_workbench import authorize_native_restore, guard_request_identity, prepare_wage_amendment
 
 
@@ -66,6 +67,7 @@ class JifengWageEntry(Document):
         if self.quantity and not getattr(self, "stock_uom", None):
             frappe.throw("请填写计件数量的单位")
         validate_wage_source(self)
+        validate_wage_reference(self)
         before = getattr(self, "get_doc_before_save", lambda: None)()
         historical = before if (before and before.docstatus == 1 and getattr(self, "docstatus", 0) == 1
                                 and before.company == self.company and before.employee == self.employee
@@ -81,6 +83,9 @@ class JifengWageEntry(Document):
             frappe.throw("只有已提交的报工单可以作为审核计薪依据")
         if not any(row.employee == self.employee for row in card.time_logs):
             frappe.throw("报工单中没有这位员工的报工时间记录")
+
+    def before_cancel(self):
+        guard_cancelled_wage_snapshot(self)
 
     def on_cancel(self):
         if active_additional_salary(self.name, for_update=True):

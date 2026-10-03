@@ -110,6 +110,49 @@ async function main() {
     check(saved.rows.length === 0 && !saved.frozen && !saved.busy && !saved.is_dirty(), "confirmed save clears only saved rows and dirty state");
     check(!storage.has(saved.storageKey), "confirmed save clears session marker");
 
+    const history = workbench();
+    const values = { work_date: "2026-10-01", operation: "O1", job_card: "J1", piece_rate: 7 };
+    const status = { textContent: "" }, button = { addEventListener: (_, action) => { button.click = action; } };
+    const host = { querySelector: selector => selector === "[data-call-rate]" ? button : status };
+    const wrapper = { html: () => {}, get: () => host };
+    let finishSetter = null;
+    const dialog = { is_visible: true, fields_dict: { history_rate: { $wrapper: wrapper } },
+        get_value: name => values[name], set_value: async (name, value) => {
+            values[name] = value; await dialog.fields_dict[name].df.onchange?.();
+            if (finishSetter) await new Promise(resolve => { finishSetter = resolve; });
+        } };
+    for (const name of ["piece_rate", "operation", "work_date"]) dialog.fields_dict[name] = { df: {} };
+    let sourceProof = { job_card: "J1", operation: "O1", stock_uom: "Nos",
+        source_modified: "2026-10-01 08:00:00", work_order_modified: "2026-10-01 09:00:00" };
+    let picker;
+    context.window = { JifengWageRatePicker: class { constructor(options) { picker = options; } } };
+    const quote = history.bindHistoryRate(dialog, { company: "C-1", employee: "E-1" }, () => sourceProof);
+    const selected = { name: "H1", version: "2026-09-01 08:00:00.000001", work_date: "2026-09-01", piece_rate: "0", stock_uom: "Nos" };
+    await button.click();
+    check(picker.stillCurrent(), "page picker begins only on the exact current person/source/price");
+    check(await picker.onChoose(selected) === true && values.piece_rate === 0, "page adopts explicit zero price without saving a wage");
+    check(quote.reference().piece_rate_reference === "H1" && quote.reference().piece_rate_reference_version === selected.version,
+        "page keeps the original wage and exact version in payload fields");
+    await dialog.set_value("piece_rate", 9);
+    check(!quote.reference().piece_rate_reference && values.piece_rate === 9, "manual page price clears quote and retains manual value");
+    await button.click();
+    dialog.is_visible = false;
+    check(await picker.onChoose(selected) === false && values.piece_rate === 9, "closed page dialog rejects a delayed historical choice");
+    dialog.is_visible = true;
+    await button.click();
+    sourceProof = { ...sourceProof, source_modified: "2026-10-01 08:00:01" };
+    check(await picker.onChoose(selected) === false, "changed source proof rejects choice before setter");
+    await button.click();
+    finishSetter = true;
+    const pendingChoice = picker.onChoose(selected);
+    for (let spin = 0; spin < 4 && typeof finishSetter !== "function"; spin++) await Promise.resolve();
+    values.piece_rate = 12;
+    finishSetter(); finishSetter = null;
+    check(await pendingChoice === false && values.piece_rate === 12 && !quote.reference().piece_rate_reference,
+        "manual change during native setter preserves current price and cannot attach a quote");
+    history.rows = [{ piece_rate_reference: "H1", piece_rate_reference_version: selected.version, flow_order: "F1" }];
+    check(history.payload().rows[0].piece_rate_reference === "H1" && !Object.hasOwn(history.payload().rows[0], "flow_order"),
+        "page save keeps both reference fields and excludes display-only flow data");
     console.log(JSON.stringify({ ok: true, checks, browser_verified: false }));
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

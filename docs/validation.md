@@ -1,6 +1,26 @@
 # 验证记录
 
+## 2026-10-03 本地历史计件工价与持久引用
+
+工资操作台单道/多道录入、原生 Wage Entry 草稿及 Wage Allocation 员工行共用显式历史选价。GET 使用原生权限列表按公司、员工、工序、单位、日期及已审核/正数计件数量筛选，完整200分批复核后分页，合法0工价可选；DTO不含计时价、工资项目或备注。选择同时核准确ID、微秒版本和工价，目标及原生来源权限/字段/mask保持。保存两项只读Data引用（不建立旧工资取消依赖），首次保存/审核在当前Job Card锁之后复核并单次历史Wage NOWAIT；无自动重试或保存。批准后保留准确工价、引用和来源绑定，后来取消旧工资不重算。取消路径独立守卫；分配逐行引用完整传播到工资。修改单先保存草稿，再选价。
+
+163 项工资相关Python模型（工资操作台/历史工价/引用/分配/来源权限/分析/原生浏览校验/计薪/计件人员调用方）通过，共享选价CJS及操作台32项协议检查通过；Ruff py313、Node语法及diff检查通过。字段安装只reload两个既有自有DocType；两表新增两Data列及分配Button元数据，完整931对象独立审计确认原数据/索引/权限/Auth/账簿/序列保持，未full migrate或改核心生产/HRMS结构。
+
+实际原生r1夹具单位错误；r2仍用了不存在的planned_uom，真实控制器字段stock_uom修正后r3通过。三次分别保留证据，失败后各独立fresh931全同。r3实际HR Manager/HR User/company及JobCard UP、202合法历史工资完整分页和0价、无写查询、准确scope/version/rate、native草稿Version/提交、人工改价带旧引用拒绝、20行重复来源前置拒绝、双人批准分配、取消篡改拒绝、旧来源取消后重新生成/提交工资、native amendment清引用及字段readonly/父子mask共13功能门；finally全物理回滚门合计14。前后fresh文件SHA同为 `6b5a7efad34bbb93023c5c52ff0ffa755e445bdcef3ce4f3f527f798b1ef23d5`。
+
+r4 加入真实白名单 `frappe.desk.form.save.savedocs` 的 JSON Cancel 入口直调；有/无历史引用的工资和分配逐项金额/日期/工资项目/来源及员工行增删替换拒绝，正常取消独立完整父子 SQL 列（只排状态和修改时间/人）保持。14门与fresh931全同通过，既有配置没有 Pulse key，真实 is_enabled 为 false，未改遥测或配置。此为真实原生函数入口，HTTP传输为 false。进一步复核发现回执/修改来源及只读姓名需要纳入取消快照，随后在r5补验通过；此前r3/r4的20行均携带同一个JobCard，实际只在prepared/insert前被重复来源拒绝，不能据此宣称前19条插入后回滚。
+
+r5 的14门全部通过。取消快照新增只读姓名、批量请求key/fingerprint与修改来源；真实正式Workbench单行先保存并提交，清空/替换回执拒绝，合法取消后batch_status保持原name/key/fingerprint及docstatus2。两个真实修改单submit后修改amended_from拒绝，普通取消保持。真实 apply_fieldlevel_read_permissions→as_dict 的父/子权限裁剪JSON取消通过，已有非空隐藏资格摘要恢复后完整SQL列不变，没有应用侧跳过或特判。20行改为19合法纯计时与最后1条明确来源错误引用；实际异常栈证明前19个Document已insert完成、正在处理第20个且进入引用校验，最后仍new/in_insert；错误后请求键与全SQL回滚。最终全部931对象fresh/config和14份复制源码逐SHA保持，前后fresh文件SHA均为 `6b5a7efad34bbb93023c5c52ff0ffa755e445bdcef3ce4f3f527f798b1ef23d5`。
+
+双连接r1因站点账号无PROCESS拒绝，未进入锁协议，fresh931保持。单次现有root无密码Unix socket只读握手证明同一实例与PROCESS有效后，经独立审查的新r2通过：准确A持JobCard、B持Wage并等待A，INNODB实际等待证明；A单次NOWAIT立即拒绝，rollback后B完成退出；新的独立连接释放后对照可取锁。没有更改权限、SQL业务写、Redis或用户；所有连接/线程退出，fresh931/config同。这是准确原生SQL争用诊断，不是完整应用并发负载验收。
+
+资源r1实际响应源正确，缓存读取误用了hash API而TypeError；无SQL变更且fresh931全同。按实际Frappe FormMeta代码改为client_cache/Redis value键后r2通过：有效hooks 19JS/10CSS、29项源码字节/指纹/静态路径、Wage Entry和Allocation原生getdoctype响应与两个实际doctype_form_meta缓存JS一致；fresh931保持。此为本地源/缓存检查，不是HTTP或GUI验证。
+
+忽略证据目录：`wage-rate-native-schema-20261003-r1/`、`wage-rate-native-suite-20261003-r1/`、r2、r3、r4、r5、`wage-rate-native-lock-20261003-r1/`、r2、`wage-rate-native-root-handshake-20261003-r1/`、`wage-rate-native-assets-20261003-r1/`、r2。本轮gpt-6-luna取旧工价页面任务创建被 `agent thread limit reached` 拒绝，未进行浏览器操作/预览。默认价范围已询问未回复，未推定旧默认保存规则；工价独立菜单及363入口状态保持。此增量未发布，外网仍为 `18e5835`；GUI、完整旧操作习惯与全模块正式验收继续待完成。
+
 ## 2026-10-03 客户选择、工序与镀色实际外网发布
+
+测试入口为 [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern) 和 [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)，使用同一 Frappe 站点及测试数据库。测试账号仅在本地私有 `output/ERP外网测试账号.private.txt` 交接，不进入公开仓库。这里证明认证页面与资源访问，未做两套业务写入比对或 GUI 验收；下方旧版本和“当时最新”的批次记录已被本节取代。
 
 外网 A/B 已由 `4d71c35` 切换为冻结业务源码 `18e5835cfda4171ec691d5e701c8f42018b5448c`。公开候选含 532 个文件，归档 3,099,538 字节，SHA256 `64474ad8769f76a899eb8df32eb6b3f44646af60460c71d8b49105ee82ede236`。本地已有客户选择15、工序22、镀色19原生岗位门；本轮发布助手共89模型通过。默认 Windows pytest 临时目录权限拒绝后使用工作区新独立目录通过，未修改业务实现绕过测试。
 
@@ -89,9 +109,9 @@ r4实际涵盖纯Manufacturing User/Manager创建、描述和排序的原生Vers
 
 物理核验使用READ ONLY/RR一致快照，独立连接持全部三个MyISAM READ锁并复核连接ID；含六个InnoDB序列。仅允许明确隔离site/db和两既有Validation公司，未全migrate、扩原生权限、导入历史或外网写入。当前只做串行实验，无双事务/负载证明。GUI报告由子智能体写在父工作目录的output，四文件已逐SHA复制到仓库忽略的output，原件保留，见`plating-color-gui-report-copy-20261003-r1.json`。旧编号、简拼、条码、删除/打印、订单选择联动和全业务GUI验收继续。本地363入口为235正式映射、12部分可用、98预览、13导航、5工具，17JS/9CSS共26资源；外网继续4d71c35、11部分/99预览，本批未发布。
 
-## 2026-10-03 最新外网发布：4d71c35
+## 2026-10-03 此前外网发布：4d71c35（已被18e5835取代）
 
-当前A/B共用源码已从5aa升级至4d71c35；下文“未发布”“外网仍5aa”等描述保留为较早批次记录，以本节为最新状态。公开候选505文件逐SHA、25资源指纹、固定镜像和只读挂载核验通过。没有下载服务器备份，上传及每项资源读取实际连接均核DIRECT；凭据只在RAM使用。
+此批次A/B共用源码从5aa升级至4d71c35；下文“未发布”“外网仍5aa”等描述是当时记录。当前外网版本以顶部18e5835发布节为准。此批次公开候选505文件逐SHA、25资源指纹、固定镜像和只读挂载核验通过。没有下载服务器备份，上传及每项资源读取实际连接均核DIRECT；凭据只在RAM使用。
 
 | 核验 | 实际结果 | 忽略目录证据 |
 | --- | --- | --- |

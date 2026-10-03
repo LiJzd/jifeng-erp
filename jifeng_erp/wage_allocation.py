@@ -22,6 +22,7 @@ WAGE_FIELDS = (
     "payroll_date", "salary_component", "employee", "quantity", "piece_rate",
     "hours", "hourly_rate", "extra_amount", "piece_amount", "time_amount", "total_amount",
     "stock_uom", "wage_allocation", "wage_allocation_employee",
+    "piece_rate_reference", "piece_rate_reference_version",
 )
 NUMERIC_WAGE_FIELDS = {
     "quantity", "piece_rate", "hours", "hourly_rate", "extra_amount",
@@ -184,6 +185,9 @@ def validate_allocation(allocation, *, approved_history=None):
         frappe.throw("请选择启用的收入类工资项目")
     before = getattr(allocation, "get_doc_before_save", lambda: None)()
     history = approved_history or before
+    from jifeng_erp.wage_rate_references import guard_approved_allocation_quotes
+
+    guard_approved_allocation_quotes(allocation, history)
     approved_rows = {row.name: row for row in history.employees} if (
         history and history.docstatus == 1 and allocation.docstatus == 1
         and history.company == allocation.company) else {}
@@ -203,6 +207,9 @@ def validate_allocation(allocation, *, approved_history=None):
         if row.quantity and _get(row, "piece_rate") in (None, ""):
             frappe.throw("有计件份额的员工需要由主管填写计件工价")
         row.piece_rate = _decimal(_get(row, "piece_rate"), "计件工价")
+        from jifeng_erp.wage_rate_references import validate_allocation_reference
+
+        validate_allocation_reference(allocation, row, approved_history=history)
         prior = approved_rows.get(row.name)
         approved_row = prior if (prior and prior.employee == row.employee
                                  and _decimal(prior.quantity) == row.quantity
@@ -237,7 +244,7 @@ def wage_values(allocation, row):
               ("company", "job_card", "work_order", "flow_order", "operation", "work_date",
                "payroll_date", "salary_component", "stock_uom")}
     values.update({field: _get(row, field) for field in
-                   ("employee", "quantity", "piece_rate", "hourly_rate", "extra_amount",
+                   ("employee", "quantity", "piece_rate", "piece_rate_reference", "piece_rate_reference_version", "hourly_rate", "extra_amount",
                     "piece_amount", "time_amount", "total_amount")})
     values.update(hours=_get(row, "wage_hours", 0), wage_allocation=allocation.name,
                   wage_allocation_employee=row.name)

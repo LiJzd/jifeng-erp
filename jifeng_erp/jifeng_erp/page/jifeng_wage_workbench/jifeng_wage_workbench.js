@@ -258,6 +258,7 @@ class JifengWageWorkbench {
             { fieldname: "source", fieldtype: "HTML" },
             { fieldname: "quantity", fieldtype: "Float", label: "计件数量", default: 0, hidden: timed ? 1 : 0 },
             { fieldname: "piece_rate", fieldtype: "Currency", label: "计件工价", default: 0, hidden: timed ? 1 : 0 },
+            { fieldname: "history_rate", fieldtype: "HTML", hidden: timed ? 1 : 0 },
             { fieldname: "hours", fieldtype: "Float", label: "计时小时", default: 0, reqd: timed ? 1 : 0 },
             { fieldname: "hourly_rate", fieldtype: "Currency", label: "计时单价", default: 0, reqd: timed ? 1 : 0 },
             { fieldname: "extra_amount", fieldtype: "Currency", label: "附加费", default: 0 },
@@ -265,6 +266,7 @@ class JifengWageWorkbench {
         ];
         let source = null;
         let sourceRequest = 0;
+        let history;
         const dialog = new frappe.ui.Dialog({ title: timed ? "计时录入" : "工序计件录入", fields,
             primary_action_label: "加入明细", primary_action: async values => {
                 if (dialog.working) return;
@@ -278,13 +280,17 @@ class JifengWageWorkbench {
                     for (const field of ["quantity", "piece_rate", "hours", "hourly_rate", "extra_amount"]) {
                         if (!Number.isFinite(Number(values[field])) || Number(values[field]) < 0) throw new Error("数量、单价、小时和附加费需要填写非负数。");
                     }
+                    const reference = history?.reference() || {};
+                    if (reference.piece_rate_reference && !(Number(values.quantity) > 0)) throw new Error("调用历史计件工价后请填写正数计件数量。");
                     if (!this.rows.length) this.batchPerson = { ...selectedPerson, employee_name: employeeName };
                     this.rows.push({ work_date: values.work_date, operation: values.operation, job_card: values.job_card || "",
                         source_modified: source?.source_modified || "", work_order_modified: source?.work_order_modified || "",
                         stock_uom: source?.stock_uom || "", quantity: timed ? 0 : Number(values.quantity || 0),
                         piece_rate: timed ? 0 : Number(values.piece_rate || 0), hours: Number(values.hours || 0),
                         hourly_rate: Number(values.hourly_rate || 0), extra_amount: Number(values.extra_amount || 0),
-                        notes: values.notes || "", flow_order: source?.flow_order || "" });
+                        notes: values.notes || "", flow_order: source?.flow_order || "",
+                        piece_rate_reference: reference.piece_rate_reference || "",
+                        piece_rate_reference_version: reference.piece_rate_reference_version || "" });
                     dialog.allowClose = true;
                     dialog.hide();
                     this.renderRows();
@@ -295,6 +301,7 @@ class JifengWageWorkbench {
             const selected = dialog.get_value("job_card");
             const request = ++sourceRequest;
             source = null;
+            history?.clear();
             dialog.fields_dict.source.$wrapper.empty();
             if (!selected) return;
             try {
@@ -302,11 +309,61 @@ class JifengWageWorkbench {
                     job_card: selected, company: this.value("company"), employee: this.value("employee") } });
                 if (request !== sourceRequest || dialog.get_value("job_card") !== selected) return;
                 source = response.message;
-                dialog.set_value("operation", source.operation);
+                await dialog.set_value("operation", source.operation);
                 dialog.fields_dict.source.$wrapper.html(`<p>来源日期：${this.esc(source.source_date)}　单位：${this.esc(source.stock_uom)}　流程单：${this.esc(source.flow_order || "")}</p>`);
             } catch (error) { if (request === sourceRequest) source = null; }
         };
+        if (!timed) history = this.bindHistoryRate(dialog, selectedPerson, () => source);
         this.trackDialog(dialog);
+    }
+    bindHistoryRate(dialog, person, readSource) {
+        let quote = null, applying = false;
+        const wrapper = dialog.fields_dict.history_rate.$wrapper;
+        wrapper.html('<button type="button" class="btn btn-default btn-sm" data-call-rate>调用历史工价</button><span class="ml-2" data-rate-reference></span>');
+        const status = wrapper.get(0).querySelector("[data-rate-reference]");
+        const context = () => {
+            const source = readSource();
+            return { ...person, operation: dialog.get_value("operation") || "", work_date: dialog.get_value("work_date") || "",
+                job_card: dialog.get_value("job_card") || "", stock_uom: source?.stock_uom || "",
+                source_modified: source?.source_modified || "", work_order_modified: source?.work_order_modified || "" };
+        };
+        const editable = () => dialog.is_visible && !dialog.working && !this.busy && !this.frozen && !this.selectionBusy &&
+            this.value("company") === person.company && this.value("employee") === person.employee;
+        const snapshot = () => JSON.stringify([context(), String(dialog.get_value("piece_rate") || 0), quote?.name || "", quote?.version || ""]);
+        const clear = () => { quote = null; status.textContent = ""; };
+        for (const field of ["piece_rate", "operation", "work_date"]) {
+            const control = dialog.fields_dict[field], previous = control.df.onchange;
+            control.df.onchange = async () => { if (!applying) clear(); if (previous) await previous(); };
+        }
+        wrapper.get(0).querySelector("[data-call-rate]").addEventListener("click", () => this.guard(async () => {
+            if (!editable()) throw new Error("请先核对当前工资录入状态。");
+            if (!readSource() || context().job_card !== readSource().job_card || context().operation !== readSource().operation) throw new Error("请先读取并核对已提交的工序报工单。");
+            if (!window.JifengWageRatePicker) throw new Error("工价选择组件尚未加载，请刷新后重试。");
+            let baseline = snapshot();
+            const stillCurrent = () => editable() && snapshot() === baseline;
+            new window.JifengWageRatePicker({ getContext: context, stillCurrent, onChoose: async choice => {
+                if (!stillCurrent()) return false;
+                const originalContext = JSON.stringify(context());
+                applying = true;
+                try {
+                    await dialog.set_value("piece_rate", Number(choice.piece_rate));
+                    if (!editable() || JSON.stringify(context()) !== originalContext || Number(dialog.get_value("piece_rate")) !== Number(choice.piece_rate)) {
+                        clear(); return false;
+                    }
+                    quote = { ...choice, context: originalContext };
+                    status.textContent = "来源：" + choice.name + " · " + choice.work_date;
+                    baseline = snapshot();
+                    return true;
+                } finally { applying = false; }
+            }});
+        }));
+        return { clear, reference: () => {
+            if (!quote) return {};
+            if (quote.context !== JSON.stringify(context()) || Number(dialog.get_value("piece_rate")) !== Number(quote.piece_rate)) {
+                clear(); throw new Error("工价或来源已变化，请重新调用历史工价或按手填工价录入。");
+            }
+            return { piece_rate_reference: quote.name, piece_rate_reference_version: quote.version };
+        }};
     }
     esc(value) { return frappe.utils.escape_html(String(value ?? "")); }
     money(value) { return (Math.round((Number(value) + Number.EPSILON) * 100) / 100).toFixed(2); }
@@ -320,7 +377,7 @@ class JifengWageWorkbench {
             piece += p; time += t; total += sum;
             if (row.quantity) quantities.set(row.stock_uom, (quantities.get(row.stock_uom) || 0) + row.quantity);
             const cells = [row.work_date, this.batchPerson?.employee_name || this.batchPerson?.employee || "", row.operation, row.job_card, row.flow_order,
-                `${row.quantity} ${row.stock_uom}`, row.piece_rate, row.hours, row.hourly_rate,
+                `${row.quantity} ${row.stock_uom}`, String(row.piece_rate) + (row.piece_rate_reference ? "（来源：" + row.piece_rate_reference + "）" : ""), row.hours, row.hourly_rate,
                 this.money(p), this.money(t), row.extra_amount, this.money(sum)];
             return "<tr>" + cells.map(value => `<td>${this.esc(value)}</td>`).join("") +
                 `<td><button class="btn btn-default btn-xs" data-remove-wage="${index}" ${this.frozen ? "disabled" : ""}>删除</button></td></tr>`;
