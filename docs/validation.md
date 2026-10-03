@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-04 外网界面修复 a75848f 实际发布与 GUI 通过
+
+基于实际外网 `5b49bac` 的独立提交 `a75848f8f8237e94c5b834d6629e2cb9a1f9eda6` 已部署。572个包文件／564个提交文件逐字节核对，仅桥接JS和17协议模型文件变化，其余562个文件与原发布一致；33资源指纹保持正确。本地主分支样品／来源／报表增量没有混入本批。独立源审、25个发布模型及Python3.6语法检查通过。
+
+四个固定输入实际SSH socket及每64KiB上传块均核为DIRECT，系统／环境代理和TUN状态留证，无代理回退。prepare→quiesce→cache→start各首次执行一次并分别核成功回执。只切换五个应用的只读源挂载；三个数据服务ID／完整挂载身份、site_config和common配置及原发布文件保持。cache仅显式删除当前数据库app_hooks，原始共享Redis GET确认删除及新33URL重填；原生init可能填其他原生缓存，未作全局flush。SQL只读，无DDL／迁移／种子／角色变更。原生15执行指纹、全部源码／资源、配置及八服务实际检查通过；启动只读采样4次、14.066秒就绪。start回执SHA `118031845a9282bdf1b765debc7cf08aa3f3d52f7a52116d0cd7c4c1834bda00`。
+
+独立外网 `output/classic-loading-external-verify-20261004-r1.json` 实际41请求通过：系统可信IP证书和各请求实际socket DIRECT，正常账号登录／身份、认证A/B HTML含新bridge版本 `cc3bb09619763d17`，33资源完整字节与包一致，CSRF退出后同CookieJar新请求确认Guest。HTTP前后只读 `classic-loading-release-control-20261004-r1-diagnose-start-*` 再核源码／八服务／配置和数据服务身份通过；不是GUI证据。
+
+真实Chrome同profile／tab的GUI r8报告已由root实际重读：A/B分别通过真实菜单订单→订单操作→订单查询，原生筛选、列、排序及分页可见，各1项；清除筛选后0 applied仍1项，两侧关闭再从菜单打开都加载成功。B流程及计薪列表均为空，仅只读附查。未打开／保存／修改业务记录或导出，报告不含业务字段或凭据。证据 `output/ab-gui-acceptance-20261004-r8/report.md`；数量和结构一致不证明全模块／全部数据相同，共数据库另由runtime证明。此前r6／r7失败保留。
+
+四阶段和上传回执为忽略目录 `classic-loading-release-stage-20261004-r1.json`、`classic-loading-release-control-20261004-r1-*`。外网仍363入口、233formal映射／14partial／98preview／13navigation／5tool；全模块正式业务、旧操作习惯完整符合性、岗位／报表／过账和并发验收继续。下文旧“当前版本”“未发布”表述按其历史批次理解。
+
 ## 2026-10-04 来源查询、调用展开与框架加载续接
 
 本地新增两个原生 `linked_with` RPC override。按原生相同过滤分支重读候选，移除不可读样品及派生对象的完整 payload 和原始 join 计数贡献，普通 hidden_count、分页和重复 join 保持；提交关联树含不可读受保护下游则通用错误整拒，不返回部分取消树。库存台账的 Flow／Work Order，以及委外进度／收回／发退原料台账的 Flow，仅在实际输出行上检查完整来源，整报表拒绝，不删流水或改总计。28查询、26库存、15委外、15原料模型及本机原生函数13个过滤分支对照通过；真实过账报表未由这些模型证明。
