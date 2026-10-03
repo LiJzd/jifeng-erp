@@ -1,0 +1,91 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Sample Order Item",
+ "module": "Jifeng ERP",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": [
+  "sample_identity",
+  "item_code",
+  "product_profile",
+  "stock_uom",
+  "qty",
+  "bom",
+  "requirements",
+  "packaging",
+  "requirements_attachment",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "sample_identity",
+   "fieldtype": "Data",
+   "label": "样品行身份",
+   "unique": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "服务器生成，各行独立，不按商品合并。"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "options": "Item",
+   "label": "商品",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "product_profile",
+   "fieldtype": "Link",
+   "options": "Jifeng Product Profile",
+   "label": "商品档案",
+   "description": "可选，须显式选择同公司同商品档案，不按商品自动关联。"
+  },
+  {
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "options": "UOM",
+   "label": "库存单位",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "制作数量",
+   "reqd": 1,
+   "precision": "9",
+   "in_list_view": 1,
+   "description": "准确的库存单位制作数量；按当前原生生产数量精度核对，不自动舍入或换算。"
+  },
+  {
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "options": "BOM",
+   "label": "制作BOM"
+  },
+  {
+   "fieldname": "requirements",
+   "fieldtype": "Small Text",
+   "label": "要求"
+  },
+  {
+   "fieldname": "packaging",
+   "fieldtype": "Small Text",
+   "label": "包装"
+  },
+  {
+   "fieldname": "requirements_attachment",
+   "fieldtype": "Attach",
+   "label": "要求附件",
+   "description": "先保存样品单，再上传绑定本单的私有附件。"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "备注"
+  }
+ ],
+ "permissions": []
+}

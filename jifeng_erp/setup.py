@@ -115,6 +115,10 @@ def install():
         for field in definitions:
             if field.get("fieldname") == "jf_flow_order" and field.get("options") == "Jifeng Flow Order":
                 field["search_index"] = 1
+    from jifeng_erp.sample_quote_schema import sample_custom_fields
+
+    for doctype, additions in sample_custom_fields().items():
+        fields.setdefault(doctype, []).extend(additions)
     create_custom_fields(fields, update=True)
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 

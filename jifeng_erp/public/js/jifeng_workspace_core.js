@@ -137,7 +137,8 @@ const JIFENG_LIVE_ROUTES = {
 	材料: { 材料类别: "Jifeng Inventory Dictionary", 形状: "Jifeng Inventory Dictionary", 颜色: "Jifeng Inventory Dictionary", 材料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
 	产品: { 类别: "Jifeng Product Category", 风格: "Jifeng Product Dictionary", 来源: "Jifeng Product Dictionary", 品牌: "Jifeng Product Dictionary",
 		产品风格: "Jifeng Product Dictionary", 产品来源: "Jifeng Product Dictionary", 产品品牌: "Jifeng Product Dictionary",
-		产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation" },
+		产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation",
+		样品制作单: "Jifeng Sample Order", 样品单反审: "Jifeng Sample Order" },
 	订单: { 订单客户分类: "Jifeng Customer Type", 订单客户级别: "Jifeng Customer Type", 客户: "Jifeng Customer Profile", 类型: "Jifeng Order Dictionary", 要求: "Jifeng Order Dictionary", 镀色: "Jifeng Plating Color", 工序: "Jifeng Order Operation", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card",
 		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation",
@@ -155,7 +156,7 @@ const JIFENG_LIVE_ROUTES = {
 };
 
 // Server-backed entry whose available operations remain explicitly limited.
-const JIFENG_PARTIAL_ROUTES = { 工资: { 历史: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
+const JIFENG_PARTIAL_ROUTES = { 产品: { 样品制作单: true, 样品单反审: true }, 工资: { 历史: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
 	销售: { 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
 
 const JIFENG_LIVE_CATALOGS = {
@@ -222,6 +223,7 @@ const JIFENG_LIVE_CREATE = {
 };
 
 const JIFENG_LIVE_LIST_FILTERS = {
+	产品: { 样品单反审: { docstatus: 1 } },
 	生产: { 完成: { docstatus: 1, status: "Completed" }, 刷单: { docstatus: ["<", 2] },
 		入库单: { stock_entry_type: "Manufacture" }, 反审: { docstatus: 1 } },
 	物料: { 采购订单: { is_subcontracted: 0 }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },

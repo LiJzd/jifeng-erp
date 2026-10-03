@@ -96,6 +96,11 @@ assert.equal(dispatch(Modern, find("订单", "工序"))[0].spec.doctype, "Jifeng
 assert.equal(shared.availability("工资", "历史"), "partial");
 assert.equal(dispatch(Modern, find("工资", "历史"))[0].spec.salaryHistory, true);
 assert.equal(shared.availability("工资", "历史分析"), "preview", "old departmental/group/operation charts cannot be the wage report");
+for (const name of ["样品制作单", "样品单反审"]) {
+	assert.equal(shared.availability("产品", name), "partial");
+	assert.equal(dispatch(Modern, find("产品", name))[0].spec.doctype, "Jifeng Sample Order");
+}
+assert.deepEqual(dispatch(Modern, find("产品", "样品单反审"))[0].spec.filters, { docstatus: 1 });
 assert.equal(dispatch(Modern, find("工资", "历史分析"))[0].action, "tab");
 
 const navigation = Workspace => {

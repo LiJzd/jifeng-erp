@@ -53,6 +53,8 @@ app_include_css = _content_versioned_assets(app_include_css)
 app_include_js = _content_versioned_assets(app_include_js)
 before_request = "jifeng_erp.session_init.initialize_csrf"
 doctype_js = {
+    "Jifeng Sample Order": "public/js/jifeng_sample_order.js",
+    "Quotation": "public/js/jifeng_quotation_sources.js",
     "Sales Order": "public/js/jifeng_sales_order.js",
     "Production Plan": "public/js/jifeng_production_instruction.js",
     "Work Order": "public/js/jifeng_work_order.js",
@@ -110,6 +112,11 @@ doc_events = {
     },
     "Employee": {"on_update": "jifeng_erp.jifeng_erp.doctype.jifeng_employee_supplement.jifeng_employee_supplement.refresh_employee_supplement"},
     "Sales Order": {
+        "before_validate": "jifeng_erp.sample_quotations.prepare_sample_sales_order",
+        "validate": "jifeng_erp.sample_quotations.validate_sample_sales_order",
+        "onload": "jifeng_erp.sample_quotations.load_sample_sales_order",
+        "before_update_after_submit": "jifeng_erp.sample_quotations.guard_sample_sales_order_history",
+        "before_cancel": "jifeng_erp.sample_quotations.guard_sample_sales_order_history",
         "on_update_after_submit": "jifeng_erp.workflow.refresh_sales_order_flows",
         "on_cancel": "jifeng_erp.workflow.refresh_sales_order_flows",
     },
@@ -118,11 +125,22 @@ doc_events = {
     # Native Production Plan creates Work Orders with ignore_validate=True.
     # before_validate still runs and must preserve flow identity and quantity limits.
     "Work Order": {"before_validate": ["jifeng_erp.setup.validate_flow_links",
-                                       "jifeng_erp.production_department.validate_work_order_departments"]},
+                                       "jifeng_erp.production_department.validate_work_order_departments",
+                                       "jifeng_erp.sample_orders.validate_sample_work_order"],
+                   "before_update_after_submit": "jifeng_erp.sample_orders.validate_sample_work_order",
+                   "before_cancel": "jifeng_erp.sample_orders.validate_sample_work_order",
+                   "on_trash": "jifeng_erp.sample_orders.prevent_sample_work_order_delete",
+                   "before_rename": "jifeng_erp.sample_orders.prevent_sample_work_order_rename"},
+    "Quotation": {"before_validate": "jifeng_erp.sample_quotations.validate_sample_quotation",
+                  "validate": "jifeng_erp.sample_quotations.validate_sample_quotation",
+                  "before_update_after_submit": "jifeng_erp.sample_quotations.validate_sample_quotation",
+                  "onload": "jifeng_erp.sample_quotations.load_sample_quotation",
+                  "before_cancel": "jifeng_erp.sample_quotations.cancel_sample_quotation"},
     "Workstation": {"validate": "jifeng_erp.production_department.validate_default_department"},
     "Operation": {"validate": "jifeng_erp.production_department.validate_default_department"},
     "Production Plan": {"validate": "jifeng_erp.production_instruction.validate_plan"},
-    "Jifeng Flow Order": {"validate": "jifeng_erp.production_instruction.validate_flow_allocation"},
+    "Jifeng Flow Order": {"before_validate": "jifeng_erp.sample_quotations.validate_sample_flow",
+                          "validate": "jifeng_erp.production_instruction.validate_flow_allocation"},
     "Subcontracting Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Subcontracting Receipt": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Material Request": {"validate": "jifeng_erp.setup.validate_flow_links"},

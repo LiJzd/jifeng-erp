@@ -1,5 +1,30 @@
 # 验证记录
 
+## 2026-10-04 样品／报价转单本地候选（未发布，原生r7真实21门通过）
+
+当前外网仍为 `5b49bac`，233 formal／14 partial／98 preview／13 navigation／5 tool；没有上传、切换或在外网执行本批样品 DDL／业务。下述为本地候选证据，不替代外网、真实岗位或 GUI 验收。
+
+| 验证层 | 当前结果 | 边界 |
+|---|---|---|
+| 样品服务后端 | Sample 32 模型通过，包含准确子行、批准状态／快照、Customer 读取及工单来源／单位保护 | 纯模型，不计原生整链通过 |
+| 报价及销售来源后端 | Quote 33、SO→Flow 13 模型通过；商业数量独立、原生换算、准确报价明细、未取消草稿／正式销售占用及历史来源保护 | 不据此认定真实报价／转单／过账成功 |
+| 原生克隆安装 | 两张新空表和 26 个来源字段实际 DDL 核验通过；原隔离库完整932对象（含六序列）与配置保持 | 只证明此定向安装及保护结果，不证明业务及权限链 |
+| 原生核心业务链 r7 | 真实21门通过；公司 User Permission 约束的 Sales Manager＋Stock Manager＋Manufacturing User＋Purchase User 组合，非 System Manager；完整934对象（含六序列）业务回滚一致，全部夹具不存在 | 不扩大为普通Sales User、撤权／mask、并发、List/API/share、amend来源、制造入库或实物领料已验收 |
+| 最终独立保护复核 | 原源932全对象含真实六序列／结构／索引／行及配置字节与before相同；克隆934业务投影及所有非目标元数据保持，26字段 PermissionLog 范围准确，两新表为空 | 无表结构重放，非外网发布 |
+| 前端及菜单 | 样品 CJS 跨窗口持久化模型、三个文件 `node --check`、A/B 363 派发模型通过；实际运行 registry 为 233 formal／16 partial／96 preview／13 navigation／5 tool | DOM／协议模型，非真实 GUI；样品两入口仅由 preview 改为 partial |
+
+本地来源链为审核样品单→样品工单，以及审核样品单→报价草稿→原生 Sales Order→Flow。准确原生子行及 UUID 保留同款不同样品身份；制作库存数量／单位与商业报价数量／单位分别核对。报价客户、币种、有效期、数量与单价明确填写，文本精度及显式零价保留；原生报价负责汇率、税和合计，SO／Flow 保留准确报价与样品来源。
+
+前端在 POST 前由 Web Locks 独占核对并持久化用户／样品／生成类型、公司／版本、UUID 与候选输入，HTTP 不持有本地锁。独立 JS 窗口模拟 A/B 和整页重载，已核 UUID、十进制文本、报价单位／流程选择与工单 BOM／制作库存单位恢复；并发准备仅一笔 POST。unknown、GET absent、403、普通缓存消失均不重 POST；确认 found／deleted 及明确 4xx 仅释放匹配 UUID，旧回执不清新意图。明确拒绝保留不含价格的作用域／UUID证明，等待的另一窗口须明确核对后才能编辑重发新 UUID。存储读／写／清除异常、无可靠锁、锁忙均有模型；存储或锁不可用时阻止新 POST。以上保证限同源、同一浏览器存储区内的标签页，不声称跨电脑共享本地未知输入。
+
+真实 r7 21门覆盖：Sample草稿／批准／读取；库存制作量3的 Work Order 创建、UUID重放／读取、同样品子行拒重、原生提交及取消；Quote 2 Box→24 Nos 与同Item独立第二行1 Nos、显式零价、UUID重放／GET及原生审核；原生mapper两张分批 Sales Order 草稿按准确报价子行占用，第三次超量拒绝；销售审核后生成两张精确来源 Flow，库存计划量分别1／12。Flow 来源清除和手工伪造被拒绝，报价反审时清除父来源及仍有有效SO均被拒绝；SO→Quote→Sample逆序反审后历史onload可读，Flow再次执行被拒绝。制造入库及实物领料未执行，不从工单提交推定库存闭环已通过。
+
+r7证据：`output/sample-quote-qa-20261004-r1/business-r7-result.json`。整批回滚后完整934对象（含六序列）业务投影一致、全部夹具不存在；最终独立只读证据 `output/sample-quote-qa-20261004-r1/business-final-source-verified-r1.json` 确认原源932全对象／六条真实序列／配置字节保持，克隆所有非目标元数据与初始相同、26个CustomField的PermissionLog准确、两新表为空，未重放DDL。此前r1的Customer读取缺口、r2的DocStatus误判已修；r5验收在取消失败后复用脏对象，已改为先原生重读；r6使用旧app_hooks缓存，r7仅刷新本克隆DB的app_hooks键后实际before_validate生效。失败批次保留，不追认其通过，不进行全局缓存刷新或原生DDL重放。
+
+对应本地验证入口：`tests/test_sample_orders.py`、`tests/test_sample_quotations.py`、`tests/test_sales_order_flow.py`、`node tests/test_sample_order_workbench.cjs`、`node tests/test_workspace_variants.cjs`。根任务复跑78 Python模型、两个CJS及r7真实21门通过，isolated Ruff py313通过；三个新前端／测试文件语法检查通过。纯模型、真实原生链和独立保护证据分别记录，不合并为GUI通过。
+
+外网发布门槛继续包含普通Sales User、撤权／mask、原生List/API/share、完整来源权限、跨连接并发及Quotation amend来源；公司UP约束的组合岗位核心正门已通过，但完整权限仍未闭合。旧样品窗口目前只有空窗等不完整证据，A/B 保存／审核／反审／回列表的GUI尚未验收。不能把原生通用Form或菜单映射认定为已复刻旧操作习惯，也不能把本批核心21门／候选／模型计为所有旧模块第一版正式完成。外网5b和14 partial／98 preview保持，样品仍只在本地、两个入口partial；较早版本与菜单计数在下节按历史保留。
+
 ## 2026-10-04 最新外网工具费用测试增量：5b49bac
 
 真实 r4 宿主八阶段 prepare→quiesce→before→apply→verify→cache→restore→start 全部首次完成，最终业务版本 `5b49bacde6fcc088e08b118103fee496524ec99f`。五应用只读绑定新 release/app，固定原镜像、数据库和两个 Redis 身份保持；原站点配置字节／属主／权限精确恢复。start 完成收据 SHA256 `044bd674c8a6f1a218377e7be366f16301b2b4b381ad62468fbc9d146d32986d`；工程助手为 `4fba792`，host SHA `514be2a508177b1004d0b0b8f305b74ac58972f88f5c265516adc9cbbd625424`。本地提交均未推送。

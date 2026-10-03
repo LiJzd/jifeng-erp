@@ -105,7 +105,8 @@ class TestSalesOrderFlow(unittest.TestCase):
                     "source_stock_precision", "stock_plan_confirmation_note", "stock_plan_confirmed_at", "stock_plan_confirmed_by"}
         model = types.ModuleType("frappe.model")
         model.get_permitted_fields = lambda *args, **kwargs: readable
-        frappe.get_meta = lambda *args: types.SimpleNamespace(fields=[], get_permlevel_access=lambda **kwargs: [0],
+        frappe.get_meta = lambda *args: types.SimpleNamespace(fields=[], has_field=lambda field: False,
+            get_permlevel_access=lambda **kwargs: [0],
             get_field=lambda field: Record(fieldname=field, fieldtype="Table" if field == "items" else "Data",
                                           options="Sales Order Item" if field == "items" else None, permlevel=0, mask=0))
         frappe.db = FakeDatabase(self.flows, self.requests)

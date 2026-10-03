@@ -1,0 +1,144 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Sample Order",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-SAMPLE-{YYYY}-{#####}",
+ "is_submittable": 1,
+ "track_changes": 1,
+ "allow_rename": 0,
+ "editable_grid": 1,
+ "field_order": [
+  "company",
+  "customer",
+  "transaction_date",
+  "required_by",
+  "remarks",
+  "items",
+  "approved_snapshot",
+  "approved_digest",
+  "approved_by",
+  "approved_at",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "options": "Company",
+   "label": "公司",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "options": "Customer",
+   "label": "客户"
+  },
+  {
+   "fieldname": "transaction_date",
+   "fieldtype": "Date",
+   "label": "样品日期",
+   "reqd": 1,
+   "default": "Today",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "required_by",
+   "fieldtype": "Date",
+   "label": "要求完成日期"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "备注"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "options": "Jifeng Sample Order Item",
+   "label": "样品制作明细",
+   "reqd": 1,
+   "description": "各行有独立样品身份；制作数量使用商品库存单位，不限制后续商业报价销售数量。"
+  },
+  {
+   "fieldname": "approved_snapshot",
+   "fieldtype": "Long Text",
+   "label": "批准制作快照",
+   "read_only": 1,
+   "no_copy": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "approved_digest",
+   "fieldtype": "Data",
+   "label": "批准内容校验",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "批准人",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "User"
+  },
+  {
+   "fieldname": "approved_at",
+   "fieldtype": "Datetime",
+   "label": "批准时间",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "options": "Jifeng Sample Order",
+   "label": "修订自",
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "Sales User",
+   "read": 1,
+   "select": 1,
+   "create": 1,
+   "write": 1
+  },
+  {
+   "role": "Manufacturing User",
+   "read": 1,
+   "select": 1
+  },
+  {
+   "role": "Sales Manager",
+   "read": 1,
+   "select": 1,
+   "create": 1,
+   "write": 1,
+   "submit": 1,
+   "cancel": 1
+  },
+  {
+   "role": "Stock Manager",
+   "read": 1,
+   "select": 1,
+   "create": 1,
+   "write": 1,
+   "submit": 1,
+   "cancel": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1,
+   "select": 1,
+   "create": 1,
+   "write": 1,
+   "submit": 1,
+   "cancel": 1
+  }
+ ]
+}

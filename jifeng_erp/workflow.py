@@ -88,6 +88,7 @@ def _sales_quantity_snapshot(order, row):
 
 def stock_plan_quantity(flow):
     """Use the verified inventory-unit plan at all downstream creation gates."""
+    _check_sample_flow(flow)
     from jifeng_erp.flow_quantity import (
         CONFIRMATION_FIELDS, SOURCE_FIELDS, FlowQuantityError, check_quantity_fields,
         read_item_stock_uom, require_stock_plan,
@@ -153,6 +154,10 @@ def create_sales_order_flows(sales_order):
             "requirements": row.get("jf_requirements"), "packaging": row.get("jf_packaging"),
             "requirements_attachment": row.get("jf_requirements_attachment"),
         })
+        if row.get("jf_sample_order"):
+            from jifeng_erp.sample_quotations import sample_fields_for_flow
+
+            flow.update(sample_fields_for_flow(order, row))
         if profile:
             template = frappe.get_doc("Jifeng Product Profile", profile)
             template.check_permission("read")
@@ -251,6 +256,7 @@ def stock_availability(flow_order):
 
 
 def validate_flow_source(flow):
+    _check_sample_flow(flow)
     if flow.source_changed or flow.source_status in BLOCKED_STATUSES or (flow.sales_order and flow.source_status == "Closed"):
         frappe.throw("请先核对源订单变更或取消状态")
     if flow.sales_order:
@@ -261,6 +267,20 @@ def validate_flow_source(flow):
         source_line = next((row for row in sales_order.items if row.name == flow.sales_order_item), None)
         if not source_line or not _sales_row_selected(source_line) or _sales_line_differs(flow, source_line, sales_order):
             frappe.throw("销售订单明细已变化，请先核对流程单来源")
+
+
+def _check_sample_flow(flow):
+    """Leave ordinary flows unchanged, including sites before sample schema sync."""
+    fields = ("jf_sample_order", "jf_sample_order_item", "jf_sample_source_digest",
+              "jf_sample_source_snapshot", "jf_source_quotation", "jf_source_quotation_item")
+    if not any(flow.get(field) for field in fields):
+        if not flow.get("sales_order") or not flow.get("sales_order_item"):
+            return
+        if not frappe.get_meta("Sales Order Item").has_field("jf_sample_order"):
+            return
+    from jifeng_erp.sample_quotations import check_sample_flow_source
+
+    check_sample_flow_source(flow, active=True, lock=True)
 
 
 def make_work_order(flow):
