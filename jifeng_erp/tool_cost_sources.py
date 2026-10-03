@@ -648,7 +648,9 @@ def validate_allocation(document):
     if document.is_new():
         if document.__dict__.get("_jf_tool_cost_server") is not _SERVER:
             _invalid()
-    elif not before or any(document.get(field) != before.get(field) for field in SERVER_FIELDS):
+    # Native Form JSON carries Date as ISO text; MariaDB reads it as date.
+    # Compare the same canonical values while still rejecting any actual edit.
+    elif not before or any(_plain(document.get(field)) != _plain(before.get(field)) for field in SERVER_FIELDS):
         frappe.throw("工具费用来源快照和请求身份不能直接修改")
     if before:
         if document.company != before.company:

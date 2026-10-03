@@ -1,6 +1,7 @@
 """Business contracts for explicit tool costs, without a database or accounts writes."""
 
 from copy import deepcopy
+from datetime import date
 from decimal import Decimal
 import importlib.util
 import json
@@ -331,6 +332,25 @@ class ToolCosts(unittest.TestCase):
         self.assertEqual(view["source"]["incurred_amount"], "120")
         self.assertNotIn("9999", json.dumps(view))
         self.assertEqual({key[0] for key in self.docs if key[0] in {"Journal Entry", "Payment Entry"}}, {"Journal Entry"})
+
+    def test_native_form_json_date_roundtrip_accepts_same_value_and_rejects_edit(self):
+        receipt = self.create()
+        stored = self.docs["Jifeng Tool Cost Allocation", receipt["name"]]
+        stored.source_date = date(2026, 10, 3)
+        incoming = self.doc(stored.doctype, stored.name)
+        incoming.source_date = "2026-10-03"
+        incoming.docstatus = 1
+        incoming.__dict__["before"] = self.doc(stored.doctype, stored.name)
+        self.module.validate_allocation(incoming)
+        self.module.before_submit_allocation(incoming)
+        self.assertTrue(incoming.active_source_key)
+        for altered in ("2026-10-04", "2026-10-03T00:00:00", None):
+            with self.subTest(altered=altered):
+                changed = self.doc(stored.doctype, stored.name)
+                changed.source_date, changed.docstatus = altered, 1
+                changed.__dict__["before"] = self.doc(stored.doctype, stored.name)
+                with self.assertRaisesRegex(ValueError, "不能直接修改"):
+                    self.module.validate_allocation(changed)
 
     def test_operation_hints_follow_native_role_rights_and_never_grant_writes(self):
         receipt = self.create()
