@@ -480,9 +480,20 @@ class HostModelTests(unittest.TestCase):
         self.assertEqual(len(native), 4)
         self.assertIn(H.TOOLS[0], native[0])
         self.assertTrue(all(H.TOOLS[1] in args for args in native[1:]))
-        self.assertTrue(
-            all("--no-deps" in args and "--pull" in args for args in native)
-        )
+        for index, args in enumerate(native):
+            run_args = args[args.index("run") + 1 :]
+            self.assertEqual(
+                run_args[:4],
+                ["--rm", "--no-deps", "-T", H.TOOLS[0] if index == 0 else H.TOOLS[1]],
+            )
+            self.assertNotIn("--pull", args)
+            self.assertNotIn("--build", args)
+            self.assertNotIn("pull", args)
+            self.assertNotIn("build", args)
+        for name in H.TOOLS:
+            self.assertEqual(
+                H.overlay_document()["services"][name]["pull_policy"], "never"
+            )
         self.assertTrue(all("--before-sha256" in args for args in native[1:]))
         self.assertTrue(all("--before-sha256" not in args for args in native[:1]))
         stop = [args for args, _, _ in model.commands if "stop" in args]

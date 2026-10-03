@@ -20,6 +20,8 @@
 
 候选包七文件已实际 DIRECT 上传、逐 SHA 和完整 572 文件解包核对；首次宿主 prepare 在停服前因 Compose 2.27 规范化 `create_host_path:false` 为 `bind:{}` 被过严表示检查拒绝。新只读核对确认未 quiesce，八旧服务运行，原配置及受管文件精确一致，native audit 目录为空。修复仅允许规范化省略 false，显式 true 仍拒绝，输入 overlay 仍明确 false 且其 SHA 受保护；Windows 34 门通过／2 跳过、WSL 36 全通过及 Ruff 通过。失败目录将完整保留，新输入副本首次执行新 phase，不重放失败阶段。证据 `tool_cost_release_stage_20261004_r1.json` 和 `tool_cost_prepare_failure_inspect_20261004_r1.json`。
 
+全新 r2 prepare／quiesce 已完成，但 before 的 Compose CLI 返回 16、stdout 为零；stderr 长度 21 及 SHA 精确匹配 `unknown flag: --pull`，原生控制及 audit 目录实际为空，原生备份／SQL 从未启动。新有界恢复严格绑定失败证据，恢复原配置字节后只启动五旧应用；旧 `2ca4358` 八服务、三数据身份、保护内容及实际 runtime/ping 全通过，未重放 native 或回滚数据库。失败目录保留。正式助手仅移除 `compose run` 不支持的参数，保留服务 `pull_policy:never` 及固定本地 imageGate，`compose up` 参数保持；Windows 34 通过／2 跳过，WSL 36 全通过，Ruff 通过。证据 `tool_cost_before_failure_inspect_20261004_r1.json`、`tool_cost_restore_aborted_release_20261004_r1.json` 和 `tool_cost_recovery_inspect_20261004_r1.json`。
+
 完整 GUI 本轮未登录或保存：既有 CLI 未安装，CUA Chrome 连接失败；IAB 可显示登录页，专用 AgentDock 浏览器启动无可用 session／超时。Computer Use 初始化可用，正常创建新窗口后，读取新窗口遭自动审批以无法可靠判断 URL 拒绝；停止 GUI，没有输入密码、费用 POST 或表单审核。报告 `output/playwright/tool-cost-gui2-20261003-r1/GUI-report.md`。不能由并发、HTTP 或发布模型门认定完整 A/B GUI／全模块正式交付。
 
 GUI2 清理 r1 的只读连接校验错误要求运行中测试站 maintenance=1，在任何停服／删除之前拒绝；失败记录保留。新 r2 明确区分源 1／测试站 0 并重置连接上下文，完整核对 934 对象结构／索引和六类元数据保持，停止精确所属 PID 及 18008 端口，恢复原测试配置字节后仅删除自有 DB／user／site。原源 fresh 932 与配置完全一致，dump／回执／失败记录均保留。证据 `tool-cost-gui2-cleanup-20261003-r2/result.json`。

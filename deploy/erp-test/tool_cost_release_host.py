@@ -1231,8 +1231,6 @@ print(json.dumps({"backend_ping": ready}))
             "--rm",
             "--no-deps",
             "-T",
-            "--pull",
-            "never",
             TOOLS[0] if phase == "before" else TOOLS[1],
             CONTAINER_ROOT + "/incoming-r1/tool_cost_release_native.py",
             phase,
