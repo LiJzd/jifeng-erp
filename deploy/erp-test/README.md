@@ -9,7 +9,9 @@
 
 固定镜像保持，五应用只读挂载 `/opt/jifeng-erp-test/releases/2ca4358-salary-r1/app`，覆盖文件为该目录的 `compose.salary.r1.yaml`，基线仍为 `8858743-r2/deploy/compose.yaml`。独立 `salary-control-r1` 五阶段各执行一次通过；四部件原生备份在受限 `salary-private-r1`。完整服务器 931→932 保护、原权限/旧列/索引/旧行投影、空 Rule、四新增 NULL 列、Form/child/Page 缓存前后数据保持均通过。八服务 running、三数据服务完整身份、站点配置字节/属主/权限恢复、受管文件和证书 timer 已核实。不得重放此次阶段。
 
-实际外网可信 HTTPS、31 资源逐字节、账号登录两个入口、4 个原生 Form 脚本、子表新增字段、工资 Page 下发、2099 年空日期查询及正常 HTTP 注销通过；未下载真实工资。忽略证据 `salary-release-control-20261003-r3-*` / `salary-release-readonly-status-*` / `salary-release-external-verify-20261003-r1.json`。上传 r1 因 SFTP 模式留下空文件；r2 已上传全部 8 个文件但解包写入模式失败，未写源码、停服或触碰站点。各次失败经独立只读核实，r3 单独完成解包和发布，没有重传、重放旧操作或自动回滚。浏览器 GUI 的首次 CUA 连接失败，恢复与 GUI 验收仍待完成；本节是运行及 HTTP 验证，不能推定全模块 GUI 通过。
+实际外网可信 HTTPS、31 资源逐字节、账号登录两个入口、4 个原生 Form 脚本、子表新增字段、工资 Page 下发、2099 年空日期查询及正常 HTTP 注销通过；未下载真实工资。忽略证据 `salary-release-control-20261003-r3-*` / `salary-release-readonly-status-*` / `salary-release-external-verify-20261003-r1.json`。上传 r1 因 SFTP 模式留下空文件；r2 已上传全部 8 个文件但解包写入模式失败，未写源码、停服或触碰站点。各次失败经独立只读核实，r3 单独完成解包和发布，没有重传、重放旧操作或自动回滚。
+
+首次 CUA 连接失败，经重置后恢复；实际 GUI 已核 A/B 工资历史默认 21 列、15 条/页、2099-12-30..31 空查询、切换保留各自筛选状态、两套分类设置打开原生公司过滤列表及正常界面注销。独立“工价调用”入口仍标示本地预览，未验证实际历史工价读取；无工资行、导出、单据写入或过账。本轮空结果不能证明有数据时的一致性，reader GUI / 全模块 GUI 仍未验收。忽略报告 `salary-release-gui-20261003-r1/report.json`。
 
 ## 2026-10-03 工资增量发布准备：2ca4358
 
