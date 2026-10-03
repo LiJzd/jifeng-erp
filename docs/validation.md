@@ -1,5 +1,21 @@
 # 验证记录
 
+## 2026-10-04 来源查询、调用展开与框架加载续接
+
+本地新增两个原生 `linked_with` RPC override。按原生相同过滤分支重读候选，移除不可读样品及派生对象的完整 payload 和原始 join 计数贡献，普通 hidden_count、分页和重复 join 保持；提交关联树含不可读受保护下游则通用错误整拒，不返回部分取消树。库存台账的 Flow／Work Order，以及委外进度／收回／发退原料台账的 Flow，仅在实际输出行上检查完整来源，整报表拒绝，不删流水或改总计。28查询、26库存、15委外、15原料模型及本机原生函数13个过滤分支对照通过；真实过账报表未由这些模型证明。
+
+来源权限65、报价49、Sample33、SO→Flow13与上述84项，共244后端模型通过。报价先完整来源授权再读取回执，消除重复 Quote native 门；修改链完整检查缺失／循环／分类后只递归直接父版本，各祖先的完整授权仍执行。已保存SO仅在原生完整门的固定业务阶段，通过准确活动对象／行／用户委派整张Quote及Sample历史读取；native、字段／mask、原始子行身份、祖先、分享和首尾freeze都保留，未完成递归不能返回 pair，不留跨调用缓存。独立源审及异常上下文清理模型通过。冻结权限SHA `3a563b05763f1cfaed4cda610f4e45b3b9c6b362190bd84b397c25eaf3cc79a7`，报价SHA `4ce9a01d2334f6c82d16a9b3aa7cf3a67117909f28ac317b3bcabe48e5bcc249`。
+
+r15实际完成16门后，原生 Item 提交关联树触发框架 virtual `WorkOrderAdditionalItem.get_list` 缺 `self` 的 TypeError，保留失败，没有修框架或移除下游。r16以当前可读 Customer 作为提交树根，22门包含实际RPC正／负门及Flow／WO引用门；普通Quote fixture的 Customer UP 不约束其 Dynamic Link，原生仍可读，负断言失败。两批完整934对象回滚相同，记录保留。r17保持相同业务源码，普通Quote负门改用真实子表 Item Link 的专属 Item UP，原生实际拒绝；该Item根仍可读，ordinary hidden_count及join增量保持。整批73门 `passed=true`，耗时95.916秒，包括此前改单／来源UP／两引擎列表／统计／导出／分享／mask及普通Sales User无BOM样品／零价报价／准确销售草稿；完整934对象回滚相同、夹具及setter不存在，未改原生角色定义、未重放DDL。证据 `business-r15/r16/r17-result.json`；dispatcher含override、whitelist及GET方法校验，不是HTTP／CSRF端到端证据。
+
+相同自有原单／修改单两明细夹具的 cProfile r1→r2 均完整回滚：总带剖析器时间248.368→91.116秒；改单生成流程阶段 SQL86,639→25,551，Sample完整gate260→44、Quote gate88→44，带剖析器时间56.776→17.035秒。累计函数时间相互重叠，不求和；这是剖析和调用次数证据，不是生产性能、正式负载或并发基准。证据 `source-profile-r1/r2-*.json`。最终独立只读 `business-final-source-verified-r3.json` 通过，原源932全对象／六序列／配置、克隆934对象／两新空表／26字段审计／UUID索引／非目标元数据和原生权限定义保持。
+
+旧GUI r3～r6取消日期限制后实际读到样品浏览页，补单头字段顺序及四效果分组；唯一非零组与数量汇总一致、四单价和金额为零、单位空，不能推导通用多效果换算、金额或下游流程映射。未保存或执行业务。外网GUI r6／r7复现A/B订单查询“页面未能打开…”，直接原生Sales Order列表可读；新tab登录状态与原tab不可恢复分开记录，未执行清空筛选测试。登录后的其他菜单抽查不足以证明共享数据或完整业务验收，控制台空不排除catch吞异常。
+
+按实际Frappe16路由／jQuery3 Deferred顺序，`set_route` Promise在async parse更新current_route之前即可完成；旧桥接立即检查会误拒，且FilterArea先于列表结果控件存在。修复等待准确目标route及 `init_promise`、检查同一List、关闭取消轮询并保留超时／late redirect拒绝；17协议模型、样品回执CJS和A/B363菜单模型通过。另跑classic_navigation存在与HEAD相同的基线失败，未改测试掩盖。基于外网旧源码的独立UI提交 `a75848f` 准备单独发布；当前仍 `5b49bac`，本地样品／来源增量未上线。
+
+剩余明确读取缺口：原生 Open／Completed／In Progress Work Orders、Issued Items Against Work Order、Work Order Summary、Production Analytics、Sales Order Analysis、Lost Quotations与Quote／SO Trends，以及Prepared Report旧附件／下载／转CSV重用；SQL／Script统计、图表、总计须按实际来源范围专项核验，不能只过滤最后表格。完整字段mask／岗位、实际过账报表、全模块GUI、正式负载、跨连接并发、四效果映射及制造入库／领料仍在验收范围。以下旧节保留其当时状态。
+
 ## 2026-10-04 样品修改版与来源权限续接（未发布）
 
 原生 r8 实际25门通过，沿用非 System Manager 的业务岗位组合及公司 UP；新增销售订单修改版继承准确原报价子行，半箱核为6库存量并生成正确 Flow 后逆序取消；报价修改版继承准确样品行，服务器替换旧回执，1.5箱核为18库存量、明确零价保持，原生提交／取消及原旧回执分别可查询。完整934对象业务回滚一致，夹具不存在，证据 `output/sample-quote-qa-20261004-r1/business-r8-result.json`。这是来源权限接入前版本，不能当作后来版本通过。

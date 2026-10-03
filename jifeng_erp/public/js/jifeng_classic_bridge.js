@@ -249,10 +249,11 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		loading.textContent = __("正在加载…");
 		host.append(loading, iframe);
 		let timer;
+		let cancelWait;
 		let stopped = false;
 		let settleReady;
 		const ready = new Promise((resolve) => { settleReady = resolve; });
-		const stop = () => { stopped = true; clearInterval(timer); settleReady(false); };
+		const stop = () => { stopped = true; clearInterval(timer); cancelWait?.(); settleReady(false); };
 		iframe.addEventListener("load", () => {
 			if (stopped) return;
 			clearInterval(timer);
@@ -338,21 +339,44 @@ window.JifengClassicBridge = class JifengClassicBridge {
 						child.frappe.route_options = { ...(spec.filters || {}) };
 						await child.frappe.set_route(...spec.route);
 						if (stopped) return;
-						const isTargetRoute = () => spec.route.every((part, index) => child.frappe.get_route()[index] === part);
-						if (!isTargetRoute()) throw new Error("Native target route not ready");
+						const isTargetRoute = () => {
+							const route = child.frappe.get_route();
+							return Array.isArray(route) && spec.route.every((part, index) => route[index] === part);
+						};
+						// Native set_route resolves after AJAX, before its async parse
+						// necessarily updates current_route. Wait for the exact target.
+						const routeReady = await new Promise((resolve, reject) => {
+							let tries = 0;
+							const finish = (value) => { clearInterval(timer); cancelWait = null; resolve(value); };
+							cancelWait = () => finish(false);
+							const check = () => {
+								if (stopped) finish(false);
+								else if (isTargetRoute()) finish(true);
+								else if (++tries >= 300) { clearInterval(timer); cancelWait = null; reject(new Error("Native target route not ready")); }
+							};
+							timer = setInterval(check, 50);
+							check();
+						});
+						if (!routeReady || stopped) return;
 						if (spec.kind === "list" && !Object.keys(spec.filters || {}).length) {
 							// Native empty route_options keeps saved filters. Classic
 							// entry defaults must start clear, once per mounted tab.
 							const list = await new Promise((resolve, reject) => {
 								let tries = 0;
+								const finish = (value) => { clearInterval(timer); cancelWait = null; resolve(value); };
+								cancelWait = () => finish(null);
 								timer = setInterval(() => {
 										const view = child.cur_list;
-									if (stopped) { clearInterval(timer); resolve(null); }
-									else if (isTargetRoute() && view?.doctype === spec.doctype && view.filter_area) { clearInterval(timer); resolve(view); }
-									else if (++tries >= 300) { clearInterval(timer); reject(new Error("List not ready")); }
+										if (stopped) finish(null);
+										else if (isTargetRoute() && view?.doctype === spec.doctype && view.filter_area) finish(view);
+										else if (++tries >= 300) { clearInterval(timer); cancelWait = null; reject(new Error("List not ready")); }
 								}, 50);
 							});
 							if (!list || stopped) return;
+							// FilterArea exists before native result/freeze controls.
+							if (list.init_promise) await list.init_promise;
+							if (stopped) return;
+							if (!isTargetRoute() || child.cur_list !== list) throw new Error("Native list changed during initialization");
 							child.frappe.route_options = null;
 							await list.filter_area.clear(false);
 							await list.refresh();

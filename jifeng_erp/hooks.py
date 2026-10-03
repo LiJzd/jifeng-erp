@@ -64,6 +64,9 @@ doctype_js = {
 }
 override_whitelisted_methods = {
     "hrms.hr.utils.get_employee_field_property": "jifeng_erp.personnel_ui.get_employee_field_property",
+    "frappe.desk.form.linked_with.get": "jifeng_erp.sample_source_queries.get",
+    "frappe.desk.form.linked_with.get_submitted_linked_docs":
+        "jifeng_erp.sample_source_queries.get_submitted_linked_docs",
 }
 has_permission = {
     "Jifeng Tool Cost Allocation": "jifeng_erp.tool_cost_sources.tool_cost_allocation_has_permission",

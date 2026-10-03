@@ -27,8 +27,11 @@ class TestSubcontractingMaterial(unittest.TestCase):
         for name in ("_scope", "_orders", "_order_items", "_readable_documents"):
             setattr(subcontracting, name, Mock())
         subcontracting._column = lambda field, label, *args, **kwargs: {"fieldname": field, "label": label}
+        references = types.ModuleType("jifeng_erp.sample_source_queries")
+        references.check_protected_reference = Mock(return_value=False)
         path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "subcontracting_material.py"
-        with patch.dict(sys.modules, {"frappe": self.frappe, "jifeng_erp.subcontracting": subcontracting}):
+        with patch.dict(sys.modules, {"frappe": self.frappe, "jifeng_erp.subcontracting": subcontracting,
+                                      "jifeng_erp.sample_source_queries": references}):
             spec = importlib.util.spec_from_file_location("subcontracting_material_under_test", path)
             self.module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.module)
@@ -59,6 +62,29 @@ class TestSubcontractingMaterial(unittest.TestCase):
         returned = self.movements()[0]
         self.assertEqual((returned["issued_qty"], returned["returned_qty"], returned["net_qty"]),
                          (Decimal(0), Decimal(3), Decimal(-3)))
+
+    def test_output_flow_uses_exact_entry_company_and_keeps_material_unit(self):
+        row = self.movements()[0]
+        self.module.check_protected_reference.assert_called_once_with(
+            "Jifeng Flow Order", "FLOW-1", company="公司")
+        self.assertEqual((row["stock_uom"], row["net_qty"]), ("Kg", Decimal(10)))
+
+    def test_unreadable_protected_flow_refuses_entire_issue_or_return_output(self):
+        self.module.check_protected_reference.side_effect = PermissionError("来源不可读")
+        for changes in ({}, {"purpose": "Material Transfer", "is_return": 1}):
+            with self.subTest(changes=changes):
+                self.entry.update(changes)
+                with self.assertRaisesRegex(PermissionError, "来源不可读"):
+                    self.movements()
+
+    def test_filtered_finished_good_or_material_does_not_check_unreturned_flow(self):
+        self.module.check_protected_reference.side_effect = PermissionError("来源不可读")
+        self.selected.clear()
+        self.assertEqual(self.movements(), [])
+        self.selected[self.item.name] = self.item
+        self.assertEqual(self.module.material_movements(self.orders, self.selected,
+                         {self.entry.name: self.entry}, "OTHER-RAW"), [])
+        self.module.check_protected_reference.assert_not_called()
 
     def test_out_of_scope_finished_good_needs_a_valid_source(self):
         self.selected.clear()

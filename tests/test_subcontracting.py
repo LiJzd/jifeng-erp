@@ -6,7 +6,7 @@ import sys
 import types
 import unittest
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 class Row(dict):
@@ -20,13 +20,17 @@ class Row(dict):
 class TestSubcontractingMovements(unittest.TestCase):
     def setUp(self):
         frappe = types.ModuleType("frappe")
+        frappe._dict = Row
         frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         utils = types.ModuleType("frappe.utils")
         utils.cint = lambda value: int(value or 0)
         utils.getdate = lambda value: value
         utils.today = lambda: "2026-09-30"
         utils.date_diff = lambda *args: 0
-        with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils}):
+        references = types.ModuleType("jifeng_erp.sample_source_queries")
+        references.check_protected_reference = Mock(return_value=False)
+        with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils,
+                                      "jifeng_erp.sample_source_queries": references}):
             path = pathlib.Path(__file__).parents[1] / "jifeng_erp/subcontracting.py"
             spec = importlib.util.spec_from_file_location("subcontracting_test_subject", path)
             self.report = importlib.util.module_from_spec(spec)
@@ -53,12 +57,55 @@ class TestSubcontractingMovements(unittest.TestCase):
     def movements(self):
         return self.report.receipt_movements(self.order, {"SCR": self.original, "RETURN": self.return_doc})
 
+    def ledger(self, selected=None):
+        filters = Row(company="JF")
+        selected = selected if selected is not None else {"SCR": self.original, "RETURN": self.return_doc}
+        with patch.object(self.report, "_scope", return_value=(filters, "2026-09-01", "2026-09-30")), \
+                patch.object(self.report, "_readable_documents", side_effect=[selected, {"SCR": self.original}]), \
+                patch.object(self.report, "_orders", return_value={}), \
+                patch.object(self.report, "_order_items", return_value=self.order), \
+                patch.object(self.report, "_receipt_closure", return_value={"SCR": self.original, "RETURN": self.return_doc}):
+            return self.report.subcontracting_receipt_ledger(filters)[1]
+
     def test_each_voucher_uses_own_stock_conversion(self):
         rows = self.movements()
         self.assertEqual(sum(r["accepted_qty"] for r in rows), Decimal(5))
         self.assertEqual(sum(r["rejected_qty"] for r in rows), Decimal(2))
         self.assertEqual(sum(r["loss_qty"] for r in rows), Decimal(2))
         self.assertEqual(sum(r["covered_qty"] for r in rows), Decimal(9))
+
+    def test_receipt_and_return_check_exact_output_flow_and_company(self):
+        rows = self.ledger()
+        self.assertEqual([call.args for call in self.report.check_protected_reference.call_args_list],
+                         [("Jifeng Flow Order", "FLOW"), ("Jifeng Flow Order", "FLOW")])
+        self.assertEqual([call.kwargs for call in self.report.check_protected_reference.call_args_list],
+                         [{"company": "JF"}, {"company": "JF"}])
+        self.assertEqual(sum(row["covered_qty"] for row in rows), 9)
+
+    def test_unreadable_protected_flow_does_not_drop_movement_or_fake_total(self):
+        self.report.check_protected_reference.side_effect = PermissionError("来源不可读")
+        with self.assertRaisesRegex(PermissionError, "来源不可读"):
+            self.ledger()
+
+    def test_source_closure_not_in_output_does_not_add_reference_gate(self):
+        rows = self.ledger({"RETURN": self.return_doc})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["receipt"], "RETURN")
+        self.report.check_protected_reference.assert_called_once_with("Jifeng Flow Order", "FLOW", company="JF")
+
+    def test_progress_without_receipts_checks_output_order_flow(self):
+        item = Row(self.order["O1"], order_status="Open", transaction_date="2026-09-30")
+        filters = Row(company="JF")
+        with patch.object(self.report, "_scope", return_value=(filters, "2026-09-01", "2026-09-30")), \
+                patch.object(self.report, "_orders", return_value={}), \
+                patch.object(self.report, "_order_items", return_value={"O1": item}), \
+                patch.object(self.report, "_receipt_closure", return_value={}), \
+                patch.object(self.report, "receipt_movements", return_value=[]):
+            self.report.check_protected_reference.side_effect = PermissionError("来源不可读")
+            with self.assertRaisesRegex(PermissionError, "来源不可读"):
+                self.report.subcontracting_progress(filters)
+        self.report.check_protected_reference.assert_called_once_with(
+            "Jifeng Flow Order", "FLOW", company="JF")
 
     def test_native_rejected_return_maps_qty_to_rejected_warehouse(self):
         # Native mapper's temporary flag is not present after a document reload.

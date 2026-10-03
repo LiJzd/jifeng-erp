@@ -210,10 +210,23 @@ class Environment:
         if not row.get("prevdoc_docname") or not row.get("quotation_item"):
             raise ValueError("missing quote identity")
         quote = self.get_doc("Quotation", row.prevdoc_docname)
-        quote.check_permission("read")
+        self.quote_check(quote, active=kwargs.get("active", True), lock=kwargs.get("lock", False))
+        self.quotation_receipt(quote)
         origin = next((old for old in quote.get("items") if old.name == row.quotation_item), None)
         if not origin or origin.item_code != row.item_code:
             raise ValueError("wrong exact quote row")
+        return quote, origin
+
+    def historical_sales_quote_row(self, order, row, quote):
+        self.calls.append(("sales_quote_history", order.name, row.name, quote.name))
+        self.quote_check(quote, active=False, lock=False)
+        self.quotation_receipt(quote)
+        origin = next((old for old in quote.get("items") if old.name == row.quotation_item), None)
+        hints = ("jf_sample_order", "jf_sample_order_item", "jf_sample_source_digest", "jf_sample_source_snapshot")
+        if (quote.name != row.prevdoc_docname or quote.docstatus not in (1, 2)
+                or not origin or origin.item_code != row.item_code
+                or any(row.get(field) != origin.get(field) for field in hints)):
+            raise ValueError("wrong exact historical quote row")
         return quote, origin
 
     def flow_check(self, doc, active=False, lock=False):
@@ -276,6 +289,7 @@ class Environment:
         quotes = types.SimpleNamespace(
             _quotation_scope=self.quotation_scope, _receipt=self.quotation_receipt,
             _check_sources=self.quote_check, _quote_row=self.quote_row, SOURCE_FIELDS=hints,
+            _historical_sales_quote_row=self.historical_sales_quote_row,
             _candidate=lambda row: bool(row.get("jf_sample_order")),
             _sample_flow_candidate=lambda doc: self.module._flow_scope(doc, frozenset(), None)
             or self.module._has_hint(doc), check_sample_flow_source=self.flow_check,
@@ -441,6 +455,112 @@ class SampleSourcePermissionTests(unittest.TestCase):
         self.assertTrue(self.module.sample_source_has_permission(fresh, "create"))
         self.env.hidden.add("I")
         self.assertFalse(self.module.sample_source_has_permission(fresh, "create"))
+
+    def _quote_chain(self):
+        previous = "Q"
+        for name in ("A", "B", "C"):
+            doc = self.env.get_doc("Quotation", "Q")
+            doc.name, doc.amended_from = name, previous
+            for row in doc.get("items"):
+                row.name, row.parent = name + "1", name
+            self.env.put(doc)
+            previous = name
+
+    def test_amendment_ancestors_each_keep_one_complete_gate(self):
+        self._quote_chain()
+        with (
+            patch.object(self.module, "_gate", wraps=self.module._gate) as gate,
+            patch.object(self.module, "_native_read", wraps=self.module._native_read) as native,
+            patch.object(self.module, "_complete_fields", wraps=self.module._complete_fields) as fields,
+            patch.object(self.module, "_storage_identity", wraps=self.module._storage_identity) as identity,
+            patch.object(self.module, "_unshared", wraps=self.module._unshared) as share,
+            patch.object(self.env.samples, "_freeze", wraps=self.env.samples._freeze) as freeze,
+        ):
+            self.assertTrue(self.allowed("Quotation", "C"))
+        self.assertEqual([call.args[0].name for call in gate.call_args_list], ["Q", "A", "B", "C"])
+        for name in ("Q", "A", "B", "C"):
+            def count(mock):
+                return len([call for call in mock.call_args_list
+                            if call.args[0].doctype == "Quotation" and call.args[0].name == name])
+
+            with self.subTest(ancestor=name):
+                self.assertEqual(count(native), 2)
+                self.assertEqual(count(fields), 1)
+                self.assertGreaterEqual(count(identity), 1)
+                self.assertEqual(count(share), 2)
+                self.assertEqual(count(freeze), 2)
+        self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+
+    def test_each_hidden_or_shared_amendment_ancestor_is_denied(self):
+        self._quote_chain()
+        for name in ("Q", "A", "B"):
+            with self.subTest(hidden_ancestor=name):
+                self.env.hidden = {name}
+                self.assertFalse(self.allowed("Quotation", "C"))
+                self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+            self.env.hidden.clear()
+            with self.subTest(shared_ancestor=name):
+                self.env.put(self.share("Quotation", name))
+                self.assertFalse(self.allowed("Quotation", "C"))
+                self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+            self.env.records.pop(("DocShare", "share"))
+
+    def test_ancestor_raw_child_identity_and_late_freeze_still_deny(self):
+        self._quote_chain()
+        self.env.records["Quotation Item", "A1"].parenttype = "Sales Order"
+        self.assertFalse(self.allowed("Quotation", "C"))
+        self.env.records["Quotation Item", "A1"].parenttype = "Quotation"
+        check = self.env.quote_check
+
+        def change_ancestor_after_history(doc, active=False, lock=False):
+            check(doc, active, lock)
+            if doc.name == "A":
+                self.env.records["Quotation", "A"].modified = "changed"
+
+        with patch.object(sys.modules["jifeng_erp.sample_quotations"], "_check_sources",
+                          side_effect=change_ancestor_after_history):
+            self.assertFalse(self.allowed("Quotation", "C"))
+        self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+
+    def test_missing_or_cyclic_deep_ancestor_denies_before_any_business_gate(self):
+        self._quote_chain()
+        for name in ("MISSING", "B", "Q"):
+            self.env.records["Quotation", "Q"].amended_from = name
+            with self.subTest(deep_link=name):
+                with patch.object(self.module, "_gate", wraps=self.module._gate) as gate:
+                    self.assertFalse(self.allowed("Quotation", "C"))
+                gate.assert_not_called()
+                self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+
+    def test_plain_intermediate_cannot_hide_older_protected_ancestor(self):
+        middle = self.env.get_doc("Quotation", "PLAIN")
+        middle.name, middle.amended_from = "MIDDLE", "Q"
+        self.env.put(middle)
+        leaf = self.env.get_doc("Quotation", "Q")
+        leaf.name, leaf.amended_from = "LEAF", "MIDDLE"
+        for row in leaf.get("items"):
+            row.name, row.parent = "LEAF1", "LEAF"
+        self.env.put(leaf)
+        with patch.object(self.module, "_gate", wraps=self.module._gate) as gate:
+            self.assertFalse(self.allowed("Quotation", "LEAF"))
+        self.assertEqual([call.args[0].name for call in gate.call_args_list], ["Q", "MIDDLE"])
+        self.assertIn(("quote_source", "Q", False, False), self.env.calls)
+        self.env.hidden.add("Q")
+        self.assertFalse(self.allowed("Quotation", "LEAF"))
+        self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+
+    def test_all_plain_ancestors_do_not_add_source_native_permissions(self):
+        older = self.env.get_doc("Quotation", "PLAIN")
+        older.name = "OLDER"
+        self.env.put(older)
+        self.env.records["Quotation", "PLAIN"].amended_from = "OLDER"
+        leaf = self.env.get_doc("Quotation", "Q")
+        leaf.amended_from = "PLAIN"
+        self.env.put(leaf)
+        self.env.hidden.update(("PLAIN", "OLDER"))
+        with patch.object(self.module, "_gate", wraps=self.module._gate) as gate:
+            self.assertTrue(self.allowed("Quotation", "Q"))
+        self.assertEqual([call.args[0].name for call in gate.call_args_list], ["Q"])
 
     def test_new_request_scoped_quote_amendment_can_await_server_source_inheritance(self):
         original = self.env.get_doc("Quotation", "Q")
@@ -622,6 +742,231 @@ class SampleSourcePermissionTests(unittest.TestCase):
         self.assertEqual(len([call for call in self.env.calls
                               if call[0:2] == ("source_check", "S")]), 2)
         self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+
+    def test_saved_so_fixed_history_keeps_complete_gates_and_removes_external_reentry(self):
+        with (
+            patch.object(self.module, "_gate", wraps=self.module._gate) as gate,
+            patch.object(self.module, "_native_read", wraps=self.module._native_read) as native,
+            patch.object(self.module, "_storage_identity", wraps=self.module._storage_identity) as identity,
+            patch.object(self.module, "_complete_fields", wraps=self.module._complete_fields) as fields,
+        ):
+            self.assertTrue(self.allowed("Sales Order", "SO"))
+        self.assertEqual([call.args[0].doctype for call in gate.call_args_list], ["Sales Order", "Quotation"])
+        self.assertEqual(self.env.calls.count(("sales_quote_history", "SO", "SO1", "Q")), 1)
+        self.assertEqual(self.env.calls.count(("quote_source", "Q", False, False)), 1)
+        self.assertEqual(len([call for call in self.env.calls if call[0:2] == ("authorize", "S")]), 2)
+        for doctype in ("Quotation", "Jifeng Sample Order"):
+            with self.subTest(complete_gate=doctype):
+                self.assertEqual(len([call for call in native.call_args_list
+                                      if call.args[0].doctype == doctype]), 2)
+                self.assertEqual(len([call for call in identity.call_args_list
+                                      if call.args[0].doctype == doctype]), 2)
+                self.assertEqual(len([call for call in fields.call_args_list
+                                      if call.args[0].doctype == doctype]), 2)
+        self.assertEqual(self.module._CHECKING_DOCUMENTS.get(), ())
+        self.assertEqual(self.module._SALES_HISTORY.get(), ())
+        self.env.calls.clear()
+        order = self.env.get_doc("Sales Order", "SO")
+        with patch.object(self.module, "_gate", wraps=self.module._gate) as external_gate:
+            self.env.quote_row(order, order.get("items")[0], active=False, lock=False)
+        self.assertEqual(self.env.calls.count(("quote_source", "Q", False, False)), 2)
+        self.assertEqual(len([call for call in external_gate.call_args_list
+                              if call.args[0].doctype == "Jifeng Sample Order"]), 4)
+
+    def test_saved_so_history_cannot_open_from_json_old_read_or_same_name_copy(self):
+        order = self.env.get_doc("Sales Order", "SO")
+        row = order.get("items")[0]
+        order._sales_history = {"user": self.env.user, "order": "SO", "row": "SO1"}
+        for phase in ("before_read", "after_read"):
+            with self.subTest(phase=phase):
+                with self.assertRaises(PermissionError):
+                    self.module._saved_sales_quote_history(order, row, self.env.user)
+            self.assertTrue(self.allowed("Sales Order", "SO"))
+        token = self.module._AUTHORIZING.set({self.module._key(order, self.env.user)})
+        documents = self.module._CHECKING_DOCUMENTS.set(((order, self.env.user),))
+        try:
+            duplicate = Doc(deepcopy(order))
+            with self.assertRaises(PermissionError):
+                self.module._saved_sales_quote_history(duplicate, duplicate.get("items")[0], self.env.user)
+            with self.assertRaises(PermissionError):
+                self.module._saved_sales_quote_history(order, row, "other-user")
+        finally:
+            self.module._CHECKING_DOCUMENTS.reset(documents)
+            self.module._AUTHORIZING.reset(token)
+        self.assertEqual(self.module._SALES_HISTORY.get(), ())
+
+    def test_saved_so_history_frame_rejects_wrong_row_identity_and_dirty_loaded_row(self):
+        helper = self.module._saved_sales_quote_history
+
+        for change in ("copy", "parenttype", "parentfield", "dirty"):
+            def corrupt_before_frame(order, row, user):
+                if change == "copy":
+                    row = Doc(deepcopy(row))
+                elif change == "dirty":
+                    row.qty = 99
+                else:
+                    row[change] = "foreign"
+                return helper(order, row, user)
+
+            self.env.calls.clear()
+            with self.subTest(change=change), patch.object(
+                    self.module, "_saved_sales_quote_history", side_effect=corrupt_before_frame):
+                self.assertFalse(self.allowed("Sales Order", "SO"))
+            self.assertFalse(any(call[0] == "sales_quote_history" for call in self.env.calls))
+            self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+            self.assertEqual(self.module._CHECKING_DOCUMENTS.get(), ())
+            self.assertEqual(self.module._SALES_HISTORY.get(), ())
+
+    def test_saved_so_history_checks_nonselected_quote_and_sample_sources(self):
+        sample = self.env.get_doc("Jifeng Sample Order", "S")
+        sample.get("items").append(child("Jifeng Sample Order Item", "Jifeng Sample Order", "S", "S2",
+                                         item_code="OTHER_ITEM", qty=1, stock_uom="Nos"))
+        self.env.put(sample)
+        quote = self.env.get_doc("Quotation", "Q")
+        second = Doc(deepcopy(quote.get("items")[0]))
+        second.name, second.item_code, second.jf_sample_order_item = "Q2", "OTHER_ITEM", "S2"
+        quote.get("items").append(second)
+        self.env.put(quote)
+        self.assertTrue(self.allowed("Sales Order", "SO"))
+        self.env.hidden.add("OTHER_ITEM")
+        self.assertFalse(self.allowed("Sales Order", "SO"))
+        self.assertEqual(self.module._SALES_HISTORY.get(), ())
+
+    def test_saved_so_history_preserves_quote_and_sample_ancestor_gates(self):
+        old_sample = self.env.get_doc("Jifeng Sample Order", "S")
+        old_sample.name = "OLD_SAMPLE"
+        for row in old_sample.get("items"):
+            row.name, row.parent, row.item_code = "OLD_SAMPLE_ROW", "OLD_SAMPLE", "OLD_ITEM"
+        self.env.put(old_sample)
+        self.env.records["Jifeng Sample Order", "S"].amended_from = "OLD_SAMPLE"
+        old_quote = self.env.get_doc("Quotation", "Q")
+        old_quote.name, old_quote.jf_sample_order = "OLD_QUOTE", "OLD_SAMPLE"
+        for row in old_quote.get("items"):
+            row.name, row.parent, row.item_code = "OLD_QUOTE_ROW", "OLD_QUOTE", "OLD_ITEM"
+            row.jf_sample_order, row.jf_sample_order_item = "OLD_SAMPLE", "OLD_SAMPLE_ROW"
+        self.env.put(old_quote)
+        self.env.records["Quotation", "Q"].amended_from = "OLD_QUOTE"
+        self.assertTrue(self.allowed("Sales Order", "SO"))
+        for hidden in ("OLD_QUOTE", "OLD_SAMPLE", "OLD_ITEM"):
+            with self.subTest(hidden=hidden):
+                self.env.hidden = {hidden}
+                self.assertFalse(self.allowed("Sales Order", "SO"))
+                self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+                self.assertEqual(self.module._SALES_HISTORY.get(), ())
+
+    def test_saved_so_history_final_freeze_identity_share_and_fields_are_not_skipped(self):
+        body = self.env.historical_sales_quote_row
+        for change in ("quote_freeze", "sample_freeze", "quote_identity", "quote_share", "quote_mask", "dirty_row"):
+            def mutate_after_body(order, row, quote):
+                result = body(order, row, quote)
+                if change == "quote_freeze":
+                    self.env.records["Quotation", "Q"].modified = "changed"
+                elif change == "sample_freeze":
+                    self.env.records["Jifeng Sample Order", "S"].modified = "changed"
+                elif change == "quote_identity":
+                    self.env.records["Quotation Item", "ALIEN"] = child("Quotation Item", "Sales Order", "Q", "ALIEN")
+                elif change == "quote_share":
+                    self.env.put(self.share("Quotation", "Q"))
+                elif change == "quote_mask":
+                    self.env.masked.add(("Quotation Item", "rate"))
+                else:
+                    row.qty = 99
+                return result
+
+            with self.subTest(change=change), patch.object(
+                    sys.modules["jifeng_erp.sample_quotations"], "_historical_sales_quote_row",
+                    side_effect=mutate_after_body):
+                self.assertFalse(self.allowed("Sales Order", "SO"))
+            self.env.records["Quotation", "Q"].pop("modified", None)
+            self.env.records["Jifeng Sample Order", "S"].pop("modified", None)
+            self.env.records.pop(("Quotation Item", "ALIEN"), None)
+            self.env.records.pop(("DocShare", "share"), None)
+            self.env.masked.clear()
+            self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+            self.assertEqual(self.module._CHECKING_DOCUMENTS.get(), ())
+            self.assertEqual(self.module._SALES_HISTORY.get(), ())
+
+    def test_saved_so_history_recursive_body_cannot_return_pair_or_complete_proof(self):
+        mixed = type("ProtectedSO", (self.module.SampleSourcePermissionMixin, Doc), {})
+        order = mixed(self.env.get_doc("Sales Order", "SO"))
+
+        def recurse_before_body(doc, row, quote):
+            self.assertTrue(self.module._PERMISSION_CALLS.get())
+            self.assertIsNone(self.module._PERMISSION_CALLS.get()[0]["result"])
+            return self.module._saved_sales_quote_history(doc, row, self.env.user)
+
+        with patch.object(sys.modules["jifeng_erp.sample_quotations"], "_historical_sales_quote_row",
+                          side_effect=recurse_before_body):
+            self.assertFalse(order.has_permission("read"))
+        self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+        self.assertEqual(self.module._CHECKING_DOCUMENTS.get(), ())
+        self.assertEqual(self.module._SALES_HISTORY.get(), ())
+        self.assertEqual(self.module._PERMISSION_CALLS.get(), ())
+
+    def test_saved_so_history_is_closed_during_native_and_ancestor_prechecks(self):
+        native, origins = self.module._native_read, self.module._origins
+        stages = []
+
+        def attempt(doc, stage):
+            if doc.doctype == "Sales Order":
+                stages.append(stage)
+                self.assertFalse(any(current is doc for current, _ in self.module._CHECKING_DOCUMENTS.get()))
+                with self.assertRaises(PermissionError):
+                    self.module._saved_sales_quote_history(doc, doc.get("items")[0], self.env.user)
+
+        def native_check(doc, user):
+            attempt(doc, "native")
+            return native(doc, user)
+
+        def origin_check(doc):
+            attempt(doc, "origins")
+            return origins(doc)
+
+        with (
+            patch.object(self.module, "_native_read", side_effect=native_check),
+            patch.object(self.module, "_origins", side_effect=origin_check),
+        ):
+            self.assertTrue(self.allowed("Sales Order", "SO"))
+        self.assertEqual(stages, ["native", "origins", "native"])
+        self.assertEqual(self.env.calls.count(("sales_quote_history", "SO", "SO1", "Q")), 1)
+
+    def test_saved_so_parent_body_spans_nested_final_checks_but_their_own_body_is_closed(self):
+        native = self.module._native_read
+        reads = {}
+        checked = []
+
+        def observe_final(doc, user):
+            reads[doc.doctype] = reads.get(doc.doctype, 0) + 1
+            if doc.doctype in ("Quotation", "Jifeng Sample Order") and reads[doc.doctype] == 2:
+                frames = self.module._CHECKING_DOCUMENTS.get()
+                self.assertTrue(any(current.doctype == "Sales Order" for current, _ in frames))
+                self.assertFalse(any(current is doc for current, _ in frames))
+                with self.assertRaises(PermissionError):
+                    self.module._saved_sales_quote_history(doc, Doc(name="SO1"), user)
+                checked.append(doc.doctype)
+            return native(doc, user)
+
+        with patch.object(self.module, "_native_read", side_effect=observe_final):
+            self.assertTrue(self.allowed("Sales Order", "SO"))
+        self.assertEqual(checked, ["Jifeng Sample Order", "Quotation"])
+        self.assertEqual(self.module._CHECKING_DOCUMENTS.get(), ())
+
+    def test_saved_so_fixed_body_exceptions_clear_all_activity_and_permission_frames(self):
+        mixed = type("ProtectedSO", (self.module.SampleSourcePermissionMixin, Doc), {})
+        order = mixed(self.env.get_doc("Sales Order", "SO"))
+        for error in (ValueError("business rejected"), RuntimeError("unexpected failure")):
+            with self.subTest(error=type(error).__name__), patch.object(
+                    sys.modules["jifeng_erp.sample_quotations"], "_historical_sales_quote_row", side_effect=error):
+                if isinstance(error, ValueError):
+                    self.assertFalse(order.has_permission("read"))
+                else:
+                    with self.assertRaises(RuntimeError):
+                        order.has_permission("read")
+            self.assertEqual(self.module._AUTHORIZING.get(), frozenset())
+            self.assertEqual(self.module._CHECKING_DOCUMENTS.get(), ())
+            self.assertEqual(self.module._SALES_HISTORY.get(), ())
+            self.assertEqual(self.module._PERMISSION_CALLS.get(), ())
+        self.assertTrue(order.has_permission("read"))
 
     def test_quote_delegation_requires_exact_active_quote_and_current_user(self):
         sample = self.env.get_doc("Jifeng Sample Order", "S")

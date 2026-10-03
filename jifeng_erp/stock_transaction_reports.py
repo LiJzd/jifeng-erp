@@ -7,6 +7,7 @@ import frappe
 from jifeng_erp.inventory_scope import (
     column, decimal_number, readable_documents, report_scope, selected_warehouses,
 )
+from jifeng_erp.sample_source_queries import check_protected_reference
 
 
 PURPOSES = {"receipt": "Material Receipt", "issue": "Material Issue", "transfer": "Material Transfer"}
@@ -135,7 +136,7 @@ def _outgoing_source(doc, row, origins):
 
 
 def stock_entry_movements(selected, ledgers, items, warehouses, origins, currency):
-    """Normalize already authorized documents without reading or posting other business sources."""
+    """Normalize permitted movements and check protected output references; never post."""
     grouped = {}
     for sle in ledgers.values():
         grouped.setdefault(sle.voucher_detail_no, []).append(sle)
@@ -148,6 +149,8 @@ def stock_entry_movements(selected, ledgers, items, warehouses, origins, currenc
         outgoing, source_detail, source_read_state = _outgoing_source(doc, row, origins)
         mode = next(key for key, purpose in PURPOSES.items() if purpose == doc.purpose)
         stage = "接收来源调拨" if doc.get("outgoing_stock_entry") else "调入在途" if doc.get("add_to_transit") else "直接调拨"
+        check_protected_reference("Jifeng Flow Order", row.get("jf_flow_order"), company=doc.company)
+        check_protected_reference("Work Order", doc.get("work_order"), company=doc.company)
         result.append({
             "company": doc.company, "posting_date": doc.posting_date, "posting_time": doc.posting_time,
             "stock_entry": doc.name, "stock_entry_detail": row.name, "idx": row.idx,

@@ -35,8 +35,11 @@ class TestStockTransactionReports(unittest.TestCase):
         scope.report_scope = Mock()
         scope.readable_documents = Mock()
         scope.selected_warehouses = Mock(return_value=["A", "B"])
+        references = types.ModuleType("jifeng_erp.sample_source_queries")
+        references.check_protected_reference = Mock(return_value=False)
         path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "stock_transaction_reports.py"
-        with patch.dict(sys.modules, {"frappe": self.frappe, "jifeng_erp.inventory_scope": scope}):
+        with patch.dict(sys.modules, {"frappe": self.frappe, "jifeng_erp.inventory_scope": scope,
+                                      "jifeng_erp.sample_source_queries": references}):
             spec = importlib.util.spec_from_file_location("stock_transaction_reports_under_test", path)
             self.module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.module)
@@ -72,6 +75,37 @@ class TestStockTransactionReports(unittest.TestCase):
         self.assertEqual((rows[0]["document_qty"], rows[0]["document_uom"], rows[0]["stock_uom"]),
                          (Decimal("1.5"), "Box", "Kg"))
         self.assertEqual((rows[0]["flow_order"], rows[0]["currency"]), ("FLOW", "CNY"))
+
+    def test_actual_output_flow_and_work_order_use_voucher_company(self):
+        self.doc["work_order"] = "WO-EXACT"
+        rows = self.movements()
+        self.assertEqual(rows[0]["work_order"], "WO-EXACT")
+        self.assertEqual(self.module.check_protected_reference.call_args_list[0].args,
+                         ("Jifeng Flow Order", "FLOW"))
+        self.assertEqual(self.module.check_protected_reference.call_args_list[1].args,
+                         ("Work Order", "WO-EXACT"))
+        self.assertEqual([call.kwargs for call in self.module.check_protected_reference.call_args_list],
+                         [{"company": "公司"}, {"company": "公司"}])
+        self.assertEqual((rows[0]["movement_qty"], rows[0]["net_value"]), (Decimal(3), Decimal(2)))
+
+    def test_hidden_protected_flow_or_work_order_refuses_whole_report(self):
+        for denied_type in ("Jifeng Flow Order", "Work Order"):
+            with self.subTest(denied_type=denied_type):
+                def guard(doctype, name, company=None):
+                    if doctype == denied_type:
+                        raise PermissionError("来源不可读")
+                self.module.check_protected_reference.side_effect = guard
+                with self.assertRaisesRegex(PermissionError, "来源不可读"):
+                    self.movements()
+
+    def test_no_reference_does_not_invent_a_source_and_keeps_quantity(self):
+        self.row["jf_flow_order"] = None
+        rows = self.movements()
+        self.assertIsNone(rows[0]["flow_order"])
+        self.assertIsNone(rows[0]["work_order"])
+        self.assertEqual(rows[0]["movement_qty"], 3)
+        self.assertEqual([call.args for call in self.module.check_protected_reference.call_args_list],
+                         [("Jifeng Flow Order", None), ("Work Order", None)])
 
     def test_receipt_and_issue_net_signs_come_from_stock_ledger(self):
         self.doc["purpose"] = "Material Receipt"

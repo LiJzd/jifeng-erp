@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 import frappe
 
 from jifeng_erp.subcontracting import _column, _order_items, _orders, _readable_documents, _scope
+from jifeng_erp.sample_source_queries import check_protected_reference
 
 
 def _transfer_quantity(row):
@@ -55,6 +56,7 @@ def material_movements(orders, selected_items, entries, rm_item_code=None, suppl
                 continue
             qty = _transfer_quantity(row)
             selected = selected_items[item.name]
+            check_protected_reference("Jifeng Flow Order", selected.get("jf_flow_order"), company=entry.company)
             result.append({
                 "company": entry.company, "posting_date": entry.posting_date,
                 "posting_time": entry.posting_time, "stock_entry": entry.name,

@@ -5,6 +5,8 @@ from decimal import Decimal, InvalidOperation
 import frappe
 from frappe.utils import cint, date_diff, getdate, today
 
+from jifeng_erp.sample_source_queries import check_protected_reference
+
 
 STATUS_LABELS = {"Draft": "草稿", "Open": "待收回", "Partially Received": "部分收回",
                  "Completed": "已完成", "Closed": "已关闭", "Cancelled": "已取消",
@@ -258,6 +260,7 @@ def subcontracting_progress(filters=None):
         overdue = max(date_diff(today(), due), 0) if due and pending > 0 else 0
         if cint(filters.only_pending) and pending <= 0 or cint(filters.only_overdue) and overdue <= 0:
             continue
+        check_protected_reference("Jifeng Flow Order", item.get("jf_flow_order"), company=item["company"])
         rows.append({"subcontracting_order": item["subcontracting_order"], "order_item": name,
                      "transaction_date": item["transaction_date"], "supplier": item["supplier"],
                      "supplier_name": item["supplier_name"], "flow_order": item.get("jf_flow_order"),
@@ -308,6 +311,8 @@ def subcontracting_receipt_ledger(filters=None):
             if not row.subcontracting_order and not filters.subcontracting_order:
                 frappe.throw("委外收回或退货缺少订单来源，无法生成订单收回台账，请先核对")
     rows = [row for row in receipt_movements(items, receipts, all_items) if row["receipt"] in selected]
+    for row in rows:
+        check_protected_reference("Jifeng Flow Order", row.get("flow_order"), company=filters.company)
     columns = [_column("posting_date", "记账日期", "Date"), _column("receipt", "收回/退回单", "Link", "Subcontracting Receipt", 175),
                _column("entry_type", "业务类型", width=110)] + _source_columns() + [
         _column("accepted_qty", "接收变动", "Float"), _column("rejected_qty", "拒收变动", "Float"),

@@ -662,6 +662,95 @@ class SampleQuotationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.module.cancel_sample_quotation(altered)
 
+    def test_quote_row_authorizes_complete_sources_once_before_receipt(self):
+        permission = Record.check_permission
+        permissions = []
+
+        def check(doc, kind):
+            permissions.append((doc.name, kind))
+            return permission(doc, kind)
+
+        with (
+            self.native_sources(),
+            patch.object(Record, "check_permission", check),
+            patch.object(self.module, "_check_sources", wraps=self.module._check_sources) as sources,
+            patch.object(self.module, "_receipt", wraps=self.module._receipt) as receipt,
+        ):
+            quote, row = self.module._quote_row(
+                self.sales_order, self.sales_order["items"][0], active=False
+            )
+            self.assertIs(quote, self.quote)
+            self.assertIs(row, self.origins[0])
+            self.assertEqual(permissions.count((self.quote.name, "read")), 1)
+            sources.assert_called_once_with(self.quote, lock=False, active=False)
+            receipt.assert_called_once_with(self.quote)
+            self.assertTrue(self.sample_read.called)
+            self.assertTrue(self.field_read.called)
+
+    def test_quote_row_denies_native_permission_or_masks_before_reading_receipt(self):
+        with self.native_sources():
+            self.quote.denied = True
+            with patch.object(self.module, "_receipt", wraps=self.module._receipt) as receipt:
+                with self.assertRaises(PermissionError):
+                    self.module._quote_row(self.sales_order, self.sales_order["items"][0])
+                receipt.assert_not_called()
+            self.quote.denied = False
+            with (
+                patch.object(self.module, "check_quantity_fields", side_effect=PermissionError("masked")),
+                patch.object(self.module, "_receipt", wraps=self.module._receipt) as receipt,
+            ):
+                with self.assertRaises(PermissionError):
+                    self.module._quote_row(self.sales_order, self.sales_order["items"][0])
+                receipt.assert_not_called()
+
+    def test_quote_row_checks_every_source_row_before_reading_receipt(self):
+        with self.native_sources():
+            self.quote["items"][1].jf_sample_source_digest = "forged"
+            with patch.object(self.module, "_receipt", wraps=self.module._receipt) as receipt:
+                with self.assertRaises(ValueError):
+                    self.module._quote_row(self.sales_order, self.sales_order["items"][0])
+                receipt.assert_not_called()
+
+    def test_fixed_sales_history_body_keeps_complete_quote_history_and_source_compare(self):
+        with (
+            self.native_sources(),
+            patch.object(self.module, "_check_sources", wraps=self.module._check_sources) as sources,
+            patch.object(self.module, "_receipt", wraps=self.module._receipt) as receipt,
+        ):
+            self.quote.docstatus = self.sample.docstatus = 2
+            row = self.sales_order["items"][0]
+            result = self.module._historical_sales_quote_row(self.sales_order, row, self.quote)
+            self.assertEqual(result, (self.quote, self.origins[0]))
+            sources.assert_called_once_with(self.quote, lock=False, active=False)
+            receipt.assert_called_once_with(self.quote)
+            self.sample_read.assert_called_once_with(self.sample.name, active=False, lock=False)
+            with self.assertRaises(ValueError):
+                self.module._quote_row(self.sales_order, row, active=True, lock=True)
+
+    def test_fixed_sales_history_body_rejects_parent_status_item_and_all_source_changes(self):
+        with self.native_sources():
+            for change in ("quote_parent", "company", "customer", "status", "quote_row", "item", "row_source", "other_source"):
+                order, quote = deepcopy(self.sales_order), deepcopy(self.quote)
+                row = order["items"][0]
+                if change == "quote_parent":
+                    quote.name = "OTHER_QUOTE"
+                elif change == "company":
+                    order.company = "OTHER_COMPANY"
+                elif change == "customer":
+                    order.customer = "OTHER_CUSTOMER"
+                elif change == "status":
+                    quote.docstatus = 0
+                elif change == "quote_row":
+                    row.quotation_item = "MISSING"
+                elif change == "item":
+                    row.item_code = "OTHER_ITEM"
+                elif change == "row_source":
+                    row.jf_sample_source_digest = "forged"
+                else:
+                    quote["items"][1].jf_sample_source_digest = "forged"
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    self.module._historical_sales_quote_row(order, row, quote)
+
     def test_canceled_so_quote_and_sample_remain_readable_as_history(self):
         with self.native_sources():
             self.sample.docstatus = self.quote.docstatus = (

@@ -709,9 +709,16 @@ def _quote_row(order, row, *, lock=False, active=True):
     if lock:
         frappe.db.get_value("Quotation", parent, "name", for_update=True)
     quote = frappe.get_doc("Quotation", parent)
-    quote.check_permission("read")
-    _receipt(quote)
+    return _checked_quote_row(order, row, quote, lock=lock, active=active)
+
+
+def _checked_quote_row(order, row, quote, *, lock=False, active=True):
+    """Full quotation sources precede receipts and the selected-row checks."""
+    identity = row.get("quotation_item")
+    if not identity or not row.get("prevdoc_docname") or quote.name != row.prevdoc_docname:
+        frappe.throw("样品销售明细缺少准确报价父单与明细")
     _check_sources(quote, lock=lock, active=active)
+    _receipt(quote)
     if (
         (quote.docstatus != 1 if active else quote.docstatus not in (1, 2))
         or quote.company != order.company
@@ -726,6 +733,14 @@ def _quote_row(order, row, *, lock=False, active=True):
     ):
         frappe.throw("销售订单的准确报价明细已变化")
     return quote, matches[0]
+
+
+def _historical_sales_quote_row(order, row, quote):
+    """Fixed business body for the private complete saved SO/Quote/Sample gates."""
+    result = _checked_quote_row(order, row, quote, lock=False, active=False)
+    if any(row.get(field) != result[1].get(field) for field in SOURCE_FIELDS):
+        frappe.throw("销售订单样品来源与准确报价明细不一致")
+    return result
 
 
 def prepare_sample_sales_order(doc, method=None):
