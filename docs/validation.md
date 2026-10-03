@@ -1,5 +1,25 @@
 # 验证记录
 
+## 2026-10-03 最新本地增量：订单镀色
+
+原站结构依据为`output/legacy-plating-color-20261003-r2/report.md/json`：订单/产品两个URL外观一致，但没有业务查询或共用底层证明；13列和“产品镀色新增”六字段已观察。编号灰色且AX不可编辑，色系是普通文本，代码占位为“代码生成条码时用”；旧必填/保存/编号/简拼算法未验证。本批只绑定订单入口，产品入口仍预览。当前规则要求名称非空，编号采用公司/类型独立服务器计数，简拼只读；代码/色系保留原文，不改Customer、Item或Sales Order。
+
+32后端模型、2资源模型、镀色/订单词典/商品词典/客户词典/客户档案/A-B六份CJS及Python3.13 AST/Ruff通过。客户端检查13列/六字段、readonly编号、代码/色系原文、scope/类型/分页、mask/readonly payload、保存冻结和UUID回查，无重复POST。额外只读审查实测发现resolve差异表和完整性检查仍硬编码旧四字段，可能在代码屏蔽时允许采用未完整核对的值；现两处与editorFields/editorLabels同源，补仅代码/仅色系冲突展示、两字段分别缺DTO或metadata拒采用的回归，六份CJS再次通过。这些是DOM/协议模型，不算真实浏览器。
+
+| 隔离步骤 | 实际结果 | 忽略目录证据 |
+| --- | --- | --- |
+| 前置及源码冻结 | 11运行文件、10原不变依赖，原字节保留；无网络。 | `plating-color-native-preflight-20261003-r1.json`、`plating-color-native-source-20261003-r1.json`（SHA `21610ded9f98f2ddd6c810b47029a92de1589794f5f9bf9cf6f847b64cb2d3b8`）及同名源码备份目录 |
+| schema r1 | 一次targeted reload+commit，929→930，仅空Plating Color表与本DocType元数据；六元数据表目标外内容/结构/索引全同，全部旧业务/Auth/账簿保持。 | `plating-color-native-schema-20261003-r1/` |
+| suite r1 | 19实际岗位门通过，全部业务与审计回滚；独立新连接930个物理对象内容/结构/索引与suite前一致。实际主管创建、原文/Version、原生表单身份、Sales User拒写、公司/记录权限、103分页、停用、真实mask及readonly、必填失败完整回滚、UUID原始摘要与重复回查、stale、Guest及原生删除拒绝均通过。 | `plating-color-native-suite-20261003-r1/`，`fresh_unchanged=true`；native Customer/Item/Sales Order及GL/SLE保持 |
+| frontend r2 | 只复制上述两行resolve修正后的共享前端文件；旧字节与新pins独立保留，r1后端冻结文件保持，不覆盖原native证明。 | `plating-color-frontend-source-20261003-r2/`；无SQL/网络 |
+| 资源 r1/r2 | native实际hooks和26资源字节/内容指纹与各时本地一致；r2覆盖最终前端修正。 | `plating-color-native-assets-20261003-r1.json`、`plating-color-native-assets-20261003-r2.json`；无DB/浏览器HTTP |
+| GUI r1失配 | 两套实际显示旧11列“本地交互预览”，新增为8字段“新增·镀色”；未保存，不能计目标界面通过。 | `plating-color-gui-20261003-r1/report.md/json`；已有QA会话，目标公司筛选器未出现 |
+| hooks cache r1 | 查明Redis仍缓存14JS，仅失效隔离站app_hooks这一键并重读为17JS/9CSS，逐URL同当前源码；独立fresh 930对象与操作前全同。 | `plating-color-hooks-cache-20261003-r1/`；无full clear-cache、SQL写入或外网操作 |
+| GUI r2 | 缓存修正后A/B重新加载、重新菜单进入；同Validation公司空关键词查询均0条，13列、六字段/标题、代码占位、色系文本框、编号不可编辑可见。名称有星号，两空窗打开后关闭，未保存。 | `plating-color-gui-20261003-r2/report.md/json`；已有会话，无输入凭据；截图仅工具内观察未落盘，未采console/network，不计保存互通或零错误证明 |
+| 预览关闭及独立后验 | 精确本轮PID/tick关闭，8000不监听，原站点配置字节/owner/mode恢复，调度/邮件仍停；新连接930对象结构/索引全同、业务/元数据/Auth凭据/角色/账簿全同。整段预览仅Sessions、User两表内容变动，行数均不变，不声称全部认证表内容保持；缓存修正后至r2关闭则930对象全同。 | WSL私有`plating-color-preview-20261003-r1/stopped.json`，`plating-color-gui-closure-audit-20261003-r1/`；无worker/scheduler、SQL写入或外网操作 |
+
+物理核验使用READ ONLY/RR一致快照，独立连接持全部三个MyISAM READ锁并复核连接ID；含六个InnoDB序列。仅允许明确隔离site/db和两既有Validation公司，未全migrate、扩原生权限、导入历史或外网写入。当前只做串行实验，无双事务/负载证明。GUI报告由子智能体写在父工作目录的output，四文件已逐SHA复制到仓库忽略的output，原件保留，见`plating-color-gui-report-copy-20261003-r1.json`。旧编号、简拼、条码、删除/打印、订单选择联动和全业务GUI验收继续。本地363入口为235正式映射、12部分可用、98预览、13导航、5工具，17JS/9CSS共26资源；外网继续4d71c35、11部分/99预览，本批未发布。
+
 ## 2026-10-03 最新外网发布：4d71c35
 
 当前A/B共用源码已从5aa升级至4d71c35；下文“未发布”“外网仍5aa”等描述保留为较早批次记录，以本节为最新状态。公开候选505文件逐SHA、25资源指纹、固定镜像和只读挂载核验通过。没有下载服务器备份，上传及每项资源读取实际连接均核DIRECT；凭据只在RAM使用。

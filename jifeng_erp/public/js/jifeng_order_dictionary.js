@@ -35,8 +35,7 @@ window.JifengOrderDictionary = class JifengOrderDictionary extends window.Jifeng
 		this.scroller = this.element("div", undefined, "jfe-product-dictionary-scroll");
 		const table = this.element("table", undefined, "jfe-product-dictionary-table"); table.setAttribute("aria-label", __(this.dictionaryTitle));
 		const thead = this.element("thead"), headings = this.element("tr");
-		const labels = this.isCompactDictionary() ? ["编号", "名称", "备注", "简拼", "停用", "修改", "删除"] :
-			["编号", "名称", "备注", "简拼", "停用", "操作", "日期", "修改人", "修改日期", "修改", "删除"];
+		const labels = this.columnLabels();
 		for (const label of labels) {
 			const th = this.element("th", __(label)); th.scope = "col"; headings.append(th);
 		}
@@ -53,6 +52,10 @@ window.JifengOrderDictionary = class JifengOrderDictionary extends window.Jifeng
 
 	pageSize() { return Number(this.pageLength.value); }
 	isCompactDictionary() { return this.type === "订单要求"; }
+	columnLabels() { return this.isCompactDictionary() ? ["编号", "名称", "备注", "简拼", "停用", "修改", "删除"] :
+		["编号", "名称", "备注", "简拼", "停用", "操作", "日期", "修改人", "修改日期", "修改", "删除"]; }
+	validDictionaryRow(row) { return !!(row?.name && typeof row.version === "string" && row.version && typeof row.value === "string" &&
+		row.company === this.company() && row.dictionary_type === this.type && [0, 1].includes(Number(row.inactive))); }
 	changeScope() { this.start = 0; this.total = 0; this.loadedScope = null; this.updatePager(); super.changeScope(); }
 	updatePager() {
 		const page = this.total ? Math.floor(this.start / this.pageSize()) + 1 : 0;
@@ -82,8 +85,7 @@ window.JifengOrderDictionary = class JifengOrderDictionary extends window.Jifeng
 				result.start !== (result.total ? Math.min(start, Math.floor((result.total - 1) / page_length) * page_length) : 0) ||
 				result.rows.length !== Math.min(page_length, Math.max(0, result.total - result.start)) ||
 				new Set(result.rows.map((row) => row?.name)).size !== result.rows.length ||
-				result.rows.some((row) => !row?.name || typeof row.version !== "string" || !row.version || typeof row.value !== "string" ||
-					row.company !== company || row.dictionary_type !== this.type || ![0, 1].includes(Number(row.inactive)) || !include_inactive && Number(row.inactive))) throw new Error("Incomplete order dictionary scope");
+				result.rows.some((row) => !this.validDictionaryRow(row) || !include_inactive && Number(row.inactive))) throw new Error("Incomplete order dictionary scope");
 			this.rows = result.rows; this.total = result.total; this.start = result.start; this.loadedScope = scope;
 			for (const row of this.rows) this.renderRow(row);
 			this.updatePager(); this.scroller.scrollTop = scroll.top; this.scroller.scrollLeft = scroll.left;

@@ -23,6 +23,7 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_product_dictionary.js",
                   "/assets/jifeng_erp/js/jifeng_customer_type.js",
                   "/assets/jifeng_erp/js/jifeng_order_dictionary.js",
+                  "/assets/jifeng_erp/js/jifeng_plating_color.js",
                   "/assets/jifeng_erp/js/jifeng_customer_archive.js",
                   "/assets/jifeng_erp/js/jifeng_product_category.js",
                   "/assets/jifeng_erp/js/jifeng_product_archive.js",

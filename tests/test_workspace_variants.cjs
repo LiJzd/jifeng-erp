@@ -10,7 +10,7 @@ class Element {
 }
 let route = "jifeng-legacy";
 const messages = [], confirmations = [];
-const window = { addEventListener() {}, removeEventListener() {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {}, JifengCustomerArchive: class {}, JifengOrderDictionary: class {} };
+const window = { addEventListener() {}, removeEventListener() {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {}, JifengCustomerArchive: class {}, JifengOrderDictionary: class {}, JifengPlatingColor: class {} };
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
@@ -87,6 +87,9 @@ for (const name of ["类型", "要求"]) {
 	assert.equal(spec.orderDictionary, "订单" + name);
 	assert.equal(spec.doctype, "Jifeng Order Dictionary");
 }
+assert.equal(shared.availability("订单", "镀色"), "partial");
+assert.equal(dispatch(Modern, find("订单", "镀色"))[0].spec.platingColor, true);
+assert.equal(dispatch(Modern, find("订单", "镀色"))[0].spec.doctype, "Jifeng Plating Color");
 
 const navigation = Workspace => {
 	const workspace = Object.create(Workspace.prototype); workspace.activeTab = () => ({ kind: "home" });

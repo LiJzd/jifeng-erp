@@ -165,10 +165,11 @@ window.JifengProductDictionary = class JifengProductDictionary {
 			const archive = response.message;
 			if (this.disposed || this.company() !== company || !archive?.field_meta || archive.company !== company || archive.dictionary_type !== this.type ||
 				(name ? archive.name !== name : !!archive.name || !!archive.version)) return;
-			const labels = { legacy_number: "编号", value: "名称", remarks: "备注", inactive: "停用", abbreviation: "简拼（原文维护）" };
-			const fields = ["legacy_number", "value", "remarks", "inactive", "abbreviation"].flatMap((fieldname) => {
+			const labels = { legacy_number: "编号", value: "名称", remarks: "备注", inactive: "停用", abbreviation: "简拼（原文维护）", ...this.dictionaryOptions.editorLabels };
+			const fields = this.editorFields().flatMap((fieldname) => {
 				const df = archive.field_meta[fieldname];
 				return df ? [{ ...df, fieldname, label: __(labels[fieldname]), default: fieldname === "legacy_number" ? this.numberPolicy(archive).value : archive[fieldname] ?? null,
+					...this.dictionaryOptions.editorFieldOptions?.[fieldname],
 					...(fieldname === "remarks" && df.fieldtype === "Small Text" ? { fieldtype: "Data", length: 65535 } : {}),
 					hidden: this.hiddenField(fieldname, archive),
 					...(fieldname === "legacy_number" ? { description: this.numberPolicy(archive).description } : {}),
@@ -209,8 +210,10 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		finally { this.opening = false; if (!this.disposed) this.updateAddButton(); }
 	}
 
+	editorFields() { return this.dictionaryOptions.editorFields || ["legacy_number", "value", "remarks", "inactive", "abbreviation"]; }
+
 	values(state) {
-		return Object.fromEntries(["legacy_number", "value", "remarks", "inactive", "abbreviation"]
+		return Object.fromEntries(this.editorFields()
 			.filter((field) => state.dialog.fields_dict[field]).map((field) => [field,
 			state.archive.field_meta[field] ? field === "legacy_number" ? this.numberPolicy(state.archive).value : state.archive[field] ?? null : null]));
 	}
@@ -223,7 +226,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		const result = { company: state.company, dictionary_type: this.type };
 		if (state.archive.name) { result.name = state.archive.name; result.version = state.archive.version; }
 		else { result.request_id = state.requestId; result.numbering_mode = "automatic_v1"; }
-		for (const field of ["value", "remarks", "inactive", "abbreviation"]) {
+		for (const field of this.editorFields().filter((name) => name !== "legacy_number")) {
 			const df = state.archive.field_meta[field], control = state.dialog.fields_dict[field];
 			if (control && df && !this.hiddenField(field, state.archive) && !df.read_only && state.archive.can_write) {
 				const value = control.get_value();
@@ -263,7 +266,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 	}
 
 	freeze(state) {
-		for (const field of ["legacy_number", "value", "remarks", "inactive", "abbreviation"]) {
+		for (const field of this.editorFields()) {
 			if (!state.dialog.fields_dict[field]) continue;
 			const df = state.archive.field_meta[field];
 			state.dialog.set_df_property(field, "hidden", !df || this.hiddenField(field, state.archive));
@@ -285,7 +288,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 
 	matches(state, archive) {
 		if (!this.validArchive(state, archive) || state.candidate.name && archive.version === state.candidate.version) return false;
-		for (const field of ["value", "remarks", "inactive", "abbreviation"]) {
+		for (const field of this.editorFields().filter((name) => name !== "legacy_number")) {
 			if (!(field in state.candidate)) continue;
 			if (!(field in archive) || !archive.field_meta[field]) return false;
 			if (field === "inactive" ? Number(archive[field]) !== Number(state.candidate[field]) : (archive[field] ?? "") !== (state.candidate[field] ?? "")) return false;
@@ -335,7 +338,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 					{ request_id: candidate.request_id, dictionary_type: this.type, company: candidate.company }, freeze: true });
 			const archive = candidate.name ? response.message : response.message?.status === "found" ? response.message.archive : null;
 			if (this.matches(state, archive)) { await this.accept(state, archive, "已核对保存结果"); return; }
-			const fields = ["value", "remarks", "inactive", "abbreviation"].filter((field) => field in candidate);
+			const fields = this.editorFields().filter((field) => field !== "legacy_number" && field in candidate);
 			if (!this.validArchive(state, archive) || fields.some((field) => !(field in archive) || !archive.field_meta[field])) {
 				frappe.msgprint(__("未核对到完整可见回执，请保留草稿稍后核对；不会重复保存。")); return;
 			}
@@ -351,7 +354,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 			}
 			state.review.append(this.element("p", __(archive.numbering_mode === "automatic_v1" ?
 				"编号方式：系统自动；新增暂定号不占号，以服务器已保存编号为准。" : "编号方式：历史原文。")));
-			const labels = { value: "名称", remarks: "备注", inactive: "停用", abbreviation: "简拼" };
+			const labels = { value: "名称", remarks: "备注", inactive: "停用", abbreviation: "简拼", ...this.dictionaryOptions.editorLabels };
 			for (const field of fields) {
 				const row = this.element("tr"); row.append(this.element("td", __(labels[field])),
 					this.element("td", field === "inactive" ? Number(candidate[field]) ? "是" : "否" : candidate[field]),
