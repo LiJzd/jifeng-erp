@@ -799,6 +799,23 @@ def read_sample_source(sample_order, version=None, for_update=False):
     return document
 
 
+def read_sample_history(sample_order, for_update=False):
+    """Authorize the approved historical source without reading descendants."""
+    _login()
+    name = _name(sample_order)
+    document = frappe.get_doc(DOCTYPE, name, for_update=for_update)
+    if int(document.docstatus) not in (1, 2):
+        _invalid("样品历史来源必须有服务器批准依据")
+    sample_order_onload(document)
+    _projection(document, PARENT_FIELDS | APPROVAL | {"name", "modified", "docstatus"})
+    current = frappe.get_doc(DOCTYPE, name)
+    sample_order_onload(current)
+    _projection(current, PARENT_FIELDS | APPROVAL | {"name", "modified", "docstatus"})
+    if _freeze(document) != _freeze(current):
+        _invalid("样品单或来源权限已改变，请重新读取")
+    return document
+
+
 def _request_digest(document, row, bom, bom_digest):
     return _hash(
         {

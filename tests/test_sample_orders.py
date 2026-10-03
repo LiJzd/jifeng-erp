@@ -918,6 +918,17 @@ class TestSampleOrders(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.service.read_sample_source(document.name)
 
+    def test_historical_source_never_reads_work_order_descendants(self):
+        document = self.approved()
+        document.docstatus = 2
+        self.persist(document)
+        with patch.object(self.service, "_dto", side_effect=AssertionError("unexpected descendants")):
+            history = self.service.read_sample_history(document.name)
+            self.assertEqual(history.approved_digest, document.approved_digest)
+        self.hidden_fields[(self.service.CHILD, "read")] = {"requirements"}
+        with self.assertRaises(PermissionError):
+            self.service.read_sample_history(document.name)
+
     def test_company_and_bom_identity_active_and_native_read_permissions(self):
         self.hidden.add("Company A")
         with self.assertRaises(PermissionError):

@@ -1,5 +1,31 @@
 # 验证记录
 
+## 2026-10-04 样品修改版与来源权限续接（未发布）
+
+原生 r8 实际25门通过，沿用非 System Manager 的业务岗位组合及公司 UP；新增销售订单修改版继承准确原报价子行，半箱核为6库存量并生成正确 Flow 后逆序取消；报价修改版继承准确样品行，服务器替换旧回执，1.5箱核为18库存量、明确零价保持，原生提交／取消及原旧回执分别可查询。完整934对象业务回滚一致，夹具不存在，证据 `output/sample-quote-qa-20261004-r1/business-r8-result.json`。这是来源权限接入前版本，不能当作后来版本通过。
+
+第三方只读审查发现并修复全行擦除来源、混合普通订单单样品行擦除、保存后清除／替换 `amended_from` 三类绕过；报价修改版不能凭客户端 JSON 伪造服务器私有授权，旧回执不会重用。Sample历史门不再查询工单下游。当前模型 Sample33／Quote44／SO→Flow13／来源权限49，共139项通过，两个CJS及Ruff／差异检查通过；模型不替代真实权限门。
+
+权限接入 r9 在合法新 Sample 的 create 检查失败：公共 `frappe.has_permission` 不接受 `print_logs`，该 TypeError 被权限附加门转换成拒绝，已修公共签名并将模型约束为真实签名。r10完成14个核心正／负门后在伪造 Flow 负门停下：新权限在 create 阶段正确抛 PermissionError，旧验收器仅识别 ValidationError；验收器须按该明确门改正。两批均 `passed=false`，完整934对象回滚相同、全部夹具不存在，无 DDL、原隔离库或外网写入；证据为同目录 `business-r9-result.json`／`business-r10-result.json`。r10多层来源校验耗时明显，正在修单次原生调用重复校验，不能把正确拒绝或已完成门扩为全矩阵通过。
+
+r11 完成16门后停在统计接口：新版框架拒绝验收器的 `count(name) as count` 字符串，要求 `{'COUNT':'name','as':'count'}`；尚未进入统计权限执行，不能算作统计通过。此前 Sample 的直接读取被实际 Customer UP 拒绝，两种列表引擎返回空，但其整个五父单列表／统计／导出矩阵未完成。完整934对象回滚相同、夹具不存在，耗时113.975秒；其中原生提交销售单、生成及重放两张 Flow 的阶段耗时74.059秒，单次 SQL 栈不能证明时间根因。证据 `business-r11-result.json`／`business-r11-progress.jsonl`；失败批次保留，不重复 DDL 或测试数据。
+
+r12 实际完成38门：Sample专属 Customer UP 的受限岗位不能直接读取五父单，两种列表引擎／dict COUNT／原生 `client.get_count` 均为空或0，报价子表直接读／列表及父子联查亦拒绝，原生CSV导出不含受限报价；五父单的普通及 everyone 独立 DocShare 即使设置 ignore_share／ignore_validate 也被拒绝。未扩大原生角色权限。随后验收器调用内部 `share.remove` 删除普通Quote分享时，业务角色缺少 DocShare.delete 而停下；普通Quote的创建／分享／读取断言已过，但整个正门尚未完成，不计批次通过。已查原生Desk使用 `share.set_permission(...,'read',0)`，下一批按该真实API继续。完整934对象回滚相同、夹具不存在，耗时72.532秒；Flow所在相同阶段观测36.086秒，不作正式负载性能结论。证据 `business-r12-result.json`／`business-r12-progress.jsonl`。
+
+来源门现只在单次原生权限调用内接收精确 self／ptype／user 的已完成钩子结果，仍做最终分享检查；Quote历史业务固定包围其准确Sample读取，保留两次授权／批准／来源／投影与首尾 native／字段／子行／分享／freeze，不保留跨调用权限缓存。另在模型精确复现并修复 new Quote “修改”继承旧UUID、暂空样品来源时被 create 误拒：原生insert先check_permission后before_validate，故仅未保存且有 `amended_from` 的报价可待服务器继承；其准确历史父单和通用授权已验证，保存后空来源仍拒绝。49模型包含上述正／负门，准确改单已在 r13 实际核验。
+
+r13 实际完成62门，包含此前五父单UP／双引擎列表／dict及Desk统计／报价子表和导出矩阵、保护记录两类分享拒绝；普通Quote的Desk分享／读取／取消分享保持，已分享普通SO绑定样品被拒且存储原行保持，五父单有权限时可读／可列；准确SO及Quote修改版继承、新回执、明确零价、提交／转Flow／逆序取消和保存后清除修改父单拒绝均完成。原生 Property Setter 对 Sample Item.requirements 设置mask后，五父单读取／列表与报价CSV均拒绝或省略；删除该自有setter后Sample读取恢复。没有更改原生角色权限，metadata操作在自有回滚事务内且清理本克隆目标元数据缓存。随后普通 Sales User 的无BOM样品新增／读取已过，报价探针遗漏API必填 `make_flow`，在输入完整性阶段停下，故保留 `passed=false`。完整934对象回滚相同、全部夹具及setter不存在，耗时200.216秒；证据 `business-r13-result.json`／`business-r13-progress.jsonl`。
+
+r14 只补验同一冻结代码的普通销售岗位，不重复 r13 已完成核心链：有BOM的参考样品由实际业务主管批准且可读；仅Sales User角色及公司UP的用户可新增／读无BOM样品，在主管批准后生成／读取库存量2的显式零价报价，经主管审核后原生转准确销售草稿；该用户不可读已选择BOM的样品来源。输入明确 `make_flow=0`，没有改变业务代码、扩大原生权限或回避必填字段。专项5门 `passed=true`，耗时7.267秒，完整934对象回滚相同、全部自有夹具不存在。证据 `business-r14-result.json`；r13仍为失败批次，r14仅证明此销售专项。
+
+最终独立只读 r2 复核通过：克隆934对象、两张新空表、26来源字段及其原生审计范围、原业务投影／非目标元数据、实际UUID唯一索引、新DocType权限定义保持；原源完整932对象／六序列和配置字节保持，无DDL重放或外网修改。证据 `business-final-source-verified-r2.json`。当前冻结来源模块SHA为 `3eb478197c90349592b8e502135465936c77a24292e8f60a1ceb309266622f0c`。列表PQC仍逐单授权；r13销售改单提交／转Flow／取消阶段观测75.103秒，正式数据量负载与该耗时须继续解决，不依据模型或单轮耗时宣称性能已达标。
+
+旧浏览器只读 r1／r2：七个产品功能的筛选、空单字段、样品效果1～4分组、报价明细、按钮及关空页回航已记录。r2更正 r1：报价新增空单同时有保存／审核。样品反审只有同意／拒绝／刷新及未标注文本区，空页不能证明申请对象。没有保存、审核、反审、查询既有记录、导入导出或打印；证据 `output/legacy-sample-gui-20261004-r1/report.md`／`output/legacy-sample-gui-20261004-r2/report.md`。效果业务映射、申请流程及 A/B 正式 GUI 仍缺，不能据空页或菜单认定习惯已复刻。
+
+外网 GUI 只读 r2 未执行：gpt-6-luna 子智能体 fresh CUA 能列出两个 Chrome profile，但浏览器后端均 `nodeRepl.fetch request failed`，现有标签亦 `Browser is not available`。没有打开 A/B 链接、登录或填写凭据，也没有用 CLI 或原生电脑 UI 替代。前次42项可信 TLS／API检查保持其原范围，不能扩大为本轮GUI通过。证据 `output/erp-ab-external-readonly-20261004-r2/report.md`。
+
+外网仍 `5b49bac`，本批未上传。SQL／Script 报表、关联数量 `hidden_count`、全部来源字段／mask、全模块岗位、实际 HTTP／GUI、正式负载、跨连接并发、制造入库／领料未由上述有限原生门证明。既有保护文档分享须先只读证明为空，再依赖 app-only PQC；不自动移除分享或扩大原生角色。下节为 r7 历史时点。
+
 ## 2026-10-04 样品／报价转单本地候选（未发布，原生r7真实21门通过）
 
 当前外网仍为 `5b49bac`，233 formal／14 partial／98 preview／13 navigation／5 tool；没有上传、切换或在外网执行本批样品 DDL／业务。下述为本地候选证据，不替代外网、真实岗位或 GUI 验收。

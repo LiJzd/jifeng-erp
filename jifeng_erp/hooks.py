@@ -91,11 +91,36 @@ extend_doctype_class = {
     "Project": ["jifeng_erp.personnel_separation.SeparationProjectMixin"],
 }
 
+# Frappe's shares can override permission hooks and list conditions. Sample
+# source records use a final controller guard plus the serialized no-share
+# binding invariant; ordinary native records retain their existing permissions.
+_sample_permission_parents = (
+    "Jifeng Sample Order", "Quotation", "Sales Order", "Jifeng Flow Order", "Work Order",
+)
+_sample_permission_children = (
+    "Jifeng Sample Order Item", "Quotation Item", "Sales Order Item",
+    "Pricing Rule Detail", "Sales Taxes and Charges", "Payment Schedule",
+    "Quotation Lost Reason Detail", "Packed Item", "Competitor Detail",
+    "Item Wise Tax Detail", "Sales Team", "Work Order Item", "Work Order Operation",
+    "Work Order Additional Item", "Jifeng Material Line", "Jifeng Operation Line",
+)
+for _doctype in _sample_permission_parents + _sample_permission_children:
+    has_permission[_doctype] = "jifeng_erp.sample_source_permissions.sample_source_has_permission"
+    extend_doctype_class.setdefault(_doctype, []).append(
+        "jifeng_erp.sample_source_permissions.SampleSourcePermissionMixin"
+    )
+for _doctype in _sample_permission_parents:
+    permission_query_conditions[_doctype] = "jifeng_erp.sample_source_permissions.sample_source_query_conditions"
+for _doctype in _sample_permission_children:
+    permission_query_conditions[_doctype] = "jifeng_erp.sample_source_permissions.sample_child_query_conditions"
+
 after_install = "jifeng_erp.setup.install"
 after_migrate = "jifeng_erp.setup.install"
 scheduler_events = {"cron": {"*/15 * * * *": ["jifeng_erp.sync.scheduled_sync"]}}
 doc_events = {
-    "DocShare": {"before_validate": "jifeng_erp.tool_cost_sources.prevent_tool_cost_docshare"},
+    "DocShare": {"before_validate": ["jifeng_erp.tool_cost_sources.prevent_tool_cost_docshare",
+                                     "jifeng_erp.sample_source_permissions.before_validate_docshare"]},
+    "Jifeng Sample Order": {"before_validate": "jifeng_erp.sample_source_permissions.before_validate_source_binding"},
     "Additional Salary": {"validate": "jifeng_erp.payroll.validate_wage_additional_salary"},
     "Journal Entry": {
         "before_validate": "jifeng_erp.accounting.lock_expense_settlement_references",
@@ -112,7 +137,8 @@ doc_events = {
     },
     "Employee": {"on_update": "jifeng_erp.jifeng_erp.doctype.jifeng_employee_supplement.jifeng_employee_supplement.refresh_employee_supplement"},
     "Sales Order": {
-        "before_validate": "jifeng_erp.sample_quotations.prepare_sample_sales_order",
+        "before_validate": ["jifeng_erp.sample_quotations.prepare_sample_sales_order",
+                            "jifeng_erp.sample_source_permissions.before_validate_source_binding"],
         "validate": "jifeng_erp.sample_quotations.validate_sample_sales_order",
         "onload": "jifeng_erp.sample_quotations.load_sample_sales_order",
         "before_update_after_submit": "jifeng_erp.sample_quotations.guard_sample_sales_order_history",
@@ -126,12 +152,14 @@ doc_events = {
     # before_validate still runs and must preserve flow identity and quantity limits.
     "Work Order": {"before_validate": ["jifeng_erp.setup.validate_flow_links",
                                        "jifeng_erp.production_department.validate_work_order_departments",
-                                       "jifeng_erp.sample_orders.validate_sample_work_order"],
+                                       "jifeng_erp.sample_orders.validate_sample_work_order",
+                                       "jifeng_erp.sample_source_permissions.before_validate_source_binding"],
                    "before_update_after_submit": "jifeng_erp.sample_orders.validate_sample_work_order",
                    "before_cancel": "jifeng_erp.sample_orders.validate_sample_work_order",
                    "on_trash": "jifeng_erp.sample_orders.prevent_sample_work_order_delete",
                    "before_rename": "jifeng_erp.sample_orders.prevent_sample_work_order_rename"},
-    "Quotation": {"before_validate": "jifeng_erp.sample_quotations.validate_sample_quotation",
+    "Quotation": {"before_validate": ["jifeng_erp.sample_quotations.validate_sample_quotation",
+                                      "jifeng_erp.sample_source_permissions.before_validate_source_binding"],
                   "validate": "jifeng_erp.sample_quotations.validate_sample_quotation",
                   "before_update_after_submit": "jifeng_erp.sample_quotations.validate_sample_quotation",
                   "onload": "jifeng_erp.sample_quotations.load_sample_quotation",
@@ -139,7 +167,8 @@ doc_events = {
     "Workstation": {"validate": "jifeng_erp.production_department.validate_default_department"},
     "Operation": {"validate": "jifeng_erp.production_department.validate_default_department"},
     "Production Plan": {"validate": "jifeng_erp.production_instruction.validate_plan"},
-    "Jifeng Flow Order": {"before_validate": "jifeng_erp.sample_quotations.validate_sample_flow",
+    "Jifeng Flow Order": {"before_validate": ["jifeng_erp.sample_quotations.validate_sample_flow",
+                                            "jifeng_erp.sample_source_permissions.before_validate_source_binding"],
                           "validate": "jifeng_erp.production_instruction.validate_flow_allocation"},
     "Subcontracting Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Subcontracting Receipt": {"validate": "jifeng_erp.setup.validate_flow_links"},
@@ -149,3 +178,7 @@ doc_events = {
     "Purchase Invoice": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Stock Entry": {"validate": "jifeng_erp.setup.validate_flow_links"},
 }
+for _doctype in _sample_permission_parents + _sample_permission_children:
+    doc_events.setdefault(_doctype, {})["validate_share"] = (
+        "jifeng_erp.sample_source_permissions.validate_sample_source_share"
+    )

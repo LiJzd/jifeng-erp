@@ -258,6 +258,7 @@ class SampleQuotationTests(unittest.TestCase):
                 "sales_order_item",
                 "source_key",
                 "external_order",
+                "amended_from",
             )
         )
         native_fields = {
@@ -884,9 +885,193 @@ class SampleQuotationTests(unittest.TestCase):
                     self.sample_read.assert_not_called()
                     self.field_read.assert_not_called()
 
+    def quote_amendment(self, *, clear=False):
+        self.quote.doctype = "Quotation"
+        self.quote.docstatus = 2
+        for old in self.quote["items"]:
+            old.update(parent=self.quote.name, parenttype="Quotation", parentfield="items")
+        result = deepcopy(self.quote)
+        result.update(name="AMENDED-QUOTE", docstatus=0, amended_from=self.quote.name,
+                      __islocal=1, previous=None)
+        for index, (row, old) in enumerate(zip(result["items"], self.quote["items"], strict=True)):
+            row.update(name=f"NEW-ROW-{index}", _amended_from=old.name)
+            if clear:
+                for field in self.module.SOURCE_FIELDS:
+                    row[field] = None
+        if clear:
+            for field in ("jf_sample_order",) + self.module.REQUEST_FIELDS:
+                result[field] = None
+        return result
+
+    def test_native_quote_amend_keeps_exact_rows_explicit_prices_and_new_receipt(self):
+        with self.native_sources():
+            amended = self.quote_amendment(clear=True)
+            amended["items"].reverse()
+            amended["items"][0].qty, amended["items"][0].rate = "2.50", "0"
+            self.module.validate_sample_quotation(amended, "before_validate")
+            new_id = amended.jf_sample_request_id
+            self.assertNotEqual(new_id, self.quote.jf_sample_request_id)
+            self.assertEqual(self.module._uuid(new_id), new_id)
+            self.assertEqual([r.jf_sample_order_item for r in amended["items"]],
+                             [r.jf_sample_order_item for r in reversed(self.quote["items"])])
+            self.assertEqual((amended["items"][0].qty, amended["items"][0].rate), ("2.50", "0"))
+            amended["items"][0].qty, amended["items"][0].rate = 2.5, 0.0
+            self.module.validate_sample_quotation(amended, "validate")
+            self.assertEqual(amended.jf_sample_request_id, new_id)
+
+    def test_amend_copied_uuid_is_replaced_and_input_cannot_authorize_new_quote(self):
+        with self.native_sources():
+            amended = self.quote_amendment()
+            amended._jf_sample_amend = [True, self.quote.name,
+                                       self.quote.jf_sample_request_id, "b" * 64, []]
+            self.module.validate_sample_quotation(amended)
+            self.assertNotEqual(amended.jf_sample_request_id, self.quote.jf_sample_request_id)
+            amended["items"][0].rate = 999
+            with self.assertRaisesRegex(ValueError, "改变了修改版指定"):
+                self.module.validate_sample_quotation(amended)
+
+    def test_amend_missing_or_forged_exact_row_and_wrong_sample_are_rejected(self):
+        with self.native_sources():
+            for field, value in (("_amended_from", "OTHER-QUOTE-ROW"),
+                                 ("jf_sample_order_item", "OTHER-SAMPLE-ROW"),
+                                 ("item_code", "OTHER-ITEM")):
+                with self.subTest(field=field):
+                    amended = self.quote_amendment()
+                    amended["items"][0][field] = value
+                    with self.assertRaises(ValueError):
+                        self.module.validate_sample_quotation(amended)
+            amended = self.quote_amendment(clear=True)
+            amended["items"][0]._amended_from = None
+            with self.assertRaisesRegex(ValueError, "准确明细"):
+                self.module.validate_sample_quotation(amended)
+
+    def test_quote_amend_parent_permissions_masks_active_sample_and_cancel_required(self):
+        with self.native_sources():
+            amended = self.quote_amendment()
+            self.quote.denied = True
+            with self.assertRaises(PermissionError):
+                self.module.validate_sample_quotation(amended)
+            self.quote.denied = False
+            with patch.object(self.module, "check_quantity_fields", side_effect=PermissionError):
+                with self.assertRaises(PermissionError):
+                    self.module.validate_sample_quotation(amended)
+            self.sample.docstatus = 2
+            with self.assertRaises(ValueError):
+                self.module.validate_sample_quotation(amended)
+            self.sample.docstatus = 1
+            self.quote.docstatus = 1
+            with self.assertRaisesRegex(ValueError, "先反审"):
+                self.module.validate_sample_quotation(amended)
+
+    def test_quote_amend_child_parenttype_parentfield_must_be_exact(self):
+        with self.native_sources():
+            for field in ("parent", "parenttype", "parentfield"):
+                amended = self.quote_amendment()
+                self.quote["items"][0][field] = "OTHER"
+                with self.assertRaisesRegex(ValueError, "准确明细归属"):
+                    self.module.validate_sample_quotation(amended)
+
+    def test_quote_amend_repeated_sample_rows_need_original_quote_row_identity(self):
+        with self.native_sources():
+            self.quote["items"][1] = Record(self.quote["items"][0], name="QUOTE-ROW-2")
+            amended = self.quote_amendment()
+            for row in amended["items"]:
+                row._amended_from = None
+            with self.assertRaisesRegex(ValueError, "准确明细"):
+                self.module.validate_sample_quotation(amended)
+            amended = self.quote_amendment()
+            self.module.validate_sample_quotation(amended)
+
+    def test_sample_sales_amend_restores_exact_quote_identity_and_keeps_qty(self):
+        with self.native_sources():
+            self.sales_order.docstatus = 2
+            amended = deepcopy(self.sales_order)
+            amended.update(name="AMENDED-SO", docstatus=0, amended_from=self.sales_order.name,
+                           previous=None, __islocal=1)
+            for row, old in zip(amended["items"], self.sales_order["items"], strict=True):
+                row._amended_from = old.name
+                for field in self.module.SOURCE_FIELDS + ("prevdoc_docname", "quotation_item"):
+                    row[field] = None
+            amended["items"][0].qty = "0.5"
+            self.module.prepare_sample_sales_order(amended)
+            self.assertEqual(amended["items"][0].qty, "0.5")
+            for row, old in zip(amended["items"], self.sales_order["items"], strict=True):
+                self.assertEqual(row.quotation_item, old.quotation_item)
+                self.assertEqual(row.jf_sample_order_item, old.jf_sample_order_item)
+            self.quote.docstatus = 2
+            with self.assertRaises(ValueError):
+                self.module.prepare_sample_sales_order(amended)
+
+    def test_normal_quote_and_sales_amend_do_not_add_sample_gates(self):
+        with self.native_sources():
+            for field in ("jf_sample_order",) + self.module.REQUEST_FIELDS:
+                self.quote[field] = None
+            for record in (self.quote, self.sales_order):
+                for row in record["items"]:
+                    for field in self.module.SOURCE_FIELDS + ("prevdoc_docname", "quotation_item"):
+                        row[field] = None
+            quote = Record(doctype="Quotation", amended_from=self.quote.name, items=[])
+            sales = Record(doctype="Sales Order", amended_from=self.sales_order.name, items=[])
+            self.module.validate_sample_quotation(quote)
+            self.module.prepare_sample_sales_order(sales)
+            self.sample_read.assert_not_called()
+            self.field_read.assert_not_called()
+
+    def test_sales_amend_cannot_strip_all_row_identity_and_bypass_cancelled_sources(self):
+        with self.native_sources():
+            self.sales_order.docstatus = self.quote.docstatus = self.sample.docstatus = 2
+            amended = deepcopy(self.sales_order)
+            amended.update(name="CLEARED-SO", docstatus=0, amended_from=self.sales_order.name,
+                           previous=None, __islocal=1)
+            for row in amended["items"]:
+                for field in self.module.SOURCE_FIELDS + (
+                    "prevdoc_docname", "quotation_item", "_amended_from"
+                ):
+                    row[field] = None
+            with self.assertRaisesRegex(ValueError, "缺少准确原明细"):
+                self.module.prepare_sample_sales_order(amended)
+
+    def test_mixed_sales_amend_keeps_exact_ordinary_row_but_rejects_one_stripped_sample(self):
+        with self.native_sources():
+            self.sales_order.docstatus = 2
+            ordinary = self.sales_order["items"][1]
+            for field in self.module.SOURCE_FIELDS + ("prevdoc_docname", "quotation_item"):
+                ordinary[field] = None
+            amended = deepcopy(self.sales_order)
+            amended.update(name="MIXED-AMEND", docstatus=0, amended_from=self.sales_order.name,
+                           previous=None, __islocal=1)
+            for row, old in zip(amended["items"], self.sales_order["items"], strict=True):
+                row._amended_from = old.name
+            self.module.prepare_sample_sales_order(amended)
+            self.assertFalse(self.module._candidate(amended["items"][1]))
+            for field in self.module.SOURCE_FIELDS + (
+                "prevdoc_docname", "quotation_item", "_amended_from"
+            ):
+                amended["items"][0][field] = None
+            with self.assertRaisesRegex(ValueError, "缺少准确原明细"):
+                self.module.prepare_sample_sales_order(amended)
+
+    def test_saved_sample_amend_parent_cannot_be_cleared_or_replaced(self):
+        with self.native_sources():
+            for kind in ("Quotation", "Sales Order"):
+                original = deepcopy(self.quote if kind == "Quotation" else self.sales_order)
+                original.amended_from = "CANCELLED-ORIGINAL"
+                for value in (None, "OTHER-CANCELLED-ORIGINAL"):
+                    changed = deepcopy(original)
+                    changed.previous = original
+                    changed.amended_from = value
+                    actions = (self.module.validate_sample_quotation,
+                               self.module.cancel_sample_quotation) if kind == "Quotation" else (
+                                   self.module.prepare_sample_sales_order,
+                                   self.module.guard_sample_sales_order_history)
+                    for action in actions:
+                        with self.subTest(doctype=kind, action=action.__name__, value=value):
+                            with self.assertRaisesRegex(ValueError, "不能替换或清除"):
+                                action(changed)
+
 
 class SampleSchemaTests(unittest.TestCase):
-    def test_receipt_uuid_unique_and_sources_not_copied_on_amend(self):
+    def test_receipt_uuid_unique_and_sources_not_copied_on_normal_duplicate(self):
         definitions = sample_custom_fields()
         for doctype in ("Work Order", "Quotation"):
             fields = {field["fieldname"]: field for field in definitions[doctype]}

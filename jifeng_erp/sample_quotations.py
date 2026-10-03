@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 import hashlib
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import frappe
 from frappe.utils import getdate, today
@@ -29,6 +29,7 @@ SOURCE_FIELDS = (
 REQUEST_FIELDS = ("jf_sample_request_id", "jf_sample_request_digest")
 FLOW_SOURCE_FIELDS = SOURCE_FIELDS + ("jf_source_quotation", "jf_source_quotation_item")
 _QUOTATION_CREATING = ContextVar("jifeng_sample_quotation_creation", default=None)
+_AMEND_VALIDATED = object()
 NUMERIC_HISTORY = {
     "qty",
     "stock_qty",
@@ -215,12 +216,7 @@ def _sample(name, *, version=None, lock=False, active=True):
     if active:
         return sample_orders.read_sample_source(name, version=version, for_update=lock)
     # Cancelled historical quotations remain readable after reverse cancellation.
-    doc = frappe.get_doc("Jifeng Sample Order", name, for_update=lock)
-    doc.check_permission("read")
-    sample_orders.get_sample_order(name)
-    if not doc.get("approved_digest"):
-        frappe.throw("样品来源缺少审核快照，请核对")
-    return doc
+    return sample_orders.read_sample_history(name, for_update=lock)
 
 
 def _sample_row(sample, name):
@@ -342,18 +338,128 @@ def _receipt(doc):
         frappe.throw("样品报价缺少有效服务器创建回执，请从样品制作单生成")
 
 
+def _amend_origin(doc):
+    """Load the exact parent without broadening an ordinary native amendment."""
+    name = doc.get("amended_from")
+    if not name:
+        return None
+    origin = frappe.get_doc(doc.doctype, _text(name, "原修改单据"), for_update=True)
+    return origin
+
+
+def _check_amend_origin(origin):
+    origin.check_permission("read")
+    check_quantity_fields(origin.doctype, ("name", "amended_from", "docstatus", "items"))
+    if origin.docstatus != 2:
+        frappe.throw("请先反审原单，再保存修改版")
+    for row in origin.get("items") or []:
+        if (row.get("parent"), row.get("parenttype"), row.get("parentfield")) != (
+            origin.name, origin.doctype, "items"
+        ):
+            frappe.throw("原修改单据缺少准确明细归属，请核对")
+
+
+def _amend_row(row, original_rows, fields):
+    # Desk's native Amend places _amended_from on each copied child. It is
+    # untrusted input: only an exact row in the persisted cancelled parent can
+    # supply an origin. Never infer a row from Item, position or a similar qty.
+    identity = row.get("_amended_from")
+    if identity:
+        matches = [old for old in original_rows if old.name == identity]
+    else:
+        # Native API callers can preserve the full exact source identity.
+        # Repeated commercial rows from the same sample need the Desk row ID.
+        matches = [
+            old for old in original_rows
+            if row.get("jf_sample_order_item")
+            and all(row.get(field) == old.get(field) for field in fields)
+        ]
+    if len(matches) != 1:
+        frappe.throw("修改版缺少原单准确明细，请从原单“修改”并保留明细来源")
+    old = matches[0]
+    if row.item_code != old.item_code:
+        frappe.throw("样品修改版不能替换原明细商品，请从样品制作单重新生成")
+    return old
+
+
+def _fill_amend_sources(row, old, fields):
+    for field in fields:
+        if row.get(field) not in (None, "", old.get(field)):
+            frappe.throw("修改版来源与原单准确明细不一致")
+        row.set(field, old.get(field))
+
+
+def _prepare_sample_quotation_amend(doc):
+    if not doc.get("amended_from") or doc.get_doc_before_save():
+        return False
+    origin = _amend_origin(doc)
+    if not _quotation_scope(origin):
+        return False
+    _check_amend_origin(origin)
+    _receipt(origin)
+    _check_sources(origin, active=False, lock=True)
+    sample = _sample(origin.jf_sample_order, lock=True)
+    if doc.get("jf_sample_order") not in (None, "", origin.jf_sample_order):
+        frappe.throw("修改版不能替换原样品来源")
+    doc.jf_sample_order = origin.jf_sample_order
+    if not doc.get("items"):
+        frappe.throw("样品报价修改版必须保留准确样品明细")
+    identities, requested = set(), []
+    for row in doc.get("items"):
+        old = _amend_row(row, origin.get("items"), SOURCE_FIELDS)
+        if old.name in identities:
+            frappe.throw("修改版不能重复引用同一原报价明细，请核对")
+        identities.add(old.name)
+        _fill_amend_sources(row, old, SOURCE_FIELDS)
+        try:
+            requested.append({
+                "quotation_item": old.name,
+                "qty": format(decimal_value(row.qty, "报价数量").normalize(), "f"),
+                "uom": _text(row.get("uom"), "报价单位"),
+                "rate": format(decimal_value(row.rate, "报价单价", zero=True).normalize(), "f"),
+                "make_flow": row.get("jf_make_flow"),
+            })
+        except SampleQuotationError as error:
+            frappe.throw(str(error))
+    # before_validate and validate both run before the first insert. The private
+    # object cannot be supplied in RPC JSON and scopes the receipt to this doc.
+    prepared = getattr(doc, "_jf_sample_amend", None)
+    if isinstance(prepared, tuple) and len(prepared) == 5 and prepared[0] is _AMEND_VALIDATED:
+        if prepared[1:] != (
+            origin.name, doc.get("jf_sample_request_id"),
+            doc.get("jf_sample_request_digest"), requested,
+        ):
+            frappe.throw("原生报价改变了修改版指定数量、单位或单价，请核对价格设置")
+    else:
+        # Ignore copied client receipts: an amendment is a new creation.
+        doc.jf_sample_request_id = str(uuid4())
+        doc.jf_sample_request_digest = _digest({
+            "kind": "quotation_amend", "amended_from": origin.name,
+            "sample_order": sample.name, "approved_digest": sample.approved_digest,
+            "company": doc.get("company"), "customer": doc.get("party_name"),
+            "currency": doc.get("currency"), "valid_till": str(doc.get("valid_till")),
+            "items": requested,
+        })
+        doc._jf_sample_amend = (
+            _AMEND_VALIDATED, origin.name, doc.jf_sample_request_id,
+            doc.jf_sample_request_digest, requested,
+        )
+    return True
+
+
 def validate_sample_quotation(doc, method=None):
+    amended = _prepare_sample_quotation_amend(doc)
     previous = doc.get_doc_before_save()
     if not _quotation_scope(doc) and not _quotation_scope(previous):
         return
-    _protected_history(doc, parent_fields=("jf_sample_order",) + REQUEST_FIELDS)
+    _protected_history(doc, parent_fields=("jf_sample_order", "amended_from") + REQUEST_FIELDS)
     if not previous:
         context = _QUOTATION_CREATING.get()
         if (
-            not context
+            not amended and (not context
             or context[0] is not doc
             or context[1:]
-            != (doc.get("jf_sample_request_id"), doc.get("jf_sample_request_digest"))
+            != (doc.get("jf_sample_request_id"), doc.get("jf_sample_request_digest")))
         ):
             frappe.throw("样品报价和创建回执只能从样品制作单生成")
     _receipt(doc)
@@ -375,7 +481,7 @@ def load_sample_quotation(doc, method=None):
 def cancel_sample_quotation(doc, method=None):
     if not _quotation_scope(doc) and not _quotation_scope(doc.get_doc_before_save()):
         return
-    _protected_history(doc, parent_fields=("jf_sample_order",) + REQUEST_FIELDS)
+    _protected_history(doc, parent_fields=("jf_sample_order", "amended_from") + REQUEST_FIELDS)
     _cancel_history(
         doc,
         (
@@ -623,7 +729,42 @@ def _quote_row(order, row, *, lock=False, active=True):
 
 
 def prepare_sample_sales_order(doc, method=None):
-    _protected_history(doc)
+    if doc.get("amended_from") and not doc.get_doc_before_save():
+        origin = _amend_origin(doc)
+        old_candidates = [row for row in origin.get("items") or [] if _candidate(row)]
+        if old_candidates:
+            _check_amend_origin(origin)
+            load_sample_sales_order(origin)
+            check_quantity_fields(
+                "Sales Order Item", SO_ITEM_FIELDS, parenttype="Sales Order"
+            )
+            identities = set()
+            ordinary_ids = {row.name for row in origin.get("items") or [] if not _candidate(row)}
+            for row in doc.get("items") or []:
+                inherited = row.get("_amended_from") in {r.name for r in old_candidates}
+                if not inherited and not _candidate(row):
+                    if row.get("_amended_from") not in ordinary_ids:
+                        frappe.throw("样品销售订单修改版缺少准确原明细，请从原单“修改”并保留来源")
+                    # Existing mixed ordinary rows retain native behavior with
+                    # their exact original ID. An untraced row cannot masquerade
+                    # as a new ordinary item after clearing its sample identity.
+                    continue
+                old = _amend_row(
+                    row, old_candidates,
+                    SOURCE_FIELDS + ("prevdoc_docname", "quotation_item"),
+                )
+                if old.name in identities:
+                    frappe.throw("修改版不能重复引用同一原销售明细，请核对")
+                identities.add(old.name)
+                _fill_amend_sources(
+                    row, old, SOURCE_FIELDS + ("prevdoc_docname", "quotation_item")
+                )
+            if not identities:
+                frappe.throw("样品销售订单修改版必须保留准确原样品明细，请从有效报价重新生成")
+    previous = doc.get_doc_before_save()
+    protected = any(_candidate(row) for record in (doc, previous) if record
+                    for row in record.get("items") or [])
+    _protected_history(doc, parent_fields=("amended_from",) if protected else ())
     candidates = [row for row in doc.get("items") or [] if _candidate(row)]
     if not candidates:
         return
@@ -702,8 +843,10 @@ def load_sample_sales_order(doc, method=None):
 
 
 def guard_sample_sales_order_history(doc, method=None):
-    _protected_history(doc)
     previous = doc.get_doc_before_save()
+    protected = any(_candidate(row) for record in (doc, previous) if record
+                    for row in record.get("items") or [])
+    _protected_history(doc, parent_fields=("amended_from",) if protected else ())
     if not previous:
         return
     old = {
