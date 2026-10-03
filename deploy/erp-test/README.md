@@ -1,5 +1,16 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-03 当前发布：2ca4358
+
+- [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
+- [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)
+
+两套继续共用测试数据。实际业务提交为 `2ca4358398cf750da31584fc31d3afaef48b30b6`，新增历史工价引用、工资结算查询/明确分类和完整工资历史 XLSX 导出；工资模块及全模块的既有业务缺口仍按验证记录推进，菜单映射数量不作验收。
+
+固定镜像保持，五应用只读挂载 `/opt/jifeng-erp-test/releases/2ca4358-salary-r1/app`，覆盖文件为该目录的 `compose.salary.r1.yaml`，基线仍为 `8858743-r2/deploy/compose.yaml`。独立 `salary-control-r1` 五阶段各执行一次通过；四部件原生备份在受限 `salary-private-r1`。完整服务器 931→932 保护、原权限/旧列/索引/旧行投影、空 Rule、四新增 NULL 列、Form/child/Page 缓存前后数据保持均通过。八服务 running、三数据服务完整身份、站点配置字节/属主/权限恢复、受管文件和证书 timer 已核实。不得重放此次阶段。
+
+实际外网可信 HTTPS、31 资源逐字节、账号登录两个入口、4 个原生 Form 脚本、子表新增字段、工资 Page 下发、2099 年空日期查询及正常 HTTP 注销通过；未下载真实工资。忽略证据 `salary-release-control-20261003-r3-*` / `salary-release-readonly-status-*` / `salary-release-external-verify-20261003-r1.json`。上传 r1 因 SFTP 模式留下空文件；r2 已上传全部 8 个文件但解包写入模式失败，未写源码、停服或触碰站点。各次失败经独立只读核实，r3 单独完成解包和发布，没有重传、重放旧操作或自动回滚。浏览器 GUI 的首次 CUA 连接失败，恢复与 GUI 验收仍待完成；本节是运行及 HTTP 验证，不能推定全模块 GUI 通过。
+
 ## 2026-10-03 工资增量发布准备：2ca4358
 
 固定业务候选 `2ca4358398cf750da31584fc31d3afaef48b30b6`，553 个文件、20 JS / 11 CSS 共 31 主资源，继续使用既有镜像。新的 `salary_release_host.py` / `salary_release_native.py` / `salary_release_audit.py` 专用于当前 18e5835 的 931→932 增量，不能重放旧发布助手。
@@ -8,7 +19,7 @@
 
 41 项纯审计 / 发布失败门测试通过；真实副本记录在忽略目录 `salary-release-native-clone-20261003-r2`，独立 Rule 结构参考在 `salary-release-native-reference-20261003-r1`。本节只记录发布准备，尚未上传、停服或切换；当前外网版本仍以下节 18e5835 为准。
 
-## 2026-10-03 当前发布：18e5835
+## 2026-10-03 历史发布：18e5835
 
 - [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
 - [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)

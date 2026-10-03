@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-03 最新外网工资增量发布：2ca4358
+
+实际业务提交 `2ca4358398cf750da31584fc31d3afaef48b30b6` 已更新两套共用测试库的外网入口。工程助手提交 `120c1b8` 单独定向处理 18e5835 的 931→932：先整体验证两个既有自有 DocType 的元数据没有漂移，再精准插入四个 Data 字段及子表 Button，仅调整旧 DocField.idx 和自有 DocType 的 migration_hash/modified/by；原生 updatedb 只同步两自有表，新空 Rule 才 reload。禁止重建既有 DocType 的字段与权限。41 项模型/失败门和独立原生副本实跑通过，副本已清理，源隔离站完整 932 对象与配置保持。
+
+DIRECT 在系统/env 代理、Clash/TUN 运行状态及真实目标 SSH socket 前中后复核；553 文件 / 3,362,045 字节的冻结归档 SHA 为 `0aff14d96887ccd8c7bc70c140d466b90b89a4433f7de91b95bc760b4f094fbe`。上传 r1 的 SFTP 排他模式失败，只留下空文件；r2 上传 8 文件的 SHA/字节均吻合，但解包 Python 写模式失败，未写源码或触碰测试站。各次经新只读检查后，r3 单独完成解包和五阶段，未重传/盲重放。服务器三 MyISAM READ 锁贯穿完整四部件原生备份及验证；全部原 931 对象、6 序列值、业务/账簿/Auth/权限、旧列和索引/旧行投影保持，新 Rule 空且四新列均 NULL。Form4（含 Sales Order）、child 元数据和工资 Page 的实际新源/缓存核验后再次完整快照保持。只切换五应用源码挂载，不重建镜像或三个数据服务；配置按字节和属主/权限精确恢复，证书 timer/受管文件保持。
+
+独立外网 HTTP 验收实际通过：可信 HTTPS、31 工作台静态资源逐字节/版本一致，正常测试账号登录 A/B 入口，原生 Sales Order/工资单/分摊/分类四个 Form 和子表字段、工资 Page 新源下发，2099 年空日期工资查询 0 行及正常带 CSRF 注销。没有下载实际工资、导入本地 202 张工资夹具、创建分类或过账。八服务 running、三数据服务身份不变。首次 CUA GUI 桥接不可用，GUI 恢复与验证仍待完成；HTTP、模型与副本结果不替代 A/B 实际界面操作。忽略证据 `salary-release-native-reference-20261003-r1/`、`salary-release-native-clone-20261003-r1/` 和 r2、`salary-release-stage-inspection-20261003-r1.json` 和 r2、`salary-release-control-20261003-r3-*`、`salary-release-external-verify-20261003-r1.json`；数据库/站点备份留服务器受限目录，不提交/下载。旧“未发布”章节保留历史状态。
+
 ## 2026-10-03 最新本地工资历史导出验收（未发布）
 
 `salary_history_export.export_salary_history(context, columns)`为GET只读下载，context沿用公司、开始/结束、严格bool指定日期、四种日期口径、关键词；columns为31个固定中文列名的非空、唯一、有序JSON数组。复用工资历史完整200分批两遍读取；生成后用独立、非root、当前primary的只读事务重读完整来源及权限，比较成功且rollback/close完成才发布XLSX，不拼查询页或旧缓存。工资历史sheet只含所选旧21默认列/10可选列，另有口径说明及币种/分类批注；全部单元格显式文本，保留合法零和准确十进制字符串，公式样文本不执行，Excel行数及UTF-16单元格上限整份拒绝，不截断。
