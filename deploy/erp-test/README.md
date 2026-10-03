@@ -1,5 +1,27 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-03 当前发布：18e5835
+
+- [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
+- [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)
+
+两套共用测试数据，冻结业务源码为 `18e5835cfda4171ec691d5e701c8f42018b5448c`。继续使用原固定 `8858743-test-r4` 镜像，五应用只读挂载 `/opt/jifeng-erp-test/releases/18e5835-source-r1/app`。532文件候选、28工作台资源及独立Sales Order客户选择脚本均已核；只新增镀色/工序排序两张空表及自己元数据。原生四部件备份、完整929→931保护、表单缓存与配置精确恢复通过。
+
+八服务运行、三个数据服务身份、可信HTTPS、28资源逐字节、实际测试账号登录A/B及原生表单脚本下发已独立复核，检查会话退出。全模块正式验收及真实GUI继续待完成；账号在本地受限文件交接，未提交账号或下载备份。下面较早“未发布/仍4d”记录保留历史状态，当前以本节和[验证记录](../../docs/validation.md)为准。
+
+启动五应用同时使用以下基线及新覆盖文件：
+
+```bash
+docker compose --project-name jifeng-erp-test \
+  --project-directory /opt/jifeng-erp-test --env-file /opt/jifeng-erp-test/.env \
+  -f /opt/jifeng-erp-test/releases/8858743-r2/deploy/compose.yaml \
+  -f /opt/jifeng-erp-test/releases/18e5835-source-r1/newcompose.source.r2.yaml \
+  --profile tools up -d --no-deps --no-build --pull never \
+  backend worker scheduler websocket frontend
+```
+
+发布助手独立审核提交 `fa560e8`，固定运行计划/公开SHA/三helperSHA/532文件/归档SHA和字节数；新控制位于 `incremental-control-r2`，备份位于 `private-backup-r2`。r1因完整工具清单漏算而在停服/SQL前拒绝，记录保留；r2五阶段各一次通过，禁止重新执行本轮阶段或自动回滚。之后的增量需重新定范围、冻结和创建操作目录，当前929→931助手不可复用于已经931的站点。证书续期仍依赖原8858743目录，继续保留。
+
 ## 2026-10-03 当前运行状态复核
 
 本轮只读检查确认外网实际源码仍为`4d71c354d3f3f281d21d3d16b496bb6e5434e655`，八服务running、无OOM、RestartCount=0、数据库healthy，五应用release源码只读挂载匹配。可信HTTPS登录页和ping均200；HTTPS/SSH均在实际sourceIP/port连接前中后核DIRECT。未部署、登录/退出、重启、写配置、SQL或下载备份；不能把此运行检查当作本轮A/B业务GUI验收。

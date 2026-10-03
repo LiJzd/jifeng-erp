@@ -1,5 +1,23 @@
 # 验证记录
 
+## 2026-10-03 客户选择、工序与镀色实际外网发布
+
+外网 A/B 已由 `4d71c35` 切换为冻结业务源码 `18e5835cfda4171ec691d5e701c8f42018b5448c`。公开候选含 532 个文件，归档 3,099,538 字节，SHA256 `64474ad8769f76a899eb8df32eb6b3f44646af60460c71d8b49105ee82ede236`。本地已有客户选择15、工序22、镀色19原生岗位门；本轮发布助手共89模型通过。默认 Windows pytest 临时目录权限拒绝后使用工作区新独立目录通过，未修改业务实现绕过测试。
+
+独立本地只读参考采集两张已安装空表结构/索引与元数据，931物理对象 fresh 校验保持；真实归档逐字节、28 hooks、Sales Order 专用脚本及零既有 DocField 修改的纯审计通过。初次本地打包对 CRLF/LF 的 raw SHA 比较拒绝，未产生或上传归档；后续分别核实际原生 raw 源及根仓库/冻结 Git 的规范化源一致，生成独立 r2 归档。归档和两轮助手批量传输均核环境/系统/WinHTTP、实际 Clash/TUN，并对每个准确 live SSH sourceIP/port/目标22连接前、回调及后确认唯一 DIRECT，无代理回退。
+
+prepare r1 因 `compose_service_set_changed` 拒绝，发生在停服和SQL前。独立只读诊断确认 `tools` 配置实际含14服务：八个运行服务、四个原有初始化/证书工具及两个发布工具。修正严格清单并逐项保护四原工具配置；保留 r1 全部记录，使用全新 `incoming-r2`、`incremental-control-r2`、`private-backup-r2` 和覆盖文件。计划文件所有权已核1000:1000/0644，公开内容SHA保持；助手审核提交为 `fa560e8`，与冻结业务源码独立。
+
+新的 prepare/quiesce/metadata/verify/start 均一次通过。quiesce 保存原站点配置，进入维护并停五应用；三个数据服务保持完整身份。原生数据库、配置、公开/私有附件四部件备份仅保留服务器，gzip/tar、完整929物理对象覆盖及SHA通过；三个MyISAM独立READ锁贯穿完整dump，六个sequence状态纳入证明。数据库备份前后及fresh一致。未执行全站migrate、seed、核心Operation/BOM/Work Order/Job Card reload、镜像构建或拉取。
+
+仅新增空 `Jifeng Plating Color`、`Jifeng Order Operation` 及自己的元数据，完整929→931校验通过。before SHA `744614d8d834f3160c2cc9dbd069cffb8804f2c94afda8976408019c1e826772`，after-apply/verify/cache 均为 `bce45abaf3645607ee4ada211fe0e2df55522c7583e9f0405f49aa64fbf192fa`。有效hooks为18JS/10CSS；生产缓存实际核 `app_hooks` 和 `doctype_form_meta::Sales Order`，专用客户脚本SHA `fb5f17e51a63c42a21addf34f5ce6f13ac5941ab68466d2a7e69ee855543f4c4`，完整FormMeta JS SHA `0952a700b1a899de60289bb3816558b202a56604fa1324db44ec55e61ec98c00`，fresh SQL证明保持。
+
+应用切换后独立SSH确认八服务running/restart0/noOOM、db healthy、五个新源码只读挂载和实际后端Git18e；三个数据服务的完整身份及保护配置保持，原site_config字节/uid/gid/mode恢复，维护解除，证书续期timer active。可信TLS登录页/ping、28个CSS/JS逐字节、实际测试账号登录/A/B认证页面、Sales Order getdoctype专用脚本及两新DocType元数据HTTP下发均通过，检查会话带CSRF退出。实际HTTPS连接前、发出、响应头及正文块均核DIRECT。接口检查未进行业务保存，账号/会话仅RAM，不输出或提交。
+
+本轮Luna子任务新建及恢复被 `agent thread limit reached` 拒绝，未进行真实浏览器操作；HTTP/FormMeta不计GUI通过。旧窗口习惯、效果1～4生产规则、97个预览及全模块正式验收继续待完成，目标保持active。当前363入口为235正式映射、13部分可用、97预览、13导航、5工具，映射不等于业务验收。以下“未发布”属于当时状态。
+
+证据均在仓库忽略 `output/`：`order-release-native-reference-20261003-r1/`、`order-release-audit-model-20261003-r1/result.json`、`erp-source-18e5835-r2/`、`order-release-preflight-20261003-r1.json`、`order-release-upload-20261003-r1.json`、两轮 `order-release-helper-pins/helper-upload`、`order-release-compose-diagnostic-20261003-r1.json`、各 `order-release-*-dispatch/poll-20261003-r2*.json`、`order-release-external-verify-20261003-r1.json`。服务器完整SQL证明、备份和失败日志位于 `/opt/jifeng-erp-test/releases/18e5835-source-r1/` 私有子目录，未下载；未知结果先读回执，禁止重放。
+
 ## 2026-10-03 外网测试站只读交接复核
 
 本轮可信TLS HEAD `/login` 与GET `/api/method/ping`均200/pong。检查环境/系统/WinHTTP及实际Clash/TUN状态，并在每个实际连接的准确sourceIP/port、目标IP/port前中后匹配唯一DIRECT链，没有代理回退。未输入账号、登录/退出、业务保存、下载备份或再次发布。
