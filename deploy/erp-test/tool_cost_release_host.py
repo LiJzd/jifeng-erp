@@ -398,7 +398,7 @@ def validate_compose(old, new):
             )
             if actual["type"] == "bind":
                 require(
-                    actual.get("bind", {}).get("create_host_path") is False,
+                    actual.get("bind", {}).get("create_host_path", False) is False,
                     "tool_bind_auto_creation",
                 )
 

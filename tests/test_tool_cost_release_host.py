@@ -988,6 +988,31 @@ class HostScopeTests(unittest.TestCase):
                 with self.assertRaises(H.HostError):
                     H.validate_compose(old, changed)
 
+    def test_compose_normalized_default_false_bind_is_allowed_but_explicit_true_is_rejected(
+        self,
+    ):
+        old, new = compose_fixture()
+        for name in H.TOOLS:
+            for mount in new["services"][name]["volumes"]:
+                if mount["type"] == "bind":
+                    mount["bind"] = {}
+        H.validate_compose(old, new)
+        for name in H.TOOLS:
+            for index, mount in enumerate(new["services"][name]["volumes"]):
+                if mount["type"] != "bind":
+                    continue
+                with self.subTest(tool=name, target=mount["target"]):
+                    changed = copy.deepcopy(new)
+                    changed["services"][name]["volumes"][index]["bind"][
+                        "create_host_path"
+                    ] = True
+                    with self.assertRaisesRegex(H.HostError, "tool_bind_auto_creation"):
+                        H.validate_compose(old, changed)
+        for name in H.TOOLS:
+            for mount in H.overlay_document()["services"][name]["volumes"]:
+                if mount["type"] == "bind":
+                    self.assertIs(mount["bind"]["create_host_path"], False)
+
     def test_tools_have_exact_readonly_inputs_and_only_named_rw_binds(self):
         for name, tool in H.overlay_document()["services"].items():
             if name in H.RUNTIME:
