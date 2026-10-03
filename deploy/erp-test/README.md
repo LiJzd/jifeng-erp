@@ -1,5 +1,9 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-04 当前工具费用测试发布：5b49bac
+
+业务提交 `5b49bacde6fcc088e08b118103fee496524ec99f` 已切换五应用只读源码挂载至 `/opt/jifeng-erp-test/releases/5b49bac-tool-cost-r1/app`，固定镜像及三个数据服务身份保持。运行配置为基线 compose、既有 salary overlay 和新 `compose.tool-cost.r1.yaml` 三层叠加；禁止单独使用旧覆盖文件重启。实际 prepare→quiesce→before→apply→verify→cache→restore→start 全部通过，站点配置按原字节／属主／权限恢复；旧完整 932 对象保持、只新增两空表，原生备份留受限服务器目录。独立外网可信 HTTPS 登录、A/B 页面、33 资源、原生表单、CSRF 退出后 Guest 及前后八服务检查通过；自有测试账号单次轮换，受限 JSON 和中文交接 TXT 更新后独立核对一致。GUI 未验收，全部模块正式可用目标未完成。失败 r1／r2／r3 副本完整保留；详见[验证记录](../../docs/validation.md)。
+
 ## 2026-10-03 工具费用下一发布准备（尚未部署）
 
 本轮真实并发已核同一费用 PRIMARY／X 行锁等待、唯一正式分摊和败方草稿，原账簿与源 932 对象保持。业务 Git 包 `5b49bac` 完整 572 文件／33 资源审计通过，尚未上传；新 native 助手 `4ba85a6` 的 Windows 32 模型门及 WSL 21 native 模型门、Ruff／编译通过。自有副本已实际执行 before／apply／verify／cache，root 独立重读完整备份及 934 对象／缓存均一致，源 932 和配置保持；宿主协调器验证继续。生产只读预检 r2 确认运行 `2ca4358`、八服务、旧源只读挂载及八个 native 依赖 SHA 匹配，实际 SSH 前中后 DIRECT；没有外网写入或切换。GUI 仍未通过，自动审批因不能可靠判断新窗口 URL 拒绝读取。下面“真实并发待验收”保留此前状态，当前以[验证记录](../../docs/validation.md)最新节为准。

@@ -1,5 +1,21 @@
 # 验证记录
 
+## 2026-10-04 最新外网工具费用测试增量：5b49bac
+
+真实 r4 宿主八阶段 prepare→quiesce→before→apply→verify→cache→restore→start 全部首次完成，最终业务版本 `5b49bacde6fcc088e08b118103fee496524ec99f`。五应用只读绑定新 release/app，固定原镜像、数据库和两个 Redis 身份保持；原站点配置字节／属主／权限精确恢复。start 完成收据 SHA256 `044bd674c8a6f1a218377e7be366f16301b2b4b381ad62468fbc9d146d32986d`；工程助手为 `4fba792`，host SHA `514be2a508177b1004d0b0b8f305b74ac58972f88f5c265516adc9cbbd625424`。本地提交均未推送。
+
+实际原生 before 四部件备份及 CRC／序列／文件／配置完整验证通过，三 MyISAM READ 锁贯穿备份；仅定向 child→parent 两个新空 DocType，完整 932→934，全部旧行、结构、索引、权限和六序列保持。独立 verify 再连接复核，实际 cache 核 33 资源／四禁止共享 hooks／作用域 DocShare／父 FormMeta 脚本通过。启动仅一次并只读采样就绪，八服务与实际新 Git/import/pins/ping 通过。回执位于忽略 `tool-cost-release-control-20261004-r4-*`；数据库备份和完整快照仍在服务器受限目录，不下载或提交。
+
+上传七文件和新助手实际 socket 前中后 DIRECT，源归档 3,537,261 字节／572 文件，原运行镜像保持且没有 build／pull。三个失败副本完整保留为 `5b49bac-tool-cost-prepare-failed-20261004-r1`、`5b49bac-tool-cost-before-cli-failed-20261004-r2` 和 `5b49bac-tool-cost-mount-order-failed-20261004-r3`；均先以新只读核查具体状态再新建输入副本，未重放失败 mutator。r2 CLI 失败后实际恢复旧服务再开始新副本，无 native 或数据库回滚。失败和修复经过见下节。
+
+独立外网 API 验收 r3 实际通过，结果 `output/tool-cost-release-external-verify-20261004-r3.json` SHA256 `d32b52c3fa2c70454e7bd3041374a6fe32e026d3783afe718af2181e567f8ce5`，root 已重读并核定。42 请求的系统可信 TLS 和每个实际 socket 前／发出／headers／body／后 DIRECT 均通过，实际新密码登录、身份确认、认证 A/B HTML、33 资源版本 query／全字节、父子 FormMeta／权限／父脚本均通过；正常 POST CSRF 退出后以同 CookieJar 新 GET 验证为 Guest。前后只读再核当前 5b、八服务、934 对象／六序列／三 MyISAM、两新表为空、原配置／三个数据服务身份／完整收据链，SSH 六个 DIRECT 核查均通过。没有业务保存、财务金额读取、备份下载或 GUI 操作。
+
+保留外网验收 r1／r2 失败证据：r1 SQL 排序和 Python 排序不同导致客户端断言失败（HTTP 未开始），实际 934 名称唯一集合一致；r2 登录／页面／资源／表单及 runtime 通过，退出实际 200，但客户端要求恰好一条 sid Cookie 而提前停止，未做 Guest 确认。r3 改用标准库 CookieJar 处理域／路径／到期后执行独立的新正常认证流程，未重放 r2 退出。
+
+审查子智能体误输出外网 QA 受限 access 文件内容后已停止，未复述或提交。确切自有账号按原创建证据核对角色／公司权限，单次 `update_password(...logout_all_sessions=True)` 已提交，前后账号证明保持；原 loopback 一次验证失败意图保留，未重复改密码。外网 r3 通过后，本地续接只发布已验证密码到受限 JSON，绑定外网结果 SHA；没有网络或账号写入。原中文 TXT 为 CRLF，按 LF 匹配的旧计划为空，本地另建一次续接只同步唯一密码行及预览计数 105→98，保留原字节备份、其他行／换行和受限 DACL。完成收据 SHA256 `06a7c2603df35463204ff9b730f93c0c68cfd83bb05e2e3384eeaea5b41a9a5c`，root 独立核对 JSON／candidate／TXT 密码一致、仅两行变化及原 DACL 保持；凭据没有输出或提交，中文账号文件现可交接。
+
+完整 A/B 工具 GUI 未通过：自动审批因不能可靠判断新窗口 URL 拒绝界面读取，已停止。98 预览等全模块缺口保持；不能由此次技术发布认定全部模块正式交付。
+
 ## 2026-10-03 工具费用并发与新发布演练准备
 
 新建自有 GUI／并发副本时，实际采集完整 932 对象的 engine、六条 sequence 状态及六类元数据，定向安装两空表后严格审计 934 对象；源完整 932 和配置保持。此 collector 没有补填历史 engine。新副本仅有合成费用／工具，原验收副本已清理；本次 GUI2 副本现也已定向清理，独立发布演练副本仍保留。
