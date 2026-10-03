@@ -1,5 +1,13 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-03 工资增量发布准备：2ca4358
+
+固定业务候选 `2ca4358398cf750da31584fc31d3afaef48b30b6`，553 个文件、20 JS / 11 CSS 共 31 主资源，继续使用既有镜像。新的 `salary_release_host.py` / `salary_release_native.py` / `salary_release_audit.py` 专用于当前 18e5835 的 931→932 增量，不能重放旧发布助手。
+
+新建一张空 `Jifeng Salary History Rule` 表；既有 Wage Entry 和 Wage Allocation Employee 保留完整旧元数据身份与权限，仅精准插入四个只读 Data 字段、子表 Button，并调整相应 idx / 自有 header migration_hash。禁止整表 reload 既有 DocType；原生 updatedb 只处理这两张自有表。独立本地副本已实跑并通过旧行投影、原列定义和索引、全部旧权限及其余 931 对象保护；四新列全 NULL，新表为空，源 932 对象及配置完全保持，已删除成功副本。准备副本 r1 的 DDL 事务保护失败保留；独立只读核实未变化后，新 r2 使用原生 sql_ddl 完成副本准备，再实跑发布函数，未重放失败操作。
+
+41 项纯审计 / 发布失败门测试通过；真实副本记录在忽略目录 `salary-release-native-clone-20261003-r2`，独立 Rule 结构参考在 `salary-release-native-reference-20261003-r1`。本节只记录发布准备，尚未上传、停服或切换；当前外网版本仍以下节 18e5835 为准。
+
 ## 2026-10-03 当前发布：18e5835
 
 - [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
