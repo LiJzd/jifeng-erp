@@ -3,6 +3,7 @@ window.JifengSalaryHistory = class JifengSalaryHistory {
 	constructor(host, bridge) {
 		this.host = host; this.bridge = bridge; this.disposed = false;
 		this.revision = 0; this.detailRevision = 0; this.loading = false;
+		this.exporting = false; this.exportController = null;
 		this.page = 1; this.pageSize = 15; this.total = 0; this.rows = [];
 		this.columns = this.columnDefinitions(); this.visibleColumns = this.columns.filter(column => !column.optional);
 		this.build(); this.ready = this.initialize();
@@ -66,8 +67,10 @@ window.JifengSalaryHistory = class JifengSalaryHistory {
 		}
 		this.search.addEventListener("keydown", event => { if (event.key === "Enter") this.query(1); });
 		this.queryButton = this.button("查询", () => this.query(1));
+		this.exportButton = this.button("导出", () => this.exportHistory());
+		this.exportButton.title = __("导出当前筛选的全部已保存可读工资单，列顺序使用当前列设置；需要原生导出权限。未核实金额留空，实发需付款依据。");
 		toolbar.append(company, this.from, this.to, useDateLabel, this.dateBasis, this.search,
-			this.button("导出", null, "工资历史导出尚未实现"), this.queryButton,
+			this.exportButton, this.queryButton,
 			this.button("格式1", null, "旧打印格式尚未实现"), this.button("打印", null, "旧工资历史打印尚未实现"),
 			this.button("列设置", () => this.configureColumns()), this.button("分类设置", () => this.openRules()));
 		const note = this.element("p", __("显示已提交工资单。未核实的旧字段留空；应发取总收入，实发需付款依据。双击行查看来源。"), "jfe-salary-history-note");
@@ -107,6 +110,7 @@ window.JifengSalaryHistory = class JifengSalaryHistory {
 	}
 	invalidate() {
 		if (this.disposed) return;
+		this.cancelExport();
 		this.revision++; this.detailRevision++; this.loading = false; this.rows = []; this.total = 0; this.page = 1; this.resultContext = null;
 		this.closeDetail(); this.renderRows(); this.updatePager(); this.status.textContent = __("筛选已变化，请查询。 ");
 	}
@@ -116,6 +120,46 @@ window.JifengSalaryHistory = class JifengSalaryHistory {
 		this.previous.disabled = this.disposed || this.loading || !this.resultContext || this.page <= 1;
 		this.next.disabled = this.disposed || this.loading || !this.resultContext || this.page >= pages;
 		this.queryButton.disabled = this.disposed || this.loading;
+		this.exportButton.disabled = this.disposed || this.loading || this.exporting || !this.validContext(this.context());
+	}
+	cancelExport() {
+		this.exportController?.abort(); this.exportController = null; this.exporting = false;
+	}
+	async exportHistory() {
+		if (this.disposed || this.loading || this.exporting) return;
+		const context = this.context(), columns = this.visibleColumns.map(column => column.label);
+		if (!this.validContext(context) || !columns.length) {
+			frappe.msgprint(__("请核对公司、日期范围、查询条件和导出列。")); return;
+		}
+		const revision = this.revision, controller = new AbortController();
+		const current = () => !this.disposed && !controller.signal.aborted && this.exportController === controller &&
+			revision === this.revision && this.sameContext(context, this.context()) &&
+			JSON.stringify(columns) === JSON.stringify(this.visibleColumns.map(column => column.label));
+		this.exportController = controller; this.exporting = true; this.updatePager();
+		this.status.textContent = __("正在导出当前筛选的全部已保存工资单…");
+		let url;
+		try {
+			const contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+			const args = { context: JSON.stringify(context), columns: JSON.stringify(columns) };
+			const response = await fetch("/api/method/jifeng_erp.salary_history_export.export_salary_history?" + new URLSearchParams(args),
+				{ method: "GET", credentials: "same-origin", headers: { Accept: contentType }, signal: controller.signal });
+			if (!current()) return;
+			if (!response.ok || response.headers.get("Content-Type")?.split(";")[0].trim() !== contentType) throw new Error("Salary history export failed");
+			const file = await response.blob();
+			if (!current()) return;
+			if (!file.size) throw new Error("Empty salary history export");
+			url = URL.createObjectURL(file); const link = this.element("a");
+			link.href = url; link.download = "工资历史.xlsx"; document.body.append(link); link.click(); link.remove();
+			this.status.textContent = __("已导出当前筛选的全部已保存工资单；未知字段为空，应发为总收入，实发未核实。");
+		} catch {
+			if (current()) {
+				this.rows = []; this.total = 0; this.resultContext = null; this.renderRows();
+				this.status.textContent = __("导出未完成，请核对筛选、来源及导出权限后重试。");
+			}
+		} finally {
+			if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+			if (this.exportController === controller) { this.exportController = null; this.exporting = false; this.updatePager(); }
+		}
 	}
 	call(method, args) { return frappe.call({ method: "jifeng_erp.salary_history." + method, type: "GET", args }); }
 	validRow(row) {
@@ -141,6 +185,7 @@ window.JifengSalaryHistory = class JifengSalaryHistory {
 		if (!this.validContext(context) || !Number.isSafeInteger(page) || page < 1 || ![15, 25, 50, 100].includes(size)) {
 			frappe.msgprint(__("请核对公司、日期范围和查询条件。")); return;
 		}
+		this.cancelExport();
 		const revision = ++this.revision; this.loading = true; this.detailRevision++; this.closeDetail(); this.updatePager();
 		try {
 			const response = await this.call("query_salary_history", { context, page, page_size: size }), result = response.message;
@@ -187,7 +232,7 @@ window.JifengSalaryHistory = class JifengSalaryHistory {
 			if (this.disposed || this.columnDialog !== dialog) return;
 			const selected = inputs.filter(([, input]) => input.checked).map(([column]) => column);
 			if (!selected.length) { frappe.msgprint(__("请至少保留一列。")); return; }
-			this.visibleColumns = selected; this.renderRows(); dialog.hide();
+			this.cancelExport(); this.visibleColumns = selected; this.renderRows(); this.updatePager(); dialog.hide();
 		});
 		dialog.on_hide = () => { if (this.columnDialog === dialog) this.columnDialog = null; }; dialog.show();
 	}
@@ -248,7 +293,7 @@ window.JifengSalaryHistory = class JifengSalaryHistory {
 	isDirty() { return false; }
 	getCloseBlock() { return ""; }
 	destroy() {
-		this.disposed = true; this.revision++; this.detailRevision++; this.closeDetail(); this.columnDialog?.hide();
+		this.cancelExport(); this.disposed = true; this.revision++; this.detailRevision++; this.closeDetail(); this.columnDialog?.hide();
 		this.companyControl.$input?.off?.(".jifeng-salary-history");
 	}
 };

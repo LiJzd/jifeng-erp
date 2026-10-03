@@ -482,7 +482,8 @@ def _collect(context):
     return {"rows": output, "records": capture.records, "rules": available_rules}
 
 
-def _stable(context):
+def _stable_snapshot(context):
+    """Internal complete saved-source snapshot; never a paginated public DTO."""
     if frappe.session.user == "Guest":
         _deny()
     try:
@@ -493,12 +494,16 @@ def _stable(context):
         second = _collect(context)
         if first != second or before != _permission_state():
             raise _Changed
-        return second["rows"]
+        return second
     except (_Unavailable, frappe.PermissionError, frappe.DoesNotExistError,
             ValueError, TypeError, InvalidOperation, OverflowError):
         _deny()
     except _Changed:
         frappe.throw("工资条、分类规则、来源或权限已改变，请重新查询并核对")
+
+
+def _stable(context):
+    return _stable_snapshot(context)["rows"]
 
 
 @frappe.whitelist(methods=["GET"])

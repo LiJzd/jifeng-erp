@@ -1,12 +1,30 @@
 # 验证记录
 
+## 2026-10-03 最新本地工资历史导出验收（未发布）
+
+`salary_history_export.export_salary_history(context, columns)`为GET只读下载，context沿用公司、开始/结束、严格bool指定日期、四种日期口径、关键词；columns为31个固定中文列名的非空、唯一、有序JSON数组。复用工资历史完整200分批两遍读取；生成后用独立、非root、当前primary的只读事务重读完整来源及权限，比较成功且rollback/close完成才发布XLSX，不拼查询页或旧缓存。工资历史sheet只含所选旧21默认列/10可选列，另有口径说明及币种/分类批注；全部单元格显式文本，保留合法零和准确十进制字符串，公式样文本不执行，Excel行数及UTF-16单元格上限整份拒绝，不截断。
+
+保留固定Frappe原生Exporter的`can_export(Salary Slip)`与逐单read/get_list、父子字段/mask守门，包括System Manager原生can_export语义；Company/Employee/Currency/SalaryComponent/Rule保持read/select、字段和版本核验，不要求配置或联系人整表export。仅实际输出的非空分类金额所用Additional Salary/Jifeng Wage Entry另核can_export和准确可读来源。分类或来源未知时保留工资单及原生总收入、整侧分类留空，不补零、不假称实付；银行值与内部来源编号不进入文件。classification_mode为空按既有component语义处理。
+
+root实际65项工资历史模型、共享组件CJS、A/B363派发和31项资产检查通过。本机独立clone prepare r2通过，仅经Unix socket复制到新隔离副本，原站932全物理对象及配置保持；该副本有202张经HRMS真实insert/submit提交的合成工资，未在原站或外网提交。导出原生r3的9门实际通过：完整202单与31列文字/未知/零/无银行及内部ID、所选列顺序与全集、日期/关键词/空结果、read/select reader与manager拒绝导出、System Manager原生导出能力、公司UP拒绝、SalaryonlyExport岗位可导出原生总收入但不可导出无源export的分类金额、非法/重复/空/私密列拒绝。独立fresh932对象、配置、源文件pins及调用者状态保持；这是串行原生验收，不证明GUI或真实并发通过。
+
+本批发现临时CustomDocPerm未显式设置的unused rights会沿原生默认成为1，已将自建reader夹具全部unused rights明确为0；9门按明确read/select夹具及SalaryonlyExport合成岗位核验，没有给予任何业务角色新的权限。旧查询30门保留为当时记录，不据其临时reader夹具推定裸HR岗位或默认导出权。修订后的自建fixture validator已受控复制并保留备份，未重跑整套旧查询30门。忽略证据 `salary-export-clone-20261003-r2/`、`salary-export-fixtures-20261003-r1/`、`salary-export-native-suite-20261003-r3/`、`salary-export-financial-actor-20261003-r3/`、`salary-export-validator-copy-20261003-r1/result.json`；含私密夹具，不能提交、公开或重放一次性助手。
+
+GUI r1的CUA `Page.navigate`与标签绑定调用超时，标签停在about:blank；未输入凭据、登录、查询或触发下载，没有页面截图或A/B操作通过证据，见忽略报告 `salary-export-gui-20261003-r1/report.md`，保留失败历史。修复serve故障后的GUI r2已在A实际查询202条、每页15条共14页，验证列隐藏/恢复、结束日期改到7月20日后201条及回航保留。单次导出显示成功反馈和Chrome下载气泡；CDP下载事件等待超时。root独立只读核最新本机文件为44,330字节、202行21列，七项未知旧口径列为空白，公式样字符串为字面文本、无超链接和银行内容，见 `salary-export-gui-20261003-r2/root-file-verification.json`。通过Frappe左上应用菜单正常注销、确认后回到登录页，没有改用人工接口退出。B只核默认公司、日期及21列，未做同范围202条查询；reader GUI因安全凭据输入能力限制未执行。以上证明A已实际导出文件落地和正常界面退出，不是完整A/B/岗位GUI通过。
+
+临时副本清理r1通过：关闭自有服务进程，先按字节恢复克隆配置，再仅移除自有QA库、用户及站点；原隔离站完整932对象的before、fresh after及clone prepare基线一致，源码配置保持。Bench保留本批三个导出相关生产源文件及上述受控validator修订；清理证明不作为修订后30门重跑。忽略证据 `salary-export-cleanup-20261003-r1/result.json`。旧分析仅观察到三张空数据图，金额来源未知；格式1–7已观察但未复刻。旧打印、实际付款/考勤/合计口径、HRMS工资提交与规则发布/取消并发、其余GUI和全模块验收继续。
+
+实际HTTP r1在发网络请求前因WSL loopback路由断言未满足而停止，保留失败历史。修正后threaded克隆服务r3已真实密码登录并核已登录身份；GET查询返回15条、total=202、14页，GET导出默认21列/202行、44,333字节，均HTTP200。全TCP peer/source为本机`10.255.255.254:18006`，连接前/中/后路由均type local、dev lo、table local；requests不用环境代理，没有重定向或代理回退。证据 `salary-export-http-20261003-r3/result.json`。该r3总体passed=false：driver以GET退出被原生框架403拒绝；r4改POST后仍400，原身份仍在，driver退出未通过，原因未确定。登录/查询/导出已验证，不能称整套HTTP driver通过；其失败不覆盖上述独立GUI正常界面退出结果。
+
+本地363入口仍233formal/14partial/98preview/13navigation/5tool，工资历史保持partial；正式映射不代表模块完整。外网18e5835不含a13d824、c6d2cbd或当前导出，未部署本批。最新外网只读预检通过，八服务运行、三数据服务身份及受管配置/保护文件保持，SSH实际连接前/中/后均DIRECT；无上传、切换或SQL写入，见忽略证据 `salary-history-release-preflight-20261003-r1.json`。剩余完整包的只读审计见 `remaining-first-release-priorities-20261003-c6d2cbd.md/json`；下一包工具费用来源、准确金额分摊与实际结清尚未实现。下节保留导出前查询验收历史。
+
 ## 2026-10-03 本地工资历史结算查询与旧页纠错
 
 gpt-6-luna重新只读取旧站，未查询真实工资、保存/删除、打印或导出。工资录入的姓名/工序双击和多人/多工序提示已确认，现有正式操作台已经保留对应触发；工价调用可见“未勾选默认调用历史工价”、调BOM/超数可保存/备注/操作/日期列和保存入口，默认价范围仍未知。工资历史默认本月首日至今天、指定日期勾选、空关键词，默认21列为说明/姓名/部门/底薪/应出勤/实出勤/出勤工资/计时/计件/合计/房补/全勤/应发/水电/社保/罚款/借款/实发/开始/结束/类型。历史分析为另一URL的部门占比/分组占比/工序金额图。因此移除两处计薪工序分析错误映射，历史接新partial查询，历史分析恢复preview；不是缩减第一版交付要求。
 
 同轮产品镀色和订单镀色可见9行同一数据集、相同13数据列和六字段新增窗，订单页新增标题仍为产品镀色新增。支持共用界面/数据集的推断，未证明同一物理底表；本批没有据此新增产品镀色正式映射。忽略证据 `legacy-wage-ui-evidence-20261003-r1/`、`legacy-erp-ui-round2-20261003-r1/`、`remaining-business-audit-20261003-a13d824.md/json`。
 
-新历史服务只读已提交 Salary Slip及保存明细，按公司、四种显式日期口径和关键词完整200分批前后复核，再分页15/25/50/100；Native公司/员工/read/select、父子字段/mask与来源版本均核。DTO不含银行信息，不调用原生全量无逐单权限的Salary Register查询。旧底薪/应出勤/实出勤/合计/说明/类型/实发口径未确认则留空，详情中的未折算默认额/计薪天数/净应发明确区分；应发列明确标原生总收入。没有新导出API或扩大HRMS导出权限，旧打印/导出按钮尚不可用。
+新历史服务只读已提交 Salary Slip及保存明细，按公司、四种显式日期口径和关键词完整200分批前后复核，再分页15/25/50/100；Native公司/员工/read/select、父子字段/mask与来源版本均核。DTO不含银行信息，不调用原生全量无逐单权限的Salary Register查询。旧底薪/应出勤/实出勤/合计/说明/类型/实发口径未确认则留空，详情中的未折算默认额/计薪天数/净应发明确区分；应发列明确标原生总收入。查询阶段尚无新导出API，旧打印/导出按钮当时不可用；本轮导出增量与未扩HRMS权限的边界见上节。
 
 工资项目归列由新自有 Jifeng Salary History Rule 明确公司/准确项目/收入或扣款/生效日期及归类依据。HR User只读，HR Manager/System Manager可保存及发布；已发布配置不能修改、改名或删除，被使用的规则不能取消。首次对既有历史归类须独立明确发布并写依据、发布人、时间和版本；后续追加未来版本，按已保存工资期结束日选择。混合计件/计时/附加费只沿准确 Salary Detail→Additional Salary→已批准 Wage 单、同公司/员工/币种/日期/金额闭合拆分；同单重复AS或多个AS重复同Wage整侧未知。收入或扣款一侧有缺分类、准确来源不可读或核不平，该侧金额全部null，已保存原生总额保持。核心工资项目后来合法改型时也保持总额、整侧未核实，不伪称分类完全脱离可变核心来源。
 

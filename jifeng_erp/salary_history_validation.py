@@ -464,7 +464,9 @@ def smoke(company, other_company, stock_uom="Nos"):
                     values = {field: original.get(field) for field in PERMISSION_FIELDS if original.get(field) is not None}
                     insert("Custom DocPerm", parent=doctype, parenttype="DocType", parentfield="permissions", **values)
             insert("Custom DocPerm", parent=doctype, parenttype="DocType", parentfield="permissions",
-                   role=reader_role.name, permlevel=0, read=1, select=1)
+                   role=reader_role.name, permlevel=0,
+                   **{right: int(right in {"read", "select"}) for right in frappe.permissions.std_rights
+                      if frappe.get_meta("Custom DocPerm").get_field(right)})
             changed_meta.add(doctype)
         clear_metadata()
         reader = actor("reader", ["HR User", reader_role.name])

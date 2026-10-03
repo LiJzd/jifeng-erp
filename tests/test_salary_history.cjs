@@ -9,6 +9,8 @@ class Element {
     replaceChildren(...nodes) { this._text = ""; this.children = nodes; }
     setAttribute(name, value) { this.attributes[name] = value; }
     addEventListener(name, action) { this.events.set(name, action); }
+    click() { if (this.tag === "a") downloads.push({ href: this.href, filename: this.download }); }
+    remove() { this.removed = true; }
     descendants(tag) { return this.children.flatMap(child => [...(child.tag === tag ? [child] : []), ...child.descendants(tag)]); }
 }
 class Dialog {
@@ -19,6 +21,7 @@ class Dialog {
     add_custom_action(_, action) { this.actions.push(action); }
 }
 const calls = [], messages = [], nativePages = [], formHandlers = new Map(), window = {};
+const fetchCalls = [], downloads = [], objectUrls = [], revoked = [], timers = [];
 const frappe = { ui: { Dialog, form: { on: (doctype, handlers) => formHandlers.set(doctype, handlers), make_control({ df }) {
     const control = { value: "", typed: "", events: new Map(), df, get_value() { return this.value; },
         async set_value(value) { this.value = value; this.typed = value; df.onchange(); } };
@@ -26,7 +29,10 @@ const frappe = { ui: { Dialog, form: { on: (doctype, handlers) => formHandlers.s
 } } }, defaults: { get_user_default: () => "C-1" },
 datetime: { month_start: () => "2026-10-01", get_today: () => "2026-10-03" }, msgprint: value => messages.push(value),
 call(options) { let resolve, reject; const pending = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ options, resolve: message => resolve({ message }), reject }); return pending; } };
-const context = vm.createContext({ window, document: { createElement: tag => new Element(tag) }, frappe, __: value => value });
+const context = vm.createContext({ window, document: { createElement: tag => new Element(tag), body: new Element("body") }, frappe, __: value => value,
+    AbortController, URLSearchParams, setTimeout: action => timers.push(action),
+    URL: { createObjectURL(file) { const url = "blob:salary-" + objectUrls.length; objectUrls.push({ url, file }); return url; }, revokeObjectURL: url => revoked.push(url) },
+    fetch(url, options) { let resolve, reject; const pending = new Promise((yes, no) => { resolve = yes; reject = no; }); fetchCalls.push({ url, options, resolve, reject }); return pending; } });
 vm.runInContext(fs.readFileSync("jifeng_erp/public/js/jifeng_salary_history.js", "utf8"), context);
 vm.runInContext(fs.readFileSync("jifeng_erp/public/js/jifeng_classic_bridge.js", "utf8"), context);
 vm.runInContext(fs.readFileSync("jifeng_erp/jifeng_erp/doctype/jifeng_salary_history_rule/jifeng_salary_history_rule.js", "utf8"), context);
@@ -65,6 +71,7 @@ async function main() {
     storedRule.docstatus = 1; rule.buttons = []; formHandlers.get(rule.doctype).refresh(rule); assert.equal(rule.buttons.length, 0);
     const before = calls.length, model = await make(), view = model.view;
     assert.equal(calls.length, before, "mount, default company and native tab ready do not query payroll");
+    assert.equal(fetchCalls.length, 0, "mount never downloads payroll");
     assert.equal(view.from.value, "2026-10-01"); assert.equal(view.to.value, "2026-10-03"); assert.equal(view.useDate.checked, true);
     assert.deepEqual(plain(view.visibleColumns.map(column => column.label)), ["说明", "姓名", "部门", "底薪", "应出勤", "实出勤", "出勤工资", "计时", "计件", "合计", "房补", "全勤", "应发", "水电", "社保", "罚款", "借款", "实发", "开始", "结束", "类型"]);
     await populate(view);
@@ -112,8 +119,45 @@ async function main() {
     assert.equal(hidden.rows.length, 0, "disposed tabs cannot receive payroll data");
     const rejected = (await make()).view; await populate(rejected); const retry = rejected.query(); calls.at(-1).reject(new Error("Denied")); await retry;
     assert.equal(rejected.rows.length, 0, "permission failures clear old displayed payroll");
-    assert.ok(calls.every(call => call.options.type === "GET" && ["jifeng_erp.salary_history.query_salary_history", "jifeng_erp.salary_history.get_salary_history_detail"].includes(call.options.method)), "component never calculates, saves, exports or pays");
+    assert.ok(calls.every(call => call.options.type === "GET" && ["jifeng_erp.salary_history.query_salary_history", "jifeng_erp.salary_history.get_salary_history_detail"].includes(call.options.method)), "queries and details never calculate, save or pay");
+    const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const fileResponse = (extra = {}) => ({ ok: true, headers: { get: () => mime }, blob: async () => ({ size: 42 }), ...extra });
+    const exported = (await make()).view; exported.visibleColumns = [exported.columns[1], exported.columns[8], exported.columns[18]];
+    const download = exported.exportHistory(), request = fetchCalls.at(-1);
+    assert.equal(request.options.method, "GET"); assert.equal(request.options.credentials, "same-origin");
+    assert.equal(request.options.headers.Accept, mime); assert.equal(exported.exportButton.disabled, true);
+    const query = new URLSearchParams(request.url.split("?")[1]);
+    assert.deepEqual(JSON.parse(query.get("context")), plain(exported.context()));
+    assert.deepEqual(JSON.parse(query.get("columns")), ["姓名", "计件", "开始"]);
+    assert.deepEqual([...query.keys()].sort(), ["columns", "context"], "exports request the full saved scope, never current page or cached rows");
+    const singleRequest = fetchCalls.length; await exported.exportHistory(); assert.equal(fetchCalls.length, singleRequest, "duplicate clicks cannot start a second download");
+    request.resolve(fileResponse()); await download;
+    assert.equal(downloads.at(-1).filename, "工资历史.xlsx"); assert.equal(downloads.at(-1).href, objectUrls.at(-1).url);
+    assert.equal(exported.exporting, false); assert.equal(exported.exportButton.disabled, false);
+    for (const change of ["search", "company", "columns", "query", "destroy"]) {
+        const fresh = (await make()).view, previousDownloads = downloads.length, pending = fresh.exportHistory(), old = fetchCalls.at(-1);
+        if (change === "search") { fresh.search.value = "变更"; fresh.search.events.get("input")(); }
+        if (change === "company") { fresh.companyControl.typed = "C-2"; [...fresh.companyControl.events.values()][0](); }
+        if (change === "columns") { fresh.configureColumns(); const selection = fresh.columnDialog; selection.fields_dict.columns.$wrapper.get(0).descendants("input")[0].checked = false; selection.primary(); }
+        if (change === "query") { const queryPending = fresh.query(); calls.at(-1).resolve(page(fresh)); await queryPending; }
+        if (change === "destroy") fresh.destroy();
+        assert.equal(old.options.signal.aborted, true, `${change} aborts the active download`);
+        old.resolve(fileResponse()); await pending; assert.equal(downloads.length, previousDownloads, `late export cannot cross ${change}`);
+    }
+    const duringBlob = (await make()).view, delayedDownload = duringBlob.exportHistory(), delayedRequest = fetchCalls.at(-1);
+    let finishBlob, markBlobStarted; const blobStarted = new Promise(resolve => { markBlobStarted = resolve; });
+    delayedRequest.resolve(fileResponse({ blob() { markBlobStarted(); return new Promise(resolve => { finishBlob = resolve; }); } }));
+    await blobStarted; const beforeBlob = downloads.length;
+    duringBlob.invalidate(); finishBlob({ size: 42 }); await delayedDownload; assert.equal(downloads.length, beforeBlob, "late blob data is discarded after filters change");
+    for (const response of [fileResponse({ ok: false }), fileResponse({ headers: { get: () => "text/html" } }), fileResponse({ blob: async () => ({ size: 0 }) })]) {
+        const fresh = (await make()).view; await populate(fresh); const beforeDenied = downloads.length, denied = fresh.exportHistory();
+        fetchCalls.at(-1).resolve(response); await denied; assert.equal(downloads.length, beforeDenied); assert.equal(fresh.rows.length, 0, "failed export clears old payroll context");
+        assert.equal(fresh.exporting, false);
+    }
+    const invalid = (await make()).view; invalid.companyControl.typed = "unsynced"; const beforeInvalid = fetchCalls.length;
+    await invalid.exportHistory(); assert.equal(fetchCalls.length, beforeInvalid, "invalid company cannot download using an old link value");
+    for (const action of timers) action(); assert.deepEqual(revoked, objectUrls.map(item => item.url), "all object URLs are released");
     model.entry.stop(); assert.equal(view.disposed, true);
-    console.log("Salary history actual component/bridge: old 21-column defaults, source precision, unknown vs zero, read-only settings/details, source changes, late responses, company input and disposal gates passed (DOM/protocol model only).");
+    console.log("Salary history component/bridge: source precision, old defaults, full-scope selected-column downloads, denied/late response and disposal gates passed (DOM/protocol model only).");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
