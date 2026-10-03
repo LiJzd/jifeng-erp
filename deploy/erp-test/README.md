@@ -1,5 +1,11 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-03 当前运行状态复核
+
+本轮只读检查确认外网实际源码仍为`4d71c354d3f3f281d21d3d16b496bb6e5434e655`，八服务running、无OOM、RestartCount=0、数据库healthy，五应用release源码只读挂载匹配。可信HTTPS登录页和ping均200；HTTPS/SSH均在实际sourceIP/port连接前中后核DIRECT。未部署、登录/退出、重启、写配置、SQL或下载备份；不能把此运行检查当作本轮A/B业务GUI验收。
+
+r1/r2遇远端旧Python不支持`subprocess.run(text=True)`的只读助手兼容错误，发生在Docker命令前，失败证据保留；r3独立采用已验证`universal_newlines=True`和兼容字符串处理后完成运行版本核验。没有重放部署或故障自动恢复。证据：忽略目录`order-customer-external-health-20261003-r1/proof.json`及r2/r3，完整说明见[验证记录](../../docs/validation.md)。本地客户选择/工序/镀色未发布，账户仍通过本地私有文件交接。
+
 ## 2026-10-03 尚未发布的订单客户选择
 
 本地原生 Sales Order 脚本新增订单客户档案选择，客户读取及核对为GET-only接口，客户变更仍由原生表单和订单保存处理。32模型、客户端协议、15真实岗位门及931物理对象业务回滚独立核验通过；原生FormMeta确实加载并缓存新脚本，18JS/10CSS共28主资源保持。

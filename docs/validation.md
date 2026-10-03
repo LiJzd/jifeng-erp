@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-03 外网测试站只读交接复核
+
+本轮可信TLS HEAD `/login` 与GET `/api/method/ping`均200/pong。检查环境/系统/WinHTTP及实际Clash/TUN状态，并在每个实际连接的准确sourceIP/port、目标IP/port前中后匹配唯一DIRECT链，没有代理回退。未输入账号、登录/退出、业务保存、下载备份或再次发布。
+
+SSH运行检查r1远端固定断言失败，r2定位旧系统Python不接受`subprocess.run(text=True)`，Docker命令尚未运行。失败独立保留，r3只读采用既有助手的`universal_newlines=True`及兼容字符串处理，`docker ps --size=false`/限定inspect/源Git读取通过。实际八服务running、noOOM、RestartCount=0、数据库healthy，五应用只读挂载匹配预期release；源码仍`4d71c354d3f3f281d21d3d16b496bb6e5434e655`。该结果不证明长期负载稳定或完整模块业务验收，没有重启daemon/业务服务或写远端配置/SQL。
+
+证据均在仓库忽略目录：`order-customer-external-health-20261003-r1/proof.json`为实际HTTPS与失败SSH，r2为兼容诊断，r3为成功运行版本核验。下面客户选择属于已提交本地`071cecb`，它及工序/镀色未发布，外网保持此前4d。真实A/B业务GUI仍沿用此前对应版本的已说明范围，本轮不新增GUI通过认定。
+
 ## 2026-10-03 最新本地增量：订单客户选择
 
 新增只读 `order_customer_selection`：当前公司、可写原生 Sales Order 草稿、在用订单客户 Profile 及关联 Customer，精确原生ID及两来源版本。无档案创建权限的销售人员也可读取其有权选择的档案；不复用要求create权的档案维护接口。原生get_list投影、字段mask、User Permission与docstatus/版本守门，查询只统计实际可选择行，首尾重新核对完整候选分类；没有1000条截断。GET-only选择不save/insert、不匹配同名，不复制地址、手机或折扣。
