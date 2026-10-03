@@ -1,5 +1,27 @@
 # 验证记录
 
+## 2026-10-03 订单类型与要求
+
+原站只读结构依据为`output/legacy-order-dictionaries-20261003-r1/report.md/json`；记录类型11列、要求7列及四字段空新增，未保存业务。A/B专用订单词典共用服务器API和组件；公司/类型、只读编号与简拼、UUID/摘要、版本及字段权限独立，不改原生Customer、SalesOrder或明细。旧必填未知，本系统名称非空为明确当前规则。简拼保持空值或历史原文，不引入猜测转换算法；旧简拼更新、删除、打印、旧编号和单据选择联动继续待完成。
+
+31后端模型、2资源模型、订单词典/客户词典/客户档案/A-B四份CJS及Ruff通过；后端新文件最终使用兼容Python3.13的except元组，纠正Ruff按项目3.14目标自动去括号造成的本机模型解析失败，format后已重跑31项。客户端核11/7列、备注在简拼前、四字段新增、明确API/type、分页及末页缩小、公司/类型迟到响应拒绝、保存结果未知不重复POST；这些为DOM/协议模型，不算浏览器验收。
+
+| 隔离步骤 | 实际结果 | 留存证据（忽略的output目录） |
+|---|---|---|
+| 来源前置 | 第一次在任何复制前拒绝：本地catalog_validation.py为CRLF，bench仍等于原冻结SHA；独立核规范行尾后内容相同，无DB或文件复制。其余依赖不变。 | `order-dictionary-native-sync-preflight-20261003-r1.json` |
+| 冻结与镜像 | 9运行文件、10原不变依赖；3既有bench文件与HEAD内容相同，6新文件原先不存在，旧字节已备份。只复制本地源码，无网络。 | `order-dictionary-native-source-20261003-r1.json`，SHA `61b70ec94bf4781ac0d1a5f251e27a91ec95f0bf2de4655570fed0c4b8b4023e`；同名目录保存intent/旧源码。 |
+| schema r1 | 一次targeted reload+commit，928→929，只新增空Order Dictionary；Module/角色存在、目标物理表不存在前置通过。 | `order-dictionary-native-schema-20261003-r1/`；六元数据表只允许新parent，其他行/结构/索引全同，所有既有非元数据表/Auth/账簿全同。 |
+| suite r1 | 18实际岗位门通过，全部业务及审计回滚；独立新连接929表完整内容、结构、索引与suite前相同。 | `order-dictionary-native-suite-20261003-r1/`；主管创建/修改/原生Version、原生表单编号、只读/公司/记录范围、103条分页、停用/版本冲突、两类型计数/同名独立、跨类型UUID冲突/atomic等通过。每门及末次核Customer/SalesOrder递归实际子表内容、完整父子元数据及覆盖配置保持。 |
+| 资源 | native实际hooks导入及25资源字节/内容指纹与本地一致；无DB/浏览器HTTP。 | `order-dictionary-native-assets-20261003-r1.json` |
+
+schema及fresh audit沿用物理InnoDB READ ONLY/RR一致快照，另一连接持三个MyISAM表（Data Import Log、Error Log、__global_search）READ锁并复核同连接ID；有效本机DB/site及维护/停调度状态严格限定。未执行全migrate、原站或外网写入。只做串行实验，无并发/负载证明；新页面GUI尚未完成，浏览器继续任务因子智能体thread上限拒绝，未自行操作屏幕或改走被拒通道。旧选择窗未观察到，订单四效果业务含义仍等待用户确认。
+
+外网收尾r3发现可信TLS连接后的登录页响应超时；只读检查八个任务仍运行，Docker管理API超时，dockerd RSS764712KiB/Swap2425280KiB。来源诊断r2因32KB输出截断无法parse；r3缩小函数摘要后成功，无业务写入。当前任务/配置检查确认live-restore=true、KillMode=process；只执行一次新r4管理进程恢复，PID328950→344058，八个任务ID/PID/启动tick及保护配置SHA全同，containerd及业务容器未重启。恢复即刻RSS86684KiB/Swap1088KiB，管理ping恢复；造成size查询的调用者仍未找到，不能据此证明长期稳定或根因已修。
+
+恢复后的public health r4为HTTP301、可信TLS登录页200、ping200/pong；认证r3实际测试账号登录、get_logged_user、A/B两页及携带当前session CSRF的POST退出均200，账号/cookie/CSRF仅RAM使用，未输出。每条HTTP/SSH连接均按精确源IP/端口及目标核DIRECT。认证仅HTTP，未做新GUI/业务保存或外网DB快照，不将登录活动计为全表不变。证据：`erp_external_https_health_20261003_r3.json`（失败）、`erp_external_server_health_readonly_20261003_r1.json`、`erp_daemon_origin_and_runtime_20261003_r2/r3.json`、`erp_daemon_recover_driver_20261003_r4.json`、`erp_external_https_health_20261003_r4.json`及`erp-authenticated-https-check-20261003-r3.json`。服务器私有单次恢复receipt为`operations/daemon-recovery-20261003-r4/`，不是候选发布或数据迁移。
+
+当前本地registry实际363＝235正式映射＋11部分可用＋99业务预览＋13导航＋5工具；两个新增入口保持部分可用。外网继续`5aa4b3b`的237正式/3部分/105业务预览，本批未发布。旧系统全部模块正式可用及旧操作习惯的完整验收目标尚未完成。
+
 ## 2026-10-03 销售与订单客户档案
 
 销售“客户档案”、订单“客户”接同一服务器Profile API及界面组件，保留实际旧页19/17字段、各16列和编号只读；依据为`output/legacy-customer-archive-20261003-r1/report.md`。五种词典使用公司、模块、字段类型和实际版本，不把原生Customer主体类型当旧客户类型。姓名、手机、联系、税号、公司、折扣等按档案原文保存；已有档案编辑/停用只改Profile。当前公司与旧“公司”原文分开。新建使用原生Customer命名及实际创建权，也可显式关联已有客户；未自动合并同名资料，未给旧角色增加Customer写权。

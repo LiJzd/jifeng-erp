@@ -138,7 +138,7 @@ const JIFENG_LIVE_ROUTES = {
 	产品: { 类别: "Jifeng Product Category", 风格: "Jifeng Product Dictionary", 来源: "Jifeng Product Dictionary", 品牌: "Jifeng Product Dictionary",
 		产品风格: "Jifeng Product Dictionary", 产品来源: "Jifeng Product Dictionary", 产品品牌: "Jifeng Product Dictionary",
 		产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation" },
-	订单: { 订单客户分类: "Jifeng Customer Type", 订单客户级别: "Jifeng Customer Type", 客户: "Jifeng Customer Profile", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
+	订单: { 订单客户分类: "Jifeng Customer Type", 订单客户级别: "Jifeng Customer Type", 客户: "Jifeng Customer Profile", 类型: "Jifeng Order Dictionary", 要求: "Jifeng Order Dictionary", 订单查询: "Sales Order", 聚水潭订单: "Jifeng External Order", 生产流程单: "Jifeng Flow Order" },
 	生产: { 生产计划单: "Production Plan", 生产工单: "Work Order", 工序报工单: "Job Card",
 		刷单: "Job Card", 计划: "Production Plan", 完成: "Work Order", 工序查询: "Operation", 刷卡工序: "Operation",
 		入库单: "Stock Entry", 反审: "Work Order", 工作站: "Workstation" },
@@ -156,7 +156,7 @@ const JIFENG_LIVE_ROUTES = {
 
 // Server-backed entry whose available operations remain explicitly limited.
 const JIFENG_PARTIAL_ROUTES = { 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
-	销售: { 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true } };
+	销售: { 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true } };
 
 const JIFENG_LIVE_CATALOGS = {
 	物料: { 浏览: "物料" },
@@ -446,6 +446,13 @@ class JifengLegacyWorkspace {
 		}
 		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
 		if (liveDoctype) {
+			if (liveDoctype === "Jifeng Order Dictionary") {
+				if (!this.formalBridge || !window.JifengOrderDictionary) {
+					frappe.msgprint(__("订单" + name + "页面未能加载，请刷新后重试。")); return;
+				}
+				this.formalBridge.open({ title: name, module: moduleName, kind: "list", doctype: liveDoctype,
+					orderDictionary: "订单" + name, availability: "partial" }); return;
+			}
 			if (liveDoctype === "Jifeng Customer Profile") {
 				if (!this.formalBridge || !window.JifengCustomerArchive) {
 					frappe.msgprint(__("客户档案页面未能加载，请刷新后重试。")); return;
