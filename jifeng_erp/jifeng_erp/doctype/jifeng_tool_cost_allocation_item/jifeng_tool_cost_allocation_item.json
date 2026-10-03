@@ -1,0 +1,13 @@
+{
+ "doctype": "DocType", "name": "Jifeng Tool Cost Allocation Item", "module": "Jifeng ERP", "istable": 1,
+ "field_order": ["tool_type", "tool_doctype", "tool_name", "amount", "tool_label", "tool_version"],
+ "fields": [
+  {"fieldname": "tool_type", "fieldtype": "Select", "label": "工具类别", "options": "模具\n版种\n建模", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "tool_doctype", "fieldtype": "Link", "label": "准确工具档案类别", "options": "DocType", "read_only": 1, "hidden": 1},
+  {"fieldname": "tool_name", "fieldtype": "Dynamic Link", "label": "准确工具档案", "options": "tool_doctype", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "amount", "fieldtype": "Data", "label": "明确分摊金额", "reqd": 1, "in_list_view": 1, "description": "填写与费用同币种的准确金额，所有工具合计必须等于整笔费用。参考价和部分付款不自动分配。"},
+  {"fieldname": "tool_label", "fieldtype": "Data", "label": "选择时工具编号", "read_only": 1, "no_copy": 1},
+  {"fieldname": "tool_version", "fieldtype": "Data", "label": "选择时工具版本", "read_only": 1, "hidden": 1, "no_copy": 1, "print_hide": 1}
+ ],
+ "permissions": []
+}

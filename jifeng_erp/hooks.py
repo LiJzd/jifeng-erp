@@ -14,6 +14,7 @@ app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css",
                    "/assets/jifeng_erp/css/jifeng_inventory_catalog.css",
                    "/assets/jifeng_erp/css/jifeng_partner_archive.css",
                    "/assets/jifeng_erp/css/jifeng_customer_archive.css",
+                   "/assets/jifeng_erp/css/jifeng_tool_costs.css",
                    "/assets/jifeng_erp/css/jifeng_tool_archive.css",
                    "/assets/jifeng_erp/css/jifeng_modern.css"]
 app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jifeng_erp/js/jifeng_hr_dictionary.js",
@@ -30,6 +31,7 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_customer_archive.js",
                   "/assets/jifeng_erp/js/jifeng_product_category.js",
                   "/assets/jifeng_erp/js/jifeng_product_archive.js",
+                  "/assets/jifeng_erp/js/jifeng_tool_costs.js",
                   "/assets/jifeng_erp/js/jifeng_tool_archive.js",
                   "/assets/jifeng_erp/js/jifeng_wage_rates.js",
                   "/assets/jifeng_erp/js/jifeng_salary_history.js",
@@ -62,11 +64,15 @@ override_whitelisted_methods = {
     "hrms.hr.utils.get_employee_field_property": "jifeng_erp.personnel_ui.get_employee_field_property",
 }
 has_permission = {
+    "Jifeng Tool Cost Allocation": "jifeng_erp.tool_cost_sources.tool_cost_allocation_has_permission",
+    "Jifeng Tool Cost Allocation Item": "jifeng_erp.tool_cost_sources.tool_cost_allocation_item_has_permission",
     "Employee Promotion": "jifeng_erp.personnel_changes.personnel_change_has_permission",
     "Employee Transfer": "jifeng_erp.personnel_changes.personnel_change_has_permission",
     "Employee Separation": "jifeng_erp.personnel_separation.separation_has_permission",
 }
 permission_query_conditions = {
+    "Jifeng Tool Cost Allocation": "jifeng_erp.tool_cost_sources.tool_cost_allocation_query_conditions",
+    "Jifeng Tool Cost Allocation Item": "jifeng_erp.tool_cost_sources.tool_cost_allocation_item_query_conditions",
     "Employee Promotion": "jifeng_erp.personnel_changes.promotion_query_conditions",
     "Employee Transfer": "jifeng_erp.personnel_changes.transfer_query_conditions",
     "Employee Separation": "jifeng_erp.personnel_separation.separation_query_conditions",
@@ -87,6 +93,7 @@ after_install = "jifeng_erp.setup.install"
 after_migrate = "jifeng_erp.setup.install"
 scheduler_events = {"cron": {"*/15 * * * *": ["jifeng_erp.sync.scheduled_sync"]}}
 doc_events = {
+    "DocShare": {"before_validate": "jifeng_erp.tool_cost_sources.prevent_tool_cost_docshare"},
     "Additional Salary": {"validate": "jifeng_erp.payroll.validate_wage_additional_salary"},
     "Journal Entry": {
         "before_validate": "jifeng_erp.accounting.lock_expense_settlement_references",

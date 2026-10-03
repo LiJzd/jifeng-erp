@@ -88,6 +88,11 @@ window.JifengToolArchive = class JifengToolArchive {
 	}
 	async changeScope() {
 		if (this.changingCompany || this.disposed) return false; const next = this.companyControl.get_value() || null; if (next === this.companyScope) { this.freezeExport(); return true; }
+		if (this.costs && !this.costs.disposed) {
+			this.changingCompany = true; try { await this.companyControl.set_value(this.companyScope); } finally { this.changingCompany = false; }
+			const closed = await this.costs.discardFor(() => this.costs.dialog.hide()); if (!closed) return false;
+			this.changingCompany = true; try { await this.companyControl.set_value(next); } finally { this.changingCompany = false; }
+		}
 		const blocked = this.getCloseBlock();
 		if (!blocked) { this.cancelExport(); this.rows = []; this.tbody.replaceChildren(); this.revision++; this.status.textContent = __("公司已改变，请查询。"); }
 		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; this.freezeExport(); return true; }
@@ -117,7 +122,16 @@ window.JifengToolArchive = class JifengToolArchive {
 		for (const [field] of this.fields) tr.append(this.element("td", field === "legacy_copy" || field === this.inactive ? row.values[field] ? __("是") : __("否") : row.values[field] ?? ""));
 		const picture = this.element("td"), info = row.image_states.image;
 		if (info?.state === "已上传" && this.safePreview(info.url)) { const img = this.element("img"); img.src = info.url; img.alt = __(this.imageLabel); picture.append(img); } else picture.textContent = info?.state || "";
-		const action = this.element("td"); action.append(this.button(row.can_write ? "修改" : "查看", () => this.openEditor(row.name))); tr.append(picture, action); this.tbody.append(tr); } }
+		const action = this.element("td"); action.append(this.button(row.can_write ? "修改" : "查看", () => this.openEditor(row.name)), this.button("实际费用", () => this.openCosts(row.name), window.JifengToolCosts ? null : "实际费用组件尚未加载")); tr.append(picture, action); this.tbody.append(tr); } }
+	async openCosts(name, state = this.editor) {
+		if (this.disposed || this.opening || this.changingCompany || !name || !window.JifengToolCosts) return;
+		if ((this.companyControl.get_value() || null) !== this.companyScope) { await this.changeScope(); return; }
+		if (this.costs && !this.costs.disposed) { this.costs.dialog.show(); return this.costs; }
+		return this.discardFor(() => { const company = this.companyScope; if (!company) return; if (state) this.closeEditor();
+			this.costs = window.JifengToolCosts.open({ company, record_type: this.recordType, name }, this.bridge, { filters: this.costFilters,
+				stillCurrent: () => !this.disposed && this.companyScope === company && (this.companyControl.get_value() || null) === company,
+				onClose: (filters) => { this.costFilters = filters; this.costs = null; } }); }, state);
+	}
 	validArchive(archive, company = null, name = null) { return !!(archive?.record_type === this.recordType && archive.values && archive.field_meta && archive.image_states &&
 		typeof archive.can_write === "boolean" && typeof archive.can_select === "boolean" && (!company || archive.values.company === company) && (!name || archive.name === name) &&
 		(archive.name ? typeof archive.name === "string" && typeof archive.version === "string" && !!archive.version : !archive.version) &&
@@ -167,7 +181,8 @@ window.JifengToolArchive = class JifengToolArchive {
 		state.review = this.element("div", undefined, "jfe-tool-review"); const footer = this.element("div", undefined, "jfe-tool-footer");
 		state.newButton = this.button("新增", () => this.newDraft(state)); state.saveButton = this.button("保存", () => this.save(state)); state.closeButton = this.button("关闭", () => state.dialog.hide());
 		state.nativeButton = this.button("历史字段", () => this.openNative(state)); state.resolveButton = this.button("核对保存结果", () => this.resolve(state)); state.adoptButton = this.button("采用已核对当前值", () => this.acceptCurrent(state));
-		footer.append(state.newButton, state.saveButton, state.closeButton, state.nativeButton, state.resolveButton, state.adoptButton); host.append(state.scope, state.message, state.layout, extra, state.review, footer);
+		state.costButton = this.button("实际费用", () => this.openCosts(state.archive.name, state));
+		footer.append(state.newButton, state.saveButton, state.closeButton, state.nativeButton, state.costButton, state.resolveButton, state.adoptButton); host.append(state.scope, state.message, state.layout, extra, state.review, footer);
 	}
 	nativeControl(host, fieldname, label, fieldtype, options, onchange, onlyInput = false) { const cell = this.element("div"); host.append(cell);
 		return frappe.ui.form.make_control({ parent: cell, render_input: true, only_input: onlyInput, df: { fieldname, label: __(label), fieldtype, options, onchange } }); }
@@ -194,8 +209,8 @@ window.JifengToolArchive = class JifengToolArchive {
 		for (const [field, value] of Object.entries(current)) if (!state.archive.name || value !== state.baseValues[field]) result.values[field] = value;
 		if (state.archive.name && state.archive.field_meta.image && !state.archive.field_meta.image.read_only && state.imageValue !== state.archive.values.image) result.values.image = state.imageValue;
 		return result; }
-	isDirty(state = this.editor) { return !!(state && !state.closed && state.original !== JSON.stringify(this.draft(state))); }
-	getCloseBlock() { const state = this.editor; if (this.opening || state?.busy || state?.upload?.open) return "正在读取、保存或上传档案，请稍候。";
+	isDirty(state = this.editor) { return !!(state && !state.closed && state.original !== JSON.stringify(this.draft(state)) || !state && this.costs && !this.costs.disposed && this.costs.isDirty()); }
+	getCloseBlock() { if (this.costs && !this.costs.disposed && this.costs.getCloseBlock()) return this.costs.getCloseBlock(); const state = this.editor; if (this.opening || state?.busy || state?.upload?.open) return "正在读取、保存或上传档案，请稍候。";
 		if (state?.unresolved) return "保存结果尚未确认，请先核对保存结果。"; if (state?.uploadUnresolved) return "图片上传结果尚未确认，请先核对上传结果。"; return state?.confirming ? "正在确认草稿，请稍候。" : ""; }
 	freeze(state) {
 		if (!state || state.closed) return; const locked = !!(state.busy || state.unresolved || state.upload?.open || state.uploadUnresolved || state.confirming);
@@ -210,12 +225,14 @@ window.JifengToolArchive = class JifengToolArchive {
 		this.nativeFlags(state.companyControl, { read_only: locked || !!state.archive.name || !state.archive.can_write, reqd: true });
 		state.saveButton.disabled = locked || !state.archive.can_write; state.newButton.disabled = locked; state.closeButton.disabled = locked;
 		state.nativeButton.hidden = !state.archive.name; state.nativeButton.disabled = locked || !this.bridge;
+		state.costButton.hidden = !state.archive.name; state.costButton.disabled = locked || !window.JifengToolCosts;
 		state.resolveButton.hidden = !state.unresolved; state.resolveButton.disabled = state.busy || state.confirming;
 		state.adoptButton.hidden = !state.unresolved || !state.conflict; state.adoptButton.disabled = state.busy || state.confirming;
 		const df = state.archive.field_meta.image; state.imageCell.hidden = !df; state.image.uploadButton.disabled = locked || !state.archive.name || !state.archive.can_write || !df || !!df.read_only;
 		state.image.clearButton.disabled = state.image.uploadButton.disabled; state.image.resolveButton.hidden = !state.uploadUnresolved; state.image.resolveButton.disabled = state.busy || state.confirming;
 	}
 	async discardFor(action, state = this.editor) {
+		if (!state && this.costs && !this.costs.disposed) return this.costs.discardFor(action);
 		if (this.disposed || state?.closed) return false; const block = this.getCloseBlock(); if (block) { frappe.msgprint(__(block)); return false; }
 		if (!this.isDirty(state)) { await action(); return true; } state.confirming = true; this.freeze(state);
 		const yes = await new Promise((resolve) => frappe.confirm(__("尚有未保存的修改，放弃修改并继续？"), () => resolve(true), () => resolve(false)));
@@ -331,5 +348,5 @@ window.JifengToolArchive = class JifengToolArchive {
 					}, () => { state.confirming = false; this.freeze(state); }); })); panel.candidates.append(candidate); }
 		} catch { panel.candidates.append(this.element("p", __("上传结果核对失败，请稍后核对；不会重复上传。"))); } finally { state.busy = false; this.freeze(state); }
 	}
-	destroy() { this.disposed = true; this.revision++; this.cancelExport(); window.removeEventListener("beforeunload", this.beforeUnload); if (this.editor && !this.editor.closed) this.closeEditor(); }
+	destroy() { this.disposed = true; this.revision++; this.cancelExport(); window.removeEventListener("beforeunload", this.beforeUnload); if (this.editor && !this.editor.closed) this.closeEditor(); if (this.costs && !this.costs.disposed) this.costs.destroy(); }
 };

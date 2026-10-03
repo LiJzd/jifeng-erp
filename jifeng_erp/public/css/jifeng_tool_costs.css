@@ -1,0 +1,17 @@
+.jfe-tool-costs { color: var(--text-color, #252525); }
+.jfe-tool-costs .jfe-cost-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.jfe-tool-costs .jfe-cost-toolbar > div { min-width: 220px; }
+.jfe-tool-costs .jfe-cost-toolbar .form-group { margin-bottom: 0; }
+.jfe-tool-costs .jfe-cost-status { min-height: 22px; margin: 8px 0; }
+.jfe-tool-costs .jfe-cost-summary, .jfe-tool-costs .jfe-cost-source { background: var(--subtle-fg, #f4f6f8); padding: 12px; margin: 10px 0; }
+.jfe-tool-costs .jfe-cost-summary:empty, .jfe-tool-costs .jfe-cost-source:empty { display: none; }
+.jfe-tool-costs .jfe-cost-number { display: inline-block; margin: 0 22px 6px 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.jfe-tool-costs .jfe-cost-scroll { overflow: auto; max-height: 280px; }
+.jfe-tool-costs table { border-collapse: collapse; width: 100%; margin: 6px 0; }
+.jfe-tool-costs td, .jfe-tool-costs th { padding: 6px 9px; border: 1px solid var(--border-color, #ddd); vertical-align: top; }
+.jfe-tool-costs th { position: sticky; top: 0; background: var(--subtle-fg, #f4f6f8); white-space: nowrap; }
+.jfe-tool-costs .jfe-cost-detail, .jfe-tool-costs .jfe-cost-create { margin-top: 18px; }
+.jfe-tool-costs input, .jfe-tool-costs select, .jfe-tool-costs textarea { border: 1px solid var(--border-color, #ddd); border-radius: 4px; padding: 5px 8px; background: var(--control-bg, #fff); color: inherit; }
+.jfe-tool-costs textarea { display: block; width: 100%; min-height: 64px; margin: 10px 0; }
+.jfe-tool-costs [hidden] { display: none !important; }
+.jfe-tool-cost-dialog .modal-dialog { width: min(1150px, calc(100vw - 32px)); }
