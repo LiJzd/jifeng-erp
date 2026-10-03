@@ -973,10 +973,33 @@ print(json.dumps({"backend_ping": ready}))
         raise HostError("readiness_timeout_unknown_result")
 
     def git_source(self, label, root, commit):
+        allowed = {OLD_RELEASE / "app": OLD, RELEASE / "app": NEW}
+        require(root in allowed and allowed[root] == commit, "fixed_git_source_scope")
+        prefix = [
+            "docker",
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "1000:1000",
+            "--env",
+            "GIT_OPTIONAL_LOCKS=0",
+            "--mount",
+            "type=bind,source=" + str(root) + ",target=/source,readonly",
+            "--entrypoint",
+            "git",
+            BASE_TAG,
+            "-C",
+            "/source",
+        ]
         require(
             self.command(
                 label + "-head",
-                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                prefix + ["rev-parse", "HEAD"],
                 timeout=30,
             )
             .decode("ascii")
@@ -989,9 +1012,7 @@ print(json.dumps({"backend_ping": ready}))
             ("untracked", ["ls-files", "--others", "--exclude-standard"]),
             ("objects", ["fsck", "--full", "--strict"]),
         ):
-            output = self.command(
-                label + "-" + suffix, ["git", "-C", str(root)] + argv, timeout=60
-            )
+            output = self.command(label + "-" + suffix, prefix + argv, timeout=60)
             if suffix in {"tracked", "untracked"}:
                 require(not output.strip(), "git_source_pollution")
 

@@ -378,12 +378,24 @@ class Model:
             else:
                 value["backend_ping"] = self.backend_ping
             return 0, H.canonical(value), b""
-        if argv[0] == "git":
+        if (
+            argv[:2] == ["docker", "run"]
+            and "--entrypoint" in argv
+            and argv[argv.index("--entrypoint") + 1] == "git"
+        ):
             if "rev-parse" in argv:
                 return (
                     0,
                     (
-                        (H.NEW if argv[2] == str(H.RELEASE / "app") else H.OLD) + "\n"
+                        (
+                            H.NEW
+                            if argv[argv.index("--mount") + 1]
+                            == "type=bind,source="
+                            + str(H.RELEASE / "app")
+                            + ",target=/source,readonly"
+                            else H.OLD
+                        )
+                        + "\n"
                     ).encode(),
                     b"",
                 )
@@ -460,7 +472,11 @@ class HostModelTests(unittest.TestCase):
         self.assertEqual(model.files[H.CONFIG], original)
         self.assertEqual({name: model.rows[name] for name in H.DATA}, data)
         self.assertEqual(model.native_called, ["before", "apply", "verify", "cache"])
-        native = [args for args, _payload, _timeout in model.commands if "run" in args]
+        native = [
+            args
+            for args, _payload, _timeout in model.commands
+            if H.CONTAINER_ROOT + "/incoming-r1/tool_cost_release_native.py" in args
+        ]
         self.assertEqual(len(native), 4)
         self.assertIn(H.TOOLS[0], native[0])
         self.assertTrue(all(H.TOOLS[1] in args for args in native[1:]))
@@ -758,6 +774,81 @@ class HostModelTests(unittest.TestCase):
 
 
 class HostScopeTests(unittest.TestCase):
+    def test_all_git_commands_use_existing_fixed_image_offline_and_exact_readonly_source(
+        self,
+    ):
+        coordinator = H.Coordinator(DIGEST)
+        for root, commit in (
+            (H.OLD_RELEASE / "app", H.OLD),
+            (H.RELEASE / "app", H.NEW),
+        ):
+            with (
+                self.subTest(root=root),
+                patch.object(
+                    coordinator,
+                    "command",
+                    side_effect=[(commit + "\n").encode(), b"", b"", b""],
+                ) as command,
+            ):
+                coordinator.git_source("git-probe", root, commit)
+                self.assertEqual(command.call_count, 4)
+                expected = [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--pull",
+                    "never",
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--user",
+                    "1000:1000",
+                    "--env",
+                    "GIT_OPTIONAL_LOCKS=0",
+                    "--mount",
+                    "type=bind,source=" + str(root) + ",target=/source,readonly",
+                    "--entrypoint",
+                    "git",
+                    H.BASE_TAG,
+                    "-C",
+                    "/source",
+                ]
+                for call in command.call_args_list:
+                    argv = call.args[1]
+                    self.assertEqual(argv[: len(expected)], expected)
+                    self.assertEqual(argv.count("--mount"), 1)
+                    self.assertEqual(argv.count(H.BASE_TAG), 1)
+                    self.assertNotIn("--global", argv)
+                    self.assertNotIn("safe.directory", " ".join(argv))
+                    self.assertNotIn("*", " ".join(argv))
+                self.assertEqual(
+                    [call.args[1][len(expected) :] for call in command.call_args_list],
+                    [
+                        ["rev-parse", "HEAD"],
+                        ["diff", "--exit-code", "HEAD", "--"],
+                        ["ls-files", "--others", "--exclude-standard"],
+                        ["fsck", "--full", "--strict"],
+                    ],
+                )
+
+    def test_git_source_rejects_unreviewed_paths_or_mismatched_commit_before_commands(
+        self,
+    ):
+        coordinator = H.Coordinator(DIGEST)
+        for root, commit in (
+            (Path("/foreign/app"), H.NEW),
+            (H.RELEASE, H.NEW),
+            (H.OLD_RELEASE / "app", H.NEW),
+            (H.RELEASE / "app", H.OLD),
+        ):
+            with (
+                self.subTest(root=root, commit=commit),
+                patch.object(coordinator, "command") as command,
+            ):
+                with self.assertRaisesRegex(H.HostError, "fixed_git_source_scope"):
+                    coordinator.git_source("git-probe", root, commit)
+                command.assert_not_called()
+
     def test_full_inventory_assets_hashes_modes_and_unlisted_files(self):
         manifest, observed = inventory_fixture()
         self.assertEqual(
