@@ -1,5 +1,24 @@
 # 验证记录
 
+## 2026-10-03 最新本地增量：订单客户选择
+
+新增只读 `order_customer_selection`：当前公司、可写原生 Sales Order 草稿、在用订单客户 Profile 及关联 Customer，精确原生ID及两来源版本。无档案创建权限的销售人员也可读取其有权选择的档案；不复用要求create权的档案维护接口。原生get_list投影、字段mask、User Permission与docstatus/版本守门，查询只统计实际可选择行，首尾重新核对完整候选分类；没有1000条截断。GET-only选择不save/insert、不匹配同名，不复制地址、手机或折扣。
+
+32 后端模型、客户端CJS、JS语法和Python3.13 AST/Ruff通过。客户端只调用一次原生`frm.set_value(customer,准确ID)`，不自动保存；窗口关闭、公司/客户/订单/版本变化拒采用迟到GET。独立复核发现setter等待期间表单权限变化仍可能误报成功，现post-set再次检查canEdit与新旧单状态，补三种延迟锁和先赋值后失败回归；不回写旧客户，失败明确关闭窗口后核对原生草稿。模型不是实际GUI。
+
+| 步骤 | 实际结果 | 忽略目录证据 |
+| --- | --- | --- |
+| 源镜像前置r1 | 错列不存在的customer_dictionary.py依赖，在创建intent或写源前失败；未连SQL/网络，未重放。 | `order-customer-native-source-preflight-20261003-r1.json`、原r1 helper |
+| 源码r2冻结 | 改为实际customer_type.py依赖，新helper仅镜像API/验收器/订单JS三文件，39原依赖保持；原JS字节备份。pins SHA `29d24b856fd8c4788b5188f7babbd4edfd6a5419d2a52d679d5dcdbd33c22149`。 | `order-customer-native-source-20261003-r2.json`及同名目录 |
+| suite r1 | 15项真实原生岗位门通过，所有合成业务/权限/元数据/审计夹具回滚；独立fresh931对象内容、结构、索引全同，没有reload/DDL/commit。 | `order-customer-native-suite-20261003-r1/`，`passed=true`、`fresh_unchanged=true` |
+| 关联来源静默过滤 | 原生Customer-only User Permission下两个Profile实际get_list可见，选择结果仅一个；成功查询message_log、flags.error_message及真实permission_debug_log未变化。没有扩大角色或吞掉带私有名称提示的权限错误。 | suite `evidence.quiet_linked_source_filter` |
+| 实际原生表单源 | 仅失效隔离站`doctype_form_meta::Sales Order`键，有效doctype_js及原生FormMeta完整新JS/再次缓存读取均通过；旧缓存不含新脚本已明确记录。28主资源SHA及有效18JS/10CSS保持，fresh931全同。 | `order-customer-form-meta-20261003-r1/`；不是HTTP或GUI证明 |
+| GUI连接r1/r2 | gpt-6-luna首次visible:true在子线程不支持，文档visible:false修正后明确IAB不可用。没有登录或业务操作，无目标页面证明；此前本轮Chrome库存fetch失败。不绕过原生审批，不启动无可用连接的8000预览。 | `order-customer-gui-connection-20261003-r1/report.md/json`及r2 |
+
+真实15门包含纯Sales User/Manager读选、精确同名客户、关键词/分页/停用/公司/种类、两来源版本、档案/原生客户记录权限、Sales User新单保存及已有草稿换客户的原生Version、订单只读岗位/记录权限/旧版本拒绝、客户readonly与三个真实mask、可选自编屏蔽后DTO和搜索均省略、Guest/严格上下文。Sales User + Stock Manager提交后生成一张准确Sales Order Item来源流程单，库存数量/要求/包装保持，重复生成没有额外写入；源要求更新只标识来源变化，不覆盖人工快照，订单取消后标Cancelled。
+
+不能据此称完整生产或工资过账、原生客户选择GUI、旧效果1～4生产规则、档案来源历史持久化、全模块或并发通过。订单只保存准确nativeCustomer，档案来源版本尚未存入订单。完整931物理保护含六InnoDB序列和独立三个MyISAM READ锁，原生文件、Auth、角色、账簿、原业务内容保持。没有本轮schema新增、worker/scheduler或外网更新。本地363入口状态仍235正式映射/13部分/97预览/13导航/5工具，外网继续4d71c35；本批及工序/镀色未发布。旧四组效果关系的用户问题仍待答。
+
 ## 2026-10-03 最新本地增量：共用订单工序
 
 原站依据为 `output/legacy-order-operations-20261003-r1/report.md/json`：8列顺序/工序/备注/操作/日期/修改人/修改日期/删除，六行后有空白行，前三格单击编辑；没有标准新增/保存工具栏。没有输入或提交，旧保存触发未知。新组件保留结构，明确行内保存/取消，已有原生工序名只读。使用全局 ERPNext Operation，独立 `Jifeng Order Operation` 保存页面顺序和永久创建回执；不改原生工序权限、表结构或BOM/生产行序。原生 description 空值采用名称是当前原生规则。
