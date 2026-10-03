@@ -5,7 +5,21 @@
 - A：`/desk/jifeng-modern`，优化后的开源 ERP 界面。
 - B：`/desk/jifeng-legacy`，沿用旧系统菜单、列表和操作入口。
 
-当前业务源码固定为 `5aa4b3b9b252c1879c299850557750c666d8cb83`。原运行镜像基线源码为 `8858743800efe1836ac53f5c3de6644dab4e7923`，Frappe 16.35.0、ERPNext 16.36.0、HRMS 16.20.0 及其已构建资源保持固定。共用业务工作台核心，界面不各自计算或存储业务数据。
+当前业务源码固定为 `4d71c354d3f3f281d21d3d16b496bb6e5434e655`。原运行镜像基线源码为 `8858743800efe1836ac53f5c3de6644dab4e7923`，Frappe 16.35.0、ERPNext 16.36.0、HRMS 16.20.0 及其已构建资源保持固定。共用业务工作台核心，界面不各自计算或存储业务数据。
+
+## 2026-10-03 最新实际发布：客户档案和订单词典
+
+`4d71c35` 的505个公开文件和25项资源已发布；五个应用使用只读源码挂载 `releases/4d71c35-source-r1/app`，当前覆盖文件为 `releases/4d71c35-source-r1/compose.source.r2.yaml`。启动时同时加载基线 Compose 和这个覆盖文件，固定镜像不变；以下较早批次的路径和状态按当时证据保留。
+
+新单次协调器分 prepare、quiesce、metadata、verify、start 五阶段，52项模拟检查及Ruff通过。维护期间在服务器私有 `private-backup-r2/` 完成数据库、公开附件、私有附件及站点配置四部分原生备份，核gzip/tar、完整927个物理对象及SHA。独立连接对三张MyISAM表（包含 `__global_search`）持READ锁贯穿快照和SQL备份；物理清单同时包含六个InnoDB序列。
+
+定向更新两行客户词典DocField的三项属性，只reload两个新增空DocType。独立后验及物理只读缓存阶段核927→929：仅新增空Customer Profile、Order Dictionary及明确元数据，既有业务表内容、结构、索引保持。完整before证明为 `89ef65d3909f68207bd88e082f19f3aab0ee0c051e4de4c6b069fd71958722b4`，apply、独立verify、cache证明均为 `c298a95077430ef3b34c68e4f9ab420ce049d7d3e043d240337ff1ab5064c063`。原站点配置精确恢复，数据库及两个Redis服务身份保持，八服务运行、后端Git为4d；没有全站migrate或seed。
+
+原r1 prepare在停服务、配置修改及SQL之前因Docker inspect超时拒绝，证据保留。实际Docker 26.1.3 CLI与私有假socket复现看板JSON格式隐式请求size=1；采集器按SHA备份后加 `--size=false`，本地看板源亦修正。r5只恢复daemon，八任务ID/PID/启动tick及保护配置保持；尚未证明所有历史size查询的调用者或长期稳定性。
+
+外部可信TLS登录页与ping通过，25项资源HTTP200且逐字节匹配，共560299字节，每项实际连接核DIRECT。受限测试账号登录、A/B认证页面及POST退出通过；Luna真实浏览器两套分别核五个客户/词典入口、同公司空查询和新增弹层开关，无业务保存。下方滚动字段、写入及完整操作未核，范围见[验证记录](../../docs/validation.md)。当前363入口为235正式映射、11部分可用、99业务预览、13导航、5工具；全模块正式可用尚未完成。账号仅在本地受限文件交接，未提交凭据或备份，未推送Git。
+
+工程助手的单次日志、完整SQL证明和备份都保留在服务器；失败阶段先核实结果，禁止重复执行。`incremental-control-r1/` 和原 `private-backup/` 未覆盖，成功阶段位于 `incremental-control-r2/`。助手内版本与SHA是本次发布的审核范围，下一批必须重新审查并使用新操作目录。
 
 ## 2026-10-03 后续本地订单词典
 

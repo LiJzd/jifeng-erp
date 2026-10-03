@@ -1,5 +1,28 @@
 # 验证记录
 
+## 2026-10-03 最新外网发布：4d71c35
+
+当前A/B共用源码已从5aa升级至4d71c35；下文“未发布”“外网仍5aa”等描述保留为较早批次记录，以本节为最新状态。公开候选505文件逐SHA、25资源指纹、固定镜像和只读挂载核验通过。没有下载服务器备份，上传及每项资源读取实际连接均核DIRECT；凭据只在RAM使用。
+
+| 核验 | 实际结果 | 忽略目录证据 |
+| --- | --- | --- |
+| 本地发布助手 | 52项纯审计/原生清理/主机阶段模拟通过，Ruff通过；不是外网业务验收。 | `tests/test_incremental*.py` |
+| 看板查询 | 实际Docker26.1.3 CLI对假Unixsocket：原JSON格式请求size=1，显式size=false不请求；未连接真实daemon。按SHA备份并修正飞哥采集器，本地看板同步修正。 | `erp_docker_json_size_model_20261003_r1.json`、`erp_dashboard_size_fix_20261003_r1.json` |
+| 管理恢复 | r5仅恢复daemon，PID344058→353776；8任务ID/PID/启动tick及保护配置相同，containerd/容器未重启。RSS恢复时86228KiB，长期稳定性及历史请求具体来源未证明。 | `erp_daemon_recover_driver_20261003_r5.json` |
+| r1 prepare拒绝 | inspect超时，未停服务、改站点配置或连接SQL；原失败不重跑，r2采用独立协调/备份/覆盖目录。 | `erp-incremental-prepare-poll-20261003-r2.json` |
+| r2 prepare | 505文件/25hooks/原生备份实现SHA固定，无SQL；8服务基线和旧source完整核验。 | `erp-incremental-prepare-poll-20261003-r4.json` |
+| r2 quiesce | 停五应用，三个数据服务保持；全927物理对象快照、三MyISAM独立READ锁贯穿完整SQLdump，四部分原生备份gzip/tar/SHA及完整对象范围通过。 | `erp-incremental-quiesce-poll-20261003-r3.json` |
+| r2 apply/verify/cache | 只更新两DocField的三属性及两个新增空DocType；927→929，元数据逐列/来源MD5、两个新表批准结构与唯一索引核验。所有既有非目标业务表内容、结构及索引保持；三个阶段fresh证明相同。 | `erp-incremental-metadata-poll-20261003-r2.json`、`erp-incremental-verify-poll-20261003-r1.json`、`erp-incremental-start-poll-20261003-r2.json` |
+| r2 start | 精确恢复原配置，五应用只读挂4d候选，8运行/noOOM，数据服务ID/启动/挂载保持，后端Git准确4d。无全migrate、seed、镜像build/pull或自动SQL重试。 | `erp-incremental-start-poll-20261003-r2.json` |
+| 外网公开连接 | HTTP301、可信TLS login200、ping200；25资源均200且逐字节SHA同冻结候选，总560299字节，各实际源IP/端口及目标核DIRECT。 | `erp_external_https_health_20261003_r5.json`、`erp_incremental_public_assets_20261003_r1.json` |
+| 外网认证连接 | 实际受限测试账号登录、get_logged_user、A/B认证页面、带CSRF的POST退出均200；未写业务或输出凭据，不当作浏览器操作证明。 | `erp-authenticated-https-check-20261003-r4.json` |
+| 发布后OS只读 | dockerd PID353776，RSS38288KiB/Swap12836KiB；8个ERP task全RUNNING，原db及两个Redis的ID/PID/starttick保持。当前远程看板目标使用fixed_collector=true，飞哥采集器修正覆盖该调用方式。无Docker API、数据库读取或备份下载；此单次观察不计长期负载验收。 | `erp-post-release-os-readonly-20261003-r1.json` |
+| 本轮真实浏览器 | gpt-6-luna在已有认证会话中刷新A/B，两套分别打开销售客户档案、销售客户类型、订单客户、订单类型、订单要求；同QA公司查询均0条，10个新增弹层开后直接关闭，无业务保存。核客户档案两套16列、词典11/7列及当前可见字段；下方滚动区域、保存、删除/打印/导入、console/network/pageerror和截图证据未取得，不报全功能或零错误。 | `customer-order-release-gui-20261003-r3/report.md/json` |
+
+服务器私有路径为 `/opt/jifeng-erp-test/releases/4d71c35-source-r1/private-backup-r2/`，成功协调证明位于 `incremental-control-r2/`，原r1失败与空备份目录保留。全927范围含六个序列和`__global_search`；较早919张tab*/Auth范围不能等同本次完整物理范围。实际登录会写会话/活动表，恢复访问后的HTTP/GUI检查不作为全数据库内容保持证明。
+
+本轮外网363入口为235正式映射、11部分可用、99业务预览、13导航、5工具；“正式”映射数量不等于旧系统所有操作已正式验收。并发、历史迁移及全模块正式目标继续。
+
 ## 2026-10-03 订单类型与要求
 
 原站只读结构依据为`output/legacy-order-dictionaries-20261003-r1/report.md/json`；记录类型11列、要求7列及四字段空新增，未保存业务。A/B专用订单词典共用服务器API和组件；公司/类型、只读编号与简拼、UUID/摘要、版本及字段权限独立，不改原生Customer、SalesOrder或明细。旧必填未知，本系统名称非空为明确当前规则。简拼保持空值或历史原文，不引入猜测转换算法；旧简拼更新、删除、打印、旧编号和单据选择联动继续待完成。
