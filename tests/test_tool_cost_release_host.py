@@ -1085,6 +1085,33 @@ class HostScopeTests(unittest.TestCase):
                 with self.assertRaises(H.HostError):
                     H.data_gate(rows, baseline)
 
+    def test_data_mount_order_is_ignored_but_complete_source_and_rw_identity_is_preserved(
+        self,
+    ):
+        baseline = container_fixture()
+        baseline["db"]["mounts"].append(
+            {
+                "Type": "bind",
+                "Source": "/owned/db-secret",
+                "Destination": "/run/secrets/db",
+                "RW": False,
+            }
+        )
+        rows = copy.deepcopy(baseline)
+        rows["db"]["mounts"].reverse()
+        original_rows, original_baseline = copy.deepcopy(rows), copy.deepcopy(baseline)
+        H.data_gate(rows, baseline)
+        self.assertEqual(rows, original_rows)
+        self.assertEqual(baseline, original_baseline)
+        for field, value in (("Source", "/foreign/db-secret"), ("RW", True)):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(rows)
+                changed["db"]["mounts"][0][field] = value
+                with self.assertRaisesRegex(
+                    H.HostError, "data_container_identity_changed"
+                ):
+                    H.data_gate(changed, baseline)
+
     def test_secret_command_output_is_only_retained_as_hashes(self):
         receipts = []
         coordinator = H.Coordinator(

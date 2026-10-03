@@ -424,6 +424,11 @@ def source_mounts(rows, source, status):
 
 
 def data_gate(rows, before=None):
+    def ordered_mounts(row):
+        value = dict(row)
+        value["mounts"] = sorted(row["mounts"], key=lambda mount: mount["Destination"])
+        return value
+
     for name in DATA:
         row = rows[name]
         require(
@@ -434,7 +439,10 @@ def data_gate(rows, before=None):
         )
     require(rows["db"]["health"] == "healthy", "database_health")
     require(
-        before is None or all(rows[name] == before[name] for name in DATA),
+        before is None
+        or all(
+            ordered_mounts(rows[name]) == ordered_mounts(before[name]) for name in DATA
+        ),
         "data_container_identity_changed",
     )
 
