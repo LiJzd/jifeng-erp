@@ -1,5 +1,25 @@
 # 验证记录
 
+## 2026-10-03 工具费用并发与新发布演练准备
+
+新建自有 GUI／并发副本时，实际采集完整 932 对象的 engine、六条 sequence 状态及六类元数据，定向安装两空表后严格审计 934 对象；源完整 932 和配置保持。此 collector 没有补填历史 engine。新副本仅有合成费用／工具，原验收副本已清理；本次 GUI2 副本现也已定向清理，独立发布演练副本仍保留。
+
+并发 r1 两个独立原生审核进程最终一正式一草稿，但未捕获数据库等待，整次门失败保留；新只读核验确认唯一生效来源及财务不变。独立仅 SELECT FOR UPDATE 实验捕获真实费用 PRIMARY／X 锁等待并全部回滚，九张相关业务表及配置保持。r1 未捕获等待的唯一原因无法从现存日志确定，不推定为缓存问题。
+
+并发 r2 使用新的独立合成费用和两新草稿，没有重放 r1 或取消已有分摊。连接 1984 实际等待连接 1983 的费用 PRIMARY／X 行锁，采集实际 waits／transactions／processlist 后才释放首会话。第一笔提交成功；第二笔 UniqueValidationError 后回滚，独立读取确认一正式、一草稿、只有一个 active source，两个 UUID 保留；费用来源及原生 JE／GL／PLE 事实完全一致。原源 932 对象、源／副本配置保持。证据：`tool-cost-concurrency-20261003-r2`，失败历史 `r1`、独立只读 `tool-cost-concurrency-inspect-20261003-r1` 和 `tool-cost-lock-inspection-20261003-r1`。
+
+本机 Git 候选包 `5b49bac` 已完整核验 572 文件、33 主资源、最小 Git 身份、两新 DocType 定义及精确 hooks 增量；归档 SHA256 `b0dcbadcc80744437a24b2192274d82a1a1225398e343b1210722d9b53ad7c2b`，尚未上传。新 native 助手本地提交 `4ba85a6`：Windows 32 门通过／10 POSIX 门跳过，WSL 独立 unittest 的 21 native 门全部通过，Ruff／编译通过。最新生产只读预检 r2 确认 `2ca4358`／八服务／五应用只读旧挂载／八原生依赖 SHA 一致，SSH 前中后实际 DIRECT；r1 远端检查失败保留，两次均未部署、重启或写业务。
+
+2026-10-04：独立自有发布副本实际完成 before／apply／verify／cache 四阶段，每阶段仅执行一次。三 MyISAM 读锁贯穿四部件备份及验证，完整 932 物理对象、六条序列与配置均核；仅新增两个空 DocType，934 对象及原权限、旧数据和其余元数据保持。实际 33 资源、四个禁止共享钩子、作用域 DocShare 钩子及父表单缓存通过。root 新连接独立重读四份阶段收据、完整备份 CRC／文件／配置／序列和实际 934 对象，均一致；原隔离站 fresh 932 和配置保持。证据 `tool-cost-native-release-qa-20261003-r2/four-phase-result.json` 和 `tool-cost-native-release-independent-20261003-r1/result.json`。演练库及备份保留；无外网或共享 bench 源码修改。
+
+准备 r1 在任何目录或数据库创建前因捕获输出不支持 faulthandler.fileno 失败；新 r2 已创建自有副本后只读核验的工作目录不符而失败，未运行四阶段。新只读核对实际状态后才首次继续四阶段，没有重放建库／导入／阶段；r3 只修正汇总读取 list／map 的表示，未写数据库。失败历史保留。
+
+宿主协调器固定 prepare→quiesce→before→apply→verify→cache→restore→start，独占阶段标记及完整收据链；五应用只读挂载切换、三数据服务身份保持、原配置字节恢复。启动命令仅一次，60 秒只读服务／ping 采样；未知结果先检查，禁止重放或自动回滚。Windows host 31 门通过／2 Linux FS 门跳过，WSL 33 门全部通过；root 联合 host/native/audit 63 门通过／12 POSIX 门跳过，WSL host 33 门通过；Ruff 及 Python 3.6 AST 通过。冻结 audit 的 removeprefix 不能在宿主 3.6 执行，host 完整核对固定 572 文件和 33 资源，完整语义 audit 在原生容器执行。外网实际协调器尚未执行，不能由模型或本机四阶段推定外网切换完成。
+
+完整 GUI 本轮未登录或保存：既有 CLI 未安装，CUA Chrome 连接失败；IAB 可显示登录页，专用 AgentDock 浏览器启动无可用 session／超时。Computer Use 初始化可用，正常创建新窗口后，读取新窗口遭自动审批以无法可靠判断 URL 拒绝；停止 GUI，没有输入密码、费用 POST 或表单审核。报告 `output/playwright/tool-cost-gui2-20261003-r1/GUI-report.md`。不能由并发、HTTP 或发布模型门认定完整 A/B GUI／全模块正式交付。
+
+GUI2 清理 r1 的只读连接校验错误要求运行中测试站 maintenance=1，在任何停服／删除之前拒绝；失败记录保留。新 r2 明确区分源 1／测试站 0 并重置连接上下文，完整核对 934 对象结构／索引和六类元数据保持，停止精确所属 PID 及 18008 端口，恢复原测试配置字节后仅删除自有 DB／user／site。原源 fresh 932 与配置完全一致，dump／回执／失败记录均保留。证据 `tool-cost-gui2-cleanup-20261003-r2/result.json`。
+
 ## 2026-10-03 本地工具费用归集与结清验收（未发布）
 
 模具、版种和建模档案共用 `tool_cost_sources` 及“实际费用”组件。整笔已提交费用须明确分摊、准确核平；金额使用十进制文本，客户端精确计算，参考价不参与记账。UUID 收据只创建草稿，原生 Form 审核后生效；未知写入结果保留 UUID 并只 GET 核对，不重放。明确原生权限/校验 4xx 拒绝解除核对状态，清空旧金额和来源版本后允许重新查询、填写和关闭。查询或权限失效会清旧结果，迟到 GET 不恢复旧金额。
