@@ -1,0 +1,19 @@
+.jfe-salary-history { display: flex; flex-direction: column; height: 100%; padding: 10px; gap: 8px; background: var(--card-bg, #fff); color: var(--text-color, #263238); }
+.jfe-salary-history-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.jfe-salary-history-toolbar input, .jfe-salary-history-toolbar select, .jfe-salary-history-pager select { padding: 5px 7px; border: 1px solid var(--border-color, #d1d8dd); border-radius: 3px; background: var(--control-bg, #fff); color: inherit; }
+.jfe-salary-history-company { min-width: 180px; width: 200px; }
+.jfe-salary-history-company .form-group { margin-bottom: 0; }
+.jfe-salary-history-toolbar label { display: inline-flex; align-items: center; gap: 5px; margin: 0; white-space: nowrap; }
+.jfe-salary-history-note, .jfe-salary-history p { margin: 0; }
+.jfe-salary-history-note { color: var(--text-muted, #626e77); }
+.jfe-salary-history-scroll { flex: 1; min-height: 120px; overflow: auto; border: 1px solid var(--border-color, #d1d8dd); }
+.jfe-salary-history table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
+.jfe-salary-history th, .jfe-salary-history td, .jfe-salary-history-detail-table th, .jfe-salary-history-detail-table td { padding: 6px 9px; border: 1px solid var(--border-color, #d1d8dd); white-space: nowrap; }
+.jfe-salary-history th { position: sticky; top: 0; background: var(--subtle-fg, #f4f6f7); }
+.jfe-salary-history tbody tr:hover { background: var(--subtle-fg, #f4f6f7); }
+.jfe-salary-history tbody tr:focus { outline: 2px solid var(--primary, #2480ff); outline-offset: -2px; }
+.jfe-salary-history-pager { display: flex; align-items: center; gap: 10px; }
+.jfe-salary-history-column { display: inline-flex; gap: 5px; margin: 6px 12px 6px 0; }
+.jfe-salary-history-totals { display: grid; grid-template-columns: max-content 1fr; gap: 6px 15px; }
+.jfe-salary-history-totals dd { margin: 0; }
+.jfe-salary-history-detail-table { width: 100%; margin-bottom: 15px; border-collapse: collapse; }

@@ -155,7 +155,7 @@ const JIFENG_LIVE_ROUTES = {
 };
 
 // Server-backed entry whose available operations remain explicitly limited.
-const JIFENG_PARTIAL_ROUTES = { 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
+const JIFENG_PARTIAL_ROUTES = { 工资: { 历史: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
 	销售: { 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
 
 const JIFENG_LIVE_CATALOGS = {
@@ -164,7 +164,7 @@ const JIFENG_LIVE_CATALOGS = {
 };
 
 const JIFENG_LIVE_PAGES = {
-	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers" },
+	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers", 历史: { salaryHistory: true } },
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
 		算料汇总: { name: "jifeng-order-material-workbench", mode: "summary" } },
 	权限: { 权限管理: "permission-manager" },
@@ -271,8 +271,7 @@ const JIFENG_LIVE_REPORTS = {
 		部门进度: "Jifeng Department Progress", 计划图片: "Jifeng Production Picture",
 		工序损耗: { name: "Jifeng Job Card Detail", filters: { only_loss: 1, approval: "已提交" } },
 		损耗汇总: { name: "Jifeng Production Progress", filters: { only_loss: 1 } } },
-	工资: { 工资分析: "Jifeng Wage Analysis", 当月分析: "Jifeng Wage Analysis",
-		历史: "Jifeng Wage Analysis", 历史分析: "Jifeng Wage Analysis", 人员查询: "Jifeng Personnel Roster" },
+	工资: { 工资分析: "Jifeng Wage Analysis", 当月分析: "Jifeng Wage Analysis", 人员查询: "Jifeng Personnel Roster" },
 	人事: { 人事报表: "Jifeng Personnel Roster" },
 	发镀: { 原料发退台账: "Jifeng Subcontracting Material Ledger", 电镀明细: "Jifeng Subcontracting Receipt Ledger", 电镀报表: "Jifeng Subcontracting Progress",
 		电镀跟踪: "Jifeng Subcontracting Progress" },
@@ -409,6 +408,12 @@ class JifengLegacyWorkspace {
 		}
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
+			if (livePage.salaryHistory) {
+				if (!this.formalBridge || !window.JifengSalaryHistory) {
+					frappe.msgprint(__("工资历史页面未能加载，请刷新后重试。")); return;
+				}
+				this.formalBridge.open({ title: name, module: moduleName, kind: "page", salaryHistory: true, availability: "partial" }); return;
+			}
 			const route = typeof livePage === "string" ? [livePage] : [livePage.name, livePage.mode];
 			if (this.formalBridge) {
 				this.formalBridge.open({ title: name, module: moduleName, kind: "page", route });

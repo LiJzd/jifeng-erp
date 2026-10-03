@@ -10,7 +10,7 @@ class Element {
 }
 let route = "jifeng-legacy";
 const messages = [], confirmations = [];
-const window = { addEventListener() {}, removeEventListener() {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {}, JifengCustomerArchive: class {}, JifengOrderDictionary: class {}, JifengPlatingColor: class {}, JifengOrderOperations: class {} };
+const window = { addEventListener() {}, removeEventListener() {}, JifengSalaryHistory: class {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {}, JifengCustomerArchive: class {}, JifengOrderDictionary: class {}, JifengPlatingColor: class {}, JifengOrderOperations: class {} };
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
@@ -93,6 +93,10 @@ assert.equal(dispatch(Modern, find("订单", "镀色"))[0].spec.doctype, "Jifeng
 assert.equal(shared.availability("订单", "工序"), "partial");
 assert.equal(dispatch(Modern, find("订单", "工序"))[0].spec.orderOperations, true);
 assert.equal(dispatch(Modern, find("订单", "工序"))[0].spec.doctype, "Jifeng Order Operation");
+assert.equal(shared.availability("工资", "历史"), "partial");
+assert.equal(dispatch(Modern, find("工资", "历史"))[0].spec.salaryHistory, true);
+assert.equal(shared.availability("工资", "历史分析"), "preview", "old departmental/group/operation charts cannot be the wage report");
+assert.equal(dispatch(Modern, find("工资", "历史分析"))[0].action, "tab");
 
 const navigation = Workspace => {
 	const workspace = Object.create(Workspace.prototype); workspace.activeTab = () => ({ kind: "home" });

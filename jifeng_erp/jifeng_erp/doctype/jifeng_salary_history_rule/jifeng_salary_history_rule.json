@@ -1,0 +1,32 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Salary History Rule",
+ "module": "Jifeng ERP",
+ "autoname": "format:JF-SAL-RULE-{#####}",
+ "is_submittable": 1,
+ "track_changes": 1,
+ "allow_rename": 0,
+ "allow_import": 0,
+ "search_fields": "company,salary_component,parentfield,effective_from,bucket",
+ "field_order": ["company", "salary_component", "parentfield", "effective_from", "bucket", "classification_mode", "extra_bucket", "publication_section", "publication_reason", "published_by", "published_at", "historical_publication", "binding_key"],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "salary_component", "fieldtype": "Link", "label": "准确工资项目", "options": "Salary Component", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "parentfield", "fieldtype": "Select", "label": "工资明细类型", "options": "earnings\ndeductions", "reqd": 1, "description": "选择收入或员工扣款；公司承担项目不进入这两类。"},
+  {"fieldname": "effective_from", "fieldtype": "Date", "label": "生效日期", "reqd": 1, "in_list_view": 1, "description": "按工资条保存的结束日期选择最近已发布版本。后续版本仅能追加未来未使用期间。"},
+  {"fieldname": "bucket", "fieldtype": "Select", "label": "归入工资列", "options": "basic\ntime\npiece\nhousing\nfull_attendance\nmeal\ntransport\nnight_snack\novertime\nintroduction\nassessment\nother_earning\nutilities\nsocial_insurance\nfine\nloan\nretained_pay\naccommodation\nother_deduction", "reqd": 1, "in_list_view": 1, "description": "明确工资项目保存金额归入哪一列；不能按项目名称猜测或重算工资。"},
+  {"fieldname": "classification_mode", "fieldtype": "Select", "label": "归类依据", "options": "component\nwage_breakdown", "default": "component", "reqd": 1, "description": "按工资项目直接归列，或沿准确来源拆分计件、计时和附加费。按来源拆分时请选择其他收入，并明确附加费归入哪一列。"},
+  {"fieldname": "extra_bucket", "fieldtype": "Select", "label": "附加费归入工资列", "options": "\nbasic\ntime\npiece\nhousing\nfull_attendance\nmeal\ntransport\nnight_snack\novertime\nintroduction\nassessment\nother_earning", "depends_on": "eval:doc.classification_mode == 'wage_breakdown'", "mandatory_depends_on": "eval:doc.classification_mode == 'wage_breakdown'"},
+  {"fieldname": "publication_section", "fieldtype": "Section Break", "label": "发布记录"},
+  {"fieldname": "publication_reason", "fieldtype": "Small Text", "label": "首次历史分类依据", "read_only": 1, "no_copy": 1},
+  {"fieldname": "published_by", "fieldtype": "Link", "label": "发布人", "options": "User", "read_only": 1, "no_copy": 1},
+  {"fieldname": "published_at", "fieldtype": "Datetime", "label": "发布时间", "read_only": 1, "no_copy": 1},
+  {"fieldname": "historical_publication", "fieldtype": "Check", "label": "明确发布首次历史分类", "read_only": 1, "no_copy": 1},
+  {"fieldname": "binding_key", "fieldtype": "Data", "label": "唯一绑定", "unique": 1, "read_only": 1, "hidden": 1, "no_copy": 1}
+ ],
+ "permissions": [
+  {"role": "HR User", "read": 1, "select": 1},
+  {"role": "HR Manager", "read": 1, "select": 1, "create": 1, "write": 1, "submit": 1},
+  {"role": "System Manager", "read": 1, "select": 1, "create": 1, "write": 1, "submit": 1}
+ ]
+}
