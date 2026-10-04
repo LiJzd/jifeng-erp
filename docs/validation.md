@@ -1,5 +1,19 @@
 # 验证记录
 
+## 2026-10-04 库存持久夹具 r7、两版GUI与独立保护通过（未发布）
+
+消费后的 r5 保持 failed：普通库存七门通过，提交前实际拒绝新用户的原生 Permission Log，未尝试 commit，fresh935完整回滚及结构／索引／六sequence／既有21夹具／文件／空队列保护通过。原生 User 和公司 User Permission 各产生一条 Added 权限日志；r6按原生字段构造期望、精确核对两条日志后，又因档案编号的计数来源漏算而拒绝，同样未尝试 commit 并完整回滚。原生 `format:JF-INV-P-{YYYY}-{#####}` 将每个括号单独解析，数字段使用空字符串 Series key；没有改原生命名逻辑。
+
+fresh r7经178源 pins的实际Linux只读检查，root差异审阅及Luna独立只读核对后，只执行一次并通过。七门使用普通 Stock Manager＋Stock User、库存 `in_test=false`；四张原生已提交凭证与两条档案保留。提交前及fresh连接后完整来源审计一致：准确两条权限日志、一个通知设置及四个通知类型、两条档案连续编号和三个计数器增量；既有行除原生仓库区间及精确单号计数外保持。935结构／索引／六sequence、21既有夹具、私有／公开文件及实际空队列0保持。原生唯一显式 commit 成功并fresh回读确认；没有worker消费，未修改原库、旧owned库或外网。结果 `output/inventory-tracking-gui-fixture-20261004-r7/result.json`，helper SHA `73ddb1d0376aa27dc36de272766d1f5fe1d6f8757b66f51a26ba4618b9703b5f`、manifest SHA `c1e987f37f96769884b5b2a5695e13e775b3c1525373a414360f786b7e2e2684`。旧缓存四任务确实丢失的边界仍保持，不能据新队列0声称恢复。
+
+会话桥 r2真实本机密码登录、独立认证用户检查及一次HttpOnly会话交接通过，未输出凭据／SID，监听已关闭；`output/inventory-tracking-session-handoff-20261004-r2/result.json`。这是后端登录与正常导航交接证明，不是GUI密码输入证明。Luna随后完成A/B物料／材料只读列表、图片、编号右侧档案、库存下方流水，数量／金额一致，历史零仓保留，参考价／单重／换算值与原生库存单位和估价分别展示，未知总重留空。侧栏关闭／Escape保留父条件、页码／条数和触发焦点；改搜索立即清旧结果，手动查询恢复。B实际打开Item／Warehouse并经面包屑返回，保留条件、清行并重新查询；A该表单回航未单独实测。B正常UI注销后确认登录页。匿名报告 `output/inventory-tracking-local-gui-20261004-r1/report.md` SHA `23e00c3d5943c338e390eefb53a1ba6b4599355da1a9b5be49d7b91fbc5d7075`。清除X、旧列筛选／导出和旧估价／重量规则仍未补证。
+
+本批独立AFTER唯一一次实际执行通过：原932、旧owned935的完整结构／索引／行／六sequence、四配置、旧两文件树及读取时钟与BEFORE相同。`output/inventory-tracking-gui-independent-20261004-r1/after/result.json` SHA `8acaaa221d480c646fdd5fef234241c680fa9057001a9a781714b1ba3aad4517`；没有扩大为原库物理附件、生产异步worker或财务并发证明。
+
+发布控制器r3仅离线准备。独立审阅在联网前查到预检的常量选择漏依赖，r3 driver未执行；fresh r4仅修正未用常量并以6项纯内存回归验证。root实际只执行r4只读预检一次，27次实际SSH链均DIRECT，326,492字节stdin批量数据发送前／分块／接收后核系统代理及TUN；未上传业务包、启动发布阶段或切换。r4在既有backend原生预检返回失败后停止，完整原生失败JSON未随宿主错误带回，不能声称整次预检成功／实际角色已核。失败与DIRECT证据留本地受限输出。
+
+fresh r5只增加有界私密原生失败流和独立AFTER检查，经9项聚焦回归及root差异审阅后执行一次。29次实际SSH DIRECT、330,075字节stdin；实际原生失败为 `PreflightError: current_site_writer_flags`，132字节完整JSON、stderr0，无截断，尚未执行新tracking API或完成岗位核对。AFTER的八服务仍运行及DB健康、四Compose、完整旧源码／配置／原发布回执及全部保护文件核对通过；全八服务原始身份字典前后比较不等，原因尚待查证，不能说身份完全保持，也不猜是挂载顺序。失败继续保持failed，原生流仅本地受限ACL保存。记录 `output/inventory-tracking-release-20261004-r5-readonly-preflight.json`；业务112ad包、宿主／native r2及外网a758／5b保持，发布阶段仍未开始。
+
 ## 2026-10-04 库存本机运行恢复与独立发布包（尚未发布）
 
 本机七文件 stage 已实际发生；该次首次登录检查2秒超时，不能报整次成功。fresh只读 readiness 随后核登录、40资源完整字节及935对象与stage前相等。数量口径已澄清：443为应用模块文件，候选全树612，另169文件保持原clone归档；不是全树只有443。库存GUI夹具r1误用模块口径、r2遇旧进程缺失，均在OP／Frappe／DB初始化前停止，没有库存或账号提交。
