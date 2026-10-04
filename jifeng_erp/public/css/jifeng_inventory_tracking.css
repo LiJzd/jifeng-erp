@@ -1,0 +1,23 @@
+.jfe-inventory-tracking { height: 100%; display: flex; flex-direction: column; padding: 14px; gap: 8px; overflow: auto; }
+.jfe-inventory-tracking-toolbar, .jfe-inventory-tracking-modes, .jfe-inventory-tracking-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.jfe-inventory-tracking-toolbar > input { min-width: 180px; flex: 1; padding: 7px; }
+.jfe-inventory-tracking-filter { min-width: 160px; max-width: 240px; flex: 1; }
+.jfe-inventory-tracking-filter .form-group { margin-bottom: 0; }
+.jfe-inventory-tracking-note, .jfe-inventory-tracking-status, .jfe-inventory-tracking-scope { margin: 0; }
+.jfe-inventory-tracking-note { color: var(--text-muted, #6b7280); font-size: 12px; }
+.jfe-inventory-tracking-scroll { overflow: auto; min-height: 120px; }
+.jfe-inventory-tracking table { border-collapse: collapse; width: max-content; min-width: 100%; }
+.jfe-inventory-tracking th, .jfe-inventory-tracking td { border: 1px solid var(--border-color, #d9dfe6); padding: 7px 9px; white-space: pre-wrap; min-width: 90px; }
+.jfe-inventory-tracking th { position: sticky; top: 0; background: var(--subtle-fg, #f3f5f8); }
+.jfe-inventory-tracking-sources { display: flex; gap: 4px; white-space: nowrap; }
+.jfe-inventory-tracking-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.jfe-inventory-tracking-cards article { border: 1px solid var(--border-color, #d9dfe6); border-radius: 6px; padding: 12px; }
+.jfe-inventory-tracking-cards h3 { font-size: 14px; overflow-wrap: anywhere; }
+.jfe-inventory-tracking-image { min-height: 100px; display: grid; place-items: center; }
+.jfe-inventory-tracking-image img { max-height: 180px; max-width: 100%; object-fit: contain; }
+.jfe-inventory-tracking-cards dl { display: grid; grid-template-columns: 78px minmax(0, 1fr); font-size: 12px; gap: 4px 8px; }
+.jfe-inventory-tracking-cards dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jfe-inventory-tracking-pager input { width: 70px; }
+.jfe-inventory-tracking [hidden] { display: none !important; }
+@media (max-width: 1000px) { .jfe-inventory-tracking-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .jfe-inventory-tracking-cards { grid-template-columns: 1fr; } }

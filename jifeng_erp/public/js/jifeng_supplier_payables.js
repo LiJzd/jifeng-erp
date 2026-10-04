@@ -19,6 +19,7 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 			df: { fieldname, fieldtype, label: __(label), ...(options ? { options } : {}),
 				reqd: fieldname !== "payable_account", onchange: action } });
 		control.$input?.on?.("input.jifeng-supplier-payables change.jifeng-supplier-payables", action);
+		control.$link_clear?.on?.("click.jifeng-supplier-payables", action);
 		return control;
 	}
 	build() {
@@ -204,8 +205,9 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 		if (this.disposed) return;
 		this.disposed = true; this.revision++; this.loading = false;
 		const request = this.request; this.request = null; request?.abort?.(); this.clearResult();
-		for (const control of [this.companyControl, this.supplierControl, this.dateControl, this.accountControl])
-			control.$input?.off?.(".jifeng-supplier-payables");
+		for (const control of [this.companyControl, this.supplierControl, this.dateControl, this.accountControl]) {
+			control.$input?.off?.(".jifeng-supplier-payables"); control.$link_clear?.off?.(".jifeng-supplier-payables");
+		}
 		this.queryButton.disabled = true; this.host.replaceChildren(); this.host.classList.remove("jfe-supplier-payables");
 	}
 };

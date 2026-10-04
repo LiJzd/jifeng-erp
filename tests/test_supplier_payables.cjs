@@ -32,6 +32,9 @@ function harness(defaultCompany = "集沣") {
 			input(value) { this.typed = value; for (const action of this.events.values()) action(); } };
 		control.$input = { val: () => control.typed, on: (events, action) => control.events.set(events, action),
 			off: () => control.events.clear() };
+		control.clearEvents = new Map();
+		control.$link_clear = { on: (events, action) => control.clearEvents.set(events, action), off: () => control.clearEvents.clear() };
+		control.clear = () => { control.value = control.typed = ""; for (const action of control.clearEvents.values()) action(); };
 		controls.push(control); return control;
 	} } }, call(options) {
 		let resolve, reject;
@@ -61,6 +64,17 @@ async function populate(model, data = response()) {
 }
 const tests = [];
 function test(name, body) { tests.push([name, body]); }
+
+test("native Link clear removes amounts before blur and rejects pending replies", async () => {
+	for (const field of ["companyControl", "supplierControl", "accountControl"]) {
+		const m = await make(); await select(m); await populate(m);
+		m.view[field].clear(); assert.equal(m.view.rows.length, 0); assert.equal(m.view.tbody.children.length, 0); assert.equal(m.calls.length, 1);
+		await m.view.companyControl.set_value("集沣"); await select(m);
+		const pending = m.view.query(), request = m.calls.at(-1); m.view[field].clear();
+		assert.equal(request.aborted, true); request.resolve(response()); await pending; assert.equal(m.view.rows.length, 0);
+		m.view.destroy(); assert.ok(m.controls.every(c => c.clearEvents.size === 0));
+	}
+});
 test("native controls require explicit supplier/date and company-scoped payable account", async () => {
 	const model = await make();
 	assert.equal(model.calls.length, 0); assert.equal(model.view.dateControl.get_value(), "");

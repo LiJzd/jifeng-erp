@@ -1,5 +1,27 @@
 # 验证记录
 
+## 2026-10-04 库存跟踪与采购应付原生界面准备（未发布）
+
+旧站补查修正此前“物料跟踪0条”的证据边界：初始页面为空，点击空关键词查询实际返回物料5121条、材料202条。两类列不同；物料15列，材料17列，末端确切为“旧编号／负责／区域／供应商”。材料图片实际四列、逐行排列，100／100／2分页，卡片为图片、仓库、编号链接、库存链接。大小类列菜单实见排序、文本筛选及勾选值清单，本次未应用。仅两条物料非零行的金额与画面库存×单价相符，重量为空，不能推广库存估价或重量算法。证据 `output/legacy-material-tracking-gui-20261004-r1/report.md`，未落业务明细或行截图。
+
+新 `inventory_tracking.query_tracking` 与共享界面已接回物料／材料原“跟踪”入口，保留各自列顺序、关键词查询、列表／图片、100条分页及四列卡片。库存数量／单价／金额采用原生截止日 StockBalance，不使用档案参考价、展示单位或换算值；真实库存单位明确提示，重量保留档案原值，总重量算法未知留空。只输出真实库存历史的 Item／叶仓组合，保留历史零余额；没有库存流水的档案不虚构仓库或零余额。服务器完整核档案／Item／仓库／贡献SLE／图片绑定与权限，并在原生计算后重查；这不是事务原子快照证明。来源按钮打开准确档案、Item或Warehouse，离开／筛选变化／销毁清空数据并拒迟到响应，返回保留条件但须手动重查。
+
+root实际执行26项Python与13项JS DTO／DOM模型、A/B366菜单派发／21侧栏动作、2项资源指纹检查及Ruff／Node语法检查通过。随后只读审计实际原生 Link.clear 仅 `.val('').focus()`，内存模型复现仓库清空却残留旧库存；现跟踪／采购／应付均补准确 `$link_clear` click监听和销毁解绑，14／25／20项模型通过，覆盖已加载数据立即清除、无自动请求、迟到响应不能恢复及释放监听。候选实际 registry 为366入口：233 formal映射／21 partial／94 preview／13 navigation／5 tool；资源40项（15 CSS／25 JS）。两个旧跟踪入口仅提升为 partial：表头筛选、导出、原卡片编号／库存链接目标、旧估价公式、无库存历史档案显示、原生库存实测与GUI仍未完成，不据模型或菜单存在认定旧模块正式可用。外网仍a75848f界面／5b49bac业务、363入口／33资源。
+
+采购／应付GUI准备r1唯一一次执行退出1，在原生 Item.insert 默认值校验失败，尚未提交新Supplier／Item或启动HTTP。独立只读诊断确认Company成本中心及选定账户公司／叶节点均正确；实际错误来自原生 `__default.default_warehouse` 自动补入另一公司的仓库，不能归因于成本中心。r1已stage的7份候选／assets保留，不能重放。失败证据 `output/procurement-payables-runtime-setup-20261004-r1/result.json` 与两份只读diagnostic。fresh保护BEFORE已以独立连接核原932／旧owned935、四配置与旧两文件树保持，`output/procurement-runtime-independent-20261004-r2/before/result.json`；不扩大为原库物理附件证明。
+
+root随后唯一一次执行fresh r2退出0：实际原生默认化后全部ItemDefault公司链接、叶节点及币种准确核验；非SystemManager六角色＋Company UP账号正常原生insert／submit PO→PR→PI→PE，准确映射子行、GL／PLE及源读取通过，发票120／支付40／余额80。七条合成fixture仅持久到新一次性DB，非库存收货无SLE，不能计为库存验收。复用r1已stage的7文件与assets，没重复复制或刷新缓存；原生／后端pins及四保护配置保持。仅新site maintenance0／localhost host／未开SocketIO端口18765，新站点配置SHA `fb790fb07b9ec4f58e28a7c46843b11bfbd42e222bd99e58ce68396ac986d299`，真实login GET及6资源字节通过，WSGI仅127.0.0.1:18764，PID145338／start15835969供Luna只读GUI。helper SHA `945c7fcabd87e7b38c323c425ab6f7736eaab20ce0f496a2ab77d63b56af4058`、manifest SHA `e4eefb6232fc99a84d8f729cd719e5b80fb1366343876a7f47d4481417c38741`，实际回执 `output/procurement-payables-runtime-setup-20261004-r2/result.json`。CUA私密变量／剪贴板交接未通，未填密码；随后一次性会话桥实际正常原生HTTP密码登录＋独立身份GET及一次302／HttpOnly Cookie发送通过，桥已退出，SID仅内存、不打印或落盘。helper SHA `03b7efdc6ea67a9050238439b851476e82209eb9449256afa712ddbc6d52509e`、manifest SHA `e48e4a28d697a438e897cbe4d87b1f50bf8b57190938adc52b315fd00160ba3c`，`output/procurement-payables-session-handoff-20261004-r1/result.json`；不把后台登录／交接当成GUI密码输入或业务界面验收。冻结runtime仍是前批38资源，未包含当前Link.clear修复或新库存跟踪，需后续准确同步再复核。
+
+本批另唯一一次只读外网健康r6通过：登录页200（28,704字节）、ping200／pong；默认可信TLS验证＋IP SAN及两请求发送前／响应头／读完实际Clash连接链均DIRECT。只读代理／TUN状态，没有上传、服务器写入或ERP账号登录。结果 `output/erp_test_public_health_20261004_r6.json` SHA `17799464b6372f10903a8c8ef0ad23bf088a1c76887c5272b7189b8303fa06d7`；其credential_read=false限ERP／SSH，本机Clash控制器secret由既有helper内部读取而未输出，附clarification保留，不改已消费源／结果。不能扩大为本批已认证A/B或GUI验收，外网版本未切换。
+
+Luna实际r2 GUI已完成：A／B经材料采购核对各1单，完整PO→PR→PI→PE来源可见；实际打开A原生PO／PR（Completed）／PE（Submitted），B PO（Completed）及应付PI（Partly Paid）。A/B应付均1行120／40／贷项0／80，实际PI总额120／未付80；日期变化立即清空，切模块／标签及源单回航保持条件但清结果，重新查询可回读。正常浏览器通过会话桥进入两版；GUI密码输入未测。两版稳定控件没有可见清除X，未强行脚本点击，因此不算X的GUI证明。原生SocketIO18765未开，独立记录为QA环境边界；未业务保存／审核／导出下载。原report写在parent workspace，root完整读取后归档到预期 `output/procurement-payables-gui-20261004-r2`，保留原SHA `afc0580c5894e20eaf2d297f623b070a7811a57c141310e43b8b573708af510a`；reviewed `report.md` SHA `ada22277ef5e89023b086a62f1e69545b9bed27b04cc5e6add3fbb6096ff5aa3`，仅将“不读取标识”澄清为“报告不记录具体标识”，provenance记录，无新增GUI操作。
+
+随后root唯一一次执行两JS clear-stage退出0：精确原master／group身份、cwd、cmdline、uid核后仅SIGTERM，自有两文件原子替换；原生RedisWrapper前缀核后只DEL自有app_hooks单key（实际1），其余candidate、111源码／配置pins及七资产realpath保持，同WSGI仅127.0.0.1:18764新master146687／start16016854。login及两新JS实际完整字节通过，未直连DB或改业务／schema／权限／密码，旧d20／5c40为未执行draft。实际helper SHA `537913f7f4ff4219119bf94bd82f10d9fd0c22e5882d985e16bb6e15758e385e`、manifest SHA `d65c1085fe792025629bd8fdef3d9e3d7fb171e1c19144fe15107811a5564bae`，结果 `output/procurement-payables-clear-stage-20261004-r1/result.json`；不是GUI加载证明，Luna后续重载另核。冻结runtime仍38资源，不含新跟踪。
+
+fresh独立AFTER实际通过：原932、旧owned935全结构／索引／行／六序列及四配置与fresh BEFORE相同，旧两文件树完整字节、目录和读取时钟保持。`output/procurement-runtime-independent-20261004-r2/after/result.json`，helper SHA `5c07b8de642a8ff40c503380c37eb42b4a5568fe5cfb442c8975d948294d7214`；没有把新runtime七fixture／认证会话称为回滚，也不扩大为原库物理附件、财务并发或全模块验收。
+
+Luna在stage之后r3通过正常导航再入A/B（上一轮tab已不在列表，不能写成原tab重载）：同认证会话，采购均1单Completed、应付均1行120／40／0／80，两版改截止日立即清空、恢复条件重查回读。B正常Desk Logout后明确Sign In；A退出后reload／状态读取超时，未独立确认A登录页，不据旧标题判会话未退出，也没有重读凭据／再次登录。`output/procurement-payables-gui-20261004-r3/report.md` SHA `b86eab56e28f52c0792a4f72e2588e20b757784f529377124aa68cacac5c6a2a`。浏览器资源URL／字节没有采到，资源证明仅前段HTTP，不把r3叫新字节GUI证明；X仍不可见未测。r3只读及退出均在新runtime，独立AFTER时间点为stage后、r3完成前。当前本机server146687供后续验收保留；下一步新库存跟踪原生来源／GUI、旧列筛选与导出、图片链接回航及全模块缺口继续，外网未发布本批。
+
 ## 2026-10-04 采购履行、供应商应付界面与后台终态续接（未发布）
 
 本地 A/B 新增共用的只读“采购履行核对”（物料／材料）与“供应商应付核对”（财务）。采购按明确公司、供应商及采购单日期查询，关联收货／退货／委外／发票／付款保留完整来源日期和整凭证口径，同款不同子行与单位不合并；应付按明确截止日展示原生本币投影。数量／金额不由浏览器重新合计或分摊。两组件筛选变化、切走标签、路由离开或销毁时清空结果，原凭证通过准确 Form 回航；返回后重新查询权限。业务列分组，内部子行 ID／parent 字段和读取版本不显示，也不存浏览器业务数据。

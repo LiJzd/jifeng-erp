@@ -28,6 +28,7 @@ window.JifengProcurementFulfillment = class JifengProcurementFulfillment {
 			const control = frappe.ui.form.make_control({ parent, render_input: true,
 				df: { fieldname, label: __(label), fieldtype, options, onchange: () => this.syncScope() } });
 			control.$input?.on?.("input.jifeng-procurement change.jifeng-procurement", () => this.invalidate("条件已改变，请重新查询。"));
+			control.$link_clear?.on?.("click.jifeng-procurement", () => this.invalidate("条件已改变，请重新查询。"));
 			this.controls[fieldname] = control; toolbar.append(parent);
 		}
 		this.search = this.element("input"); this.search.type = "text"; this.search.maxLength = 140;
@@ -305,6 +306,8 @@ window.JifengProcurementFulfillment = class JifengProcurementFulfillment {
 	destroy() {
 		if (this.disposed) return;
 		this.disposed = true; this.revision++; this.detailRevision++; this.clearResults();
-		for (const control of Object.values(this.controls)) control.$input?.off?.(".jifeng-procurement");
+		for (const control of Object.values(this.controls)) {
+			control.$input?.off?.(".jifeng-procurement"); control.$link_clear?.off?.(".jifeng-procurement");
+		}
 	}
 };

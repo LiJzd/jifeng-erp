@@ -16,6 +16,8 @@ const frappe = { call(options) { let resolve, reject; const promise = new Promis
 	calls.push({ options, resolve: (message) => resolve({ message }), reject }); return promise;
 }, ui: { form: { make_control({ df }) { const handlers = {}, control = { value: "", df, handlers, get_value() { return this.value; },
 	$input: { on(events, callback) { for (const event of events.split(" ")) handlers[event.split(".")[0]] = callback; }, off() { control.detached = true; } },
+	$link_clear: { on(events, callback) { control.clearHandler = callback; }, off() { control.clearHandler = null; } },
+	clear() { this.value = ""; this.clearHandler?.(); },
 	set(value, notify = true) { this.value = value; if (notify) df.onchange(); } }; controls.push(control); return control; } } } };
 const window = {}, document = { createElement: (tag) => new Element(tag) };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_procurement_fulfillment.js"), "utf8"), {
@@ -62,6 +64,16 @@ async function main() {
 	await check("initial no automatic or unscoped query", async () => { const before = calls.length, bench = new window.JifengProcurementFulfillment(new Element(), {}); await bench.ready; await bench.query();
 		assert.equal(calls.length, before); assert.match(bench.status.textContent, /公司.*供应商/); assert.equal(bench.isDirty(), false); assert.equal(bench.getCloseBlock(), ""); });
 	const bench = await make();
+	await check("native Link clear removes list/details immediately without input/change and rejects late reads", async () => {
+		for (const field of ["company", "supplier"]) {
+			const view = await make(); await query(view); await detail(view); const before = calls.length;
+			view.controls[field].clear(); assert.equal(view.rows.length, 0); assert.equal(view.detail, null);
+			assert.equal(view.list.children.length, 0); assert.equal(view.detailHost.children.length, 0); assert.equal(calls.length, before);
+			view.controls[field].set(field === "company" ? "JF" : "SUP");
+			const pending = view.query(), call = calls.at(-1); view.controls[field].clear(); call.resolve([fixture()]); await pending;
+			assert.equal(view.rows.length, 0); view.destroy(); assert.ok(Object.values(view.controls).every(c => c.clearHandler === null));
+		}
+	});
 	await check("exact GET request and separate fresh details", async () => { bench.search.value = "PO-"; const call = await query(bench); assert.equal(call.options.type, "GET");
 		assert.equal(call.options.method, "jifeng_erp.procurement_fulfillment_workbench.query_procurement_sources");
 		assert.equal(JSON.stringify(call.options.args), JSON.stringify({ company: "JF", supplier: "SUP", from_date: "2026-10-01", to_date: "2026-10-31", search: "PO-" }));

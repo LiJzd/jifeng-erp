@@ -189,6 +189,10 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	mount(host, spec) {
+		if (spec.inventoryTracking) {
+			const workbench = new window.JifengInventoryTracking(host, spec.module, this);
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		if (spec.procurementFulfillment || spec.supplierPayables) {
 			const Component = spec.procurementFulfillment ? window.JifengProcurementFulfillment : window.JifengSupplierPayables;
 			const workbench = new Component(host, this, spec.module);
