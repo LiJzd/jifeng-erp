@@ -1,0 +1,17 @@
+{
+ "doctype": "DocType", "name": "Jifeng Report Artifact", "module": "Jifeng ERP",
+ "autoname": "hash", "allow_rename": 0, "allow_import": 0,
+ "track_changes": 0, "is_submittable": 0,
+ "field_order": ["state", "artifact_kind", "report", "prepared_report", "file", "source_artifact", "canonical_path_sha256", "receipt"],
+ "fields": [
+  {"fieldname": "state", "fieldtype": "Select", "label": "签收状态", "options": "Pending\nSealed", "reqd": 1, "read_only": 1},
+  {"fieldname": "artifact_kind", "fieldtype": "Select", "label": "产物类型", "options": "JSON\nCSV\nExport", "reqd": 1, "read_only": 1},
+  {"fieldname": "report", "fieldtype": "Data", "label": "准确报表标识", "reqd": 1, "read_only": 1, "search_index": 1, "ignore_xss_filter": 1},
+  {"fieldname": "prepared_report", "fieldtype": "Data", "label": "准确预生成报表标识", "read_only": 1, "search_index": 1},
+  {"fieldname": "file", "fieldtype": "Data", "label": "准确产物文件标识", "reqd": 1, "read_only": 1, "unique": 1},
+  {"fieldname": "source_artifact", "fieldtype": "Link", "label": "父 JSON 产物", "options": "Jifeng Report Artifact", "read_only": 1, "search_index": 1},
+  {"fieldname": "canonical_path_sha256", "fieldtype": "Data", "label": "实际文件路径校验", "reqd": 1, "read_only": 1, "search_index": 1},
+  {"fieldname": "receipt", "fieldtype": "Long Text", "label": "服务器来源签收", "reqd": 1, "read_only": 1, "hidden": 1, "print_hide": 1, "ignore_xss_filter": 1}
+ ],
+ "permissions": []
+}

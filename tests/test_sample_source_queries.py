@@ -319,7 +319,7 @@ class TestSampleSourceQueries(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "无法完整读取"):
             self.subject.get_submitted_linked_docs("Item", "ITEM")
 
-    def test_hooks_cover_exact_same_children_and_only_two_native_overrides(self):
+    def test_hooks_cover_exact_same_children_and_declared_native_overrides(self):
         tree = ast.parse((ROOT / "jifeng_erp/hooks.py").read_text(encoding="utf-8"))
         assignments = {node.targets[0].id: node.value for node in tree.body if isinstance(node, ast.Assign)
                        and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)}
@@ -331,6 +331,12 @@ class TestSampleSourceQueries(unittest.TestCase):
             "frappe.desk.form.linked_with.get": "jifeng_erp.sample_source_queries.get",
             "frappe.desk.form.linked_with.get_submitted_linked_docs":
                 "jifeng_erp.sample_source_queries.get_submitted_linked_docs",
+            "frappe.desk.query_report.run": "jifeng_erp.sample_source_report_output.run",
+            "frappe.desk.query_report.export_query": "jifeng_erp.sample_source_report_output.export_query",
+            "frappe.core.doctype.prepared_report.prepared_report.enqueue_json_to_csv_conversion":
+                "jifeng_erp.sample_source_report_output.enqueue_json_to_csv_conversion",
+            "frappe.core.doctype.prepared_report.prepared_report.get_reports_in_queued_state":
+                "jifeng_erp.sample_source_prepared_reports.get_reports_in_queued_state",
         })
 
 

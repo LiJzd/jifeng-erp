@@ -1,5 +1,29 @@
 # 验证记录
 
+## 2026-10-04 Prepared、文件与导出来源候选：20项实际校验通过（未发布）
+
+本地新增十份准确原生报表及其递归 Custom 引用的生成／消费保护：服务器登记完整贡献来源、权限、字段与定义快照，私有 JSON／CSV／Export 文件保存实际字节摘要；旧文件、原生拷贝及同字节普通附件别名每次消费均重新核对完整来源与父文件链。新增独立不可分享的 Jifeng Report Artifact 登记表，客户端不能写入、改绑或把登记结果当作授权。没有准确登记的旧范围附件拒绝重用，通过原生 Prepared 新建流程重新生成。前端按钮及请求失败后的加载状态清理、同次失败重试标识已有协议模型，尚未实际 GUI 验证。
+
+root 组合 r2 实际运行441项，440项执行通过、1项 Windows 实际 symlink 跳过、0失败；A29／B45／C39（38执行＋1跳过）／D23包含在该批。随后 D 增加原生独立15秒计时线程保护，当时24项 D 模型单独通过：只在准确范围的原生调用内暂时禁止 Prepared 自动切换，finally还原内存对象，避免另线程连接／提交越过本线程回滚。13项 Node 请求／重生成协议模型、Ruff及语法检查通过；不把两轮模型相加成一轮完整矩阵。
+
+后续独立源审确认两处实际契约问题并已修：CSV错误要求PR创建者本人，改为仅JSON创建保留owner门，其他显式PR消费须准确原生read／DocShare首尾／完整即时binding，复用B原生permission guard防复合钩子递归；源与同PR父JSON门保持。D两个worker分类前导异常曾落在try外，现纳入完整rollback／未知回滚sentinel，已确认ordinary后仍直接走原生异常路径。新A33／D28模型覆盖非创建者正门、原生拒绝／中途撤权及分类阶段清理；root fresh组合r3实际450项，449执行通过／1 symlink跳过／0失败，11.545秒，当前源码及测试pins随 `output/report-artifact-models-20261004-r3.json` 保存。r1原生artifact准备已冻结但未执行，保留；修后改用fresh r2，不能把准备清单当作原生通过。
+
+owned schema r1 已实际首次安装，934→935对象只增加一张空表及准确DocType／8字段；旧业务数据、结构、索引、六编号序列、非目标元数据及四份配置保持。DDL真实持久存在，不能声称回滚回934。原生 reload_doc 的目标元数据／controller缓存副作用已记录；随后只显式删自有 app_hooks 单键并核实际 Report／Prepared Report／File／Artifact controller及新RPC hook。不是全局缓存刷新、迁移、种子或角色授权。证据为自有 `report-artifact-schema-20261004-r1/` 及 `output/report-artifact-hook-cache-20261004-r1/`。
+
+本机 candidate 同步九份运行文件，后只更新 D 一份计时线程修复；无网络传输或外网切换。root fresh-before独立只读核原源932／自有935／四配置一致，自有新基线摘要 `9e1e43d5b9c6863fd496e95ab3ae1c436bca3f42bf6620e3b80bef5029af9d7e`，原源摘要仍 `ce485ec7ffe165315459fa932405d5412001e5a78318fc59bc5c20d87b6e3676`。证据 `output/report-artifact-independent-before-20261004-r1/`。模型和框架加载本身不证明实际文件、导出或原生回滚流程。
+
+随后stage r3仅同步修后的A/D两文件，receipt已核passed，四配置字节保持，没有DB／缓存／网络动作；其他运行文件未改变。
+
+原生artifact r1只准备未执行，保持原SHA。fresh r2实际7.004秒失败，在临时User.on_update请求create_contact入队时被验收器禁止，尚未进入报表门；其完整935对象与owned两文件树回滚一致。root新只读连接的 `output/report-artifact-independent-after-20261004-r2/attempt/result.json` 核原源932／自有935／四配置及两树保持，明确只证明保护，`c_native_matrix_passed=false`；r2失败结果没有改写。
+
+fresh r3只修准确两个临时User对象的create_contact enqueue spy，既有六业务岗位、对象身份／字段／原生now值均准确核对，不运行Contact、不登记队列或after-commit回调；Prepared固定enqueue另独立spy，两次均为准确固定入口。r3实际 `passed=true`，20项、85.118秒，范围为Production Analytics。完成真实原生图表／六状态加总计、gzip JSON的File保存／签收／PR读取、相同MD5的新生成不合并物理文件、合法非创建者samePR CSV保存／签收／读取、原生copy和hash普通附件别名正门、真实Customer UP撤权后四类消费拒绝，以及独立授权用户仍可读。原生DocShare／私有转公开在写前拒绝；真实CSV／Excel由D导出入口和原生格式器生成，独立解析核准确列及可见行顺序、总计（含表头4行／2列）；另完成CSV父JSON链撤权、普通File正门及已签收字节被替换后的拒绝。
+
+本批实际登记六份私有产物文件，含一份非创建者CSV；普通控制File另验。真实full rollback运行全部File回调，准确替换inode被回调保留，仅在核inode／device／sha后删除该自有合成替换；所有登记夹具不存在。完整935对象、结构／索引／行／六序列及owned private/public完整两树保持；创建／删除造成的目录或读取时钟变化单独记录，不恢复时间制造一致。原生Timer factory未构造，D临时开关恢复原实际值，持久Report值保持。证据 `output/report-artifact-native-20261004-r3/result.json`；runner／manifest及本次实际输入各首次消费，没有重放r2。
+
+root独立after-r3新只读连接又核原源932／自有935／四配置，且以独立O_NOFOLLOW字节读取复核两次owned完整树，均与原生before相等；两目录节点树摘要 `3facff4f53bd235fbbf671083f3a83f5f001af85ba7d5e3ebab607423172be9e`。证据 `output/report-artifact-independent-after-20261004-r3/attempt/result.json`，final manifest SHA `26e8c64aabff2d91b58897becaf8e35bd905ba1279805f8e93d87bdecdddf9e0`，约4.484秒。原源物理文件树没有前后基线，不扩大保护证据；原源数据库／配置有完整证据。没有HTTP、RQ、worker早期提交、通知、邮件或外网访问。
+
+真实RQ／worker早期提交、HTTP／X-Accel下载、跨连接并发、旧缓存按钮GUI、文件保留策略及完整Custom引用链的原生验收仍有缺口。外网保持a75848f界面／5b49bac业务和共享测试库；第一版全旧模块正式可用目标保持，不能把本批保护候选认定为全模块交付。下节按历史批次保留。
+
 ## 2026-10-04 十份原生来源报表候选：43项实际校验通过（未发布）
 
 新增 Report controller extension，覆盖 Open／Completed／In Progress Work Orders、Issued Items Against Work Order、Work Order Summary、Production Analytics、Sales Order Analysis、Lost Quotations、Quotation Trends 与 Sales Order Trends 的准确原生定义。四份 Query 和六份 Script 按实际 SQL 的完整贡献集合执行前后来源核对，包括未显示的汇总／图表贡献、子行身份和关联依赖；任一受保护来源不可读或变化则整份拒绝。普通贡献不增加来源授权，其他报表保留原生执行。Source 回调只记录实际成功读取及最终完成的来源门，不签发跨调用授权。

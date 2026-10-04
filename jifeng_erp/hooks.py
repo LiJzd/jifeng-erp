@@ -18,6 +18,7 @@ app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css",
                    "/assets/jifeng_erp/css/jifeng_tool_archive.css",
                    "/assets/jifeng_erp/css/jifeng_modern.css"]
 app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jifeng_erp/js/jifeng_hr_dictionary.js",
+                  "/assets/jifeng_erp/js/jifeng_source_reports.js",
                   "/assets/jifeng_erp/js/jifeng_personnel_archive.js",
                   "/assets/jifeng_erp/js/jifeng_inventory_archive.js",
                   "/assets/jifeng_erp/js/jifeng_inventory_catalog.js",
@@ -52,6 +53,8 @@ def _content_versioned_assets(paths):
 app_include_css = _content_versioned_assets(app_include_css)
 app_include_js = _content_versioned_assets(app_include_js)
 before_request = "jifeng_erp.session_init.initialize_csrf"
+after_request = "jifeng_erp.sample_source_report_files.after_report_file_request"
+before_job = "jifeng_erp.sample_source_report_output.before_job"
 doctype_js = {
     "Jifeng Sample Order": "public/js/jifeng_sample_order.js",
     "Quotation": "public/js/jifeng_quotation_sources.js",
@@ -67,8 +70,16 @@ override_whitelisted_methods = {
     "frappe.desk.form.linked_with.get": "jifeng_erp.sample_source_queries.get",
     "frappe.desk.form.linked_with.get_submitted_linked_docs":
         "jifeng_erp.sample_source_queries.get_submitted_linked_docs",
+    "frappe.desk.query_report.run": "jifeng_erp.sample_source_report_output.run",
+    "frappe.desk.query_report.export_query": "jifeng_erp.sample_source_report_output.export_query",
+    "frappe.core.doctype.prepared_report.prepared_report.enqueue_json_to_csv_conversion":
+        "jifeng_erp.sample_source_report_output.enqueue_json_to_csv_conversion",
+    "frappe.core.doctype.prepared_report.prepared_report.get_reports_in_queued_state":
+        "jifeng_erp.sample_source_prepared_reports.get_reports_in_queued_state",
 }
 has_permission = {
+    "Prepared Report": "jifeng_erp.sample_source_prepared_reports.prepared_report_has_permission",
+    "Jifeng Report Artifact": "jifeng_erp.sample_source_report_artifacts.artifact_has_permission",
     "Jifeng Tool Cost Allocation": "jifeng_erp.tool_cost_sources.tool_cost_allocation_has_permission",
     "Jifeng Tool Cost Allocation Item": "jifeng_erp.tool_cost_sources.tool_cost_allocation_item_has_permission",
     "Employee Promotion": "jifeng_erp.personnel_changes.personnel_change_has_permission",
@@ -76,6 +87,9 @@ has_permission = {
     "Employee Separation": "jifeng_erp.personnel_separation.separation_has_permission",
 }
 permission_query_conditions = {
+    "Prepared Report": "jifeng_erp.sample_source_prepared_reports.prepared_report_query_conditions",
+    "File": "jifeng_erp.sample_source_report_files.report_file_query_conditions",
+    "Jifeng Report Artifact": "jifeng_erp.sample_source_report_artifacts.artifact_query_conditions",
     "Jifeng Tool Cost Allocation": "jifeng_erp.tool_cost_sources.tool_cost_allocation_query_conditions",
     "Jifeng Tool Cost Allocation Item": "jifeng_erp.tool_cost_sources.tool_cost_allocation_item_query_conditions",
     "Employee Promotion": "jifeng_erp.personnel_changes.promotion_query_conditions",
@@ -83,6 +97,8 @@ permission_query_conditions = {
     "Employee Separation": "jifeng_erp.personnel_separation.separation_query_conditions",
 }
 extend_doctype_class = {
+    "Prepared Report": ["jifeng_erp.sample_source_prepared_reports.SampleSourcePreparedReportMixin"],
+    "File": ["jifeng_erp.sample_source_report_files.SampleSourceReportFileMixin"],
     "Report": ["jifeng_erp.sample_source_reports.SampleSourceReportMixin"],
     "Stock Entry": ["jifeng_erp.material_issue_locking.MaterialIssueLockingMixin"],
     "Production Plan": ["jifeng_erp.production_instruction.ProductionInstructionMixin"],
@@ -123,7 +139,14 @@ after_migrate = "jifeng_erp.setup.install"
 scheduler_events = {"cron": {"*/15 * * * *": ["jifeng_erp.sync.scheduled_sync"]}}
 doc_events = {
     "DocShare": {"before_validate": ["jifeng_erp.tool_cost_sources.prevent_tool_cost_docshare",
-                                     "jifeng_erp.sample_source_permissions.before_validate_docshare"]},
+                                     "jifeng_erp.sample_source_permissions.before_validate_docshare",
+                                     "jifeng_erp.sample_source_prepared_reports.before_validate_docshare",
+                                     "jifeng_erp.sample_source_report_files.prevent_report_file_docshare",
+                                     "jifeng_erp.sample_source_report_artifacts.before_validate_artifact_share"]},
+    "Prepared Report": {
+        "before_validate": "jifeng_erp.sample_source_prepared_reports.before_validate_prepared_report",
+        "validate_share": "jifeng_erp.sample_source_prepared_reports.validate_prepared_report_share",
+    },
     "Jifeng Sample Order": {"before_validate": "jifeng_erp.sample_source_permissions.before_validate_source_binding"},
     "Additional Salary": {"validate": "jifeng_erp.payroll.validate_wage_additional_salary"},
     "Journal Entry": {
