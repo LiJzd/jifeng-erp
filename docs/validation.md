@@ -8,6 +8,8 @@
 
 helper SHA `47ef0726b588be3f09f7aae1a8d8d267bb908025045f6a5ab526a09e6690e578`／manifest SHA `99992382d66afe253f25d8044338d7a12c6e17419543cbaa9c9d56313a24b970`；实际结果 `output/inventory-tracking-export-native-20261004-r3/result.json` SHA `f45ea9ee931cd924d0904694ebbc619155e9734aa44b41b83705c70e3881c40d`。本次仅进程内编译候选，未 stage、HTTP、下载 GUI 或外网发布；原模板和总重规则仍未核实。外网继续 `81abd2e` 共享测试库，全旧模块正式可用目标未完成。
 
+fresh export-stage r2 经完整差异、固定来源与六模型复核后根唯一执行，保持失败：frame 准确定位 main 404 的完整 before 与 native 基线比较，尚未尝试停止／启动 web、删除缓存或同步文件。结果 SHA `5ad9f49d777e06fae9b0bff348cdcc6a101af010bb4398ae598620001622b182`；helper `71e0adb02a2e2aeaaa531fb167ba1c98f1eb995ab15ad54ddccf8f562ce31201`／manifest `0310a8bc1123e25fdb369ff113a88cef705fc8a0af979d43134323bd123feec4`。只读源码核两条链使用相同 snapshot 定义，但原生 CONVERSION_MAP 把 NEWDECIMAL 转成 float，直接驱动保留 Decimal；离线复现相同值的 typed 编码指纹不同。未保存真实 before 差异，不能据此排除其他真实变化；独立只读双口径检查正在准备，旧失败记录不重放。
+
 ## 2026-10-04 库存跟踪完整 Excel 导出候选（未发布）
 
 两版共用跟踪组件新增导出入口，服务器按当前公司／仓库／截止日／搜索／列筛选及排序读取全部匹配行，使用已核 16／17 数据列，不拼接浏览器分页。原生截止日库存数量、估价和金额保持精确文本；总重量仍留空，档案单价或单位不重算余额。档案和 SLE 表级及全部贡献单据导出权限在列筛选前核对；序列化后另建独立站点非 root 主库 READ ONLY 连接，比较完整投影、流水和权限输入，并成功 rollback／close 后才返回文件。前端用正常 same-origin CSRF POST 传完整筛选，避免合法长条件成为超长 URL；改变输入、模式、查询、离开或关闭会取消过期下载。条件说明逐选值保存在独立工作表，完整保留合法 65K 条件及空值／空串／空选择列表区别。
