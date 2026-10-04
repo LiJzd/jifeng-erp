@@ -51,6 +51,17 @@ class PreparedModels(unittest.TestCase):
         class Doc(Row):
             def save(doc, **kwargs):
                 if doc.doctype == "Prepared Report" and (doc.doctype, doc.name) in test.docs:
+                    if isinstance(doc, test.subject.SampleSourcePreparedReportMixin):
+                        # Native Document.has_permission grants its own
+                        # ignore_permissions save; the final mixin must still
+                        # check the exact private status write before resolving.
+                        native_allowed = test.native_allowed
+                        test.native_allowed = native_allowed or bool(kwargs.get("ignore_permissions"))
+                        try:
+                            if not doc.has_permission("write", user=test.fr.session.user):
+                                raise PermissionError("final mixin denied status write")
+                        finally:
+                            test.native_allowed = native_allowed
                     if not test.subject.prepared_report_has_permission(doc, "write", "actor"):
                         raise PermissionError("native save final permission denied")
                     test.subject.before_validate_prepared_report(doc)
@@ -574,7 +585,9 @@ class PreparedModels(unittest.TestCase):
         self.pr.status = "Started"
         candidate = copy.deepcopy(self.pr)
         candidate.status, candidate.error_message = "Error", self.subject.GENERATION_ERROR
-        context = {"doc": candidate, "kind": "Error", "frame": None, "user": "actor"}
+        context = {"marker": self.subject._STATUS_SAVE_MARKER,
+                   "doc": candidate, "kind": "Error", "frame": None, "user": "actor",
+                   "failed_binding": self.subject._worker_binding(self.pr)}
         token = self.subject._STATUS_SAVE.set(context)
         self.source_allowed = False
         try:
@@ -587,6 +600,199 @@ class PreparedModels(unittest.TestCase):
         finally:
             self.subject._STATUS_SAVE.reset(token)
         self.assertIsNone(self.subject._STATUS_SAVE.get())
+
+    def test_first_classification_role_disabled_or_definition_failure_records_generic_error(self):
+        for report_name in ("Open Work Orders", "Custom Work Orders"):
+            for status in ("Queued", "Started"):
+                for cause in ("role revoked", "report disabled", "definition changed"):
+                    with self.subTest(report=report_name, status=status, cause=cause):
+                        self.pr.report_name, self.pr.status = report_name, status
+                        self.pr.error_message = None
+                        self.docs["Prepared Report", "PR"] = copy.deepcopy(self.pr)
+                        original = copy.deepcopy(self.pr)
+                        self.artifacts.resolve_report.side_effect = PermissionError("PRIVATE " + cause)
+                        self.subject.generate_report("PR")
+                        saved = self.docs["Prepared Report", "PR"]
+                        self.assertEqual(saved.status, "Error")
+                        self.assertEqual(saved.error_message, self.subject.GENERATION_ERROR)
+                        for field in ("name", "report_name", "owner", "filters", "creation"):
+                            self.assertEqual(saved[field], original[field])
+                        self.assertIsNone(self.subject._STATUS_SAVE.get())
+                        self.assertIsNone(self.active.get())
+        self.native.update_job_id.assert_not_called()
+        self.native.generate_report.assert_not_called()
+        self.output.generate_report_result.assert_not_called()
+        self.artifacts.new_pending_file.assert_not_called()
+        self.artifacts.check_artifact.assert_not_called()
+        self.fr.publish_realtime.assert_not_called()
+        self.fr.log_error.assert_not_called()
+        self.fr.get_traceback.assert_not_called()
+
+    def test_first_classification_error_actual_mixin_save_skips_failed_report_authorization(self):
+        self.pr.status = "Queued"
+        self.docs["Prepared Report", "PR"] = self.mixed()
+        self.native_allowed, self.source_allowed = False, False
+        self.artifacts.resolve_report.side_effect = PermissionError("PRIVATE report role")
+        self.subject.generate_report("PR")
+        saved = self.docs["Prepared Report", "PR"]
+        self.assertIsInstance(saved, self.subject.SampleSourcePreparedReportMixin)
+        self.assertEqual(saved.status, "Error")
+        self.assertEqual(saved.error_message, self.subject.GENERATION_ERROR)
+        self.assertEqual(self.artifacts.resolve_report.call_count, 1)
+        self.artifacts.capture.assert_not_called()
+        self.artifacts.check_artifact.assert_not_called()
+        self.assertFalse(saved.has_permission("read"))
+        self.assertIsNone(self.subject._STATUS_SAVE.get())
+
+    def test_generic_status_preserves_invalid_filter_text_without_normalization(self):
+        self.pr.status, self.pr.filters = "Queued", "invalid persisted JSON"
+        self.artifacts.resolve_report.side_effect = PermissionError("PRIVATE definition")
+        self.subject.generate_report("PR")
+        saved = self.docs["Prepared Report", "PR"]
+        self.assertEqual(saved.status, "Error")
+        self.assertEqual(saved.filters, "invalid persisted JSON")
+        self.artifacts.capture.assert_not_called()
+        self.assertFalse(self.subject.prepared_report_has_permission(saved, "read"))
+
+    def test_classification_failure_wrong_owner_or_guest_never_writes_status(self):
+        self.pr.status = "Queued"
+        self.artifacts.resolve_report.side_effect = PermissionError("PRIVATE report role")
+        self.pr.owner = "other"
+        before = copy.deepcopy(self.pr)
+        self.subject.generate_report("PR")
+        self.assertEqual(self.docs["Prepared Report", "PR"], before)
+        self.pr.owner, self.fr.session.user = "Guest", "Guest"
+        before = copy.deepcopy(self.pr)
+        self.subject.generate_report("PR")
+        self.assertEqual(self.docs["Prepared Report", "PR"], before)
+        self.assertFalse(any(event[0] == "save" for event in self.events))
+
+    def test_classification_failure_completed_and_missing_target_never_overwrite(self):
+        before = copy.deepcopy(self.pr)
+        self.artifacts.resolve_report.side_effect = PermissionError("PRIVATE role")
+        self.subject.generate_report("PR")
+        self.assertEqual(self.docs["Prepared Report", "PR"], before)
+        self.subject.generate_report("MISSING")
+        self.assertNotIn(("Prepared Report", "MISSING"), self.docs)
+        self.assertFalse(any(event[0] == "save" for event in self.events))
+        self.fr.log_error.assert_not_called()
+
+    def test_fixed_worker_rejects_wrong_record_identity_or_unsaved_object_before_classifying(self):
+        original_get = self.fr.get_doc
+        for field, value in (("doctype", "File"), ("name", "OTHER"), ("__new", True)):
+            with self.subTest(field=field):
+                candidate = copy.deepcopy(self.pr)
+                candidate.status, candidate[field] = "Queued", value
+                self.fr.get_doc = Mock(return_value=candidate)
+                self.subject.generate_report("PR")
+                self.artifacts.resolve_report.assert_not_called()
+                self.assertFalse(any(event[0] == "save" for event in self.events))
+        self.fr.get_doc = original_get
+
+    def test_classification_failure_binding_change_before_rollback_cannot_retarget_error(self):
+        self.pr.status = "Queued"
+        def changed(_name):
+            self.pr.report_name = "Other Report"
+            raise PermissionError("PRIVATE definition changed")
+        self.artifacts.resolve_report.side_effect = changed
+        with self.assertRaisesRegex(PermissionError, self.subject.GENERATION_ERROR):
+            self.subject.generate_report("PR")
+        self.assertEqual(self.pr.status, "Queued")
+        self.assertEqual(self.pr.report_name, "Other Report")
+        self.assertFalse(any(event[0] == "save" for event in self.events))
+        self.assertIsNone(self.subject._STATUS_SAVE.get())
+        self.fr.log_error.assert_not_called()
+
+    def test_classification_rollback_unknown_escapes_only_minimal_wrapper(self):
+        self.pr.status = "Queued"
+        self.artifacts.resolve_report.side_effect = PermissionError("PRIVATE classification locals")
+        self.fr.db.rollback.side_effect = RuntimeError("rollback unknown")
+        frames = []
+        committed = Mock()
+        try:
+            self.subject.generate_report("PR")
+        except PermissionError as error:
+            self.assertEqual(str(error), self.subject.GENERATION_ERROR)
+            self.assertIsNone(error.__context__)
+            trace = error.__traceback__
+            while trace:
+                frames.append(trace.tb_frame.f_code.co_name)
+                if trace.tb_frame.f_code.co_name == "generate_report":
+                    self.assertEqual(set(trace.tb_frame.f_locals), {"prepared_report", "result"})
+                trace = trace.tb_next
+        else:
+            committed()
+        committed.assert_not_called()
+        self.assertNotIn("_generate_report_body", frames)
+        self.assertNotIn("_failed_or_rollback", frames)
+        self.assertEqual(self.pr.status, "Queued")
+        self.fr.log_error.assert_not_called()
+        self.fr.get_traceback.assert_not_called()
+
+    def test_json_status_context_cannot_forge_error_grant(self):
+        self.pr.status = "Queued"
+        candidate = copy.deepcopy(self.pr)
+        candidate.status, candidate.error_message = "Error", self.subject.GENERATION_ERROR
+        self.artifacts.resolve_report.side_effect = PermissionError("PRIVATE revoked report")
+        fake = {"doc": candidate, "kind": "Error", "frame": None, "user": "actor",
+                "failed_binding": self.subject._worker_binding(self.pr)}
+        token = self.subject._STATUS_SAVE.set(fake)
+        try:
+            self.assertFalse(self.subject._status_write(candidate, "write", "actor"))
+            self.assertFalse(self.subject.prepared_report_has_permission(candidate, "write", "actor"))
+            with self.assertRaises(PermissionError):
+                self.subject.before_validate_prepared_report(candidate)
+        finally:
+            self.subject._STATUS_SAVE.reset(token)
+        self.assertEqual(self.pr.status, "Queued")
+
+    def test_private_generic_error_context_does_not_allow_create_share_or_metadata_changes(self):
+        self.pr.status = "Started"
+        candidate = self.mixed()
+        candidate.status, candidate.error_message = "Error", self.subject.GENERATION_ERROR
+        binding = self.subject._worker_binding(self.pr)
+        self.artifacts.resolve_report.side_effect = PermissionError("PRIVATE definition")
+        token = self.subject._STATUS_SAVE.set({
+            "marker": self.subject._STATUS_SAVE_MARKER, "doc": candidate, "kind": "Error",
+            "frame": None, "user": "actor", "failed_binding": binding,
+        })
+        try:
+            self.assertTrue(candidate.has_permission("write"))
+            self.subject.before_validate_prepared_report(candidate)
+            for permission in ("read", "create", "share", "delete"):
+                self.assertFalse(candidate.has_permission(permission))
+            for field, value in (("job_id", "new-job"), ("report_name", "Other Report"),
+                                 ("filters", "{}"), ("owner", "other"), ("columns", "secret"),
+                                 ("report_end_time", "new-time"), ("name", "OTHER"),
+                                 ("__new", True)):
+                with self.subTest(field=field):
+                    old = candidate.get(field)
+                    candidate[field] = value
+                    self.assertFalse(candidate.has_permission("write"))
+                    candidate[field] = old
+        finally:
+            self.subject._STATUS_SAVE.reset(token)
+        self.assertEqual(self.pr.status, "Started")
+
+    def test_private_error_context_requires_captured_binding_no_roots_and_no_share(self):
+        self.pr.status = "Queued"
+        candidate = copy.deepcopy(self.pr)
+        candidate.status, candidate.error_message = "Error", self.subject.GENERATION_ERROR
+        binding = self.subject._worker_binding(self.pr)
+        for forbidden in ("wrong-binding", "root", "share"):
+            with self.subTest(forbidden=forbidden):
+                if forbidden == "root":
+                    self.roots["PR"] = ["UNREAD-ARTIFACT"]
+                if forbidden == "share":
+                    self.shared.add("PR")
+                with self.assertRaises(PermissionError):
+                    self.subject._save_status(candidate, "Error", failed_binding=(
+                        "forged-binding" if forbidden == "wrong-binding" else binding))
+                self.assertIsNone(self.subject._STATUS_SAVE.get())
+                self.roots.clear()
+                self.shared.clear()
+        self.assertEqual(self.pr.status, "Queued")
+        self.artifacts.check_artifact.assert_not_called()
 
     def test_completed_native_save_rechecks_source_after_seal_and_records_only_generic_error(self):
         self.pr.status = "Queued"

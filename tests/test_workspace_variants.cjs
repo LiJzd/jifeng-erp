@@ -11,6 +11,8 @@ class Element {
 let route = "jifeng-legacy";
 const messages = [], confirmations = [];
 const window = { addEventListener() {}, removeEventListener() {}, JifengSalaryHistory: class {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {}, JifengCustomerArchive: class {}, JifengOrderDictionary: class {}, JifengPlatingColor: class {}, JifengOrderOperations: class {} };
+window.JifengProcurementFulfillment = class {};
+window.JifengSupplierPayables = class {};
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
@@ -96,6 +98,12 @@ assert.equal(dispatch(Modern, find("订单", "工序"))[0].spec.doctype, "Jifeng
 assert.equal(shared.availability("工资", "历史"), "partial");
 assert.equal(dispatch(Modern, find("工资", "历史"))[0].spec.salaryHistory, true);
 assert.equal(shared.availability("工资", "历史分析"), "preview", "old departmental/group/operation charts cannot be the wage report");
+for (const [module, name, flag] of [["物料", "采购履行核对", "procurementFulfillment"], ["材料", "采购履行核对", "procurementFulfillment"], ["财务", "供应商应付核对", "supplierPayables"]]) {
+	assert.equal(shared.availability(module, name), "partial");
+	assert.equal(dispatch(Modern, find(module, name))[0].spec[flag], true);
+}
+assert.equal(shared.availability("销售", "销售跟踪"), "preview");
+assert.equal(shared.availability("财务", "电镀账"), "preview");
 for (const name of ["样品制作单", "样品单反审"]) {
 	assert.equal(shared.availability("产品", name), "partial");
 	assert.equal(dispatch(Modern, find("产品", name))[0].spec.doctype, "Jifeng Sample Order");
@@ -159,10 +167,11 @@ function makeWorkspace(Workspace) {
 	workspace.renderModule = () => "<section>module</section>"; workspace.updateClock = () => {};
 	const bridge = workspace.formalBridge;
 	let stopped = 0, mounted = 0;
-	const state = { dirty: true, block: "", value: "同一草稿", requestId: "保留的请求身份" };
+	const state = { dirty: true, block: "", visible: false, value: "同一草稿", requestId: "保留的请求身份" };
 	bridge.mount = container => {
 		mounted++;
-		return { container, workbench: { isDirty: () => state.dirty, getCloseBlock: () => state.block }, stop: () => stopped++ };
+		return { container, workbench: { isDirty: () => state.dirty, getCloseBlock: () => state.block,
+			setVisible: value => { state.visible = value; } }, stop: () => stopped++ };
 	};
 	const click = (action, values = {}) => {
 		const button = { dataset: { action, ...values }, matches: () => false, closest: () => button };
@@ -181,18 +190,22 @@ for (const [currentRoute, visible, hidden] of [["jifeng-legacy", b, a], ["jifeng
 	route = currentRoute; b.bridge.align(); a.bridge.align();
 	assert.equal(visible.bridge.layer.hidden, false); assert.equal(visible.bridge.frames.get(key).container.hidden, false);
 	assert.equal(hidden.bridge.layer.hidden, true); assert.equal(hidden.bridge.frames.get(key).container.hidden, true);
+	assert.equal(visible.state.visible, true); assert.equal(hidden.state.visible, false);
 }
 route = "query-report"; b.bridge.align(); a.bridge.align();
 assert.equal(b.bridge.layer.hidden, true); assert.equal(a.bridge.layer.hidden, true);
+assert.equal(b.state.visible, false); assert.equal(a.state.visible, false);
 for (const [model, currentRoute] of [[b, "jifeng-legacy"], [a, "jifeng-modern"]]) {
 	route = currentRoute;
 	const entry = model.bridge.frames.get(key), before = confirmations.length;
 	model.filters.set("[data-search]", { value: "未查询筛选" });
 	model.workspace.switchTab("home"); assert.equal(entry.container.hidden, true);
+	assert.equal(model.state.visible, false);
 	assert.equal(model.bridge.frames.get(key), entry); assert.equal(model.counts().stopped, 0);
 	model.filters.clear(); model.click("tab", { key });
 	assert.equal(model.workspace.search, "未查询筛选"); assert.equal(model.bridge.frames.get(key), entry);
 	assert.equal(model.counts().mounted, 1); assert.equal(entry.container.hidden, false);
+	assert.equal(model.state.visible, true);
 	for (const block of ["正在保存", "保存结果未知", "上传结果未知"]) {
 		model.state.block = block; model.workspace.closeTab(key, true);
 		assert.equal(model.bridge.frames.get(key), entry); assert.equal(model.counts().stopped, 0);

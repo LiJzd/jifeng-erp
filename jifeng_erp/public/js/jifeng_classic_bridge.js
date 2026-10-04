@@ -53,7 +53,9 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		const anchor = this.workspace.host.querySelector(".jfe-formal-anchor");
 		const visible = anchor && anchor.getClientRects().length && frappe.get_route()[0] === (this.workspace.pageName || "jifeng-legacy");
 		for (const [key, entry] of this.frames) {
-			entry.container.hidden = !(visible && key === active);
+			const frameVisible = !!(visible && key === active);
+			entry.container.hidden = !frameVisible;
+			entry.workbench?.setVisible?.(frameVisible);
 		}
 		this.layer.hidden = !visible;
 		if (!visible) return;
@@ -187,6 +189,11 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	mount(host, spec) {
+		if (spec.procurementFulfillment || spec.supplierPayables) {
+			const Component = spec.procurementFulfillment ? window.JifengProcurementFulfillment : window.JifengSupplierPayables;
+			const workbench = new Component(host, this, spec.module);
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		if (spec.salaryHistory) {
 			const workbench = new window.JifengSalaryHistory(host, this);
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };

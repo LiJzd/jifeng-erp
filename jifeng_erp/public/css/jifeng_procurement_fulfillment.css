@@ -1,0 +1,24 @@
+.jfe-procurement { padding: 14px; color: var(--text-color, #243443); font-size: 13px; }
+.jfe-procurement h2 { margin: 0 0 8px; font-size: 19px; }
+.jfe-procurement h3 { margin: 22px 0 10px; font-size: 16px; }
+.jfe-procurement h4, .jfe-procurement h5 { margin: 12px 0 8px; }
+.jfe-procurement-note { line-height: 1.6; color: var(--text-muted, #5c6875); margin: 8px 0; }
+.jfe-procurement-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 12px 0; }
+.jfe-procurement-filter { flex: 1 1 170px; min-width: 150px; max-width: 260px; }
+.jfe-procurement-toolbar input[type=text] { min-height: 32px; padding: 6px 9px; border: 1px solid var(--border-color, #cad2da); border-radius: 4px; }
+.jfe-procurement-button { padding: 6px 11px; border: 1px solid var(--border-color, #bcc8d2); border-radius: 4px; background: var(--control-bg, #fff); color: inherit; cursor: pointer; white-space: nowrap; }
+.jfe-procurement-button.primary { background: #285a83; color: white; border-color: #285a83; }
+.jfe-procurement-button:focus-visible { outline: 2px solid #397aaf; outline-offset: 2px; }
+.jfe-procurement-status { min-height: 22px; margin: 8px 0; line-height: 1.6; }
+.jfe-procurement-list-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 9px 10px; border-bottom: 1px solid var(--border-color, #dce2e8); }
+.jfe-procurement-list-row .jfe-procurement-button { margin-left: auto; }
+.jfe-procurement-card { padding: 12px; margin: 12px 0; border: 1px solid var(--border-color, #d5dee6); border-radius: 5px; background: var(--card-bg, #fff); }
+.jfe-procurement-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 18px; margin: 14px 0; }
+.jfe-procurement-summary dt { font-size: 12px; color: var(--text-muted, #5c6875); font-weight: normal; }
+.jfe-procurement-summary dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+.jfe-procurement-group-title { margin: 12px 0 5px; color: var(--text-muted, #5c6875); font-weight: 600; }
+.jfe-procurement-scroll { overflow: auto; max-width: 100%; margin: 8px 0; }
+.jfe-procurement table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.jfe-procurement th, .jfe-procurement td { border: 1px solid var(--border-color, #dce2e8); text-align: left; padding: 7px 9px; white-space: pre-wrap; min-width: 90px; max-width: 360px; overflow-wrap: anywhere; vertical-align: top; }
+.jfe-procurement th { background: var(--subtle-fg, #eef3f7); font-weight: 600; }
+@media (max-width: 680px) { .jfe-procurement { padding: 10px; } .jfe-procurement-filter { max-width: none; } }

@@ -3,7 +3,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "物料",
 		groups: [
 			{ name: "基础资料", items: ["物料类别", "物料档案", "仓库", "采购员", "出库方式", "领用人", "浏览"] },
-			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证"] },
+			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证", "采购履行核对"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
 			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
@@ -13,7 +13,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "材料",
 		groups: [
 			{ name: "基础资料", items: ["材料类别", "形状", "颜色", "材料档案", "仓库", "供应商", "采购员", "出库方式", "领用人", "浏览"] },
-			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证"] },
+			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证", "采购履行核对"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
 			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
@@ -113,7 +113,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "财务",
 		groups: [
-			{ name: "正式业务", items: ["收付款单", "总账凭证", "费用登记单"] },
+			{ name: "正式业务", items: ["收付款单", "总账凭证", "费用登记单", "供应商应付核对"] },
 			{ name: "基础资料", items: ["收款银行", "付款银行", "费用科目"] },
 			{ name: "凭证录入", items: ["收款凭证", "付款凭证", "费用登记"] },
 			{ name: "报表查询", items: ["收款凭证查询", "付款凭证查询", "费用登记查询", "物料账", "材料账", "委外账", "电镀账", "销售账", "费用账", "付款报表", "收款报表", "总报表"] },
@@ -157,6 +157,7 @@ const JIFENG_LIVE_ROUTES = {
 
 // Server-backed entry whose available operations remain explicitly limited.
 const JIFENG_PARTIAL_ROUTES = { 产品: { 样品制作单: true, 样品单反审: true }, 工资: { 历史: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
+	物料: { 采购履行核对: true }, 材料: { 采购履行核对: true }, 财务: { 供应商应付核对: true },
 	销售: { 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
 
 const JIFENG_LIVE_CATALOGS = {
@@ -165,6 +166,9 @@ const JIFENG_LIVE_CATALOGS = {
 };
 
 const JIFENG_LIVE_PAGES = {
+	物料: { 采购履行核对: { procurementFulfillment: true } },
+	材料: { 采购履行核对: { procurementFulfillment: true } },
+	财务: { 供应商应付核对: { supplierPayables: true } },
 	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers", 历史: { salaryHistory: true } },
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
 		算料汇总: { name: "jifeng-order-material-workbench", mode: "summary" } },
@@ -410,6 +414,13 @@ class JifengLegacyWorkspace {
 		}
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
+			for (const [flag, component] of [["procurementFulfillment", "JifengProcurementFulfillment"], ["supplierPayables", "JifengSupplierPayables"]]) {
+				if (!livePage[flag]) continue;
+				if (!this.formalBridge || !window[component]) {
+					frappe.msgprint(__("核对页面未能加载，请刷新后重试。")); return;
+				}
+				this.formalBridge.open({ title: name, module: moduleName, kind: "page", [flag]: true, availability: "partial" }); return;
+			}
 			if (livePage.salaryHistory) {
 				if (!this.formalBridge || !window.JifengSalaryHistory) {
 					frappe.msgprint(__("工资历史页面未能加载，请刷新后重试。")); return;

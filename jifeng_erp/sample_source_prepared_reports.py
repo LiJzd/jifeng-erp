@@ -25,6 +25,7 @@ SHARE_DENIED = "来源报表及其产物不能独立分享，请沿用来源单�
 GENERATION_ERROR = "报表生成失败，请核对当前报表和来源权限后重新生成"
 _NATIVE_GUARDS = ContextVar("jifeng_prepared_native_permissions", default=frozenset())
 _STATUS_SAVE = ContextVar("jifeng_prepared_fixed_status_save", default=None)
+_STATUS_SAVE_MARKER = object()
 _ROLLBACK_UNKNOWN = object()
 
 
@@ -98,6 +99,23 @@ def _binding(doc):
         _deny()
 
 
+def _worker_record(name):
+    """Read the saved job target without resolving its now-revoked Report."""
+    if not isinstance(name, str) or not name:
+        _deny()
+    doc = frappe.get_doc(PREPARED, name, for_update=True)
+    if doc.doctype != PREPARED or doc.name != name or doc.is_new():
+        _deny()
+    return doc
+
+
+def _worker_binding(doc):
+    # Preserve even invalid filter text: a failed classifier may record only a
+    # generic status, and may not normalize or replace that persisted binding.
+    return _freeze((doc.doctype, doc.name, doc.get("report_name"),
+                    doc.get("filters"), doc.get("owner")))
+
+
 def _status_write(doc, ptype, user):
     """Only the exact fixed worker object can perform these status writes.
 
@@ -107,13 +125,17 @@ def _status_write(doc, ptype, user):
     Neither case grants a read, create, share, or arbitrary ignore-permission save.
     """
     context = _STATUS_SAVE.get()
-    if not (context and context["doc"] is doc and ptype == "write"
+    if not (isinstance(context, dict) and context.get("marker") is _STATUS_SAVE_MARKER
+            and context["doc"] is doc and ptype == "write"
             and context["user"] == user == frappe.session.user):
         return False
+    if doc.doctype != PREPARED or doc.is_new() or user == "Guest":
+        _deny()
     stored = _persisted(doc)
     _unshared(stored)
     _unshared(doc)
-    if _binding(stored) != _binding(doc) or doc.owner != user:
+    if (stored.doctype != PREPARED or stored.name != doc.name or stored.is_new()
+            or _worker_binding(stored) != _worker_binding(doc) or doc.owner != user):
         _deny()
     ignored = {"status", "error_message", "modified", "modified_by"}
     if context["kind"] == "Completed":
@@ -130,7 +152,8 @@ def _status_write(doc, ptype, user):
         ignored.update({"report_end_time", "peak_memory_usage"})
     elif context["kind"] == "Error":
         if not (stored.status in ("Queued", "Started") and doc.status == "Error"
-                and doc.error_message == GENERATION_ERROR and not _roots(stored)):
+                and doc.error_message == GENERATION_ERROR and not _roots(stored)
+                and context.get("failed_binding") == _worker_binding(stored)):
             _deny()
     else:
         _deny()
@@ -142,9 +165,10 @@ def _status_write(doc, ptype, user):
     return True
 
 
-def _save_status(doc, kind, *, frame=None):
-    token = _STATUS_SAVE.set({"doc": doc, "kind": kind,
-                              "frame": frame, "user": frappe.session.user})
+def _save_status(doc, kind, *, frame=None, failed_binding=None):
+    token = _STATUS_SAVE.set({"marker": _STATUS_SAVE_MARKER, "doc": doc, "kind": kind,
+                              "frame": frame, "user": frappe.session.user,
+                              "failed_binding": failed_binding})
     try:
         doc.save(ignore_permissions=True)
     finally:
@@ -396,41 +420,53 @@ def _failed(prepared_report, binding):
     # Native File.on_rollback is registered on the full transaction callback;
     # rolling back only a savepoint would leave private blobs behind.
     frappe.db.rollback()
-    instance = frappe.get_doc(PREPARED, prepared_report, for_update=True)
+    instance = _worker_record(prepared_report)
     if (instance.owner != frappe.session.user or instance.get("status") not in ("Queued", "Started")
-            or (instance.report_name, instance.filters, instance.owner) != binding):
+            or _worker_binding(instance) != binding):
         _deny()
     instance.status = "Error"
     instance.error_message = GENERATION_ERROR
-    _save_status(instance, "Error")
+    _save_status(instance, "Error", failed_binding=binding)
+
+
+def _failed_or_rollback(prepared_report, binding):
+    """Finish sensitive failures here; only an unknown sentinel leaves this body."""
+    try:
+        if binding is not None:
+            _failed(prepared_report, binding)
+        else:
+            frappe.db.rollback()
+    except Exception:
+        return _ROLLBACK_UNKNOWN
+    return None
 
 
 def _generate_report_body(prepared_report):
     """Sensitive result/frame locals stay in this private, finished body."""
     binding = None
     try:
-        instance = frappe.get_doc(PREPARED, prepared_report, for_update=True)
+        instance = _worker_record(prepared_report)
+        actor = frappe.session.user
+        if (isinstance(actor, str) and actor and actor != "Guest" and instance.owner == actor
+                and instance.get("status") in ("Queued", "Started")):
+            binding = _worker_binding(instance)
         scoped = _scoped(instance)
     except Exception:
-        try:
-            frappe.db.rollback()
-        except Exception:
-            return _ROLLBACK_UNKNOWN
-        return None
+        return _failed_or_rollback(prepared_report, binding)
     if not scoped:
         return _native().generate_report(prepared_report)
     try:
         user = _current_user()
         if instance.owner != user or instance.get("status") != "Queued":
             return None
-        binding = (instance.report_name, instance.filters, instance.owner)
+        binding = _worker_binding(instance)
         _check_metadata(instance, user)
         _same(instance, _persisted(instance))
         # The native early commit is deliberately outside the generation frame.
         _native().update_job_id(prepared_report)
-        instance = frappe.get_doc(PREPARED, prepared_report, for_update=True)
+        instance = _worker_record(prepared_report)
         if (instance.owner != user or instance.get("status") != "Started"
-                or (instance.report_name, instance.filters, instance.owner) != binding):
+                or _worker_binding(instance) != binding):
             _deny()
         resolved = _artifacts().resolve_report(instance.report_name)
         if resolved is None or _roots(instance):
@@ -461,14 +497,7 @@ def _generate_report_body(prepared_report):
     except Exception:
         # Neither native _save_error(with_context=True) nor RQ's generic exception
         # logger should receive source rows/locals from this fixed worker.
-        try:
-            if binding is not None:
-                _failed(prepared_report, binding)
-            else:
-                frappe.db.rollback()
-        except Exception:
-            return _ROLLBACK_UNKNOWN
-        return None
+        return _failed_or_rollback(prepared_report, binding)
 
 
 def generate_report(prepared_report):

@@ -1,0 +1,18 @@
+.jfe-supplier-payables { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 12px; gap: 10px; background: var(--card-bg, #fff); color: var(--text-color, #263238); }
+.jfe-supplier-payables-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.jfe-supplier-payables-filter { flex: 1 1 180px; min-width: 170px; max-width: 280px; }
+.jfe-supplier-payables-date { flex-basis: 160px; min-width: 150px; max-width: 190px; }
+.jfe-supplier-payables-filter .form-group { margin-bottom: 0; }
+.jfe-supplier-payables-toolbar > button { margin-bottom: 1px; }
+.jfe-supplier-payables p { margin: 0; }
+.jfe-supplier-payables-note { color: var(--text-muted, #626e77); }
+.jfe-supplier-payables-status { min-height: 20px; }
+.jfe-supplier-payables-scope { font-weight: 500; overflow-wrap: anywhere; }
+.jfe-supplier-payables-scroll { flex: 1; min-height: 150px; overflow: auto; border: 1px solid var(--border-color, #d1d8dd); }
+.jfe-supplier-payables table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; }
+.jfe-supplier-payables th, .jfe-supplier-payables td { padding: 7px 10px; border: 1px solid var(--border-color, #d1d8dd); white-space: nowrap; }
+.jfe-supplier-payables th { position: sticky; top: 0; background: var(--subtle-fg, #f4f6f7); text-align: left; }
+.jfe-supplier-payables tbody tr:hover { background: var(--subtle-fg, #f4f6f7); }
+.jfe-supplier-payables-amount { text-align: right; font-variant-numeric: tabular-nums; }
+.jfe-supplier-payables-source { padding: 0; border: 0; background: transparent; color: var(--primary, #1769aa); text-align: left; text-decoration: underline; cursor: pointer; }
+.jfe-supplier-payables-source:focus-visible { outline: 2px solid var(--primary, #1769aa); outline-offset: 3px; }

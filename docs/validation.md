@@ -1,5 +1,21 @@
 # 验证记录
 
+## 2026-10-04 采购履行、供应商应付界面与后台终态续接（未发布）
+
+本地 A/B 新增共用的只读“采购履行核对”（物料／材料）与“供应商应付核对”（财务）。采购按明确公司、供应商及采购单日期查询，关联收货／退货／委外／发票／付款保留完整来源日期和整凭证口径，同款不同子行与单位不合并；应付按明确截止日展示原生本币投影。数量／金额不由浏览器重新合计或分摊。两组件筛选变化、切走标签、路由离开或销毁时清空结果，原凭证通过准确 Form 回航；返回后重新查询权限。业务列分组，内部子行 ID／parent 字段和读取版本不显示，也不存浏览器业务数据。
+
+root 实际复跑采购后端59项、应付后端37项、采购界面23项、应付界面18项全部通过。后续窄审发现应付跨DocType同名单据会复用旧页签、采购来源页签使用不存在的模块，已修为类型＋编号标题及保留物料／材料归属；两个准确回航门补后，root现采购24／应付19项通过。fresh跨端r2用14个既有后端测试捕获16份实际模型 API 投影，通过当前两份 JS 的17次校验和28次渲染，旧r1保留。资源2项及 A/B 全366派发／21侧栏动作通过，当前候选38资源（14 CSS／24 JS）；首次资源预期少算已存在的来源报表 JS，23改24后通过。后续资源复跑最初按非包模块调用而ImportError，改用unittest discover实际2项通过。模型不代替原生／HTTP／GUI。新增三入口保持 partial：候选366入口为233 formal映射／19 partial／96 preview／13 navigation／5 tool；原363入口分类未提升。外网仍363入口、33资源、a75848f界面／5b49bac业务，本批未发布。
+
+Prepared 固定 worker 修复了分类失败前尚未捕获绑定的断点：准确持久 PR／当前 owner／Queued或Started 先捕获绑定，失败完整回滚后仅允许服务器准确对象保存通用 Error；没有来源读取、分享、新建或任意元数据写权限。56项模型执行通过，覆盖角色／disabled／定义异常、Custom、错误对象／owner／绑定、旧产物／分享、未知回滚及普通原生路径。真实 RQ 首批结果见下段，完整Custom／HTTP仍不能据模型认定通过。
+
+真实环境准备已完成一次：新 `/home/jifengtest/jifeng-dev/report-runtime-qa-20261004-r1` 从旧 owned935 经本机 Unix SQL socket 逻辑复制，初始全935对象／索引／数据／六序列相等；仅新 DB/user 和独占 Unix Redis，准备阶段未启动 worker／HTTP／fixture。候选固定 cac1648 本机归档＋B准确覆盖，三处原始 SHA 差异实际仅 LF／CRLF，规范化字节相等；没有修改旧 owned、原库或外网。clone实际回执 `output/report-runtime-clone-20261004-r1/result.json` 通过；root独立 BEFORE 核原932／旧935／四配置和旧两文件树一致。
+
+随后 root 唯一一次执行真实 RQ r1，3个目标job／4项门全部通过：原生make_prepared_report与after_commit实际入独占long队列，原生Worker／execute_job运行固定B；原update_job_id真实提交Started，独立新连接可见准确job_id；完成后准确一份JSON／private File／Sealed登记和实际gzip字节可读。另两份Queued后分别撤准确fixture User的Report角色、原生停用Report，业务均为通用Error，RQ均finished且无异常、无新增File／登记／Error Log，角色与停用值在通过后还原。准确worker进程退出，20候选／66原生源码及新两配置保持。runner SHA `1f010e9ea6f891b6ee123820e28c01b3b673926ca307dd29019ec7eea7904596`，manifest SHA `b35b421f3e259cd094a80da601a0633954055ede7acafe41b155d047f910e7ad`，实际结果 `output/report-runtime-native-20261004-r1/result.json`；旧草稿manifest未执行、r1不得重放。
+
+root再用独立只读新连接执行AFTER，约6.8秒通过：原932／旧owned935全结构、索引、行、六序列及四配置与BEFORE一致，旧两文件树完整字节及目录保持；证据 `output/report-runtime-independent-20261004-r1/after/result.json`。不扩大成原源物理附件保护证据。新一次性DB确实保留14个合成fixture及真实PR／产物，不声称它已回滚；自有default Contact任务不消费，新Unix Redis无TCP端口保留供下一批。无HTTP、CSV、Excel、Custom、保留策略、SMTP或外网验收；WO状态投影不证明制造／库存／GL过账。
+
+旧 GUI 两批证据已核读。新一次只读“物料跟踪”显示仓库／编号／库存／金额／重量等库存列，0条，未见采购凭证关联，因此不以采购履行服务替换旧跟踪。生产完成最近30天仍0条；稳定截图与 active 页签同步确认“完成记录”为工序／完成／次数／合计／差数／重量列，“完成抽单”为客户／镀色／数量／备注／包装／操作／日期／删除列，修正前批页签归属误读。空表不能证明工序关联或制造过账。证据 `output/legacy-tracking-completion-gui-20261004-r1/report.md`；全模块正式交付与旧习惯目标保持。
+
 ## 2026-10-04 Prepared、文件与导出来源候选：20项实际校验通过（未发布）
 
 本地新增十份准确原生报表及其递归 Custom 引用的生成／消费保护：服务器登记完整贡献来源、权限、字段与定义快照，私有 JSON／CSV／Export 文件保存实际字节摘要；旧文件、原生拷贝及同字节普通附件别名每次消费均重新核对完整来源与父文件链。新增独立不可分享的 Jifeng Report Artifact 登记表，客户端不能写入、改绑或把登记结果当作授权。没有准确登记的旧范围附件拒绝重用，通过原生 Prepared 新建流程重新生成。前端按钮及请求失败后的加载状态清理、同次失败重试标识已有协议模型，尚未实际 GUI 验证。
