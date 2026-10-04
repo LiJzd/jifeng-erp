@@ -648,10 +648,19 @@ class TestInventoryTracking(unittest.TestCase):
                       {"field": "notes", "direction": "asc", "extra": 1}):
             with self.subTest(sort=order), self.assertRaises(ValueError):
                 self.query(sort=order)
-        for kind, field in (([], "notes"), ("物料", "supplier"), ("材料", "material"), ("物料", [])):
+        for kind, field in (([], "notes"), ("物料", "owner_name"), ("材料", "material"), ("物料", [])):
             with self.subTest(kind=kind, field=field), self.assertRaises(ValueError):
                 self.module.query_tracking_values(kind, "JF", field)
         self.reports._native_balance.assert_not_called()
+
+    def test_raw_supplier_column_uses_only_authorized_projection(self):
+        self.env.profile["supplier"] = "供应商原文"
+        condition = [{"field": "supplier", "operator": "eq", "value": "供应商原文"}]
+        self.assertEqual(self.query(column_filters=condition)["total"], 1)
+        self.assertEqual(self.module.query_tracking_values("物料", "JF", "supplier")["values"], ["供应商原文"])
+        self.env.metas[PROFILE]["supplier"].update(mask=1)
+        self.assertEqual(self.query(column_filters=condition)["total"], 0)
+        self.assertEqual(self.module.query_tracking_values("物料", "JF", "supplier")["values"], [None])
 
     def test_value_option_overlong_values_are_explicitly_refused_and_legacy_response_unchanged(self):
         original = self.query()

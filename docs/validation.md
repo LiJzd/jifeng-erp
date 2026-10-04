@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-04 外网库存发布 r8 停止，原版本恢复可访问
+
+root完整审阅后唯一上传五个固定成员，3,834,066字节、140次实际SSH DIRECT及远端完整SHA／权限／所有者核验通过；原112ad包未改。prepare、quiesce各执行一次并通过；before原生返回TypeError后停止，未执行cache或start，库存候选没有切入外网。宿主failed回执SHA `e1e041a26c984d7149db9bf3ee96696bcaac47c245feacfb9dbc2fd73e8f996b`、原生failed SHA `f3b00f11222a42345ceae17ad0fe835fac005f6a6c41a58b7da53fec69974df8`；r8与全部失败证据保持，不盲重放。实际33资源／hooks校验已到达，before快照及native-backup目录尚不存在，错误原因未定。只读diagnose全保护门通过；不能据此宣称完整934行／结构／索引冻结或备份完成。
+
+独立fresh恢复r1经root完整源码审阅，只对原四Compose执行start，原五应用容器IDs保持；八服务运行、旧572文件／33资源／后端ping、配置／保护文件及三个数据服务身份通过，14次实际SSH DIRECT，无显式SQL／cache／schema／roles动作。结果 `output/inventory-tracking-recover-old-20261004-r1.json` SHA `a647b0b8744103d62fd85a47b437380b73335c56206076bc3958b255a94a4c89`。随后fresh公网只读HTTPS检查：login200、ping=pong、可信IP证书及实际DIRECT，`output/inventory-tracking-restored-https-20261004-r1.json` SHA `cfc037e4942120494fff16137a57ba49c5988a843a2bb0f724445b32c6e6ec7b`。外网恢复a758／5b、同一测试库；不声称恢复后全SQL冻结或新库存API已发布。
+
+## 2026-10-04 旧跟踪完整列与真实条件补证
+
+Luna只经真实GUI核物料横向最右端“备注／供应商”，完整16列；材料末端“负责／区域／供应商”，完整17列，纠正早期漏读物料末列。真实大类复选确认73条、库存升／降序行序、名称确认／取消、清单列保留页面搜索及另一列条件已证；材料小类勾选2条，同零库存不能证明排序行序。正常UI注销确认登录页。报告 `output/legacy-tracking-column-filter-20261004-r3/report.md` SHA `02779156f146c8356fbb82243704c052f0fbdc695428ec762b95115e9ee30a27`，不抄录业务行私密值。
+
+root据此仅补物料末列supplier的渲染及筛选白名单，读取既有授权profile投影；新增测试确认masked供应商不会补回。45后端／33前端模型、Ruff及diff通过。最新源码与JS SHA分别 `e9e9e33a308f9b4045018a30e46c47ceb02a288b723e9db2ff293294e533c0d4`、`6550969f4cd5abd30b1e4e697c2582fb3fdd864c51806ddbcba299c32364d470`；CSS保持。本批尚未stage本机或外网，前批原生r2八门证明属于修正前源码，不能扩成最新供应商列的原生／HTTP／GUI证明。
+
 ## 2026-10-04 列筛选原生只读八门通过（未同步界面）
 
 root审阅r2助手及固定manifest后只执行一次：真实普通库存账号、原生3.14环境和既有935对象验收库，在同一MariaDB连接实际启用并前后核对SESSION READ ONLY。两类旧响应及13／139、历史零仓、2.5／50余额保持；零仓跨页过滤、Decimal升降序、完整范围仓库选项分页、未知总重null区别字面“—”、无匹配仍读取授权来源、非法条件拒绝和Guest选项拒绝共八门通过。实际4,450次只读SQL，transaction_writes=0；结构／索引、文件、空队列、运行身份、配置与612／443旧候选前后保持。助手只在该原生进程编译新tracking模块，没有stage候选、创建fixture或连接原／旧owned库。结果 `output/inventory-tracking-column-native-20261004-r2/result.json` SHA `e8ce24091d33d6bd838ae5ff7ffca4dea908119b89215b8f91dbe6f7a1654d08`；helper SHA `cd86a0faf5fd82a48592582e3caa070c9aedb21f898ac1ea550aef3fa7b84d7f`、manifest SHA `8ee7f12a72aef23b7f535d51cbe3068505775e7d261d9fa3565f27e4419e372f`。尚无新筛选HTTP／GUI证明，112ad外网发布包仍不包含此功能。

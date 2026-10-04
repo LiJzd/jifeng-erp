@@ -17,7 +17,7 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		this.fields = [["warehouse", "仓库"], ["legacy_number", "编号"], ["stock_qty", "库存"],
 			["valuation_rate", "单价"], ["stock_value", "金额"], ["weight", "重量"], ["total_weight", "总重量"],
 			["major_category", "大类"], ["minor_category", "小类"], ["material", "材质"], ["stock_uom", "单位"],
-			["display_name", "名称"], ["specification", "规格"], ["location", "库位"], ["notes", "备注"]];
+			["display_name", "名称"], ["specification", "规格"], ["location", "库位"], ["notes", "备注"], ["supplier", "供应商"]];
 		if (this.kind === "材料") this.fields = [["warehouse", "仓库"], ["legacy_number", "编号"], ["stock_qty", "库存"],
 			["valuation_rate", "单价"], ["stock_value", "金额"], ["weight", "重量"], ["total_weight", "总重量"],
 			["minor_category", "小类"], ["specification", "规格"], ["shape", "形状"], ["color", "颜色"],

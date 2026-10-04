@@ -62,7 +62,7 @@ const tests = [];
 const test = (name, body) => tests.push([name, body]);
 test("old column order and explicit native scope; blank warehouse is omitted", async () => {
 	const m = await make(); assert.equal(m.calls.length, 0);
-	assert.equal(m.host.descendants("th").map(th => th.textContent).join("/"), "仓库/编号/库存/单价/金额/重量/总重量/大类/小类/材质/单位/名称/规格/库位/备注/来源");
+	assert.equal(m.host.descendants("th").map(th => th.textContent).join("/"), "仓库/编号/库存/单价/金额/重量/总重量/大类/小类/材质/单位/名称/规格/库位/备注/供应商/来源");
 	await populate(m); assert.deepEqual(m.calls[0].options, { method: "jifeng_erp.inventory_tracking.query_tracking", type: "GET",
 		args: { kind: "物料", company: "集沣", search: "", as_of: "2026-10-04", page: 1, page_size: 100 } });
 	assert.deepEqual(plain(m.view.warehouseControl.get_query()), { filters: { company: "集沣", is_group: 0 } });

@@ -45,7 +45,7 @@ BASIS = {
 COLUMN_FIELDS = {
     "物料": ("warehouse", "legacy_number", "stock_qty", "valuation_rate", "stock_value", "weight",
              "total_weight", "major_category", "minor_category", "material", "stock_uom", "display_name",
-             "specification", "location", "notes"),
+             "specification", "location", "notes", "supplier"),
     "材料": ("warehouse", "legacy_number", "stock_qty", "valuation_rate", "stock_value", "weight",
              "total_weight", "minor_category", "specification", "shape", "color", "display_name", "location",
              "old_number", "owner_name", "region", "supplier"),
