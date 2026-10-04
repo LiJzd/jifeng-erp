@@ -1,10 +1,14 @@
 # 验证记录
 
+## 2026-10-04 列筛选原生只读八门通过（未同步界面）
+
+root审阅r2助手及固定manifest后只执行一次：真实普通库存账号、原生3.14环境和既有935对象验收库，在同一MariaDB连接实际启用并前后核对SESSION READ ONLY。两类旧响应及13／139、历史零仓、2.5／50余额保持；零仓跨页过滤、Decimal升降序、完整范围仓库选项分页、未知总重null区别字面“—”、无匹配仍读取授权来源、非法条件拒绝和Guest选项拒绝共八门通过。实际4,450次只读SQL，transaction_writes=0；结构／索引、文件、空队列、运行身份、配置与612／443旧候选前后保持。助手只在该原生进程编译新tracking模块，没有stage候选、创建fixture或连接原／旧owned库。结果 `output/inventory-tracking-column-native-20261004-r2/result.json` SHA `e8ce24091d33d6bd838ae5ff7ffca4dea908119b89215b8f91dbe6f7a1654d08`；helper SHA `cd86a0faf5fd82a48592582e3caa070c9aedb21f898ac1ea550aef3fa7b84d7f`、manifest SHA `8ee7f12a72aef23b7f535d51cbe3068505775e7d261d9fa3565f27e4419e372f`。尚无新筛选HTTP／GUI证明，112ad外网发布包仍不包含此功能。
+
 ## 2026-10-04 列筛选候选与外网只读预检 r7 通过（尚未发布）
 
 两版共用的跟踪表头已实现升序／降序、清空、文本条件及分页勾选选项。完整授权和来源版本校验后才过滤、排序及分页；Decimal 数值排序、缺失排末、稳定同值顺序，空投影与字面“—”分开。选项来自完整授权范围，其他列条件生效、当前列自身条件不限制选项；勾选跨页保留，最多选或排除200值，不静默截取全集。扩展查询用 POST 和精确回显的协议1，旧无参数 GET／响应保持；详情仍只传旧参数。确定后清旧行和详情并重查第1页，取消／Escape保持条件，清列不清页面搜索，过期响应不能重现。root 实际44 Python、33 JS、A/B366派发／21侧栏动作、2资源门、Ruff／Node解析及diff检查通过。测试覆盖261行跨页、151去重值分页、被筛除行仍须通过权限、高精度排序及mask值不能补回。这些是模型与源码证据；未stage到本机runtime，也未完成本批原生／HTTP／GUI或旧系统真实勾选、排序验收。独立112ad发布包没有加入新列筛选。
 
-fresh 外网只读预检 r7由root审阅并唯一执行：严格校验r6实际四标志的类型／存在性／值，只规范挂载列表顺序且拒绝重复Destination；335,675字节stdin、30次实际SSH DIRECT，原生及独立AFTER全门通过。实际旧572源码／33资源／934对象、八服务及四Compose／配置／保护文件保持。既有测试账号14角色、唯一可选公司及跟踪始终执行的权限先决条件通过；既有catalog两种类合成无匹配查询返回空，Guest拒绝。`ready_for_actor_freeze=true`、预测新跟踪空查询可读；没有执行尚未安装的新tracking API，不将权限预测等同API验收。原始队列只读观察到queued0／registered worker1；没有消费或修改队列。记录 `output/inventory-tracking-release-20261004-r7-readonly-preflight.json`，完整响应SHA `98b72a18712e41641c00914b3285c1f20396a486377bcb42149d4348fa04da99` 留本地受限ACL。未上传／切源码／DDL／授角色／改配置，当前外网仍a758／5b及共用测试数据。
+fresh 外网只读预检 r7由root审阅并唯一执行：严格校验r6实际四标志的类型／存在性／值，只规范挂载列表顺序且拒绝重复Destination；335,675字节stdin、30次实际SSH DIRECT，原生及独立AFTER全门通过。实际核对934对象的数量／名称／引擎与六sequence形状；旧572源码／33资源、八服务及四Compose／配置／保护文件保持。该活跃站只读预检未提供全库行／结构／索引指纹冻结证明。既有测试账号14角色、唯一可选公司及跟踪始终执行的权限先决条件通过；既有catalog两种类合成无匹配查询返回空，Guest拒绝。`ready_for_actor_freeze=true`、预测新跟踪空查询可读；没有执行尚未安装的新tracking API，不将权限预测等同API验收。原始队列只读观察到queued0／registered worker1；没有消费或修改队列。记录 `output/inventory-tracking-release-20261004-r7-readonly-preflight.json`，完整响应SHA `98b72a18712e41641c00914b3285c1f20396a486377bcb42149d4348fa04da99` 留本地受限ACL。未上传／切源码／DDL／授角色／改配置，当前外网仍a758／5b及共用测试数据。
 
 ## 2026-10-04 外网库存预检 r6 的实际失败原因（未发布）
 
