@@ -48,7 +48,9 @@ function row(extra = {}) {
 		image: { source_doctype: "Item", source_name: "ITEM-0007", source_field: "image", label: "关联业务商品图片", state: "未上传", url: "" }, ...extra };
 }
 function response(request, rows = [row()], extra = {}) {
-	return { warehouse: "", ...request.options.args, rows, currency: "CNY", basis, total: rows.length, total_pages: rows.length ? 1 : 0, readonly: true, can_write: false, ...extra };
+	const args = request.options.args, extended = Object.hasOwn(args, "column_filters") ? {
+		filter_protocol: 1, column_filters: JSON.parse(args.column_filters), sort: JSON.parse(args.sort) } : {};
+	return { warehouse: "", ...args, ...extended, rows, currency: "CNY", basis, total: rows.length, total_pages: rows.length ? 1 : 0, readonly: true, can_write: false, ...extra };
 }
 async function make(kind = "物料", h = harness()) {
 	const host = new Element("div"), view = new h.window.JifengInventoryTracking(host, kind, h.bridge); await view.ready; return { ...h, host, view };
@@ -297,6 +299,99 @@ test("replaced detail page aborts prior page and denied diagnostics remain gener
 	detail.request.resolve(recordsResponse(detail.request)); await detail.pending; assert.match(detail.state.body.textContent, /正在读取/);
 	request.reject(new Error("private SQL password")); await next; assert.match(detail.state.body.textContent, /详情未能读取/);
 	assert.ok(!m.host.textContent.includes("private SQL password")); assert.equal(m.view.rows.length, 1);
+});
+function valuesResponse(request, values = [null, "—"], extra = {}) {
+	const args = request.options.args;
+	return { ...args, warehouse: args.warehouse || "", column_filters: JSON.parse(args.column_filters), sort: JSON.parse(args.sort),
+		filter_protocol: 1, currency: "CNY", full_scope: true, source_total: values.length, matched_total: values.length,
+		values, total: values.length, total_pages: values.length ? 1 : 0, readonly: true, can_write: false, ...extra };
+}
+test("column menu and text cancellation preserve rows, page, search and conditions; Escape restores focus", async () => {
+	const m = await make(); m.view.search.value = "0007"; await populate(m, [row()], { total: 101, total_pages: 2 }, 2);
+	const rows = m.view.rows, trigger = m.view.columnHeaders.get("display_name").button;
+	m.view.openColumnMenu("display_name", trigger); const menu = m.view.columnPopup;
+	assert.equal(menu.layer.descendants("button").map(button => button.textContent).join("/"), "升序排序/降序排序/清空筛选/文本筛选/设置筛选");
+	menu.controls[3].click(); menu.layer.descendants("button").find(button => button.textContent === "包含").click(); const draft = m.view.columnPopup;
+	assert.equal(draft.operator.value, "contains"); assert.equal(draft.operator.descendants("option").length, 10); draft.input.value = "nomatch";
+	draft.cancel.click(); assert.equal(m.view.columnPopup, null); assert.equal(trigger.focused, true);
+	assert.equal(m.view.rows, rows); assert.equal(m.view.page, 2); assert.equal(m.view.search.value, "0007"); assert.equal(m.calls.length, 1); assert.deepEqual(plain(m.view.columnFilters), []);
+	const next = m.view.openTextFilter("display_name", "contains", trigger); next.input.value = "other";
+	next.layer.events.get("keydown")({ key: "Escape", preventDefault() {}, stopPropagation() {} });
+	assert.equal(m.view.columnPopup, null); assert.equal(trigger.focused, true); assert.equal(m.view.rows, rows); assert.equal(m.calls.length, 1);
+});
+test("column changes abort old rows/details, use POST protocol 1 and restart page 1 while keeping page search", async () => {
+	const m = await make(); m.view.search.value = "0007"; await populate(m, [row()], { total: 101, total_pages: 2 }, 2);
+	const detail = openDetail(m), condition = { field: "display_name", operator: "contains", value: "nomatch" };
+	const pending = m.view.applyColumnCondition("display_name", condition), request = m.calls.at(-1);
+	assert.equal(detail.request.aborted, true); assert.equal(m.view.detail, null); assert.equal(m.view.rows.length, 0); assert.equal(m.view.page, 1);
+	assert.equal(request.options.type, "POST"); assert.equal(request.options.args.page, 1); assert.equal(request.options.args.search, "0007");
+	assert.deepEqual(JSON.parse(request.options.args.column_filters), [condition]); assert.equal(JSON.parse(request.options.args.sort), null);
+	assert.equal(m.view.columnHeaders.get("display_name").button.dataset.filtered, "true");
+	request.resolve(response(request, [])); await pending; detail.request.resolve(archiveResponse(detail.request)); await detail.pending;
+	assert.equal(m.view.total, 0); assert.equal(m.view.detail, null); assert.equal(m.view.search.value, "0007");
+	const clear = m.view.applyColumnCondition("display_name", null), old = m.calls.at(-1); assert.equal(old.options.type, "GET");
+	assert.equal(Object.hasOwn(old.options.args, "column_filters"), false); assert.equal(old.options.args.search, "0007");
+	old.resolve(response(old, [])); await clear; assert.equal(m.view.columnHeaders.get("display_name").button.dataset.filtered, "false");
+});
+test("filter changes discard old responses even when requests ignore abort", async () => {
+	const m = await make(); await populate(m); const previous = m.view.query(), old = m.calls.at(-1);
+	const pending = m.view.applyColumnCondition("notes", { operator: "eq", value: "原文\n保留" }), request = m.calls.at(-1);
+	assert.equal(old.aborted, true); assert.notEqual(old, request); old.resolve(response(old)); await previous; assert.equal(m.view.rows.length, 0);
+	request.resolve(response(request)); await pending; assert.equal(m.view.rows.length, 1);
+	const third = m.view.query(), stale = m.calls.at(-1); m.view.search.value = "new"; m.view.search.events.get("input")();
+	stale.resolve(response(stale)); await third; assert.equal(m.view.rows.length, 0);
+});
+test("extended response binds exact filters, sort and protocol; sorting leaves decimal text untouched", async () => {
+	for (const change of [data => { data.filter_protocol = 2; }, data => { data.column_filters = []; }, data => { data.sort.direction = "asc"; }, data => { data.unexpected = true; }]) {
+		const m = await make(); m.view.columnFilters = [{ field: "notes", operator: "eq", value: "原文\n保留" }];
+		const pending = m.view.setColumnSort("stock_qty", "desc"), request = m.calls.at(-1), data = response(request); change(data); request.resolve(data); await pending;
+		assert.equal(m.view.rows.length, 0); assert.match(m.view.status.textContent, /查询未完成/);
+	}
+	const m = await make(), pending = m.view.setColumnSort("stock_qty", "desc"), request = m.calls.at(-1);
+	assert.equal(request.options.type, "POST"); assert.equal(m.view.columnHeaders.get("stock_qty").th.attributes["aria-sort"], "descending");
+	request.resolve(response(request)); await pending; assert.equal(m.view.tbody.descendants("td")[2].textContent, "9007199254740993.01");
+});
+test("value pages cover the full authorized scope, separate null/dash and preserve cross-page exclusions", async () => {
+	const m = await make(); await populate(m); const state = m.view.openValueFilter("notes"), first = m.calls.at(-1);
+	assert.equal(first.options.method, "jifeng_erp.inventory_tracking.query_tracking_values"); assert.equal(first.options.type, "POST"); assert.equal(state.confirm.disabled, true);
+	const values = [null, "—", ...Array.from({ length: 98 }, (_, index) => "value-" + index)];
+	first.resolve(valuesResponse(first, values, { source_total: 150, matched_total: 150, total: 101, total_pages: 2 })); await state.ready;
+	assert.equal(state.list.descendants("label")[0].textContent, "（空值）"); assert.equal(state.list.descendants("label")[1].textContent, "—"); assert.equal(state.next.disabled, false);
+	const empty = state.list.descendants("input")[0]; empty.checked = false; empty.events.get("change")(); assert.equal(state.selected.has("null"), true); assert.equal(state.selected.has('"—"'), false);
+	const next = m.view.queryValueOptions(state, 2), second = m.calls.at(-1); second.resolve(valuesResponse(second, ["outside-first-100"], { source_total: 150, matched_total: 150, total: 101, total_pages: 2 })); await next;
+	assert.equal(state.selected.has("null"), true); state.confirm.click(); const request = m.calls.at(-1);
+	assert.deepEqual(JSON.parse(request.options.args.column_filters), [{ field: "notes", operator: "not_in", value: [null] }]); assert.equal(request.options.args.page, 1);
+	request.resolve(response(request)); await new Promise(setImmediate); assert.equal(m.view.rows.length, 1);
+});
+test("cancelled or stale value pages cannot apply drafts or render late option values", async () => {
+	const m = await make(); await populate(m); const rows = m.view.rows, state = m.view.openValueFilter("notes"), first = m.calls.at(-1);
+	first.resolve(valuesResponse(first)); await state.ready; const box = state.list.descendants("input")[0]; box.checked = false; box.events.get("change")(); state.cancel.click();
+	assert.equal(m.view.rows, rows); assert.deepEqual(plain(m.view.columnFilters), []); assert.equal(m.calls.length, 2);
+	const stale = m.view.openValueFilter("notes"), request = m.calls.at(-1); m.view.search.value = "changed"; m.view.search.events.get("input")();
+	assert.equal(request.aborted, true); request.resolve(valuesResponse(request, ["do-not-render"])); await stale.ready;
+	assert.equal(m.view.columnPopup, null); assert.ok(!m.host.textContent.includes("do-not-render")); assert.equal(stale.list.textContent, "");
+});
+test("incomplete or denied options clear older data and cannot masquerade as a valid empty set", async () => {
+	for (const change of [data => { data.full_scope = false; }, data => { data.source_total = 0; }, data => { data.column_filters = [{ field: "notes", operator: "eq", value: "other" }]; },
+		data => { data.values = [null, null]; }, data => { data.field = "display_name"; }, data => { data.currency = ""; }]) {
+		const m = await make(); await populate(m); const state = m.view.openValueFilter("notes"), request = m.calls.at(-1), data = valuesResponse(request); change(data); request.resolve(data); await state.ready;
+		assert.equal(state.confirm.disabled, true); assert.equal(state.list.textContent, ""); assert.equal(m.view.rows.length, 0); assert.match(state.error.textContent, /未能完整读取/);
+	}
+	const m = await make(); await populate(m); const state = m.view.openValueFilter("notes"); m.calls.at(-1).reject(new Error("private SQL")); await state.ready;
+	assert.equal(m.view.rows.length, 0); assert.ok(!state.layer.textContent.includes("private SQL"));
+});
+test("filtered details retain old exact scope and closing preserves conditions, count and focus", async () => {
+	const m = await make(); m.view.search.value = "0007"; m.view.columnFilters = [{ field: "notes", operator: "contains", value: "原文" }]; m.view.columnSort = { field: "stock_qty", direction: "asc" };
+	await populate(m, [row()], { total: 101, total_pages: 2 }, 2); const conditions = plain(m.view.columnFilters), order = plain(m.view.columnSort), detail = openDetail(m);
+	assert.equal(Object.hasOwn(detail.request.options.args, "column_filters"), false); assert.equal(Object.hasOwn(detail.request.options.args, "sort"), false);
+	detail.request.resolve(archiveResponse(detail.request)); await detail.pending; m.view.closeDetail(true);
+	assert.equal(m.view.page, 2); assert.equal(m.view.total, 101); assert.equal(detail.trigger.focused, true); assert.equal(m.view.search.value, "0007");
+	assert.deepEqual(plain(m.view.columnFilters), conditions); assert.deepEqual(plain(m.view.columnSort), order); assert.equal(m.calls.length, 2);
+});
+test("empty complete options disable confirm and cancellation does not apply a filter", async () => {
+	const m = await make(); const state = m.view.openValueFilter("notes"), request = m.calls.at(-1); request.resolve(valuesResponse(request, [])); await state.ready;
+	assert.equal(state.confirm.disabled, true); assert.equal(state.all.disabled, true); assert.equal(m.calls.length, 1); state.confirm.click(); assert.equal(m.calls.length, 1);
+	state.cancel.click(); assert.deepEqual(plain(m.view.columnFilters), []);
 });
 (async () => { for (const [name, body] of tests) { try { await body(); } catch (error) { error.message = name + ": " + error.message; throw error; } }
 	console.log(tests.length + " inventory tracking DTO/DOM models passed (no GUI/native/HTTP proof)");

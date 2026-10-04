@@ -6,7 +6,13 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 	}
 	build() {
 		this.host.classList.add("jfe-inventory-tracking"); this.host.replaceChildren();
-		this.detailKeydown = event => { if (event.key === "Escape" && this.detail) { event.preventDefault(); event.stopPropagation(); this.closeDetail(true); } };
+		this.columnFilters = []; this.columnSort = null; this.columnPopup = null;
+		this.detailKeydown = event => {
+			if (event.key === "Escape" && (this.columnPopup || this.detail)) {
+				event.preventDefault(); event.stopPropagation();
+				if (this.columnPopup) this.closeColumnPopup(true); else this.closeDetail(true);
+			}
+		};
 		this.host.addEventListener("keydown", this.detailKeydown);
 		this.fields = [["warehouse", "仓库"], ["legacy_number", "编号"], ["stock_qty", "库存"],
 			["valuation_rate", "单价"], ["stock_value", "金额"], ["weight", "重量"], ["total_weight", "总重量"],
@@ -40,7 +46,13 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		this.scroller = this.element("div", undefined, "jfe-inventory-tracking-scroll");
 		this.table = this.element("table"); this.table.setAttribute("aria-label", __(this.kind + "跟踪列表"));
 		const head = this.element("thead"), titles = this.element("tr");
-		for (const [field, label] of this.fields) { const th = this.element("th", __(label)); th.dataset.field = field; titles.append(th); }
+		this.columnHeaders = new Map();
+		for (const [field, label] of this.fields) {
+			const th = this.element("th"); th.dataset.field = field; th.setAttribute("aria-sort", "none");
+			const button = this.button(label, () => this.openColumnMenu(field, button), "jfe-inventory-tracking-column");
+			button.setAttribute("aria-label", __(label) + __("列菜单")); button.setAttribute("aria-haspopup", "menu");
+			th.append(button); titles.append(th); this.columnHeaders.set(field, { th, button, label });
+		}
 		titles.append(this.element("th", __("来源"))); head.append(titles); this.tbody = this.element("tbody");
 		this.table.append(head, this.tbody); this.scroller.append(this.table);
 		this.cards = this.element("div", undefined, "jfe-inventory-tracking-cards"); this.cards.hidden = true;
@@ -90,13 +102,14 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 	changeScope() { /* Every query compares current native controls directly. */ }
 	invalidate(message = "筛选已变化，请重新查询。") {
 		if (this.disposed) return;
+		this.closeColumnPopup(false);
 		this.revision++; this.loading = false; const request = this.request; this.request = null; request?.abort?.();
 		this.clearResults(); this.page = 1; if (this.goto) this.goto.value = "1";
 		if (this.status) this.status.textContent = __(message); this.renderPager();
 	}
 	clearResults() {
 		this.closeDetail(false);
-		this.rows = []; this.total = null; this.totalPages = 0; this.resultScope = null; this.resultCurrency = null;
+		this.rows = []; this.total = null; this.totalPages = 0; this.resultScope = null; this.resultColumns = null; this.resultCurrency = null;
 		this.tbody?.replaceChildren(); this.cards?.replaceChildren(); if (this.scopeLabel) this.scopeLabel.textContent = ""; this.renderPager();
 	}
 	renderPager() {
@@ -108,7 +121,9 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		if (this.queryButton) this.queryButton.disabled = !this.visible || !!this.loading;
 	}
 	sameContext(a, b) { return !!a && !!b && ["kind", "company", "warehouse", "as_of", "search"].every(key => a[key] === b[key]); }
-	current(sequence, args) { return !this.disposed && this.visible && sequence === this.revision && this.sameContext(args, this.context()); }
+	columnContext() { const scope = this.context(); return scope && { ...scope, column_filters: JSON.parse(JSON.stringify(this.columnFilters)), sort: this.columnSort && { ...this.columnSort } }; }
+	sameColumnContext(a, b) { return this.sameContext(a, b) && this.sameData(a.column_filters || [], b.column_filters || []) && this.sameData(a.sort ?? null, b.sort ?? null); }
+	current(sequence, args) { return !this.disposed && this.visible && sequence === this.revision && this.sameColumnContext(args, this.columnContext()); }
 	keys(object, required) { return !!object && typeof object === "object" && !Array.isArray(object) && Object.keys(object).length === required.length && required.every(key => Object.hasOwn(object, key)); }
 	decimal(value) { return typeof value === "string" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?$/.test(value); }
 	validRow(row, args) {
@@ -126,7 +141,9 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 			(image.state === "已上传" ? this.safePreview(image.url) : image.url === "");
 	}
 	validPage(result, args) {
-		if (!this.keys(result, ["kind", "company", "search", "warehouse", "as_of", "currency", "basis", "page", "page_size", "total", "total_pages", "rows", "readonly", "can_write"]) ||
+		const extended = Object.hasOwn(args, "column_filters");
+		if (!this.keys(result, ["kind", "company", "search", "warehouse", "as_of", "currency", "basis", "page", "page_size", "total", "total_pages", "rows", "readonly", "can_write", ...(extended ? ["filter_protocol", "column_filters", "sort"] : [])]) ||
+			extended && (result.filter_protocol !== 1 || !this.sameColumnContext(result, args)) ||
 			result.readonly !== true || result.can_write !== false || !this.sameContext(result, args) || !this.validName(result.currency) ||
 			result.page !== args.page || result.page_size !== args.page_size || !Number.isSafeInteger(result.total) || result.total < 0 ||
 			!Number.isSafeInteger(args.page) || args.page < 1 || !Number.isSafeInteger(args.page_size) || args.page_size < 1 || args.page_size > 100 ||
@@ -140,23 +157,216 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 	}
 	async query(page = 1) {
 		if (this.disposed || !this.visible || this.loading) return;
+		this.closeColumnPopup(false);
 		const scope = this.context(), requestedPage = this.pageNumber(page); this.clearResults();
 		if (!scope || !requestedPage) { this.status.textContent = __("请选择有效的公司、截止日期和页码，仓库须为明确的叶仓。") ; return; }
-		const args = { ...scope, page: requestedPage, page_size: this.pageSize }, sequence = ++this.revision;
+		const extended = this.columnFilters.length > 0 || this.columnSort !== null;
+		const args = { ...scope, ...(extended ? { column_filters: JSON.parse(JSON.stringify(this.columnFilters)), sort: this.columnSort && { ...this.columnSort } } : {}), page: requestedPage, page_size: this.pageSize }, sequence = ++this.revision;
 		this.loading = true; this.renderPager(); this.status.textContent = __("正在查询库存跟踪…");
 		try {
 			const requestArgs = { ...args }; if (!requestArgs.warehouse) delete requestArgs.warehouse;
-			this.request = frappe.call({ method: "jifeng_erp.inventory_tracking.query_tracking", type: "GET", args: requestArgs });
+			if (extended) { requestArgs.column_filters = JSON.stringify(args.column_filters); requestArgs.sort = JSON.stringify(args.sort); }
+			this.request = frappe.call({ method: "jifeng_erp.inventory_tracking.query_tracking", type: extended ? "POST" : "GET", args: requestArgs });
 			const response = await this.request; if (!this.current(sequence, args)) return;
 			if (!this.validPage(response?.message, args)) throw new Error("Invalid tracking scope");
 			const result = response.message; this.rows = result.rows; this.page = result.page; this.total = result.total; this.totalPages = result.total_pages;
-			this.resultScope = scope; this.resultCurrency = result.currency; this.goto.value = String(this.page);
+			this.resultScope = scope; this.resultColumns = this.columnContext(); this.resultCurrency = result.currency; this.goto.value = String(this.page);
 			this.scopeLabel.textContent = [scope.company, scope.as_of, scope.warehouse || __("公司叶仓"), result.currency].join(" · ");
 			this.renderRows(result.basis); this.status.textContent = this.total ? __("查询完成。") : __("没有可见的库存历史记录。");
 		} catch { if (this.current(sequence, args)) { this.clearResults(); this.status.textContent = __("查询未完成，请核对筛选条件和完整来源权限后重试。"); } }
-		finally { if (!this.disposed && sequence === this.revision) { if (!this.sameContext(scope, this.context())) this.clearResults(); this.loading = false; this.request = null; this.renderPager(); } }
+		finally { if (!this.disposed && sequence === this.revision) { if (!this.sameColumnContext(args, this.columnContext())) this.clearResults(); this.loading = false; this.request = null; this.renderPager(); } }
 	}
 	cellValue(row, field) { return ["warehouse", "stock_qty", "valuation_rate", "stock_value", "stock_uom", "total_weight"].includes(field) ? row[field] : row.profile[field]; }
+	columnOperators() { return [["eq", "等于"], ["ne", "不等于"], ["starts", "开头是"], ["not_starts", "开头不是"], ["ends", "结尾是"], ["not_ends", "结尾不是"], ["contains", "包含"], ["not_contains", "不包含"], ["in", "在里面"], ["not_in", "不在里面"]]; }
+	validColumnValue(text) { return typeof text === "string" && [...text].length <= 2000 && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text); }
+	validColumnConditions(filters, sort) {
+		const names = this.fields.map(([field]) => field), seen = new Set();
+		return Array.isArray(filters) && filters.length <= names.length && JSON.stringify(filters).length <= 65536 && filters.every(condition => {
+			if (!this.keys(condition, ["field", "operator", "value"]) || !names.includes(condition.field) || seen.has(condition.field)) return false;
+			seen.add(condition.field);
+			return ["in", "not_in"].includes(condition.operator) ? Array.isArray(condition.value) && condition.value.length <= 200 &&
+				condition.value.every(item => item === null || this.validColumnValue(item)) && new Set(condition.value.map(item => JSON.stringify(item))).size === condition.value.length :
+				this.columnOperators().slice(0, 8).some(([operator]) => operator === condition.operator) && this.validColumnValue(condition.value);
+		}) && (sort === null || this.keys(sort, ["field", "direction"]) && names.includes(sort.field) && ["asc", "desc"].includes(sort.direction));
+	}
+	renderColumnMarkers() {
+		for (const [field, header] of this.columnHeaders) {
+			const filtered = this.columnFilters.some(condition => condition.field === field), direction = this.columnSort?.field === field ? this.columnSort.direction : "";
+			header.button.dataset.filtered = String(filtered); header.button.dataset.direction = direction;
+			header.button.setAttribute("aria-label", __(header.label) + __("列菜单") + (filtered ? __("，已筛选") : "") + (direction ? __(direction === "asc" ? "，升序" : "，降序") : ""));
+			header.th.setAttribute("aria-sort", direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none");
+		}
+	}
+	applyColumnCondition(field, condition, order = this.columnSort) {
+		if (this.disposed || !this.visible || !this.columnHeaders.has(field)) return;
+		const filters = this.columnFilters.filter(item => item.field !== field);
+		if (condition) filters.push({ field, operator: condition.operator, value: condition.value });
+		filters.sort((a, b) => this.fields.findIndex(([name]) => name === a.field) - this.fields.findIndex(([name]) => name === b.field));
+		if (!this.validColumnConditions(filters, order)) {
+			if (this.columnPopup?.error) this.columnPopup.error.textContent = __("筛选条件过长或无效，请减少选择的值或缩短文本。");
+			return;
+		}
+		this.closeColumnPopup(true);
+		if (this.sameData(filters, this.columnFilters) && this.sameData(order, this.columnSort)) return;
+		this.columnFilters = JSON.parse(JSON.stringify(filters)); this.columnSort = order && { ...order };
+		this.renderColumnMarkers(); this.invalidate(); return this.query(1);
+	}
+	setColumnSort(field, direction) {
+		const condition = this.columnFilters.find(item => item.field === field);
+		return this.applyColumnCondition(field, condition || null, { field, direction });
+	}
+	columnPopupCurrent(state) {
+		return !this.disposed && this.visible && this.columnPopup === state && !state.closed && state.revision === this.revision &&
+			this.sameColumnContext(state.scope, this.columnContext());
+	}
+	closeColumnPopup(restoreFocus = true) {
+		const state = this.columnPopup; this.columnPopup = null;
+		if (!state) return;
+		state.closed = true; state.request?.abort?.(); state.request = null; state.layer.remove();
+		if (state.outside) this.host.removeEventListener("pointerdown", state.outside);
+		for (const [node, inert] of state.background || []) node.inert = inert;
+		state.trigger?.setAttribute("aria-expanded", "false");
+		if (restoreFocus && this.visible && !this.disposed) state.trigger?.focus?.();
+	}
+	makeColumnPopup(field, trigger, dialog = false) {
+		this.closeColumnPopup(false); this.closeDetail(false);
+		const layer = this.element("section", undefined, "jfe-inventory-tracking-column-popup" + (dialog ? " dialog" : " menu"));
+		const state = { field, trigger, layer, scope: this.columnContext(), revision: this.revision, request: null, requestRevision: 0, closed: false, controls: [], background: [] };
+		layer.setAttribute("role", dialog ? "dialog" : "menu"); layer.setAttribute("aria-label", __(this.columnHeaders.get(field).label) + __(dialog ? "筛选" : "列菜单"));
+		if (dialog) {
+			layer.setAttribute("aria-modal", "true"); state.background = Array.from(this.host.children, node => [node, node.inert]); for (const [node] of state.background) node.inert = true;
+			if (layer.style) layer.style.top = ((this.host.scrollTop || 0) + 24) + "px";
+		}
+		else if (trigger?.getBoundingClientRect && this.host.getBoundingClientRect) {
+			const anchor = trigger.getBoundingClientRect(), host = this.host.getBoundingClientRect();
+			layer.style.left = Math.max(0, Math.min(anchor.left - host.left + this.host.scrollLeft, this.host.clientWidth - 220)) + "px";
+			layer.style.top = Math.max(0, anchor.bottom - host.top + this.host.scrollTop) + "px";
+		}
+		layer.addEventListener("keydown", event => {
+			if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.closeColumnPopup(true); return; }
+			const controls = state.controls.filter(control => !control.disabled), index = controls.indexOf(event.target);
+			if (dialog && event.key === "Tab" || !dialog && ["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+				event.preventDefault();
+				const next = event.key === "Home" ? 0 : event.key === "End" ? controls.length - 1 :
+					(index + (event.key === "ArrowUp" || event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+				controls[next]?.focus?.();
+			}
+		});
+		if (!dialog) {
+			state.outside = event => { if (this.columnPopup === state && !layer.contains?.(event.target) && !trigger?.contains?.(event.target)) this.closeColumnPopup(true); };
+			this.host.addEventListener("pointerdown", state.outside);
+		}
+		this.columnPopup = state; trigger?.setAttribute("aria-expanded", "true"); this.host.append(layer); return state;
+	}
+	openColumnMenu(field, trigger = this.columnHeaders.get(field)?.button) {
+		if (this.disposed || !this.visible || this.loading || !this.columnHeaders.has(field)) return;
+		const state = this.makeColumnPopup(field, trigger), filtered = this.columnFilters.find(condition => condition.field === field);
+		const action = (label, callback) => { const button = this.button(label, callback); button.setAttribute("role", "menuitem"); state.controls.push(button); state.layer.append(button); return button; };
+		action("升序排序", () => this.setColumnSort(field, "asc")); action("降序排序", () => this.setColumnSort(field, "desc"));
+		const clear = action("清空筛选", () => this.applyColumnCondition(field, null)); clear.disabled = !filtered;
+		const text = action("文本筛选" + (filtered && !["in", "not_in"].includes(filtered.operator) ? " ✓" : ""), () => {
+			if (state.submenu) return;
+			state.submenu = this.element("div", undefined, "jfe-inventory-tracking-column-submenu"); state.layer.append(state.submenu);
+			for (const [operator, label] of [...this.columnOperators().filter(([operator]) => !["in", "not_in", "not_starts", "not_ends"].includes(operator)), [filtered?.operator || "contains", "自定义筛选"]]) {
+				const button = this.button(label, () => this.openTextFilter(field, operator, trigger)); button.setAttribute("role", "menuitem"); state.controls.push(button); state.submenu.append(button);
+			}
+			state.submenu.children[0]?.focus?.();
+		}); text.setAttribute("aria-haspopup", "menu");
+		action("设置筛选", () => this.openValueFilter(field, trigger)); state.controls[0].focus?.();
+	}
+	filterDialog(field, trigger, title) {
+		const state = this.makeColumnPopup(field, trigger, true), header = this.element("header");
+		header.append(this.element("h2", __(title)), this.element("span", __("显示行：") + __(this.columnHeaders.get(field).label))); state.layer.append(header);
+		state.error = this.element("p", undefined, "jfe-inventory-tracking-column-error"); state.error.setAttribute("role", "status");
+		state.footer = this.element("footer"); state.cancel = this.button("取消", () => this.closeColumnPopup(true));
+		return state;
+	}
+	openTextFilter(field, operator = "contains", trigger = this.columnHeaders.get(field)?.button) {
+		if (this.disposed || !this.visible || this.loading || !this.columnHeaders.has(field)) return;
+		const previous = this.columnFilters.find(condition => condition.field === field), state = this.filterDialog(field, trigger, "自定义筛选");
+		state.operator = this.element("select"); state.operator.setAttribute("aria-label", __("筛选运算符"));
+		for (const [value, label] of this.columnOperators()) { const option = this.element("option", __(label)); option.value = value; state.operator.append(option); }
+		state.operator.value = operator; state.input = this.element("textarea"); state.input.maxLength = 2000; state.input.setAttribute("aria-label", __("筛选值"));
+		state.input.value = previous ? Array.isArray(previous.value) ? previous.value.filter(value => value !== null).join("\n") : previous.value : "";
+		const hint = this.element("p", __("在里面/不在里面：每行输入一个完整值。空值请使用设置筛选。"));
+		state.confirm = this.button("确定", () => {
+			const value = ["in", "not_in"].includes(state.operator.value) ? state.input.value.split(/\r?\n/) : state.input.value;
+			const condition = { field, operator: state.operator.value, value };
+			if (!this.validColumnConditions([condition], null)) { state.error.textContent = __("请检查筛选值；每列最多 200 个值，每个值最多 2000 字，值不能重复。"); return; }
+			this.applyColumnCondition(field, condition);
+		}, "primary");
+		state.layer.append(state.operator, state.input, hint); state.footer.append(state.confirm, state.cancel); state.layer.append(state.error, state.footer);
+		state.controls = [state.operator, state.input, state.confirm, state.cancel]; state.input.focus?.(); return state;
+	}
+	openValueFilter(field, trigger = this.columnHeaders.get(field)?.button) {
+		if (this.disposed || !this.visible || this.loading || !this.columnHeaders.has(field)) return;
+		const previous = this.columnFilters.find(condition => condition.field === field), state = this.filterDialog(field, trigger, "筛选");
+		state.allSelected = previous?.operator !== "in"; state.selected = new Set(["in", "not_in"].includes(previous?.operator) ? previous.value.map(value => JSON.stringify(value)) : []);
+		const label = this.element("label"); state.all = this.element("input"); state.all.type = "checkbox"; state.all.checked = state.allSelected;
+		state.all.addEventListener("change", () => { state.allSelected = state.all.checked; state.selected.clear(); this.renderValueChecks(state); });
+		label.append(state.all, this.element("span", __("全选"))); state.list = this.element("div", undefined, "jfe-inventory-tracking-value-list");
+		state.pager = this.element("div", undefined, "jfe-inventory-tracking-pager");
+		state.previous = this.button("上页", () => this.queryValueOptions(state, state.page - 1)); state.next = this.button("下页", () => this.queryValueOptions(state, state.page + 1)); state.count = this.element("span");
+		state.pager.append(state.previous, state.count, state.next);
+		state.confirm = this.button("确定", () => {
+			if (!this.columnPopupCurrent(state) || state.loading || !state.total) return;
+			const values = [...state.selected].map(value => JSON.parse(value));
+			this.applyColumnCondition(field, state.allSelected && !values.length ? null : { field, operator: state.allSelected ? "not_in" : "in", value: values });
+		}, "primary");
+		state.layer.append(label, this.element("p", __("选项来自完整查询范围，其他列条件继续生效。选择跨选项页保留；全选作用于所有选项。")), state.list, state.pager);
+		state.footer.append(state.confirm, state.cancel); state.layer.append(state.error, state.footer); state.controls = [state.all, state.previous, state.next, state.confirm, state.cancel];
+		state.confirm.disabled = true; state.all.disabled = true; state.previous.disabled = true; state.next.disabled = true;
+		state.cancel.focus?.();
+		if (!state.scope) { state.error.textContent = __("请选择有效的公司和截止日期后再读取选项。"); state.ready = Promise.resolve(); }
+		else state.ready = this.queryValueOptions(state, 1);
+		return state;
+	}
+	validValueOptions(result, state, page) {
+		if (!this.keys(result, ["kind", "company", "search", "warehouse", "as_of", "currency", "filter_protocol", "column_filters", "sort", "field", "full_scope", "source_total", "matched_total", "page", "page_size", "total", "total_pages", "values", "readonly", "can_write"]) ||
+			!this.sameColumnContext(result, state.scope) || result.filter_protocol !== 1 || result.field !== state.field || result.full_scope !== true || result.readonly !== true || result.can_write !== false || !this.validName(result.currency) ||
+			![result.source_total, result.matched_total, result.total, result.total_pages].every(value => Number.isSafeInteger(value) && value >= 0) || result.matched_total > result.source_total || result.total > result.matched_total ||
+			result.page !== page || result.page_size !== 100 || page > Math.max(1, result.total_pages) || !Array.isArray(result.values)) return false;
+		const total = BigInt(result.total), offset = (BigInt(page) - 1n) * 100n;
+		return offset <= BigInt(Number.MAX_SAFE_INTEGER) && result.total_pages === Number(total === 0n ? 0n : (total - 1n) / 100n + 1n) &&
+			result.values.length === Math.min(100, Math.max(0, result.total - Number(offset))) &&
+			result.values.every(value => value === null || this.validColumnValue(value)) && new Set(result.values.map(value => JSON.stringify(value))).size === result.values.length;
+	}
+	async queryValueOptions(state, requestedPage) {
+		const page = this.pageNumber(requestedPage); if (!page || !this.columnPopupCurrent(state)) return;
+		state.request?.abort?.(); const sequence = ++state.requestRevision; state.loading = true; state.values = []; state.total = null; state.totalPages = 0; state.count.textContent = ""; state.controls = [state.cancel];
+		state.list.replaceChildren(); state.confirm.disabled = true; state.all.disabled = true; state.previous.disabled = true; state.next.disabled = true; state.error.textContent = __("正在读取筛选选项…");
+		const args = { ...state.scope, field: state.field, page, page_size: 100, column_filters: JSON.stringify(state.scope.column_filters), sort: JSON.stringify(state.scope.sort) };
+		if (!args.warehouse) delete args.warehouse;
+		try {
+			state.request = frappe.call({ method: "jifeng_erp.inventory_tracking.query_tracking_values", type: "POST", args }); const response = await state.request;
+			if (!this.columnPopupCurrent(state) || sequence !== state.requestRevision) return;
+			if (!this.validValueOptions(response?.message, state, page)) throw new Error("Invalid tracking values");
+			state.values = response.message.values; state.page = page; state.total = response.message.total; state.totalPages = response.message.total_pages;
+			state.error.textContent = state.total ? "" : __("没有可选择的值。"); state.count.textContent = __("第") + " " + page + " " + __("页") + " · " + __("共") + " " + state.total + " " + __("个值");
+			state.previous.disabled = page <= 1; state.next.disabled = page >= state.totalPages; state.confirm.disabled = !state.total; state.all.disabled = !state.total;
+			this.renderValueChecks(state);
+		} catch {
+			if (this.columnPopupCurrent(state) && sequence === state.requestRevision) {
+				this.clearResults(); state.list.replaceChildren(); state.error.textContent = __("选项未能完整读取，请取消并核对来源权限或使用文本筛选。");
+			}
+		} finally { if (this.columnPopupCurrent(state) && sequence === state.requestRevision) { state.request = null; state.loading = false; } }
+	}
+	renderValueChecks(state) {
+		state.list.replaceChildren(); const controls = [];
+		for (const value of state.values || []) {
+			const label = this.element("label"), checkbox = this.element("input"), key = JSON.stringify(value); checkbox.type = "checkbox";
+			checkbox.checked = state.allSelected ? !state.selected.has(key) : state.selected.has(key);
+			checkbox.addEventListener("change", () => {
+				const chosen = state.allSelected ? !checkbox.checked : checkbox.checked;
+				if (chosen && !state.selected.has(key) && state.selected.size >= 200) { checkbox.checked = !checkbox.checked; state.error.textContent = __("每列最多选择或排除 200 个值。"); return; }
+				if (chosen) state.selected.add(key); else state.selected.delete(key); state.error.textContent = "";
+				state.all.checked = state.allSelected && state.selected.size === 0; state.all.indeterminate = state.selected.size > 0;
+			});
+			label.append(checkbox, this.element("span", value === null ? __("（空值）") : value === "" ? __("（空字符串）") : value)); state.list.append(label); controls.push(checkbox);
+		}
+		state.all.checked = state.allSelected && state.selected.size === 0; state.all.indeterminate = state.selected.size > 0;
+		state.controls = [state.all, ...controls, state.previous, state.next, state.confirm, state.cancel];
+	}
 	tooltip(row, field, basis) {
 		if (field === "weight") return basis.profile_weight;
 		if (field === "stock_qty") return basis.stock_qty + " · " + __("库存单位：") + row.stock_uom;
@@ -240,6 +450,7 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 	async readTrackingDetail(row, mode, trigger) {
 		if (this.disposed || !this.visible || this.loading || !["archive", "records"].includes(mode) || !this.rows.includes(row) ||
 			!this.sameContext(this.resultScope, this.context())) return;
+		this.closeColumnPopup(false);
 		this.closeDetail(false);
 		const layer = this.element("section", undefined, "jfe-inventory-tracking-detail " + (mode === "archive" ? "archive" : "records"));
 		const title = this.kind + (mode === "archive" ? "档案查询" : "跟踪记录");

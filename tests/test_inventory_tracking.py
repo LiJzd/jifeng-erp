@@ -548,6 +548,120 @@ class TestInventoryTracking(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.module.query_tracking_records(**args)
 
+    def test_column_filter_and_sort_run_before_paging_over_the_complete_authorized_scope(self):
+        for index in range(260):
+            self.add_pair(index)
+        filters = [{"field": "legacy_number", "operator": "starts", "value": "号02"}]
+        order = {"field": "legacy_number", "direction": "desc"}
+        result = self.query(column_filters=filters, sort=order, page_size=25, page=2)
+        self.assertEqual((result["total"], result["total_pages"], len(result["rows"])), (60, 3, 25))
+        self.assertEqual(result["rows"][0]["profile"]["legacy_number"], "号0234")
+        self.assertEqual((result["filter_protocol"], result["column_filters"], result["sort"]), (1, filters, order))
+        self.assertEqual(len(self.reports._native_balance.call_args.args[1]), 261)
+        # A hidden contributor on an excluded row must still refuse the page.
+        self.env.list_denials.add(("Stock Ledger Entry", "SLE-0001"))
+        with self.assertRaises(PermissionError):
+            self.query(column_filters=filters, sort=order)
+
+    def test_no_match_filter_and_value_options_do_not_hide_source_role_or_late_version_failure(self):
+        filters = [{"field": "legacy_number", "operator": "eq", "value": "nomatch"}]
+        self.env.role_denials.add(("Stock Ledger Entry", "read"))
+        for action in (lambda: self.query(column_filters=filters), lambda: self.module.query_tracking_values(
+                "物料", "JF", "legacy_number", column_filters=filters)):
+            with self.assertRaises(PermissionError):
+                action()
+        self.env.role_denials.clear()
+        self.native_hook = lambda count: self.env.item.update(modified="changed") if count == 2 else None
+        with self.assertRaises(PermissionError):
+            self.query(column_filters=filters)
+
+    def test_decimal_sort_preserves_high_precision_and_has_stable_ties_and_missing_last(self):
+        self.add_pair(1)
+        self.add_pair(2)
+        self.native_rows[0]["bal_qty"] = Decimal("9007199254740993.01")
+        self.native_rows[1]["bal_qty"] = Decimal("9007199254740993.02")
+        self.native_rows[2]["bal_qty"] = Decimal("9007199254740993.01")
+        result = self.query(sort={"field": "stock_qty", "direction": "desc"})
+        self.assertEqual([row["profile_name"] for row in result["rows"]], ["PROFILE-0001", "PROFILE-0002", "PROFILE-A"])
+        self.assertEqual(result["rows"][0]["stock_qty"], "9007199254740993.02")
+        for direction in ("asc", "desc"):
+            result = self.query(sort={"field": "weight", "direction": direction})
+            self.assertEqual([row["profile_name"] for row in result["rows"]], ["PROFILE-A", "PROFILE-0001", "PROFILE-0002"])
+            self.assertTrue(all(row["total_weight"] is None for row in result["rows"]))
+
+    def test_text_operations_compare_rendered_values_without_trimming_or_numeric_coercion(self):
+        self.env.profile["notes"] = " 甲乙\n尾 "
+        cases = [("eq", " 甲乙\n尾 ", 1), ("ne", "甲乙\n尾", 1), ("starts", " 甲", 1),
+                 ("not_starts", "甲", 1), ("ends", "尾 ", 1), ("not_ends", "尾", 1),
+                 ("contains", "乙\n", 1), ("not_contains", "丙", 1), ("eq", "甲乙\n尾", 0)]
+        for operator, value, total in cases:
+            with self.subTest(operator=operator, value=value):
+                result = self.query(column_filters=[{"field": "notes", "operator": operator, "value": value}])
+                self.assertEqual(result["total"], total)
+        self.assertEqual(self.query(column_filters=[{"field": "stock_qty", "operator": "eq", "value": "3"}])["total"], 0)
+
+    def test_null_set_value_is_distinct_from_literal_dash_and_masked_projection_stays_null(self):
+        self.add_pair(1)
+        self.env.profile["notes"] = None
+        self.env.documents[PROFILE, "PROFILE-0001"]["notes"] = "—"
+        values = self.module.query_tracking_values("物料", "JF", "notes")
+        self.assertEqual(values["values"], ["—", None])
+        empty = self.query(column_filters=[{"field": "notes", "operator": "in", "value": [None]}])
+        dash = self.query(column_filters=[{"field": "notes", "operator": "in", "value": ["—"]}])
+        self.assertEqual([row["profile_name"] for row in empty["rows"]], ["PROFILE-A"])
+        self.assertEqual([row["profile_name"] for row in dash["rows"]], ["PROFILE-0001"])
+        self.assertEqual(self.query(column_filters=[{"field": "notes", "operator": "eq", "value": "—"}])["total"], 2)
+        self.env.metas[PROFILE]["notes"].update(mask=1)
+        values = self.module.query_tracking_values("物料", "JF", "notes")
+        self.assertEqual(values["values"], [None])
+        self.assertNotIn("—", values["values"])
+
+    def test_value_options_cover_all_rows_apply_other_conditions_and_exclude_own_condition(self):
+        for index in range(150):
+            self.add_pair(index)
+        filters = [{"field": "legacy_number", "operator": "eq", "value": "nomatch"}]
+        result = self.module.query_tracking_values("物料", "JF", "legacy_number", column_filters=filters, page=2)
+        self.assertTrue(result["full_scope"])
+        self.assertEqual((result["source_total"], result["matched_total"], result["total"], result["total_pages"]), (151, 151, 151, 2))
+        self.assertEqual(len(result["values"]), 51)
+        self.assertEqual(result["values"][-1], "号0149")
+        self.assertEqual(result["column_filters"], filters)
+        filters.append({"field": "stock_qty", "operator": "eq", "value": "3.00"})
+        result = self.module.query_tracking_values("物料", "JF", "legacy_number", column_filters=filters)
+        self.assertEqual((result["matched_total"], result["values"]), (1, [" 0007 "]))
+        self.frappe.db.sql.assert_not_called()
+        self.frappe.db.commit.assert_not_called()
+
+    def test_invalid_column_json_fields_types_operators_bounds_and_duplicates_are_rejected(self):
+        valid = {"field": "notes", "operator": "eq", "value": "x"}
+        cases = [True, {}, "not json", "[", [dict(valid, field="list_price")], [dict(valid, operator="sql")],
+                 [dict(valid, value=3)], [dict(valid, value=None)], [dict(valid, value="x" * 2001)],
+                 [dict(valid, value="x\x00")], [valid, valid], [dict(valid, extra="x")],
+                 [dict(valid, operator="in", value=["x", "x"])], [dict(valid, operator="in", value=[{}])],
+                 [dict(valid, operator="in", value=[str(index) for index in range(201)])],
+                 '[{"field":"notes","field":"stock_qty","operator":"eq","value":"3.00"}]',
+                 " " * 65537]
+        for column_filters in cases:
+            with self.subTest(column_filters=str(column_filters)[:100]), self.assertRaises(ValueError):
+                self.query(column_filters=column_filters)
+        for order in (True, [], {"field": "list_price", "direction": "asc"}, {"field": "notes", "direction": "ASC"},
+                      {"field": "notes", "direction": "asc", "extra": 1}):
+            with self.subTest(sort=order), self.assertRaises(ValueError):
+                self.query(sort=order)
+        for kind, field in (([], "notes"), ("物料", "supplier"), ("材料", "material"), ("物料", [])):
+            with self.subTest(kind=kind, field=field), self.assertRaises(ValueError):
+                self.module.query_tracking_values(kind, "JF", field)
+        self.reports._native_balance.assert_not_called()
+
+    def test_value_option_overlong_values_are_explicitly_refused_and_legacy_response_unchanged(self):
+        original = self.query()
+        self.assertNotIn("filter_protocol", original)
+        self.assertNotIn("column_filters", original)
+        self.env.profile["notes"] = "文" * 2001
+        with self.assertRaisesRegex(ValueError, "超过 2000"):
+            self.module.query_tracking_values("物料", "JF", "notes")
+        self.assertEqual(self.query()["rows"][0]["profile"]["notes"], "文" * 2001)
+
 
 if __name__ == "__main__":
     unittest.main()

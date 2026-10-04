@@ -7,6 +7,8 @@ Guards cover this request, not an atomic database or cross-request snapshot.
 """
 
 from decimal import Decimal, InvalidOperation
+from functools import cmp_to_key
+import json
 
 import frappe
 from frappe.utils import getdate, today
@@ -37,6 +39,127 @@ BASIS = {
     "profile_display_uom": "档案单位原文，不作为库存数量单位",
     "total_weight": "总重量算法未核实，留空",
 }
+
+# These are the rendered tracking columns, never raw archive/Item fields. A
+# masked or omitted optional field remains absent in the authorized projection.
+COLUMN_FIELDS = {
+    "物料": ("warehouse", "legacy_number", "stock_qty", "valuation_rate", "stock_value", "weight",
+             "total_weight", "major_category", "minor_category", "material", "stock_uom", "display_name",
+             "specification", "location", "notes"),
+    "材料": ("warehouse", "legacy_number", "stock_qty", "valuation_rate", "stock_value", "weight",
+             "total_weight", "minor_category", "specification", "shape", "color", "display_name", "location",
+             "old_number", "owner_name", "region", "supplier"),
+}
+NUMERIC_COLUMNS = {"stock_qty", "valuation_rate", "stock_value", "weight", "total_weight"}
+ROW_COLUMNS = {"warehouse", "stock_qty", "valuation_rate", "stock_value", "stock_uom", "total_weight"}
+TEXT_OPERATORS = {"eq", "ne", "starts", "not_starts", "ends", "not_ends", "contains", "not_contains"}
+MAX_COLUMN_VALUE = 2000
+MAX_SELECTED_VALUES = 200
+
+
+def _bad_columns():
+    frappe.throw("列筛选或排序条件无效；每列最多选择 200 个值，单个值最多 2000 字")
+
+
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+
+
+def _column_json(value, maximum):
+    try:
+        if isinstance(value, str):
+            if len(value) > maximum:
+                _bad_columns()
+            value = json.loads(value, object_pairs_hook=_unique_json_object)
+        if len(json.dumps(value, ensure_ascii=False)) > maximum:
+            _bad_columns()
+    except (TypeError, ValueError, RecursionError):
+        _bad_columns()
+    return value
+
+
+def _column_value(value):
+    return (isinstance(value, str) and len(value) <= MAX_COLUMN_VALUE
+            and not any(ord(char) < 32 and char not in "\n\r\t" or ord(char) == 127 for char in value))
+
+
+def _column_query(kind, column_filters, sort):
+    extended = column_filters is not None or sort is not None
+    filters = _column_json(column_filters, 65536) if column_filters is not None else []
+    order = _column_json(sort, 2048) if sort is not None else None
+    fields = COLUMN_FIELDS.get(kind, ()) if isinstance(kind, str) else ()
+    if not isinstance(filters, list) or len(filters) > len(fields):
+        _bad_columns()
+    seen = set()
+    for condition in filters:
+        if (not isinstance(condition, dict) or set(condition) != {"field", "operator", "value"}
+                or not isinstance(condition["field"], str) or condition["field"] not in fields
+                or condition["field"] in seen or not isinstance(condition["operator"], str)):
+            _bad_columns()
+        seen.add(condition["field"])
+        operator, value = condition["operator"], condition["value"]
+        if operator in TEXT_OPERATORS:
+            if not _column_value(value):
+                _bad_columns()
+        elif operator in {"in", "not_in"}:
+            if (not isinstance(value, list) or len(value) > MAX_SELECTED_VALUES
+                    or any(item is not None and not _column_value(item) for item in value)
+                    or len({json.dumps(item, ensure_ascii=False) for item in value}) != len(value)):
+                _bad_columns()
+        else:
+            _bad_columns()
+    if order is not None and (not isinstance(order, dict) or set(order) != {"field", "direction"}
+                              or not isinstance(order["field"], str) or order["field"] not in fields
+                              or order["direction"] not in ("asc", "desc")):
+        _bad_columns()
+    return filters, order, extended
+
+
+def _projected_value(row, field):
+    return row.get(field) if field in ROW_COLUMNS else row["profile"].get(field)
+
+
+def _column_match(row, condition):
+    value = _projected_value(row, condition["field"])
+    operator, expected = condition["operator"], condition["value"]
+    if operator in {"in", "not_in"}:
+        # Null is an empty projection; a literal em dash is a different value.
+        return (value in expected) == (operator == "in")
+    text = "—" if value is None else str(value)
+    comparisons = {"eq": lambda: text == expected, "ne": lambda: text != expected,
+                   "starts": lambda: text.startswith(expected), "not_starts": lambda: not text.startswith(expected),
+                   "ends": lambda: text.endswith(expected), "not_ends": lambda: not text.endswith(expected),
+                   "contains": lambda: expected in text, "not_contains": lambda: expected not in text}
+    return comparisons[operator]()
+
+
+def _column_rows(rows, filters, order):
+    rows = [row for row in rows if all(_column_match(row, condition) for condition in filters)]
+    if order is None:
+        return rows
+
+    def compare(left, right):
+        a, b = (_projected_value(row, order["field"]) for row in (left, right))
+        if a is None or b is None:
+            # Missing values stay last for either direction.
+            comparison = (a is None) - (b is None)
+        else:
+            if order["field"] in NUMERIC_COLUMNS:
+                a, b = Decimal(a), Decimal(b)
+            comparison = (a > b) - (a < b)
+            if order["direction"] == "desc":
+                comparison = -comparison
+        if comparison:
+            return comparison
+        a, b = (tuple(row[key] for key in ("warehouse", "profile_name", "item_code")) for row in (left, right))
+        return (a > b) - (a < b)
+
+    return sorted(rows, key=cmp_to_key(compare))
 
 
 def _deny():
@@ -261,14 +384,46 @@ def _page(rows, page, page_size):
 
 
 @frappe.whitelist()
-def query_tracking(kind, company, search="", warehouse=None, as_of=None, page=1, page_size=catalog.LIMIT):
+def query_tracking(kind, company, search="", warehouse=None, as_of=None, page=1, page_size=catalog.LIMIT,
+                   column_filters=None, sort=None):
     """Page checked history pairs; balance access never exposes source vouchers."""
     page = catalog._page_integer(page, "页码", catalog.MAX_SAFE_INTEGER)
     page_size = catalog._page_integer(page_size, "每页条数", catalog.LIMIT)
+    conditions, order, extended = _column_query(kind, column_filters, sort)
     result, _entries, currency, cutoff = _checked_tracking(kind, company, search, warehouse, as_of)
+    # Filtering cannot hide an unreadable or changed source on another page.
+    result = _column_rows(result, conditions, order)
     return {"kind": kind, "company": company, "search": search, "warehouse": warehouse or "",
             "as_of": cutoff, "currency": currency, "basis": dict(BASIS),
+            **({"filter_protocol": 1, "column_filters": conditions, "sort": order} if extended else {}),
             **_page(result, page, page_size), "readonly": True, "can_write": False}
+
+
+@frappe.whitelist()
+def query_tracking_values(kind, company, field, search="", warehouse=None, as_of=None,
+                          column_filters=None, sort=None, page=1, page_size=catalog.LIMIT):
+    """Distinct values from the entire checked scope, with bounded option pages.
+
+    Other column conditions apply; this column's own condition is excluded so
+    previously unchecked values can be selected again. No raw source fallback.
+    """
+    conditions, order, _extended = _column_query(kind, column_filters, sort)
+    if not isinstance(kind, str) or not isinstance(field, str) or field not in COLUMN_FIELDS.get(kind, ()):
+        _bad_columns()
+    page = catalog._page_integer(page, "选项页码", catalog.MAX_SAFE_INTEGER)
+    page_size = catalog._page_integer(page_size, "每页选项数", catalog.LIMIT)
+    rows, _entries, currency, cutoff = _checked_tracking(kind, company, search, warehouse, as_of)
+    matched = _column_rows(rows, [condition for condition in conditions if condition["field"] != field], None)
+    values = {_projected_value(row, field) for row in matched}
+    if any(value is not None and not _column_value(value) for value in values):
+        frappe.throw("该列包含超过 2000 字或不可选择的值，请使用文本筛选")
+    values = sorted(values, key=lambda value: (value is None, value or ""))
+    result = _page(values, page, page_size)
+    result["values"] = result.pop("rows")
+    return {"kind": kind, "company": company, "search": search, "warehouse": warehouse or "",
+            "as_of": cutoff, "currency": currency, "filter_protocol": 1, "column_filters": conditions,
+            "sort": order, "field": field, "full_scope": True, "source_total": len(rows),
+            "matched_total": len(matched), **result, "readonly": True, "can_write": False}
 
 
 def _selection(rows, profile_name, item_code, warehouse, profile_version, item_version, warehouse_version):

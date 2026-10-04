@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-04 列筛选候选与外网只读预检 r7 通过（尚未发布）
+
+两版共用的跟踪表头已实现升序／降序、清空、文本条件及分页勾选选项。完整授权和来源版本校验后才过滤、排序及分页；Decimal 数值排序、缺失排末、稳定同值顺序，空投影与字面“—”分开。选项来自完整授权范围，其他列条件生效、当前列自身条件不限制选项；勾选跨页保留，最多选或排除200值，不静默截取全集。扩展查询用 POST 和精确回显的协议1，旧无参数 GET／响应保持；详情仍只传旧参数。确定后清旧行和详情并重查第1页，取消／Escape保持条件，清列不清页面搜索，过期响应不能重现。root 实际44 Python、33 JS、A/B366派发／21侧栏动作、2资源门、Ruff／Node解析及diff检查通过。测试覆盖261行跨页、151去重值分页、被筛除行仍须通过权限、高精度排序及mask值不能补回。这些是模型与源码证据；未stage到本机runtime，也未完成本批原生／HTTP／GUI或旧系统真实勾选、排序验收。独立112ad发布包没有加入新列筛选。
+
+fresh 外网只读预检 r7由root审阅并唯一执行：严格校验r6实际四标志的类型／存在性／值，只规范挂载列表顺序且拒绝重复Destination；335,675字节stdin、30次实际SSH DIRECT，原生及独立AFTER全门通过。实际旧572源码／33资源／934对象、八服务及四Compose／配置／保护文件保持。既有测试账号14角色、唯一可选公司及跟踪始终执行的权限先决条件通过；既有catalog两种类合成无匹配查询返回空，Guest拒绝。`ready_for_actor_freeze=true`、预测新跟踪空查询可读；没有执行尚未安装的新tracking API，不将权限预测等同API验收。原始队列只读观察到queued0／registered worker1；没有消费或修改队列。记录 `output/inventory-tracking-release-20261004-r7-readonly-preflight.json`，完整响应SHA `98b72a18712e41641c00914b3285c1f20396a486377bcb42149d4348fa04da99` 留本地受限ACL。未上传／切源码／DDL／授角色／改配置，当前外网仍a758／5b及共用测试数据。
+
+## 2026-10-04 外网库存预检 r6 的实际失败原因（未发布）
+
+fresh r6 只增加诊断，不改变 r5 的判断门。root 审阅差异、核对固定 SHA 后只执行一次：333,035 字节 stdin、29 次实际 SSH DIRECT，原生仍因 `current_site_writer_flags` 拒绝，角色与新 tracking API 尚未执行。实际原配置与有效配置中，`mute_emails` 为存在的布尔 `true`，`pause_scheduler`、`disable_scheduler`、`maintenance_mode` 均不存在；site 配置四项均不存在。预检误用了本机隔离验收的全停调度条件，不能据此修改服务器配置以满足检查。r6 仍保持 failed，结果 SHA `cf82025bb8bbeb20f3d272a08ac9096cd983cb8195eaa9d6805011a811ec1cf3`，完整响应仅保存在受限 ACL 目录。
+
+独立 AFTER 除原始字典比较外全部通过：八服务 running／DB healthy、四层 Compose、源码／配置／原回执及保护文件保持。实际差异只涉及五个应用的 `mounts` 列表次序；root 另核每个挂载 Destination 唯一、按 Destination 排序后完整八服务字典相等，ID、启动时间、镜像和每个挂载字段没有改变。该核实只解释 r6 的差异，不将 r6 改记为通过。完整私密响应 SHA `7e80ed5ecbdb1da40fb977b614ef733d0975f8a2f5c5cb5d3fae13ed044b52b1`。下一版仅按这个实际基线校验四个标志，并规范挂载集合顺序；不暂停站点、不授角色、不写配置。业务包与原发布助手仍冻结，外网继续 a758／5b，两套共用原测试数据。
+
 ## 2026-10-04 库存持久夹具 r7、两版GUI与独立保护通过（未发布）
 
 消费后的 r5 保持 failed：普通库存七门通过，提交前实际拒绝新用户的原生 Permission Log，未尝试 commit，fresh935完整回滚及结构／索引／六sequence／既有21夹具／文件／空队列保护通过。原生 User 和公司 User Permission 各产生一条 Added 权限日志；r6按原生字段构造期望、精确核对两条日志后，又因档案编号的计数来源漏算而拒绝，同样未尝试 commit 并完整回滚。原生 `format:JF-INV-P-{YYYY}-{#####}` 将每个括号单独解析，数字段使用空字符串 Series key；没有改原生命名逻辑。
