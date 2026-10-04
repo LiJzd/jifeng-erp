@@ -508,6 +508,9 @@ def _check(doc, user, *, quotation=None, sales_order=None, sales_row=None):
         _native_read(doc, user)
         if sales_history:
             _sales_history_context(sales_order, sales_row, quotation or doc, user)
+        from jifeng_erp.sample_source_reports import observe_dependency
+
+        observe_dependency(doc, completed_source=True)
         return result
     finally:
         _AUTHORIZING.reset(token)

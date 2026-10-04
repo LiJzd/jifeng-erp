@@ -83,6 +83,7 @@ permission_query_conditions = {
     "Employee Separation": "jifeng_erp.personnel_separation.separation_query_conditions",
 }
 extend_doctype_class = {
+    "Report": ["jifeng_erp.sample_source_reports.SampleSourceReportMixin"],
     "Stock Entry": ["jifeng_erp.material_issue_locking.MaterialIssueLockingMixin"],
     "Production Plan": ["jifeng_erp.production_instruction.ProductionInstructionMixin"],
     "Purchase Receipt": ["jifeng_erp.purchase_returns.PurchaseReceiptMixin"],

@@ -269,6 +269,9 @@ class _Sources:
         if previous and previous[0] != state:
             _invalid("样品来源在读取期间已改变，请重新核对")
         self.sources[key] = (state, fields, tables, permission)
+        from jifeng_erp.sample_source_reports import observe_dependency
+
+        observe_dependency(document, fields=fields, tables=tables, permission=permission)
         return document
 
     def item(self, name, full=False, active=False):

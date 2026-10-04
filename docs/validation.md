@@ -1,5 +1,19 @@
 # 验证记录
 
+## 2026-10-04 十份原生来源报表候选：43项实际校验通过（未发布）
+
+新增 Report controller extension，覆盖 Open／Completed／In Progress Work Orders、Issued Items Against Work Order、Work Order Summary、Production Analytics、Sales Order Analysis、Lost Quotations、Quotation Trends 与 Sales Order Trends 的准确原生定义。四份 Query 和六份 Script 按实际 SQL 的完整贡献集合执行前后来源核对，包括未显示的汇总／图表贡献、子行身份和关联依赖；任一受保护来源不可读或变化则整份拒绝。普通贡献不增加来源授权，其他报表保留原生执行。Source 回调只记录实际成功读取及最终完成的来源门，不签发跨调用授权。
+
+原生 get_fiscal_year 使用 Frappe whitelist 包装；按实际源码增加该唯一标准包装的准确身份检查，其他额外包装仍拒绝。root 在同一新 Python 进程中运行244项既有模型、40项 Report 模型及34项 Script 模型，共318项通过；Ruff和差异检查通过。模型不替代真实原生执行、HTTP或GUI。
+
+实际验收仅在本机自有回滚克隆。r1在首次 import Frappe 时因 StringIO 缺少 stderr.fileno 失败，尚未连接数据库。fresh r2完成35项、十份报表的普通／受保护正门与无权限前置拒绝，以及来源和真实 User Permission 变化门；随后清理临时权限时，原生完整删除尝试写 MyISAM __global_search，被回滚守卫拒绝。r2保持failed，完整934对象回滚一致。fresh r3仅修夹具清理：核对自有准确权限行后调用真正 UserPermission.on_trash 和精确事务内DELETE，未放宽守卫；这不是完整原生删除生命周期的验收。
+
+r3首次执行 `passed=true`，43项、十份范围、33.760秒。除上述矩阵外，实际完成 Production 原生生成的图表和六状态行加第七总计行、进程内真实Meta字段权限变化后的最终拒绝、Issued错误子行及Bin变化拒绝、原生draft／cancelled Stock Entry存在谓词和修改准确Query定义拒绝。岗位使用现有业务角色及公司／来源User Permission，非System Manager；未新增角色授权或迁移／种子。证据 `output/report-source-native-20261004-r1/r2/r3/result.json`，runner及manifest各首次消费，失败记录不改写或重放。
+
+业务夹具全部回滚，934物理对象含六序列的完整结构／索引／行一致，所有登记夹具不存在。root另以新只读连接完成 `output/sample-quote-qa-20261004-r1/report-after-r3-independent.json`，核原源932、自有934及四份配置均与fresh before一致；耗时4.366秒。原源摘要 `ce485ec7ffe165315459fa932405d5412001e5a78318fc59bc5c20d87b6e3676`，克隆摘要 `f3bf5f83ae709830d3e79281393346c42e29ef1413c8d7ea76f4d7abc46f68ab`。候选同步仅本机五份运行文件和自有app_hooks单键刷新，没有外网访问或切换。
+
+边界：WO／STE状态为事务内报表夹具投影，不能当作库存／制造过账证明；字段变化为本进程Meta，未验跨连接缓存或持久Property Setter。内存对象关闭原生Prepared自动计时任务，避免后台线程越过回滚；没有执行会写不可回滚Error Log的负向 get_data／_run。已有Prepared JSON／CSV／File、Custom引用链、最终生成后处理的附件来源签收、完整HTTP／GUI、并发及正式负载继续待完成。此候选未发布，外网仍a75848f；全模块正式可用与旧习惯完整验收目标保持。
+
 ## 2026-10-04 外网界面修复 a75848f 实际发布与 GUI 通过
 
 基于实际外网 `5b49bac` 的独立提交 `a75848f8f8237e94c5b834d6629e2cb9a1f9eda6` 已部署。572个包文件／564个提交文件逐字节核对，仅桥接JS和17协议模型文件变化，其余562个文件与原发布一致；33资源指纹保持正确。本地主分支样品／来源／报表增量没有混入本批。独立源审、25个发布模型及Python3.6语法检查通过。
