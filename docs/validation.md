@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-04 库存本机运行恢复与独立发布包（尚未发布）
+
+本机七文件 stage 已实际发生；该次首次登录检查2秒超时，不能报整次成功。fresh只读 readiness 随后核登录、40资源完整字节及935对象与stage前相等。数量口径已澄清：443为应用模块文件，候选全树612，另169文件保持原clone归档；不是全树只有443。库存GUI夹具r1误用模块口径、r2遇旧进程缺失，均在OP／Frappe／DB初始化前停止，没有库存或账号提交。
+
+之后确认WSL实际重启，旧Redis配置为`save ""`／`appendonly no`且无RDB／AOF；旧缓存与四个default任务已丢失，不宣称恢复或保持它们。原有21条SQL夹具及935对象完整核对与退出前一致。root启动一个隐藏WSL keepalive；恢复r1为未执行draft，r2在CIM／Get-Process的400ns时间差检查处停止、尚无文件或服务操作。fresh恢复r3实际执行通过：只启动两个自有PID1 transient服务、无enable／全局WSL变更，失效socket原样rename保存，Redis私有AOF启用且0600，明确以实际空队列0为新基线；web仅本机18764。612全树／443模块、40资源字节、配置及935完整before／after保持。实际结果`output/inventory-tracking-runtime-recovery-20261004-r3/result.json` SHA `2ce5eedc9154fc3abd9b79ff2d0d66856bab5dce1601626539cb8041d55b235a`；没有业务SQL／DDL、worker消费或ERP登录。
+
+GUI夹具r3因新Linux路径被Windows Path变成反斜杠而在初始化前拒绝；fresh r4先经Linux核156 pins无非法路径／缺失／漂移，再实际运行普通库存岗位、stock in_test=false的矩阵。真实7门通过：首笔前无历史、10 Nos／2.5 Kg入库、两仓调拨、绝对盘点到9、调回后历史零仓、真实分页；每阶段档案／流水与未改原生报表一致。提交前完整新增行归属检查拒绝一条尚未定位来源，整个r4保持failed：未尝试commit，fresh935完整回滚、结构／索引／六sequence／文件／新空队列保护通过。结果`output/inventory-tracking-gui-fixture-20261004-r4/result.json`；正在查明来源，尚无持久库存GUI夹具或新库存浏览器业务验收。独立原932／旧owned935保护BEFORE通过，本批AFTER仍待收尾；不扩大为原库物理附件证明。
+
+独立外网候选从a758分支仅取7源码和5测试，已本地提交`112ad19450373c0dda4a06b13018b06c26ac6592`，隔离其余HEAD样品／报表／采购应付增量。52 Python、24 JS及A/B363派发、35资源检查通过。实际本机file-only打包成功：577成员（569提交文件＋8 Git元文件），3,597,353字节，SHA `6953dc0fa027d6958b5c58f4a0e21591c240abcdee4e884b1b3569e2b8d895d4`；source manifest SHA `15a15eeb0edcac611a215df0d5a6f62bb617d5f38bf6d2f36434a29db10226d9`。没有网络上传。新发布助手r1仅离线16门通过；独立审阅发现对外启动后才核SQL及PID-only存活判定风险，fresh r2正在准备，未执行远端阶段。
+
+最新只读公开health r7实际两GET通过：登录页200／ping pong、可信TLS及每次实际连接发送前／头后／读完均Clash DIRECT。代理环境／系统代理和TUN状态已核；只在内存读取本机Clash控制器secret，没有ERP／SSH凭据读取、登录或服务器写入。`output/erp_test_public_health_20261004_r7.json`。外网仍a758界面／5b业务、363入口／33资源及共享测试数据；跟踪仍partial，全旧模块正式可用与旧操作习惯目标继续。
+
 ## 2026-10-04 库存跟踪详情与旧卡片回航（本地候选，未发布）
 
 Luna通过旧站现有登录态实际点击材料、物料图片卡片：编号打开右侧“材料／物料档案查询”，库存打开下方“材料／物料跟踪记录”；关闭后空关键词、第1页及202／5121总数保留。每类只打开一张卡片，流水样本各2／9条。当前截图2560×1311，约10列且未见横向滚动；此前四列观察不能当作固定列数或响应式规则。匿名证据 `output/legacy-tracking-card-links-20261004-r1/report.md`，没有业务写入、导出或行级截图落盘。

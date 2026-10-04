@@ -1,5 +1,14 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-04 当前外网版本：a75848f
+
+- [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
+- [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)
+
+两套共用测试数据。当前实际界面源码为 `a75848f8f8237e94c5b834d6629e2cb9a1f9eda6`，业务保持 `5b49bac`，五个应用只读挂载 `/opt/jifeng-erp-test/releases/a75848f-classic-loading-r1/app`。启动配置包括基线、salary、tool-cost、classic-loading 四层；后续维护必须保留全部四层，不能按下文旧历史批次的命令启动。
+
+该次发布只修复原生列表加载：四阶段、完整源码与33资源、八服务、配置和三个数据服务身份已验证；可信HTTPS登录、A/B页面、退出及实际订单菜单GUI已通过。没有DDL、迁移、种子或角色变更。详细证据见[验证记录](../../docs/validation.md)。库存跟踪与其他本地候选尚未发布；第一版全部旧模块正式可用的目标仍在推进。以下记录按当时的历史状态保留。
+
 ## 2026-10-04 当前工具费用测试发布：5b49bac
 
 业务提交 `5b49bacde6fcc088e08b118103fee496524ec99f` 已切换五应用只读源码挂载至 `/opt/jifeng-erp-test/releases/5b49bac-tool-cost-r1/app`，固定镜像及三个数据服务身份保持。运行配置为基线 compose、既有 salary overlay 和新 `compose.tool-cost.r1.yaml` 三层叠加；禁止单独使用旧覆盖文件重启。实际 prepare→quiesce→before→apply→verify→cache→restore→start 全部通过，站点配置按原字节／属主／权限恢复；旧完整 932 对象保持、只新增两空表，原生备份留受限服务器目录。独立外网可信 HTTPS 登录、A/B 页面、33 资源、原生表单、CSRF 退出后 Guest 及前后八服务检查通过；自有测试账号单次轮换，受限 JSON 和中文交接 TXT 更新后独立核对一致。GUI 未验收，全部模块正式可用目标未完成。失败 r1／r2／r3 副本完整保留；详见[验证记录](../../docs/validation.md)。
