@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-04 两版本机 GUI 通过；外网 r14 缓存校验失败后已恢复
+
+Luna 经可见 Chrome 普通密码登录，实际核两种工作台 URL。B 复刻页物料 16 列／材料 17 列、末端供应商、13／139 和历史零仓、材料 2.5／50、升降序、复选确认／取消／Escape及清仓库列保留供应商条件、排序和搜索通过；A 优化页同一账号与数据、两类余额、仓库勾选及清列保留搜索通过。离开 B 后重开保留搜索／公司／日期、清结果和列条件；可见 `/logout` 导航后重定向登录页并确认表单。匿名报告 `output/inventory-tracking-columns-local-gui-20261004-r1/report.md` SHA `a1d2050e18d899fb98dd1a1399326c1b3b2e9d188f3a17c81a96f05090aa58bc`。当前夹具仅一页，GUI 跨选项页和非空供应商未测，不能由弹窗文案推定。
+
+根代理唯一实际上传 r14 五成员 3,862,282 字节，142 次实际 SSH DIRECT、远端完整 SHA／所有者／权限通过；prepare、quiesce、before 各完成，934 对象及配置／公开／私密附件四份备份完成。cache 唯一执行失败，未执行 start：原生 `NativeError: raw_shared_hook_cache`，失败 SHA `f0de107bb91ae09f5cf152c5d4ec7f1b36aab11f49fbd757aa598712d8d61138`；宿主失败 SHA `73d8587685fc14558236e8935e7be51203ad288352156807520ef9424ce3b43a`。只读 diagnose 全保护通过，根另普通只读核准确 Redis key TYPE 实际为 none。原因是清键后 app_name 专用 hooks 读取不重建共享键，原助手在通用 get_hooks 前读取 raw；所有 r14 证据保持 failed，不重放或改原件。
+
+fresh 恢复 r2 完整审阅及 3 模型／10 变体验证后，根唯一执行通过。仅原四 Compose `start` 旧五应用，原 IDs／挂载及三个数据服务保持；8 服务、572 源／33 资源、普通框架读取重建旧 33 hooks、实际 SESSION tx_read_only 前后通过，没有显式缓存删除、业务 SQL／角色／schema 动作，不声称恢复后全库冻结。结果 SHA `cc0fcdf7de98b90a4d4ff1145e899812f8d18a16f58f49405e2d5e9f13691554`，远端 completed SHA `94158bfe024f0c53b643ed2345d131ee399cc1c63dc800e28ec222615f8091ab`。随后 fresh 公网 HTTPS r2 `/login`／ping 两门可信 TLS、实际 DIRECT通过；helper SHA `e3a3449c386781f228d76e6efe1c2fe58d388c4b0e5479dca93ca46b87d95973`。外网继续 a758／5b、两版共用原测试数据。新 r17 仅准备：把通用 get_hooks 移到 raw 读取前，旧缓存失败重现、新正常重建及保留拒绝门共 7 模型通过，其他函数 AST 保持；尚未上传或执行。
+
 ## 2026-10-04 最新库存本机三文件同步与正常 HTTP 通过
 
 根代理完整阅读 stage r2 并核三组模型后唯一执行：精确停止／启动独立 owned web 各一次，原进程组退出；三个旧文件及准确 app_hooks 键完整私密备份，仅该键删除一次，Redis 进程／socket／run ID 和队列保持。三文件同步后，其他 609 源、40 带版本资源完整字节、当前 935 对象前后不变，新 web master／worker 身份及原配置核对通过。stage 结果 SHA `e3603545e92ac1c74789cc2c291c1542541e84308449e2292f9a2c6bcbc8214c`、新 owner SHA `6aa1dfbc35b07fe916450ffe0d1bd7dae5769cc6d9c32225b55f43965a1c1055`。未重启 Redis、创建夹具、改权限或连接原／旧 owned 库。
