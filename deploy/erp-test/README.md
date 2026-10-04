@@ -1,6 +1,23 @@
 # 集沣 ERP 外网 A/B 测试站
 
-## 2026-10-04 当前外网版本：a75848f
+## 2026-10-04 当前外网版本：81abd2e
+
+- [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
+- [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)
+
+两套共用原测试数据库。当前实际源码为 `81abd2e716001ad482f1a37c1c489887dd4810c6`，五应用只读挂载 `/opt/jifeng-erp-test/releases/81abd2e-inventory-tracking-r17/app`。维护需保留基线、salary、tool-cost、classic-loading 和新库存覆盖文件五层；最后一层为 `/opt/jifeng-erp-test/releases/81abd2e-inventory-tracking-r17/compose.inventory-tracking.r17.yaml`。不能只用下方旧历史批次的覆盖文件重启。
+
+五层配置按以下顺序保留：
+
+1. `/opt/jifeng-erp-test/releases/8858743-r2/deploy/compose.yaml`
+2. `/opt/jifeng-erp-test/releases/2ca4358-salary-r1/compose.salary.r1.yaml`
+3. `/opt/jifeng-erp-test/releases/5b49bac-tool-cost-r1/compose.tool-cost.r1.yaml`
+4. `/opt/jifeng-erp-test/releases/a75848f-classic-loading-r1/compose.classic-loading.r1.yaml`
+5. `/opt/jifeng-erp-test/releases/81abd2e-inventory-tracking-r17/compose.inventory-tracking.r17.yaml`
+
+fresh r17 五阶段各唯一派发完成；原生四部件备份、934 对象和权限／原配置保护、恢复公共入口与 worker 前全 SQL 核对、577 包文件（569 受 Git 跟踪＋8 项 Git 元数据）／35 资源及八服务通过。正常外网 HTTPS、密码登录／独立身份、A/B 两入口、两类查询及选项空结果、35 资源完整字节和 CSRF 退出／Guest 拒绝已通过；实际公网 GUI 同公司两版空查询、16／17 数据列及供应商弹窗取消／Escape通过并正常退出。没有 DDL、迁移、种子、角色或业务保存。此为测试环境，全旧模块正式可用尚未完成；账号在本地受限文件交接，证据及边界见[验证记录](../../docs/validation.md)。已消费阶段和 r8／r14 失败及恢复原件禁止重放；以下版本记录均为历史批次。
+
+## 2026-10-04 历史外网版本：a75848f
 
 - [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
 - [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)

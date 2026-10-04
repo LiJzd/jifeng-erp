@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-04 库存 r17 已实际发布，正常外网 HTTP 通过
+
+根代理完成 fresh r17 host／native 全差异审阅，controller 在规范新路径和 SHA 后与已审 r14 的完整 AST 相同；uploader 保留逐块实际 DIRECT、专属目录、写首字节前权限及完整远端 SHA。五成员 3,865,114 字节只上传一次，142 次实际 SSH DIRECT 通过，上传结果 SHA `178e824846b2ce9492b6017a6780d76e31c79f393025c35d6c83c00b86e64ac3`。prepare→quiesce→before→cache→start 各只派发一次，逐阶段严格检查实际 completed 身份及前序 SHA 链。首次 quiesce 只读 inspect 在 SSH banner 前 EOF，没有执行远端读取；随后新只读 inspect 核实际完成，没有再次派发停服。
+
+before 已完成原生四部件备份及完整 934 对象；before／cache／start 的完整快照均为 `f9e843b90551c4928a806c1a18b66d2f38552300a14f4cd5f7f64c200e93951f`。仅精确共享 app_hooks 键显式删除，普通通用 hooks 重建及全部 35 资源通过；现有普通岗位的查询／选项 API、13 项 Form 元数据指纹和非资源 hooks 保持检查通过，该项不作表单 GUI／保存证明。最后在公共入口和 worker 恢复前完成 SQL 全保护核对，再切换五应用只读源码挂载，八服务 running、原配置及三个数据服务身份保持。没有 DDL、迁移、种子、角色或业务 SQL 写入；不声称恢复公众和 worker 后数据库仍冻结。start completed SHA `2a8cacbeecdf43d3c178306f3d452f15441019bfcd6fa09d86bb57eb162d8302`，完整 inspect SHA `e75892f3b8e8f9506862b1ebefcb93a0c564c9cf15aac85ce5f75352f862f415`。
+
+随后根唯一执行 fresh r18 外网助手，绑定上述实际 start 双 SHA：51 请求（49 GET＋2 正常认证 POST）、35 个带版本资源完整字节、可信 IP TLS、实际 HTTP DIRECT、普通密码登录和独立用户确认、A/B 两入口、物料／材料各查询及完整范围选项空查询、正常 CSRF 退出和 Guest 四个合法请求拒绝全部通过。结果 SHA `47dcb4fee131d11362c32cd066e75b1da4297a8892db48479d8ed3a3a013f3fc`；没有业务保存，空结果不能证明外网非空余额或非空供应商。实际外网为 `81abd2e716001ad482f1a37c1c489887dd4810c6`，两版共用原测试库。所有 r8／r14 失败、独立恢复和本机证据保持原样；下方较早“仅准备／尚未发布／外网仍 a758”均为历史批次。完整旧模块正式可用目标仍未完成。
+
+Luna 随后实际普通登录公网，准确 A 优化／B 复刻 URL、同公司／2026-10-04，四次物料／材料空查询均 0 条；各 16／17 个数据列及末端供应商、A 材料／B 物料供应商选项弹窗 0 值、取消／Escape 均通过。经正常 `/logout` 导航到 `/login` 并确认登录表单；没有业务保存、审核、打印、导出、下载或夹具。报告为 `output/inventory-tracking-columns-external-gui-20261004-r1/report.md`，SHA `b492864295c87872e2a9ebec0d1fc5c85ef3b409d53236ce7d50c9504bec216d`。它包含本机原记录及精确公网追加段；agent 原追加到已消费本机文件，root 已先将完整新字节保留到独立文件，再用唯一匹配已知 SHA 的原 3378 字节前缀精确恢复本机 a1d205 原件，操作记录为同目录 `evidence-separation.json`。没有将空 GUI 扩大为非空数据／筛选应用、选项翻页、旧估价重量／导出或全模块证明。
+
 ## 2026-10-04 两版本机 GUI 通过；外网 r14 缓存校验失败后已恢复
 
 Luna 经可见 Chrome 普通密码登录，实际核两种工作台 URL。B 复刻页物料 16 列／材料 17 列、末端供应商、13／139 和历史零仓、材料 2.5／50、升降序、复选确认／取消／Escape及清仓库列保留供应商条件、排序和搜索通过；A 优化页同一账号与数据、两类余额、仓库勾选及清列保留搜索通过。离开 B 后重开保留搜索／公司／日期、清结果和列条件；可见 `/logout` 导航后重定向登录页并确认表单。匿名报告 `output/inventory-tracking-columns-local-gui-20261004-r1/report.md` SHA `a1d2050e18d899fb98dd1a1399326c1b3b2e9d188f3a17c81a96f05090aa58bc`。当前夹具仅一页，GUI 跨选项页和非空供应商未测，不能由弹窗文案推定。
