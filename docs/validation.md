@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-04 发布校验根因已核，最新库存包仍未发布
+
+根代理只执行一次服务器诊断 r12，真实 READ ONLY 会话及同连接、934 物理对象、角色行、572 旧源码／33 资源、配置和八服务身份前后检查通过，10 次实际 SSH 链均 DIRECT。13 个原生 Form 的 get_meta／as_dict／严格编码全部通过；失败准确位于 effective non-asset hooks 的 JSON 编码：两个元组键及混合键排序不受原编码器支持，原 forms_and_hooks 的 TypeError 真实重现。没有执行备份、发布阶段、显式缓存删除或业务 SQL 写入。r12 结果保持原样，不能因诊断流程通过而称原编码已通过。
+
+fresh r13 只为 hooks 增加独立的全树 typed canonical 编码，保留字典键和值及顺序语义，区分 tuple／list、bool／int／float，未知对象、循环、非有限数严格拒绝；原 SQL wire／encode／fingerprint、Form 和保护函数保持。六组聚焦模型通过后，根代理唯一实际执行 r13：13 个 Form、两组 hooks、修后的 aggregate 和全部原生／宿主保护通过，11 次实际 SSH DIRECT、41,712 字节 stdin。公开结果 `output/inventory-tracking-native-diagnostic-20261004-r13.json` SHA `69617f0f6520a65f482d3527281dd5780ab435dd1c1930f7239a5d43683ecf68`；driver SHA `773ecb91730a3c19afe8e1d935513badb89c1efcea2857c3698cca3b4ad49853`、native SHA `9c4374c7bd526891cbb9c9e288487af0b7ba001f32713a28d889f13db2e0ef1d`。这证明校验修复，不代表库存代码已对外切换。
+
+本机最新供应商列 native r3 因 WSL 又重启，在 boot 身份检查处拒绝，0 门／0 业务读取，未连接 Frappe／数据库、未 stage。旧 Windows keepalive 已不存在，原两 transient 服务均 not-found；r3 failed 证据保留，不能重跑或计为九门通过。正准备加载原持久 AOF 的独立常规 systemd 服务；恢复和最新源码的原生／HTTP／GUI仍待。旧 GUI 模式状态／导出补证也未完成：正常登录首次结果不明、限频后 CDP 超时，可见 IAB 能力不可用，未重复提交或下载，匿名 r2 报告保留未知登录／退出边界。
+
+为将最新 16／17 列及筛选一次交付，从库存隔离提交 112ad 建 fresh worktree r2，仅加入三源码和两测试并本地提交 `81abd2e716001ad482f1a37c1c489887dd4810c6`。45 Python、33 JS、A/B363 派发、2 资源门及 Ruff／diff 通过。仅本地新打包并独立核全部 577 成员：569 提交文件＋8 Git 元文件、35 资源，3,618,773 字节，archive SHA `22988c25f26f942666b5a5e89c768d57fd31a27ead4a014fe50df454d973985f`、source manifest SHA `420f1914a4f5eb020e525414b8155acef2a68656e26f8319e45812ce5542776d`。三文件完整字节等于当前候选；没有 schema／setup／非资源 hooks 变化。旧 112ad 包、r8 失败发布及独立恢复证据均保持。81abd 新包未上传，发布 r14 仅准备；外网仍已恢复的 a758／5b、共享测试数据。全旧模块正式可用目标仍未完成。
+
 ## 2026-10-04 外网库存发布 r8 停止，原版本恢复可访问
 
 root完整审阅后唯一上传五个固定成员，3,834,066字节、140次实际SSH DIRECT及远端完整SHA／权限／所有者核验通过；原112ad包未改。prepare、quiesce各执行一次并通过；before原生返回TypeError后停止，未执行cache或start，库存候选没有切入外网。宿主failed回执SHA `e1e041a26c984d7149db9bf3ee96696bcaac47c245feacfb9dbc2fd73e8f996b`、原生failed SHA `f3b00f11222a42345ceae17ad0fe835fac005f6a6c41a58b7da53fec69974df8`；r8与全部失败证据保持，不盲重放。实际33资源／hooks校验已到达，before快照及native-backup目录尚不存在，错误原因未定。只读diagnose全保护门通过；不能据此宣称完整934行／结构／索引冻结或备份完成。
