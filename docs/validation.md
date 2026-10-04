@@ -1,5 +1,23 @@
 # 验证记录
 
+## 2026-10-04 库存跟踪详情与旧卡片回航（本地候选，未发布）
+
+Luna通过旧站现有登录态实际点击材料、物料图片卡片：编号打开右侧“材料／物料档案查询”，库存打开下方“材料／物料跟踪记录”；关闭后空关键词、第1页及202／5121总数保留。每类只打开一张卡片，流水样本各2／9条。当前截图2560×1311，约10列且未见横向滚动；此前四列观察不能当作固定列数或响应式规则。匿名证据 `output/legacy-tracking-card-links-20261004-r1/report.md`，没有业务写入、导出或行级截图落盘。
+
+共享跟踪组件已据此补齐编号／库存只读详情；列表也提供相同动作。档案抽屉读取准确已保存档案和公司叶仓截止日历史余额，流水面板按准确Item／仓库展示完整原生贡献SLE、100条分页及真实总数。关闭、Escape保留父列表、筛选和页码；筛选／模式／分页输入／离开／销毁关闭详情并取消请求，晚返回不能恢复。卡片按可用宽度排列是本实现适配方案，未宣称原站窄屏行为已证。流水保留原生数量变动、变动后余额和价值变化；`is_adjustment_entry`显示“仅价值调整”，不误称所有盘点的标记。旧去向／入退库分类规则未核实，没有将原生数量假映到这些列。
+
+后端新增 `read_tracking_archive`、`query_tracking_records`，核准确档案／Item／仓库版本及完整来源；流水中的凭证编号另核原凭证角色、列表、整单及字段权限，不能从SLE读取权绕过凭证权限。档案参考价／单位不用于库存换算，mask字段不补回，图片沿用准确私有File绑定。root实际36 Python、24 JS模型、既有档案浏览模型、A/B366派发／21侧栏及2资源门、Ruff／Node语法／diff检查通过。这是模型与源码验证；新详情真实GUI、HTTP和正式业务并发尚未验收。
+
+新一次性DB只读准备确认935对象、没有所选公司库存关闭快照／待重算／活跃库存维度。原生Stock Manager不自动具有SLE读取权；本次库存岗位采用Stock Manager＋Stock User及Company UP，独立新夹具，不更改旧RQ／采购账号的六角色。准备阶段r1缺Stock User、r2误用本机不存在的维度disabled列，均仅只读退出；fresh r3成功，`output/inventory-tracking-runtime-readonly-20261004-r3.json`。
+
+原生事务r1因夹具换算单位不存在而失败，0门；r2改用已有Kg，入库前空历史门通过，但真实入库后的查询暴露业务缺陷：本机原生StockBalance的 `filter_items_with_no_transactions` 未排除currency，把公司币种字符串经flt原地改为0.0。共享 `inventory_reports._native_balance` 现于该原生筛选后恢复原生Company币种；跟踪仍严格核company／单位／货币，并独立前后重读Company字段与mask，不以容许坏币种绕过来源约束。14项报表模型（含币种损坏与历史零组合回归）及36项跟踪模型通过。r1／r2脚本、manifest、结果与私有日志原样保留，各自fresh完整935回滚、文件／队列保护均通过。
+
+root审阅最终helper及manifest后唯一执行fresh r3，12门通过：正常库存岗位原生入库10 Nos／2.5 Kg、两仓调拨、绝对盘点到9（不是再增加9）、调回后历史零仓、真实分页、追加入库及取消后余额恢复；跟踪数量／估价／价值与未修改原生StockBalance逐对一致，并独立核预期数量／价值。各有数据阶段实际读取只读档案和流水，参考价／换算原值与库存值分离，原生SLE数量变动与变动后余额精确对应；Company UP、真实部分SLE来源及临时字段mask均整份拒绝。仅在该新DB事务内建立14条显式夹具和原生派生行，取消使用原生in_test同步重算分支，不算生产异步worker／HTTP／GUI／串批并发证据。临时一个DocField.mask在savepoint回滚后核原值和准确元信息，未改Role／DocPerm／Company／全局设置／grant／DDL。
+
+实际r3结果 `output/inventory-tracking-native-20261004-r3/result.json`；helper SHA `8fc292ac71bacb2304f8070aedbada764a02525ad240e36d9bbe776a2639b1d6`、manifest SHA `da8fd424816f046af0e9f1759dadb348f03f83efec36dd21bd6ebadd98e416de`。两py仅在验收进程加载，没有stage或重启；candidate440文件、128来源／配置pins及原生源码保持。fresh连接核935全对象行／结构／索引及六真实sequence完全相等，既有21夹具、PR3／Artifact1、认证／File／GL／SLE、文件和队列ID保持，无业务commit。root独立BEFORE／AFTER另核原932／旧owned935、四配置与旧两附件树一致，`output/inventory-tracking-independent-20261004-r1/after/result.json`；该保护不扩大为原库物理附件证明。
+
+本批未同步本机38资源HTTP候选，也未发布外网；外网仍a75848f界面／5b49bac业务和共用测试数据。本地366入口／40资源及跟踪partial状态保持；列筛选、导出、旧估价／重量规则、全旧模块正式交付继续。
+
 ## 2026-10-04 库存跟踪与采购应付原生界面准备（未发布）
 
 旧站补查修正此前“物料跟踪0条”的证据边界：初始页面为空，点击空关键词查询实际返回物料5121条、材料202条。两类列不同；物料15列，材料17列，末端确切为“旧编号／负责／区域／供应商”。材料图片实际四列、逐行排列，100／100／2分页，卡片为图片、仓库、编号链接、库存链接。大小类列菜单实见排序、文本筛选及勾选值清单，本次未应用。仅两条物料非零行的金额与画面库存×单价相符，重量为空，不能推广库存估价或重量算法。证据 `output/legacy-material-tracking-gui-20261004-r1/report.md`，未落业务明细或行截图。

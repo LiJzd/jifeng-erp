@@ -119,6 +119,11 @@ def _native_balance(filters, entries, opening):
             # turnover. "Include zero" retains only combinations that had a SLE.
             for key, row in getattr(self, "history_map", {}).items():
                 self.item_warehouse_map.setdefault(key, row)
+            # Native filter_items_with_no_transactions applies flt() to currency
+            # as well as numeric fields. Preserve the native Company's currency
+            # instead of returning the corrupted 0.0 alias for nonzero balances.
+            for row in self.item_warehouse_map.values():
+                row["currency"] = self.company_currency
 
     return AuthorizedBalance(filters).run()[1]
 

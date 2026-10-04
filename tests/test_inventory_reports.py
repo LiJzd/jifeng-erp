@@ -123,6 +123,42 @@ class InventoryReportsTest(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "部分库存余额"):
             self.report._complete_ledger({})
 
+    def test_native_filter_currency_corruption_is_repaired_for_nonzero_and_historic_zero_pairs(self):
+        self.report.frappe._dict = Row
+        # Reproduce native filter_items_with_no_transactions: currency is not
+        # excluded from flt(), and a zero pair with no period turnover is pruned.
+        class NativeBalance:
+            def __init__(self, filters):
+                self.filters = filters
+                self.company_currency = "CNY"
+                self.item_warehouse_map = {}
+
+            def prepare_item_warehouse_map(self, entry, key):
+                pass
+
+            def prepare_item_warehouse_map_for_current_period(self):
+                for warehouse, qty, value in (("A", 10, 100), ("B", 0, 0)):
+                    key = ("ITEM", warehouse)
+                    self.item_warehouse_map[key] = Row(item_code="ITEM", warehouse=warehouse,
+                        company="JF", currency=self.company_currency, stock_uom="Nos",
+                        bal_qty=qty, bal_val=value, val_rate=10 if qty else 0)
+                    self.prepare_item_warehouse_map(None, key)
+                for row in self.item_warehouse_map.values():
+                    row["currency"] = 0.0
+                del self.item_warehouse_map["ITEM", "B"]
+
+            def run(self):
+                self.prepare_item_warehouse_map_for_current_period()
+                return [], list(self.item_warehouse_map.values())
+
+        native = types.ModuleType("erpnext.stock.report.stock_balance.stock_balance")
+        native.StockBalanceReport = NativeBalance
+        with patch.dict(sys.modules, {native.__name__: native}):
+            rows = self.report._native_balance(types.SimpleNamespace(include_zero_stock_items=1), [], {})
+        self.assertEqual([(row["warehouse"], row["bal_qty"], row["bal_val"], row["currency"])
+                          for row in rows], [("A", 10, 100, "CNY"), ("B", 0, 0, "CNY")])
+        self.assertTrue(all(row["company"] == "JF" and row["stock_uom"] == "Nos" for row in rows))
+
 
 if __name__ == "__main__":
     unittest.main()

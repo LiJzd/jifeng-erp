@@ -6,6 +6,8 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 	}
 	build() {
 		this.host.classList.add("jfe-inventory-tracking"); this.host.replaceChildren();
+		this.detailKeydown = event => { if (event.key === "Escape" && this.detail) { event.preventDefault(); event.stopPropagation(); this.closeDetail(true); } };
+		this.host.addEventListener("keydown", this.detailKeydown);
 		this.fields = [["warehouse", "仓库"], ["legacy_number", "编号"], ["stock_qty", "库存"],
 			["valuation_rate", "单价"], ["stock_value", "金额"], ["weight", "重量"], ["total_weight", "总重量"],
 			["major_category", "大类"], ["minor_category", "小类"], ["material", "材质"], ["stock_uom", "单位"],
@@ -48,6 +50,7 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		this.next = this.button("下页", () => this.query(this.page + 1));
 		this.goto = this.element("input"); this.goto.type = "text"; this.goto.inputMode = "numeric"; this.goto.maxLength = 16;
 		this.goto.value = "1"; this.goto.setAttribute("aria-label", __("前往页码"));
+		this.goto.addEventListener("input", () => this.closeDetail(false));
 		this.goto.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); this.query(this.goto.value); } });
 		this.count = this.element("span", __("尚未查询"));
 		pager.append(this.previous, this.pageLabel, this.next, this.button("前往", () => this.query(this.goto.value)), this.goto, this.element("span", __("页")), this.count);
@@ -92,7 +95,8 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		if (this.status) this.status.textContent = __(message); this.renderPager();
 	}
 	clearResults() {
-		this.rows = []; this.total = null; this.totalPages = 0; this.resultScope = null;
+		this.closeDetail(false);
+		this.rows = []; this.total = null; this.totalPages = 0; this.resultScope = null; this.resultCurrency = null;
 		this.tbody?.replaceChildren(); this.cards?.replaceChildren(); if (this.scopeLabel) this.scopeLabel.textContent = ""; this.renderPager();
 	}
 	renderPager() {
@@ -146,7 +150,7 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 			const response = await this.request; if (!this.current(sequence, args)) return;
 			if (!this.validPage(response?.message, args)) throw new Error("Invalid tracking scope");
 			const result = response.message; this.rows = result.rows; this.page = result.page; this.total = result.total; this.totalPages = result.total_pages;
-			this.resultScope = scope; this.goto.value = String(this.page);
+			this.resultScope = scope; this.resultCurrency = result.currency; this.goto.value = String(this.page);
 			this.scopeLabel.textContent = [scope.company, scope.as_of, scope.warehouse || __("公司叶仓"), result.currency].join(" · ");
 			this.renderRows(result.basis); this.status.textContent = this.total ? __("查询完成。") : __("没有可见的库存历史记录。");
 		} catch { if (this.current(sequence, args)) { this.clearResults(); this.status.textContent = __("查询未完成，请核对筛选条件和完整来源权限后重试。"); } }
@@ -170,15 +174,152 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		for (const row of this.rows) {
 			if (this.mode === "列表") {
 				const tr = this.element("tr");
-				for (const [field] of this.fields) { const td = this.element("td", this.cellValue(row, field) ?? "—"); td.title = this.tooltip(row, field, basis); tr.append(td); }
+				for (const [field] of this.fields) { const td = this.element("td"); this.trackingCell(row, field, td); td.title = this.tooltip(row, field, basis); tr.append(td); }
 				const source = this.element("td"); source.append(this.sourceButtons(row)); tr.append(source); this.tbody.append(tr);
 			} else {
 				const card = this.element("article"); card.append(this.element("h3", (row.profile.legacy_number ?? "—") + " · " + row.warehouse));
 				const image = this.element("div", undefined, "jfe-inventory-tracking-image"); this.imageCell(row.image, image); for (const img of image.querySelectorAll?.("img") || []) img.loading = "lazy"; card.append(image);
-				const fields = this.element("dl"); for (const [field, label] of [["warehouse", "仓库"], ["legacy_number", "编号"], ["stock_qty", "库存"]]) { fields.append(this.element("dt", __(label))); const value = this.element("dd", this.cellValue(row, field) ?? "—"); value.title = this.tooltip(row, field, basis); fields.append(value); }
+				const fields = this.element("dl"); for (const [field, label] of [["warehouse", "仓库"], ["legacy_number", "编号"], ["stock_qty", "库存"]]) { fields.append(this.element("dt", __(label))); const value = this.element("dd"); this.trackingCell(row, field, value); value.title = this.tooltip(row, field, basis); fields.append(value); }
 				card.append(fields, this.sourceButtons(row)); this.cards.append(card);
 			}
 		}
+	}
+	trackingCell(row, field, target) {
+		const value = this.cellValue(row, field);
+		if (["legacy_number", "stock_qty"].includes(field) && value !== null && value !== undefined && value !== "") {
+			const mode = field === "legacy_number" ? "archive" : "records";
+			const button = this.button(String(value), () => this.readTrackingDetail(row, mode, button), "jfe-inventory-tracking-link");
+			button.setAttribute("aria-label", __(field === "legacy_number" ? "查看只读档案" : "查看库存跟踪记录") + "：" + String(value)); target.append(button);
+		} else target.textContent = String(value ?? "—");
+	}
+	sameData(left, right) {
+		if (left === right) return true;
+		if (!left || !right || typeof left !== "object" || typeof right !== "object" || Array.isArray(left) !== Array.isArray(right)) return false;
+		const keys = Object.keys(left);
+		return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && this.sameData(left[key], right[key]));
+	}
+	detailArgs(row) {
+		return { ...this.resultScope, warehouse: row.warehouse, profile_name: row.profile_name, item_code: row.item_code,
+			profile_version: row.profile_version, item_version: row.item_version, warehouse_version: row.warehouse_version };
+	}
+	detailCurrent(state) {
+		return !this.disposed && this.visible && this.detail === state && !state.closed && state.sequence === this.detailRevision &&
+			state.listRevision === this.revision && this.sameContext(state.parentScope, this.context()) && this.rows.includes(state.row) &&
+			this.sameData(state.row, state.snapshot);
+	}
+	validDetailScope(result, state, keys) {
+		return this.keys(result, keys) && result.readonly === true && result.can_write === false &&
+			this.sameContext(result, state.args) && this.validName(result.currency) && result.currency === state.currency && this.validRow(result.row, state.args) &&
+			this.sameData(result.row, state.snapshot);
+	}
+	validTrackingArchive(result, state) {
+		if (!this.validDetailScope(result, state, ["kind", "company", "search", "warehouse", "as_of", "currency", "row", "archive", "balances", "readonly", "can_write"]) ||
+			!this.keys(result.archive, ["name", "kind", "company", "item_code", "profile_version", "item_version", "profile", "item", "field_meta", "image", "readonly", "can_write"]) ||
+			!this.validArchive(result.archive, state.args.company, state.args.profile_name) ||
+			!["item_code", "profile_version", "item_version"].every(key => result.archive[key] === state.args[key]) ||
+			!this.sameData(result.archive.image, result.row.image) || !this.keys(result.archive.field_meta, ["profile", "item"]) || !Array.isArray(result.balances)) return false;
+		return result.balances.every(row => this.validRow(row, { ...state.args, warehouse: "" }) &&
+			["profile_name", "profile_version", "item_code", "item_version", "stock_uom"].every(key => row[key] === result.row[key]) &&
+			this.sameData(row.profile, result.row.profile) && this.sameData(row.image, result.row.image)) &&
+			new Set(result.balances.map(row => row.warehouse)).size === result.balances.length &&
+			result.balances.filter(row => this.sameData(row, result.row)).length === 1;
+	}
+	validTrackingRecords(result, state, page) {
+		if (!this.validDetailScope(result, state, ["kind", "company", "search", "warehouse", "as_of", "currency", "row", "page", "page_size", "total", "total_pages", "rows", "readonly", "can_write"]) ||
+			result.page !== page || result.page_size !== 100 || !Number.isSafeInteger(result.total) || result.total < 0 ||
+			!Number.isSafeInteger(result.total_pages) || !Array.isArray(result.rows) || page > Math.max(1, result.total_pages)) return false;
+		const total = BigInt(result.total), size = 100n, offset = (BigInt(page) - 1n) * size;
+		if (offset > BigInt(Number.MAX_SAFE_INTEGER) || result.total_pages !== Number(total === 0n ? 0n : (total - 1n) / size + 1n) ||
+			result.rows.length !== Math.min(100, Math.max(0, result.total - Number(offset)))) return false;
+		return result.rows.every(row => this.keys(row, ["name", "modified", "posting_datetime", "voucher_type", "voucher_no", "actual_qty", "qty_after_transaction", "valuation_rate", "stock_value", "stock_value_difference", "stock_uom", "is_adjustment_entry", "company"]) &&
+			["name", "modified", "posting_datetime", "voucher_type", "voucher_no", "stock_uom", "company"].every(key => this.validName(row[key])) &&
+			["actual_qty", "qty_after_transaction", "valuation_rate", "stock_value", "stock_value_difference"].every(key => this.decimal(row[key])) &&
+			row.company === state.args.company && row.stock_uom === state.row.stock_uom && [0, 1].includes(row.is_adjustment_entry)) &&
+			new Set(result.rows.map(row => row.name)).size === result.rows.length;
+	}
+	async readTrackingDetail(row, mode, trigger) {
+		if (this.disposed || !this.visible || this.loading || !["archive", "records"].includes(mode) || !this.rows.includes(row) ||
+			!this.sameContext(this.resultScope, this.context())) return;
+		this.closeDetail(false);
+		const layer = this.element("section", undefined, "jfe-inventory-tracking-detail " + (mode === "archive" ? "archive" : "records"));
+		const title = this.kind + (mode === "archive" ? "档案查询" : "跟踪记录");
+		layer.setAttribute("role", "dialog"); layer.setAttribute("aria-label", __(title)); layer.setAttribute("aria-modal", String(mode === "archive"));
+		const header = this.element("header"), heading = this.element("h2", __(title));
+		const body = this.element("div", undefined, "jfe-inventory-tracking-detail-body"); body.setAttribute("aria-live", "polite");
+		const close = this.button("关闭", () => this.closeDetail(true)); close.setAttribute("aria-label", __("关闭") + __(title));
+		header.append(heading, close); layer.append(header, body);
+		const state = { layer, body, close, trigger, mode, row, snapshot: JSON.parse(JSON.stringify(row)), args: this.detailArgs(row),
+			parentScope: { ...this.resultScope }, currency: this.resultCurrency, listRevision: this.revision, sequence: this.detailRevision, request: null, requestRevision: 0, closed: false,
+			background: mode === "archive" ? Array.from(this.host.children, node => [node, node.inert]) : [] };
+		this.detail = state;
+		for (const [node] of state.background) node.inert = true;
+		layer.addEventListener("keydown", event => {
+			if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.closeDetail(true); }
+			if (event.key === "Tab" && mode === "archive") { event.preventDefault(); close.focus(); }
+		});
+		this.host.append(layer); this.host.classList.add("has-tracking-detail"); close.focus?.();
+		await this.queryTrackingDetail(state, 1);
+	}
+	async queryTrackingDetail(state, requestedPage) {
+		const page = this.pageNumber(requestedPage);
+		if (!page || !this.detailCurrent(state)) return;
+		state.request?.abort?.(); const requestRevision = ++state.requestRevision;
+		state.body.replaceChildren(this.element("p", __("正在读取…"))); state.loading = true;
+		const args = { ...state.args, ...(state.mode === "records" ? { page, page_size: 100 } : {}) };
+		try {
+			state.request = frappe.call({ method: "jifeng_erp.inventory_tracking." + (state.mode === "archive" ? "read_tracking_archive" : "query_tracking_records"), type: "GET", args });
+			const response = await state.request;
+			if (!this.detailCurrent(state) || requestRevision !== state.requestRevision) return;
+			if (!(state.mode === "archive" ? this.validTrackingArchive(response?.message, state) : this.validTrackingRecords(response?.message, state, page))) throw new Error("Invalid tracking detail");
+			if (state.mode === "archive") this.renderTrackingArchive(state, response.message); else this.renderTrackingRecords(state, response.message);
+		} catch {
+			if (this.detailCurrent(state) && requestRevision === state.requestRevision) state.body.replaceChildren(this.element("p", __("详情未能读取，请关闭后重新查询并核对完整来源权限。")));
+		} finally {
+			if (this.detailCurrent(state) && requestRevision === state.requestRevision) { state.request = null; state.loading = false; }
+		}
+	}
+	appendProfile(target, archive) {
+		const fields = this.element("dl", undefined, "jfe-inventory-tracking-detail-fields");
+		for (const [field, value] of Object.entries(archive.profile)) {
+			const label = archive.field_meta.profile[field].label;
+			fields.append(this.element("dt", __(typeof label === "string" && label ? label : field)), this.element("dd", value ?? "—"));
+		}
+		target.append(fields);
+		const image = this.element("div", undefined, "jfe-inventory-tracking-image"); this.imageCell(archive.image, image); target.append(image);
+	}
+	detailTable(columns, rows) {
+		const scroll = this.element("div", undefined, "jfe-inventory-tracking-detail-scroll"), table = this.element("table");
+		const head = this.element("thead"), titles = this.element("tr"), body = this.element("tbody");
+		for (const [, label] of columns) titles.append(this.element("th", __(label))); head.append(titles);
+		for (const row of rows) { const tr = this.element("tr"); for (const [field] of columns) tr.append(this.element("td", field === "voucher_type" ? __(row[field]) : row[field] ?? "—")); body.append(tr); }
+		table.append(head, body); scroll.append(table); return scroll;
+	}
+	renderTrackingArchive(state, result) {
+		state.body.replaceChildren(this.element("p", result.company + " · " + result.as_of + " · " + result.currency));
+		this.appendProfile(state.body, result.archive);
+		state.body.append(this.element("h3", __("截止日库存")), this.detailTable([["warehouse", "仓库"], ["stock_qty", "库存"], ["valuation_rate", "单价"], ["stock_value", "金额"], ["stock_uom", "库存单位"]], result.balances));
+	}
+	renderTrackingRecords(state, result) {
+		state.body.replaceChildren(this.element("p", __("按截止日展示原生库存流水；数量变动与变动后余额分别展示。旧去向、退回等列规则待确认。")));
+		const layout = this.element("div", undefined, "jfe-inventory-tracking-record-layout"), ledger = this.element("div"), summary = this.element("aside");
+		ledger.append(this.detailTable([["voucher_no", "单号"], ["voucher_type", "来源类型"], ["posting_datetime", "时间"], ["valuation_rate", "单价"],
+			["actual_qty", "原生数量变动"], ["qty_after_transaction", "本次余数"], ["stock_value", "库存价值"], ["stock_value_difference", "价值变动"], ["stock_uom", "库存单位"], ["is_adjustment_entry", "仅价值调整"]], result.rows));
+		const pager = this.element("div", undefined, "jfe-inventory-tracking-pager");
+		const previous = this.button("上页", () => this.queryTrackingDetail(state, result.page - 1)), next = this.button("下页", () => this.queryTrackingDetail(state, result.page + 1));
+		previous.disabled = result.page <= 1; next.disabled = result.page >= result.total_pages;
+		pager.append(previous, this.element("span", __("第") + " " + result.page + " " + __("页") + " · " + __("共") + " " + result.total + " " + __("条")), next); ledger.append(pager);
+		const fields = this.element("dl", undefined, "jfe-inventory-tracking-detail-fields");
+		fields.append(this.element("dt", __("仓库")), this.element("dd", result.row.warehouse));
+		for (const [field, label] of this.fields.filter(([field]) => Object.hasOwn(result.row.profile, field))) fields.append(this.element("dt", __(label)), this.element("dd", result.row.profile[field] ?? "—"));
+		const image = this.element("div", undefined, "jfe-inventory-tracking-image"); this.imageCell(result.row.image, image); summary.append(fields, image); layout.append(ledger, summary); state.body.append(layout);
+	}
+	closeDetail(restoreFocus = true) {
+		this.detailRevision++; const state = this.detail; this.detail = null;
+		if (!state) return;
+		state.closed = true; state.requestRevision++; state.request?.abort?.(); state.request = null;
+		state.body.replaceChildren(); state.layer.remove(); for (const [node, inert] of state.background) node.inert = inert;
+		this.host.classList.remove("has-tracking-detail");
+		if (restoreFocus && this.visible && !this.disposed) state.trigger?.focus?.();
 	}
 	setMode(mode) {
 		if (this.disposed || !this.visible || !["列表", "图片"].includes(mode) || mode === this.mode) return;
@@ -200,6 +341,7 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		this.invalidate(); this.disposed = true; for (const control of [this.companyControl, this.warehouseControl, this.dateControl]) {
 			control.$input?.off?.(".jifeng-inventory-tracking"); control.$link_clear?.off?.(".jifeng-inventory-tracking");
 		}
+		this.host.removeEventListener("keydown", this.detailKeydown);
 		this.host.replaceChildren(); this.host.classList.remove("jfe-inventory-tracking");
 	}
 };

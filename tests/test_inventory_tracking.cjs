@@ -5,10 +5,13 @@ class Element {
 	set textContent(value) { this._text = String(value); this.children = []; }
 	get textContent() { return this._text + this.children.map(child => child.textContent).join(""); }
 	set innerHTML(_) { throw new Error("Tracking source text cannot execute HTML"); }
-	append(...nodes) { this.children.push(...nodes); }
-	replaceChildren(...nodes) { this._text = ""; this.children = nodes; }
+	append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
+	replaceChildren(...nodes) { this._text = ""; for (const node of this.children) node.parent = null; this.children = []; this.append(...nodes); }
+	remove() { if (this.parent) { this.parent.children = this.parent.children.filter(node => node !== this); this.parent = null; } }
+	focus() { this.focused = true; }
 	setAttribute(name, value) { this.attributes[name] = value; }
 	addEventListener(name, callback) { this.events.set(name, callback); }
+	removeEventListener(name, callback) { if (this.events.get(name) === callback) this.events.delete(name); }
 	click() { if (!this.disabled) this.events.get("click")?.(); }
 	descendants(tag) { return this.children.flatMap(child => [...(child.tag === tag ? [child] : []), ...child.descendants(tag)]); }
 }
@@ -143,8 +146,8 @@ test("native Link clear without input/change drops stock immediately and invalid
 test("source opens exact native Form in original module and clears all stock output", async () => {
 	for (const kind of ["物料", "材料"]) {
 		const m = await make(kind); await populate(m); const actions = m.view.tbody.descendants("button");
-		actions[1].click(); assert.deepEqual(m.pages[0].route, ["Form", "Item", "ITEM-0007"]); assert.equal(m.pages[0].module, kind);
-		assert.equal(m.view.rows.length, 0); actions[0].click(); assert.equal(m.pages.length, 1);
+		actions.find(button => button.textContent === "商品").click(); assert.deepEqual(m.pages[0].route, ["Form", "Item", "ITEM-0007"]); assert.equal(m.pages[0].module, kind);
+		assert.equal(m.view.rows.length, 0); actions.find(button => button.textContent === "档案").click(); assert.equal(m.pages.length, 1);
 		assert.equal(m.view.companyControl.get_value(), "集沣"); assert.equal(m.view.dateControl.get_value(), "2026-10-04");
 	}
 });
@@ -159,6 +162,141 @@ test("denied requests do not leak diagnostics or look like an empty balance", as
 	const m = await make(); await populate(m); const pending = m.view.query(); m.calls.at(-1).reject(new Error("private SQL source")); await pending;
 	assert.equal(m.view.rows.length, 0); assert.match(m.view.status.textContent, /查询未完成/); assert.ok(!m.host.textContent.includes("private SQL source"));
 	await populate(m, []); assert.match(m.view.status.textContent, /没有可见的库存历史/);
+});
+function archive(source = row(), kind = "物料", profileExtra = {}) {
+	const profile = { company: "集沣", archive_kind: kind, item_code: source.item_code, inactive: 0, ...source.profile, ...profileExtra };
+	const item = { item_code: source.item_code, stock_uom: source.stock_uom, is_stock_item: 1 };
+	const metadata = values => Object.fromEntries(Object.keys(values).map(key => [key, {
+		label: "字段 " + key, fieldtype: "Data", options: "", description: "", read_only: true, reqd: false }]));
+	return { name: source.profile_name, kind, company: "集沣", item_code: source.item_code, profile_version: source.profile_version,
+		item_version: source.item_version, profile, item, field_meta: { profile: metadata(profile), item: metadata(item) },
+		image: source.image, readonly: true, can_write: false };
+}
+function archiveResponse(request, source = row(), extra = {}) {
+	const args = request.options.args;
+	return { kind: args.kind, company: args.company, search: args.search, warehouse: args.warehouse, as_of: args.as_of,
+		currency: "CNY", row: source, archive: archive(source, args.kind), balances: [source], readonly: true, can_write: false, ...extra };
+}
+function ledgerRow(extra = {}) {
+	return { name: "SLE-1", modified: "2026-10-04T01:01:00", posting_datetime: "2026-10-04 01:00:00", voucher_type: "Stock Reconciliation",
+		voucher_no: "REC-0001", actual_qty: "-9007199254740993.01", qty_after_transaction: "0", valuation_rate: "-0E-20",
+		stock_value: "0", stock_value_difference: "-1E+28", stock_uom: "Nos", is_adjustment_entry: 0, company: "集沣", ...extra };
+}
+function recordsResponse(request, source = row(), records = [ledgerRow()], extra = {}) {
+	const args = request.options.args;
+	return { kind: args.kind, company: args.company, search: args.search, warehouse: args.warehouse, as_of: args.as_of, currency: "CNY", row: source,
+		page: args.page, page_size: args.page_size, total: records.length, total_pages: records.length ? 1 : 0, rows: records, readonly: true, can_write: false, ...extra };
+}
+function openDetail(model, mode = "archive") {
+	const trigger = model.view.tbody.descendants("td")[mode === "archive" ? 1 : 2].descendants("button")[0];
+	const pending = model.view.readTrackingDetail(model.view.rows[0], mode, trigger);
+	return { pending, request: model.calls.at(-1), state: model.view.detail, trigger };
+}
+test("list and picture identity links request exact read-only detail without native Form navigation", async () => {
+	for (const kind of ["物料", "材料"]) {
+		const m = await make(kind); await populate(m);
+		const button = m.view.tbody.descendants("td")[1].descendants("button")[0]; button.click(); const request = m.calls.at(-1);
+		assert.deepEqual(request.options, { method: "jifeng_erp.inventory_tracking.read_tracking_archive", type: "GET", args: {
+			kind, company: "集沣", warehouse: "仓库一", as_of: "2026-10-04", search: "", profile_name: "PROFILE-0007", item_code: "ITEM-0007",
+			profile_version: row().profile_version, item_version: row().item_version, warehouse_version: row().warehouse_version } });
+		request.resolve(archiveResponse(request)); await new Promise(setImmediate); assert.equal(m.pages.length, 0);
+		m.view.closeDetail(); m.view.setMode("图片"); await populate(m);
+		const stock = m.view.cards.descendants("dd")[2].descendants("button")[0]; stock.click(); const records = m.calls.at(-1);
+		assert.equal(records.options.method, "jifeng_erp.inventory_tracking.query_tracking_records"); assert.equal(records.options.type, "GET");
+		assert.equal(records.options.args.page_size, 100); records.resolve(recordsResponse(records)); await new Promise(setImmediate);
+		assert.equal(m.view.detail.layer.attributes["aria-label"], kind + "跟踪记录"); assert.equal(m.pages.length, 0);
+	}
+});
+test("drawer close and Escape restore focus and preserve parent rows, filters and page without another query", async () => {
+	const m = await make(); m.view.search.value = "0007"; await populate(m, [row()], { total: 101, total_pages: 2 }, 2);
+	const rows = m.view.rows, table = m.view.tbody.children[0], detail = openDetail(m);
+	assert.ok(m.host.children.slice(0, -1).every(node => node.inert === true)); assert.equal(detail.state.close.focused, true);
+	const otherWarehouse = row({ warehouse: "仓库二", warehouse_version: "2026-10-04T00:00:03", stock_qty: "0", stock_value: "0" });
+	detail.request.resolve(archiveResponse(detail.request, row(), { balances: [row(), otherWarehouse] })); await detail.pending;
+	assert.equal(detail.state.body.descendants("tr").length, 3); assert.ok(detail.state.body.textContent.includes("1E+28"));
+	detail.state.layer.events.get("keydown")({ key: "Escape", preventDefault() {}, stopPropagation() {} });
+	assert.equal(m.view.detail, null); assert.equal(detail.trigger.focused, true); assert.ok(m.host.children.every(node => node.inert !== true));
+	assert.equal(m.view.rows, rows); assert.equal(m.view.tbody.children[0], table); assert.equal(m.view.page, 2); assert.equal(m.view.total, 101);
+	assert.equal(m.view.search.value, "0007"); assert.equal(m.calls.length, 2);
+});
+test("masked archive fields and empty labels render only readable keys; private image stays exactly bound", async () => {
+	const image = { ...row().image, state: "已上传", url: "/private/files/detail.png?fid=FILE-2" };
+	const source = row({ profile: { display_name: "已读取名称" }, image }); const m = await make(); await populate(m, [source]);
+	assert.equal(m.view.tbody.descendants("td")[1].descendants("button").length, 0, "masked number cannot become a guessed identity button");
+	const detail = openDetail(m, "records"); detail.request.resolve(recordsResponse(detail.request, source)); await detail.pending; m.view.closeDetail();
+	const pending = m.view.readTrackingDetail(m.view.rows[0], "archive"); const request = m.calls.at(-1), state = m.view.detail;
+	const data = archiveResponse(request, source); data.archive.field_meta.profile.display_name.label = null;
+	data.archive.field_meta.profile.hidden_field = { label: "不可见字段标签", read_only: true };
+	request.resolve(data); await pending;
+	assert.ok(state.body.textContent.includes("display_name")); assert.ok(!state.body.textContent.includes("不可见字段标签"));
+	assert.ok(!state.body.textContent.includes("字段 weight")); assert.equal(state.body.descendants("img")[0].src, image.url);
+});
+test("archive detail rejects foreign identity, versions, currency, duplicate or missing balances and unknown keys", async () => {
+	const changes = [data => { data.company = "OTHER"; }, data => { data.currency = "USD"; }, data => { data.warehouse = "OTHER"; },
+		data => { data.row.item_version += "changed"; }, data => { data.archive.profile_version += "changed"; },
+		data => { data.archive.name = "OTHER"; }, data => { data.archive.image.source_name = "OTHER"; },
+		data => { data.balances = [row(), row()]; }, data => { data.balances = []; }, data => { data.balances[0].stock_qty = "3"; },
+		data => { data.can_write = true; }, data => { data.secret = "private"; }];
+	for (const change of changes) {
+		const m = await make(); await populate(m); const detail = openDetail(m), data = plain(archiveResponse(detail.request)); change(data);
+		detail.request.resolve(data); await detail.pending; assert.match(detail.state.body.textContent, /详情未能读取/); assert.equal(detail.state.body.descendants("td").length, 0);
+		assert.equal(m.view.rows.length, 1, "denied detail must not fabricate or discard its parent query");
+	}
+});
+test("ledger renders native change and after balance separately and paginates true total without changing parent", async () => {
+	const m = await make(); await populate(m); const detail = openDetail(m, "records"), parent = m.view.rows;
+	const rows = Array.from({ length: 100 }, (_, i) => ledgerRow({ name: "SLE-" + i }));
+	detail.request.resolve(recordsResponse(detail.request, row(), rows, { total: 101, total_pages: 2 })); await detail.pending;
+	assert.ok(detail.state.body.textContent.includes("-9007199254740993.01")); assert.ok(detail.state.body.textContent.includes("本次余数"));
+	assert.ok(detail.state.body.textContent.includes("仅价值调整")); assert.ok(!detail.state.body.textContent.includes("盘点标记"));
+	assert.ok(detail.state.body.textContent.includes("旧去向、退回等列规则待确认"));
+	const buttons = detail.state.body.descendants("button"); assert.equal(buttons[0].disabled, true); assert.equal(buttons[1].disabled, false);
+	buttons[1].click(); const page = m.calls.at(-1); assert.equal(page.options.args.page, 2); assert.equal(page.options.args.warehouse, "仓库一");
+	page.resolve(recordsResponse(page, row(), [ledgerRow({ name: "SLE-100" })], { total: 101, total_pages: 2 })); await new Promise(setImmediate);
+	assert.ok(detail.state.body.textContent.includes("第 2 页 · 共 101 条")); assert.equal(m.view.rows, parent); assert.equal(m.view.page, 1);
+	assert.equal(detail.state.body.descendants("tr").length, 2); m.view.closeDetail(); assert.equal(m.calls.length, 3);
+});
+test("ledger rejects scope, unsafe counts, truncated pages and numeric or foreign source rows as a whole", async () => {
+	const changes = [data => { data.search = "OTHER"; }, data => { data.row.warehouse_version = "changed"; }, data => { data.total = 101; data.total_pages = 2; },
+		data => { data.total = Number.MAX_SAFE_INTEGER + 1; }, data => { data.rows[0].actual_qty = 3; }, data => { data.rows[0].stock_value = "NaN"; },
+		data => { data.rows[0].company = "OTHER"; }, data => { data.rows[0].stock_uom = "Kg"; }, data => { data.rows[0].is_adjustment_entry = 2; },
+		data => { data.rows[0].private_source = "secret"; }, data => { data.rows.push(ledgerRow()); data.total = 2; }];
+	for (const change of changes) {
+		const m = await make(); await populate(m); const detail = openDetail(m, "records"), data = plain(recordsResponse(detail.request)); change(data);
+		detail.request.resolve(data); await detail.pending; assert.match(detail.state.body.textContent, /详情未能读取/); assert.equal(detail.state.body.descendants("td").length, 0);
+	}
+});
+test("closing details aborts pending reads and late completion cannot restore a drawer or ledger", async () => {
+	for (const mode of ["archive", "records"]) {
+		const m = await make(); await populate(m); const detail = openDetail(m, mode), parent = m.view.rows;
+		m.view.closeDetail(); assert.equal(detail.request.aborted, true); detail.request.resolve(mode === "archive" ? archiveResponse(detail.request) : recordsResponse(detail.request)); await detail.pending;
+		assert.equal(m.view.detail, null); assert.equal(detail.state.body.textContent, ""); assert.equal(m.view.rows, parent); assert.equal(m.calls.length, 2);
+	}
+});
+test("Escape while focus is on the parent closes a nonmodal ledger; destroy removes its handler", async () => {
+	const m = await make(); await populate(m); const detail = openDetail(m, "records");
+	m.host.events.get("keydown")({ key: "Escape", preventDefault() {}, stopPropagation() {} });
+	assert.equal(m.view.detail, null); assert.equal(detail.request.aborted, true); assert.equal(detail.trigger.focused, true); assert.equal(m.view.rows.length, 1);
+	detail.request.resolve(recordsResponse(detail.request)); await detail.pending; m.view.destroy(); assert.equal(m.host.events.has("keydown"), false);
+});
+test("parent filter, mode, page, leave and destroy close details and permanently discard their late returns", async () => {
+	const actions = [m => { m.view.search.value = "changed"; m.view.search.events.get("input")(); },
+		m => m.view.companyControl.clear(), m => m.view.dateControl.input("2026-10-03"), m => m.view.warehouseControl.clear(),
+		m => { m.view.goto.value = "2"; m.view.goto.events.get("input")(); },
+		m => m.view.setMode("图片"), m => m.view.query(1), m => m.view.setVisible(false), m => m.view.destroy()];
+	for (const action of actions) {
+		const m = await make(); await populate(m); const detail = openDetail(m, "records"); action(m);
+		assert.equal(detail.request.aborted, true); assert.equal(m.view.detail, null);
+		detail.request.resolve(recordsResponse(detail.request)); await detail.pending; assert.equal(detail.state.body.textContent, "");
+		assert.ok(!m.host.textContent.includes("REC-0001"));
+	}
+});
+test("replaced detail page aborts prior page and denied diagnostics remain generic", async () => {
+	const m = await make(); await populate(m); const detail = openDetail(m, "records");
+	const next = m.view.queryTrackingDetail(detail.state, 2), request = m.calls.at(-1); assert.equal(detail.request.aborted, true);
+	detail.request.resolve(recordsResponse(detail.request)); await detail.pending; assert.match(detail.state.body.textContent, /正在读取/);
+	request.reject(new Error("private SQL password")); await next; assert.match(detail.state.body.textContent, /详情未能读取/);
+	assert.ok(!m.host.textContent.includes("private SQL password")); assert.equal(m.view.rows.length, 1);
 });
 (async () => { for (const [name, body] of tests) { try { await body(); } catch (error) { error.message = name + ": " + error.message; throw error; } }
 	console.log(tests.length + " inventory tracking DTO/DOM models passed (no GUI/native/HTTP proof)");

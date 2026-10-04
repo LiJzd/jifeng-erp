@@ -1,4 +1,4 @@
-.jfe-inventory-tracking { height: 100%; display: flex; flex-direction: column; padding: 14px; gap: 8px; overflow: auto; }
+.jfe-inventory-tracking { position: relative; height: 100%; display: flex; flex-direction: column; padding: 14px; gap: 8px; overflow: auto; }
 .jfe-inventory-tracking-toolbar, .jfe-inventory-tracking-modes, .jfe-inventory-tracking-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .jfe-inventory-tracking-toolbar > input { min-width: 180px; flex: 1; padding: 7px; }
 .jfe-inventory-tracking-filter { min-width: 160px; max-width: 240px; flex: 1; }
@@ -10,7 +10,7 @@
 .jfe-inventory-tracking th, .jfe-inventory-tracking td { border: 1px solid var(--border-color, #d9dfe6); padding: 7px 9px; white-space: pre-wrap; min-width: 90px; }
 .jfe-inventory-tracking th { position: sticky; top: 0; background: var(--subtle-fg, #f3f5f8); }
 .jfe-inventory-tracking-sources { display: flex; gap: 4px; white-space: nowrap; }
-.jfe-inventory-tracking-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.jfe-inventory-tracking-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 12px; }
 .jfe-inventory-tracking-cards article { border: 1px solid var(--border-color, #d9dfe6); border-radius: 6px; padding: 12px; }
 .jfe-inventory-tracking-cards h3 { font-size: 14px; overflow-wrap: anywhere; }
 .jfe-inventory-tracking-image { min-height: 100px; display: grid; place-items: center; }
@@ -18,6 +18,20 @@
 .jfe-inventory-tracking-cards dl { display: grid; grid-template-columns: 78px minmax(0, 1fr); font-size: 12px; gap: 4px 8px; }
 .jfe-inventory-tracking-cards dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .jfe-inventory-tracking-pager input { width: 70px; }
+.jfe-inventory-tracking-link { border: 0; background: transparent; color: var(--primary, #245acb); padding: 0; text-decoration: underline; text-underline-offset: 2px; white-space: inherit; overflow-wrap: anywhere; text-align: left; }
+.jfe-inventory-tracking-link:focus-visible { outline: 2px solid var(--primary, #245acb); outline-offset: 3px; }
+.jfe-inventory-tracking-detail { position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--fg-color, #fff); border: 1px solid var(--border-color, #d9dfe6); }
+.jfe-inventory-tracking-detail.archive { top: 0; bottom: 0; right: 0; width: min(840px, 100%); box-shadow: -1000px 0 0 1000px rgb(0 0 0 / 20%); }
+.jfe-inventory-tracking-detail.records { bottom: 0; left: 0; right: 0; max-height: 65%; min-height: 230px; box-shadow: 0 -4px 16px rgb(0 0 0 / 14%); }
+.jfe-inventory-tracking-detail > header { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; gap: 12px; }
+.jfe-inventory-tracking-detail h2 { font-size: 17px; margin: 0; }
+.jfe-inventory-tracking-detail h3 { font-size: 15px; }
+.jfe-inventory-tracking-detail-body { overflow: auto; min-height: 0; }
+.jfe-inventory-tracking-detail-fields { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 2fr); gap: 5px 10px; }
+.jfe-inventory-tracking-detail-fields dt { color: var(--text-muted, #6b7280); }
+.jfe-inventory-tracking-detail-fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jfe-inventory-tracking-detail-scroll { overflow: auto; }
+.jfe-inventory-tracking-record-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 300px); gap: 14px; }
+.jfe-inventory-tracking-record-layout > * { min-width: 0; }
 .jfe-inventory-tracking [hidden] { display: none !important; }
-@media (max-width: 1000px) { .jfe-inventory-tracking-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 600px) { .jfe-inventory-tracking-cards { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .jfe-inventory-tracking-record-layout { grid-template-columns: 1fr; } }

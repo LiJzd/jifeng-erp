@@ -420,6 +420,134 @@ class TestInventoryTracking(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "页码超过"):
             self.query(page=2)
 
+    def detail_args(self):
+        row = self.query()["rows"][0]
+        return {"kind": "物料", "company": "JF", "as_of": "2026-10-04", "search": "",
+                **{key: row[key] for key in ("profile_name", "item_code", "warehouse",
+                                            "profile_version", "item_version", "warehouse_version")}}
+
+    def permit_vouchers(self):
+        self.env.permitted["Stock Entry"].add("modified")
+        self.env.metas["Stock Entry"]["modified"] = Record(fieldname="modified")
+
+    def test_archive_drawer_reads_saved_fields_and_same_item_native_warehouse_balances(self):
+        args = self.detail_args()
+        self.env.add("Warehouse", "B", company="JF", is_group=0)
+        self.env.add("Stock Ledger Entry", "SLE-B", **{
+            key: value for key, value in self.entry.items() if key not in {"doctype", "name", "modified"}
+        }).update(warehouse="B", actual_qty=Decimal("0"), qty_after_transaction=Decimal("0"))
+        self.native_rows.append(Record(self.native_rows[0], warehouse="B", bal_qty=Decimal("0"), bal_val=Decimal("0")))
+        before = deepcopy(self.env.documents)
+        result = self.module.read_tracking_archive(**args)
+        self.assertEqual(set(result), {"kind", "company", "search", "warehouse", "as_of", "currency", "row",
+                                       "archive", "balances", "readonly", "can_write"})
+        self.assertEqual(result["archive"]["profile"]["list_price"], "17.50")
+        self.assertEqual(result["archive"]["profile"]["display_uom"], "对（旧原文）")
+        self.assertEqual([(row["warehouse"], row["stock_qty"], row["stock_uom"]) for row in result["balances"]],
+                         [("A", "3.00", "Nos"), ("B", "0", "Nos")])
+        self.assertEqual(result["row"], result["balances"][0])
+        self.assertEqual(self.env.documents, before)
+        self.frappe.db.commit.assert_not_called()
+        self.frappe.db.sql.assert_not_called()
+
+    def test_archive_drawer_does_not_fill_masked_values_or_require_voucher_read(self):
+        args = self.detail_args()
+        self.env.metas[PROFILE]["list_price"].update(mask=1)
+        self.env.projection_omissions[PROFILE] = {"supplier"}
+        self.env.doc_denials.add(("Stock Entry", "VOUCHER-A", "read"))
+        result = self.module.read_tracking_archive(**args)
+        self.assertNotIn("list_price", result["archive"]["profile"])
+        self.assertNotIn("supplier", result["archive"]["profile"])
+        self.assertNotIn("list_price", result["archive"]["field_meta"]["profile"])
+
+    def test_details_reject_stale_or_foreign_exact_source_identity(self):
+        args = self.detail_args()
+        for changes in ({"profile_version": "stale"}, {"item_version": "stale"}, {"warehouse_version": "stale"},
+                        {"item_code": "OTHER"}, {"warehouse": " B"}, {"kind": "材料"}, {"company": "OTHER"},
+                        {"search": "not-this-archive"}, {"warehouse": ""}):
+            with self.subTest(changes=changes), self.assertRaises((PermissionError, ValueError)):
+                self.module.read_tracking_archive(**{**args, **changes})
+
+    def test_archive_drawer_does_not_drop_a_hidden_company_warehouse(self):
+        args = self.detail_args()
+        self.env.add("Warehouse", "HIDDEN", company="JF", is_group=0)
+        self.env.list_denials.add(("Warehouse", "HIDDEN"))
+        with self.assertRaises(PermissionError):
+            self.module.read_tracking_archive(**args)
+
+    def test_archive_change_during_balance_load_refuses_drawer(self):
+        args = self.detail_args()
+        self.native_hook = lambda count: self.env.profile.update(list_price=Decimal("9"))
+        with self.assertRaises(PermissionError):
+            self.module.read_tracking_archive(**args)
+
+    def test_records_preserve_native_movements_balance_precision_and_exact_source(self):
+        args = self.detail_args()
+        self.permit_vouchers()
+        self.entry.update(actual_qty=Decimal("-1E-17"), qty_after_transaction=Decimal("9.000000000000000001"))
+        result = self.module.query_tracking_records(**args)
+        self.assertEqual((result["total"], result["total_pages"], result["page_size"]), (1, 1, 100))
+        record = result["rows"][0]
+        self.assertEqual(set(record), {"name", "modified", "posting_datetime", "voucher_type", "voucher_no",
+                                      "actual_qty", "qty_after_transaction", "valuation_rate", "stock_value",
+                                      "stock_value_difference", "stock_uom", "is_adjustment_entry", "company"})
+        self.assertEqual((record["actual_qty"], record["qty_after_transaction"], record["voucher_no"]),
+                         ("-1E-17", "9.000000000000000001", "VOUCHER-A"))
+        self.assertNotIn("receipt_qty", record)
+        self.assertNotIn("counted_qty", record)
+        self.assertNotIn("voucher_detail_no", record)
+        self.frappe.db.commit.assert_not_called()
+        self.frappe.new_doc.assert_not_called()
+
+    def test_records_require_voucher_role_document_list_and_field_permissions(self):
+        args = self.detail_args()
+        self.permit_vouchers()
+        denials = [self.env.role_denials, self.env.doc_denials, self.env.list_denials]
+        keys = [("Stock Entry", "read"), ("Stock Entry", "VOUCHER-A", "read"), ("Stock Entry", "VOUCHER-A")]
+        for denial_set, key in zip(denials, keys, strict=True):
+            denial_set.add(key)
+            with self.assertRaises(PermissionError):
+                self.module.query_tracking_records(**args)
+            denial_set.clear()
+        self.env.metas["Stock Entry"]["name"].update(mask=1)
+        with self.assertRaises(PermissionError):
+            self.module.query_tracking_records(**args)
+        # Independent balance access still reveals no voucher identifier.
+        self.assertNotIn("VOUCHER-A", repr(self.query()))
+
+    def test_records_full_scope_pagination_does_not_ignore_hidden_later_page(self):
+        args = self.detail_args()
+        self.permit_vouchers()
+        for index in range(102):
+            self.env.add("Stock Ledger Entry", f"SLE-{index:04d}", **{
+                key: value for key, value in self.entry.items() if key not in {"doctype", "name", "modified"}
+            })
+        result = self.module.query_tracking_records(**args, page=2)
+        self.assertEqual((result["total"], result["total_pages"], len(result["rows"])), (103, 2, 3))
+        self.env.list_denials.add(("Stock Ledger Entry", "SLE-0101"))
+        with self.assertRaises(PermissionError):
+            self.module.query_tracking_records(**args, page=1)
+
+    def test_records_voucher_changed_between_native_passes_refuses_whole_panel(self):
+        args = self.detail_args()
+        self.permit_vouchers()
+        self.reports._native_balance.reset_mock()
+        self.native_hook = lambda count: self.voucher.update(modified="changed") if count == 3 else None
+        with self.assertRaises(PermissionError):
+            self.module.query_tracking_records(**args)
+
+    def test_later_voucher_load_cannot_revoke_earlier_voucher_and_still_expose_its_id(self):
+        args = self.detail_args()
+        self.permit_vouchers()
+        self.env.add("Stock Entry", "VOUCHER-B", company="JF", docstatus=1, is_opening="No")
+        self.env.add("Stock Ledger Entry", "SLE-B", **{
+            key: value for key, value in self.entry.items() if key not in {"doctype", "name", "modified"}
+        }).update(voucher_no="VOUCHER-B")
+        self.env.doc_hooks["Stock Entry"] = lambda name: self.env.doc_denials.add(
+            ("Stock Entry", "VOUCHER-A", "read")) if name == "VOUCHER-B" else None
+        with self.assertRaises(PermissionError):
+            self.module.query_tracking_records(**args)
+
 
 if __name__ == "__main__":
     unittest.main()

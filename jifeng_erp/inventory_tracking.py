@@ -197,21 +197,12 @@ def _project(native, items, warehouses, entries, company, currency):
     return sorted(result, key=lambda row: (row["warehouse"], row["profile_name"], row["item_code"]))
 
 
-@frappe.whitelist()
-def query_tracking(kind, company, search="", warehouse=None, as_of=None, page=1, page_size=catalog.LIMIT):
-    """Page all checked Item/leaf-Warehouse history pairs, not a truncated scan.
-
-    Only already authorized archive candidates enter the inventory scope. Every
-    contributing SLE must be readable even if only one output page is requested.
-    Source-voucher metadata stays internal, following the existing balance API's
-    independent SLE authorization; no voucher name/link or private field is sent.
-    """
+def _checked_tracking(kind, company, search, warehouse, as_of):
+    """Read the complete authorized scope before either paging or drilling in."""
     catalog._scope(kind, company)
     if warehouse is not None and (not isinstance(warehouse, str) or not warehouse or warehouse != warehouse.strip()):
         frappe.throw("请选择准确仓库，或不指定仓库")
     cutoff = _date(as_of)
-    page = catalog._page_integer(page, "页码", catalog.MAX_SAFE_INTEGER)
-    page_size = catalog._page_integer(page_size, "每页条数", catalog.LIMIT)
     if not frappe.has_permission("Stock Ledger Entry", "read"):
         _deny()
     from erpnext.stock.doctype.inventory_dimension.inventory_dimension import get_inventory_dimensions
@@ -256,12 +247,135 @@ def query_tracking(kind, company, search="", warehouse=None, as_of=None, page=1,
             or dimensions != tuple(sorted(dimension.fieldname for dimension in get_inventory_dimensions()))
             or access != {doctype: catalog._columns(doctype) for doctype in access}):
         _deny()
-    total = len(result)
+    return result, entries, currency, str(cutoff)
+
+
+def _page(rows, page, page_size):
+    total = len(rows)
     total_pages = (total + page_size - 1) // page_size
     if page > max(1, total_pages):
         frappe.throw("页码超过查询结果范围，请重新查询")
     start = (page - 1) * page_size
+    return {"page": page, "page_size": page_size, "total": total, "total_pages": total_pages,
+            "rows": rows[start:start + page_size]}
+
+
+@frappe.whitelist()
+def query_tracking(kind, company, search="", warehouse=None, as_of=None, page=1, page_size=catalog.LIMIT):
+    """Page checked history pairs; balance access never exposes source vouchers."""
+    page = catalog._page_integer(page, "页码", catalog.MAX_SAFE_INTEGER)
+    page_size = catalog._page_integer(page_size, "每页条数", catalog.LIMIT)
+    result, _entries, currency, cutoff = _checked_tracking(kind, company, search, warehouse, as_of)
     return {"kind": kind, "company": company, "search": search, "warehouse": warehouse or "",
-            "as_of": str(cutoff), "currency": currency, "basis": dict(BASIS),
-            "page": page, "page_size": page_size, "total": total, "total_pages": total_pages,
-            "rows": result[start:start + page_size], "readonly": True, "can_write": False}
+            "as_of": cutoff, "currency": currency, "basis": dict(BASIS),
+            **_page(result, page, page_size), "readonly": True, "can_write": False}
+
+
+def _selection(rows, profile_name, item_code, warehouse, profile_version, item_version, warehouse_version):
+    expected = {"profile_name": profile_name, "item_code": item_code, "warehouse": warehouse,
+                "profile_version": profile_version, "item_version": item_version,
+                "warehouse_version": warehouse_version}
+    if any(not isinstance(value, str) or not value or value != value.strip() or len(value) > 140
+           or any(ord(character) < 32 or ord(character) == 127 for character in value)
+           for value in expected.values()):
+        frappe.throw("请选择准确的库存跟踪行，并保留其来源版本")
+    found = [row for row in rows if all(row[field] == value for field, value in expected.items())]
+    if len(found) != 1:
+        frappe.throw("库存跟踪来源或版本已变化，请重新查询", frappe.PermissionError)
+    return found[0]
+
+
+@frappe.whitelist()
+def read_tracking_archive(kind, company, profile_name, item_code, warehouse, as_of,
+                          profile_version, item_version, warehouse_version, search=""):
+    """Read-only drawer; do not navigate away or grant an archive edit action."""
+    archive = catalog.read_archive(profile_name, kind, company)
+    # The archive drawer's stock table covers this company's complete leaf scope.
+    rows, _entries, currency, cutoff = _checked_tracking(kind, company, search, None, as_of)
+    selected = _selection(rows, profile_name, item_code, warehouse,
+                          profile_version, item_version, warehouse_version)
+    if (archive["item_code"] != item_code or archive["profile_version"] != profile_version
+            or archive["item_version"] != item_version
+            or archive != catalog.read_archive(profile_name, kind, company)):
+        _deny()
+    balances = [row for row in rows if row["profile_name"] == profile_name and row["item_code"] == item_code]
+    return {"kind": kind, "company": company, "search": search, "warehouse": warehouse,
+            "as_of": cutoff, "currency": currency, "row": selected, "archive": archive,
+            "balances": balances, "readonly": True, "can_write": False}
+
+
+def _voucher_sources(entries, company):
+    """Voucher identifiers need their own permissions, independent of SLE read."""
+    groups = {}
+    for row in entries:
+        groups.setdefault(row["voucher_type"], set()).add(row["voucher_no"])
+    state, loaded = {}, []
+    for doctype, names in groups.items():
+        if not frappe.has_permission(doctype, "read"):
+            _deny()
+        required = {"name", "modified", "docstatus"}
+        if frappe.get_meta(doctype).has_field("company"):
+            required.add("company")
+        _fields(doctype, required)
+        records = frappe.get_list(doctype, filters={"name": ["in", sorted(names)]},
+                                  fields=sorted(required), limit_page_length=0)
+        if len(records) != len(names) or {row.get("name") for row in records} != names:
+            _deny()
+        for row in records:
+            document = frappe.get_doc(doctype, row["name"])
+            loaded.append((doctype, required, row, document))
+        state[doctype] = (tuple(sorted(required)), _state(records))
+    # A later voucher load must not hide an earlier voucher after it was checked.
+    for doctype, required, row, document in loaded:
+        _fields(doctype, required)
+        if (not frappe.has_permission(doctype, "read") or not required.issubset(row)
+                or not catalog._current(document, row, required - {"modified"})
+                or row["docstatus"] != 1 or "company" in required and row["company"] != company):
+            _deny()
+    return state
+
+
+def _record_rows(entries, company):
+    rows = []
+    for entry in sorted(entries, key=lambda row: (str(row["posting_datetime"]), str(row["creation"]), row["name"])):
+        if not entry.get("posting_datetime") or entry.get("is_adjustment_entry") not in (0, 1, False, True):
+            _invalid()
+        rows.append({"name": entry["name"], "modified": catalog._value(entry["modified"]),
+                     "posting_datetime": catalog._value(entry["posting_datetime"]),
+                     "voucher_type": entry["voucher_type"], "voucher_no": entry["voucher_no"],
+                     **{field: _number(entry[field]) for field in LEDGER_NUMBERS},
+                     "stock_uom": entry["stock_uom"], "is_adjustment_entry": int(entry["is_adjustment_entry"]),
+                     "company": company})
+    return rows
+
+
+@frappe.whitelist()
+def query_tracking_records(kind, company, profile_name, item_code, warehouse, as_of,
+                           profile_version, item_version, warehouse_version, search="",
+                           page=1, page_size=catalog.LIMIT):
+    """Native movements for one exact pair, including absolute reconciliation.
+
+    actual_qty and qty_after_transaction remain distinct native values. Neither
+    is relabelled as an unverified old-system receipt/return/count category.
+    Source and field authorization covers every record before pagination.
+    """
+    page = catalog._page_integer(page, "页码", catalog.MAX_SAFE_INTEGER)
+    page_size = catalog._page_integer(page_size, "每页条数", catalog.LIMIT)
+    rows, entries, currency, cutoff = _checked_tracking(kind, company, search, warehouse, as_of)
+    selected = _selection(rows, profile_name, item_code, warehouse,
+                          profile_version, item_version, warehouse_version)
+    entries = [entry for entry in entries if entry["item_code"] == item_code and entry["warehouse"] == warehouse]
+    source_state = _voucher_sources(entries, company)
+    records = _record_rows(entries, company)
+    # Voucher loads can change an earlier source's permissions. Recheck the full
+    # inventory scope and then every voucher; this is not an atomic DB snapshot.
+    fresh_rows, fresh_entries, fresh_currency, fresh_cutoff = _checked_tracking(kind, company, search, warehouse, as_of)
+    fresh_selected = _selection(fresh_rows, profile_name, item_code, warehouse,
+                                profile_version, item_version, warehouse_version)
+    fresh_entries = [entry for entry in fresh_entries if entry["item_code"] == item_code and entry["warehouse"] == warehouse]
+    if (selected != fresh_selected or currency != fresh_currency or cutoff != fresh_cutoff
+            or _state(entries) != _state(fresh_entries) or source_state != _voucher_sources(fresh_entries, company)):
+        _deny()
+    return {"kind": kind, "company": company, "search": search, "warehouse": warehouse,
+            "as_of": cutoff, "currency": currency, "row": selected,
+            **_page(records, page, page_size), "readonly": True, "can_write": False}
