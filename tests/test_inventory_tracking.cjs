@@ -17,8 +17,8 @@ class Element {
 }
 const plain = value => JSON.parse(JSON.stringify(value));
 function harness() {
-	const calls = [], pages = [], controls = [], window = {};
-	const frappe = { defaults: { get_user_default: () => "集沣" }, datetime: { get_today: () => "2026-10-04" }, ui: { form: { make_control({ df }) {
+	const calls = [], pages = [], controls = [], window = {}, exports = [], downloads = [], revoked = [];
+	const frappe = { csrf_token: "synthetic-csrf", defaults: { get_user_default: () => "集沣" }, datetime: { get_today: () => "2026-10-04" }, ui: { form: { make_control({ df }) {
 		const control = { df, value: "", typed: "", handlers: new Map(), titleMap: {}, get_value() { return df.fieldtype === "Date" ? (this.dateMap?.[this.typed] || this.typed) : this.value; },
 			get_input_value() { return this.titleMap[this.typed] || this.typed; }, async set_value(value) { this.value = value; this.typed = value; df.onchange(); },
 			input(value) { this.typed = value; for (const action of this.handlers.values()) action(); } };
@@ -33,11 +33,18 @@ function harness() {
 		promise.abort = () => { request.aborted = true; }; calls.push(request); return promise;
 	} };
 	const forbidden = new Proxy({}, { get() { throw new Error("Stock DTO cannot enter browser storage"); } });
-	const context = vm.createContext({ window, document: { createElement: tag => new Element(tag) }, frappe, __: value => value,
+	const document = { body: new Element("body"), createElement(tag) {
+		const node = new Element(tag); if (tag === "a") node.click = () => downloads.push({ href: node.href, filename: node.download }); return node;
+	} };
+	const fetch = (url, options) => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+		exports.push({ url, options, args: Object.fromEntries(options.body), resolve, reject }); return promise;
+	};
+	const context = vm.createContext({ window, document, frappe, fetch, AbortController, URLSearchParams, __: value => value,
+		URL: { createObjectURL: () => "blob:synthetic-tracking", revokeObjectURL: url => revoked.push(url) }, setTimeout: fn => fn(),
 		localStorage: forbidden, sessionStorage: forbidden, indexedDB: forbidden });
 	for (const file of ["jifeng_inventory_catalog.js", "jifeng_inventory_tracking.js"])
 		vm.runInContext(fs.readFileSync("jifeng_erp/public/js/" + file, "utf8"), context);
-	return { calls, controls, pages, window, bridge: { open: spec => pages.push(plain(spec)) } };
+	return { calls, controls, pages, window, exports, downloads, revoked, frappe, bridge: { open: spec => pages.push(plain(spec)) } };
 }
 const basis = Object.fromEntries(["stock_qty", "valuation_rate", "stock_value", "stock_uom", "profile_weight", "profile_display_uom", "total_weight"].map(key => [key, "来源 " + key]));
 function row(extra = {}) {
@@ -392,6 +399,60 @@ test("empty complete options disable confirm and cancellation does not apply a f
 	const m = await make(); const state = m.view.openValueFilter("notes"), request = m.calls.at(-1); request.resolve(valuesResponse(request, [])); await state.ready;
 	assert.equal(state.confirm.disabled, true); assert.equal(state.all.disabled, true); assert.equal(m.calls.length, 1); state.confirm.click(); assert.equal(m.calls.length, 1);
 	state.cancel.click(); assert.deepEqual(plain(m.view.columnFilters), []);
+});
+const exportResponse = (options = {}) => ({ ok: true, headers: { get: () => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, blob: async () => ({ size: 12 }), ...options });
+test("export uses current full conditions and CSRF POST body without page or long URL", async () => {
+	const m = await make("材料"); m.view.search.value = "0007";
+	m.view.columnFilters = ["warehouse", "legacy_number", "minor_category", "display_name", "specification", "location"].map(field => ({ field, operator: "contains", value: "中".repeat(2000) }));
+	m.view.columnSort = { field: "stock_qty", direction: "desc" };
+	const pending = m.view.exportTracking(), request = m.exports.at(-1);
+	assert.equal(request.url, "/api/method/jifeng_erp.inventory_tracking_export.export_tracking");
+	assert.equal(request.options.method, "POST"); assert.equal(request.options.credentials, "same-origin");
+	assert.equal(request.options.headers["X-Frappe-CSRF-Token"], "synthetic-csrf");
+	assert.ok(request.options.body.toString().length > 8000);
+	assert.deepEqual(Object.keys(request.args).sort(), ["as_of", "column_filters", "company", "kind", "search", "sort"]);
+	assert.deepEqual(JSON.parse(request.args.column_filters), plain(m.view.columnFilters));
+	assert.deepEqual(JSON.parse(request.args.sort), { field: "stock_qty", direction: "desc" });
+	assert.equal(m.view.exportButton.disabled, true); await m.view.exportTracking(); assert.equal(m.exports.length, 1);
+	request.resolve(exportResponse()); await pending;
+	assert.deepEqual(m.downloads, [{ href: "blob:synthetic-tracking", filename: "材料跟踪.xlsx" }]);
+	assert.deepEqual(m.revoked, ["blob:synthetic-tracking"]); assert.equal(m.calls.length, 0);
+	assert.equal(m.view.exporting, false); assert.equal(m.view.exportButton.disabled, false);
+});
+test("invalid context or missing CSRF refuses an export before network", async () => {
+	for (const action of [m => m.view.companyControl.input("unfinished"), m => m.frappe.csrf_token = "", m => m.view.columnSort = { field: "item_code", direction: "asc" }]) {
+		const m = await make(); action(m); await m.view.exportTracking(); assert.equal(m.exports.length, 0); assert.equal(m.downloads.length, 0);
+	}
+});
+test("all input changes and leave, mode, dispose cancel a late export", async () => {
+	const actions = [m => { m.view.search.value = "changed"; m.view.search.events.get("input")(); },
+		m => m.view.companyControl.clear(), m => m.view.warehouseControl.input("changed"), m => m.view.dateControl.input("2026-10-03"),
+		m => m.view.setVisible(false), m => m.view.setMode("图片"), m => m.view.dispose()];
+	for (const action of actions) {
+		const m = await make(); const pending = m.view.exportTracking(), request = m.exports.at(-1); action(m);
+		assert.equal(request.options.signal.aborted, true); request.resolve(exportResponse()); await pending;
+		assert.equal(m.downloads.length, 0); assert.equal(m.view.exporting, false);
+	}
+});
+test("fresh query aborts pending export and rejected files preserve readable results", async () => {
+	const m = await make(); await populate(m);
+	const pending = m.view.exportTracking(), request = m.exports.at(-1), query = m.view.query();
+	assert.equal(request.options.signal.aborted, true); const call = m.calls.at(-1); call.resolve(response(call)); await query;
+	request.resolve(exportResponse()); await pending; assert.equal(m.downloads.length, 0);
+	for (const bad of [exportResponse({ ok: false }), exportResponse({ headers: { get: () => "application/json" } }), exportResponse({ blob: async () => ({ size: 0 }) })]) {
+		const failed = m.view.exportTracking(); m.exports.at(-1).resolve(bad); await failed;
+		assert.equal(m.downloads.length, 0); assert.equal(m.view.total, 1); assert.equal(m.view.rows.length, 1);
+		assert.match(m.view.status.textContent, /导出未完成/);
+	}
+});
+test("old export completion cannot reset a new export or download changed filters", async () => {
+	const m = await make(); const old = m.view.exportTracking(), first = m.exports.at(-1);
+	m.view.search.value = "new"; m.view.search.events.get("input")(); const fresh = m.view.exportTracking(), second = m.exports.at(-1);
+	first.resolve(exportResponse()); await old; assert.equal(m.view.exporting, true); assert.equal(m.downloads.length, 0);
+	second.resolve(exportResponse()); await fresh; assert.equal(m.downloads.length, 1); assert.equal(m.view.exporting, false);
+	const next = m.view.exportTracking(), third = m.exports.at(-1);
+	m.view.columnFilters = [{ field: "supplier", operator: "in", value: ["changed"] }];
+	third.resolve(exportResponse()); await next; assert.equal(m.downloads.length, 1, "unreported native/control change still discards stale bytes");
 });
 (async () => { for (const [name, body] of tests) { try { await body(); } catch (error) { error.message = name + ": " + error.message; throw error; } }
 	console.log(tests.length + " inventory tracking DTO/DOM models passed (no GUI/native/HTTP proof)");

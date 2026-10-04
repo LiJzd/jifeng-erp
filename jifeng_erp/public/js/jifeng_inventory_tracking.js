@@ -28,12 +28,14 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		this.search.addEventListener("input", () => this.invalidate());
 		this.search.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); this.query(1); } });
 		this.queryButton = this.button("查询", () => this.query(1), "primary");
+		this.exportButton = this.button("导出", () => this.exportTracking());
+		this.exportButton.title = __("导出当前公司、截止日、搜索及列筛选下的全部匹配行；需要档案和库存流水导出权限。");
 		const holders = ["company", "warehouse", "date"].map(() => this.element("div", undefined, "jfe-inventory-tracking-filter"));
 		this.companyControl = this.makeControl(holders[0], "company", "Link", "公司", "Company", () => this.companyChanged());
 		this.warehouseControl = this.makeControl(holders[1], "warehouse", "Link", "仓库（可选）", "Warehouse", () => this.invalidate());
 		this.warehouseControl.get_query = () => ({ filters: { company: this.linkValue(this.companyControl) || "", is_group: 0 } });
 		this.dateControl = this.makeControl(holders[2], "as_of", "Date", "截止日期", null, () => this.invalidate());
-		toolbar.append(this.search, this.queryButton, ...holders);
+		toolbar.append(this.search, this.queryButton, this.exportButton, ...holders);
 		const modes = this.element("div", undefined, "jfe-inventory-tracking-modes");
 		this.modeButtons = {};
 		for (const mode of ["列表", "图片"]) {
@@ -102,6 +104,7 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 	changeScope() { /* Every query compares current native controls directly. */ }
 	invalidate(message = "筛选已变化，请重新查询。") {
 		if (this.disposed) return;
+		this.cancelExport();
 		this.closeColumnPopup(false);
 		this.revision++; this.loading = false; const request = this.request; this.request = null; request?.abort?.();
 		this.clearResults(); this.page = 1; if (this.goto) this.goto.value = "1";
@@ -119,6 +122,42 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 		this.next.disabled = !this.visible || this.loading || this.total === null || this.page >= this.totalPages;
 		this.count.textContent = this.total === null ? __("尚未查询") : __("共") + " " + this.total + " " + __("条");
 		if (this.queryButton) this.queryButton.disabled = !this.visible || !!this.loading;
+		if (this.exportButton) this.exportButton.disabled = !this.visible || !!this.loading || !!this.exporting || !this.context();
+	}
+	cancelExport() { this.exportController?.abort(); this.exportController = null; this.exporting = false; }
+	async exportTracking() {
+		if (this.disposed || !this.visible || this.loading || this.exporting) return;
+		const scope = this.columnContext();
+		if (!scope || !this.validColumnConditions(scope.column_filters, scope.sort) || !frappe.csrf_token) {
+			this.status.textContent = __("请核对公司、仓库、截止日期和查询条件，或重新登录后导出。"); return;
+		}
+		const revision = this.revision, controller = new AbortController();
+		const current = () => this.current(revision, scope) && this.exportController === controller && !controller.signal.aborted;
+		this.closeColumnPopup(false); this.closeDetail(false);
+		this.exporting = true; this.exportController = controller; this.renderPager();
+		this.status.textContent = __("正在导出当前筛选的全部库存行…");
+		let url;
+		try {
+			const type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+			const args = { ...scope, column_filters: JSON.stringify(scope.column_filters), sort: JSON.stringify(scope.sort) };
+			if (!args.warehouse) delete args.warehouse;
+			const response = await fetch("/api/method/jifeng_erp.inventory_tracking_export.export_tracking",
+				{ method: "POST", credentials: "same-origin", body: new URLSearchParams(args),
+					headers: { Accept: type, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Frappe-CSRF-Token": frappe.csrf_token }, signal: controller.signal });
+			if (!current()) return;
+			if (!response.ok || response.headers.get("Content-Type")?.split(";")[0].trim() !== type) throw new Error("Inventory tracking export failed");
+			const file = await response.blob();
+			if (!current()) return;
+			if (!file.size) throw new Error("Empty inventory tracking export");
+			url = URL.createObjectURL(file); const link = this.element("a");
+			link.href = url; link.download = this.kind + "跟踪.xlsx"; document.body.append(link); link.click(); link.remove();
+			this.status.textContent = __("已导出当前筛选的全部库存行。");
+		} catch {
+			if (current()) this.status.textContent = __("导出未完成，请核对来源、筛选和导出权限后重试。");
+		} finally {
+			if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+			if (this.exportController === controller) { this.exportController = null; this.exporting = false; this.renderPager(); }
+		}
 	}
 	sameContext(a, b) { return !!a && !!b && ["kind", "company", "warehouse", "as_of", "search"].every(key => a[key] === b[key]); }
 	columnContext() { const scope = this.context(); return scope && { ...scope, column_filters: JSON.parse(JSON.stringify(this.columnFilters)), sort: this.columnSort && { ...this.columnSort } }; }
@@ -157,6 +196,7 @@ window.JifengInventoryTracking = class JifengInventoryTracking extends window.Ji
 	}
 	async query(page = 1) {
 		if (this.disposed || !this.visible || this.loading) return;
+		this.cancelExport();
 		this.closeColumnPopup(false);
 		const scope = this.context(), requestedPage = this.pageNumber(page); this.clearResults();
 		if (!scope || !requestedPage) { this.status.textContent = __("请选择有效的公司、截止日期和页码，仓库须为明确的叶仓。") ; return; }

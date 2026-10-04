@@ -1,5 +1,25 @@
 # 验证记录
 
+## 2026-10-05 跟踪导出真实原生验收通过，运行同步待验
+
+原生 StockBalance 使用未消费的流式游标；r2 验收脚本在迭代完成前额外查询连接属性，与驱动冲突。fresh r3 将属性复核延到完整消费或真实 native cursor 关闭后，未消费时拒绝新 SQL，保留连接身份、零写入和 READ ONLY 保护；四组离线模型重现原冲突并覆盖消费、提前退出及异常。除 ConnectionAudit／main 外原 12 个函数 AST 保持，全部原固定来源未改变，旧失败记录未重放或修改。
+
+根唯一执行 r3 通过八项原生门和九项 after 保护：真实 Stock Manager 物料 16 列／材料 17 列文件，13／139 与零仓、材料 2.5／50、仓库与列筛选／数值排序、完整长条件、真实 Guest 拒绝，以及仅进程内模拟的表级／贡献单据导出权限撤销。九个独立非 root fresh READ ONLY 连接均成功 rollback／close 后才返回文件；12,147 原生读取、24,393 连接属性证明查询、0 事务写入。当前 935 对象完整数据／结构／索引前后 digest 同为 `e01bbf1a3ffdf81d1da2ef88d46d04cde2e0b071f0cfef936ca85d9aa1c6edfb`，612 源／443 模块／40 资源、配置、运行身份、队列及私密日志保护通过。未创建业务夹具或修改岗位，模拟撤权不能作为真实岗位撤权证明。
+
+helper SHA `47ef0726b588be3f09f7aae1a8d8d267bb908025045f6a5ab526a09e6690e578`／manifest SHA `99992382d66afe253f25d8044338d7a12c6e17419543cbaa9c9d56313a24b970`；实际结果 `output/inventory-tracking-export-native-20261004-r3/result.json` SHA `f45ea9ee931cd924d0904694ebbc619155e9734aa44b41b83705c70e3881c40d`。本次仅进程内编译候选，未 stage、HTTP、下载 GUI 或外网发布；原模板和总重规则仍未核实。外网继续 `81abd2e` 共享测试库，全旧模块正式可用目标未完成。
+
+## 2026-10-04 库存跟踪完整 Excel 导出候选（未发布）
+
+两版共用跟踪组件新增导出入口，服务器按当前公司／仓库／截止日／搜索／列筛选及排序读取全部匹配行，使用已核 16／17 数据列，不拼接浏览器分页。原生截止日库存数量、估价和金额保持精确文本；总重量仍留空，档案单价或单位不重算余额。档案和 SLE 表级及全部贡献单据导出权限在列筛选前核对；序列化后另建独立站点非 root 主库 READ ONLY 连接，比较完整投影、流水和权限输入，并成功 rollback／close 后才返回文件。前端用正常 same-origin CSRF POST 传完整筛选，避免合法长条件成为超长 URL；改变输入、模式、查询、离开或关闭会取消过期下载。条件说明逐选值保存在独立工作表，完整保留合法 65K 条件及空值／空串／空选择列表区别。
+
+实际执行 13 项新导出模型、45 项现有跟踪模型、38 项共享 JS 模型、A/B 366 派发、2 资源门及 Ruff／diff 全部通过。新模型覆盖 1001 个历史组合、完整过滤排序、两种列顺序、未知重量、精确数值、公式样文本、UTF16 单元格限制、独立连接提交变化、权限撤销／mask、清理失败及合法长筛选。独立源码复核还定位到框架请求内缓存的严格用户权限开关；新增未缓存主库值与真实有效值的一致性检查，并冻结到权限快照，模型模拟请求初始缓存已旧及生成文件后提交变化被旧连接隐藏时完整拒绝，不清共享缓存或修改配置。它们不是实际原生、HTTP、GUI、旧导出模板或岗位证明；真实原生助手正在准备，代码尚未同步本机运行或外网。外网仍为已验 `81abd2e`／r17 共享测试库。
+
+根唯一执行 fresh export-native r1，helper SHA `1cda88e475d45b5fa1303590730541c7b8d2ef5dbea8841b372e2ceec1ac93d7`／manifest SHA `b37599f6da3713ebd02c109e9f0677fa0cf34bb32714a28c2f4b7360998d85df`。流程在 Windows 私密日志权限前置自检退出 AssertionError；只有 intent 和 0 字节日志，未进入 Frappe／SQL／原生矩阵。根随后只读核实际 ACL 为未保护、四规则，PS 源／执行文件指纹及 Windows 目标路径均匹配；未捕获具体前置断言，不能编造原因。失败留证于 `output/inventory-tracking-export-native-20261004-r1-root-attempt.json`，SHA `1c157db77197fe7c8dd874e9563ac93b79372635aad5cbd1b16d7d6c9240c2f0`，不重放。新的 r2 正在准备将日志存入独立 Linux owned 目录并核 0600；尚未执行，stage 草案仍未绑定实际成功证据。
+
+随后只读桥接诊断出现 ObjectNotFound；不再次执行 Set-Acl。fresh r2 改为独立 Linux owned 0600 日志，保留原 12 个函数／类 AST，仅日志和 main 改变，3 个 Linux 合成日志检查通过。根基于新只读观察明确冻结新 boot `a009dc1a-e942-4cfa-804d-301478032bbb` 和原固定来源，唯一实际执行 r2：日志保护通过，原生计算首次读取抛 ProgrammingError，0 个导出门、0 个 fresh 导出连接，保持失败。全部九个 after 保护通过，5,735 原生读取、11,489 只读证明查询、0 事务写入，935 对象完整数据／结构／索引前后 digest 同为 `e01bbf1a3ffdf81d1da2ef88d46d04cde2e0b071f0cfef936ca85d9aa1c6edfb`，源／40 资源、配置、队列、账号范围、运行身份及清理保持。结果 SHA `53a5187e58ead009990b2660cbc40b98aa7da8c788ad67c496b498381aa70a07`；helper `105f1cb79e30696b37fb2e0078c09489175d55c6d2c17fe560760d96320a7ab9`／manifest `909cf860b06e7bd445daa4da5d195cc914f9daae752cfa921ba0f5ce508a4f24`。错误位于跟踪的原生 StockBalance 调用，正在核对验收逐查询证明与框架流式读取的交互；尚未确定具体 SQL 错误，不声称导出已通过，未 stage 或发布。
+
+Luna 准确打开旧首页后只提交普通登录一次，7 秒及随后 25／30 秒同 tab 只读观察仍停登录表单，无可见 error／loading／disabled，不盲重复提交；旧模式、导出模板和重量算法没有新增证据。fresh r3 缺标签、r4 登录未知及 r5 同 tab 观察记录均保留于 `output/legacy-tracking-modes-export-20261004-r3`／r4／r5，没有业务写入或文件下载；不能据此声称旧会话已注销。完整旧模块正式目标继续。
+
 ## 2026-10-04 库存 r17 已实际发布，正常外网 HTTP 通过
 
 根代理完成 fresh r17 host／native 全差异审阅，controller 在规范新路径和 SHA 后与已审 r14 的完整 AST 相同；uploader 保留逐块实际 DIRECT、专属目录、写首字节前权限及完整远端 SHA。五成员 3,865,114 字节只上传一次，142 次实际 SSH DIRECT 通过，上传结果 SHA `178e824846b2ce9492b6017a6780d76e31c79f393025c35d6c83c00b86e64ac3`。prepare→quiesce→before→cache→start 各只派发一次，逐阶段严格检查实际 completed 身份及前序 SHA 链。首次 quiesce 只读 inspect 在 SSH banner 前 EOF，没有执行远端读取；随后新只读 inspect 核实际完成，没有再次派发停服。
