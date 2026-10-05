@@ -6,7 +6,17 @@
 
 根全文审阅后唯一执行 native r3，15门实际 PASS，结果 SHA `878d7d18542ce300a531defb9a299843238ff46e02d711403468f3469e43e028`。纯 Stock Manager 的两个写入口拒绝；正向业务使用事务内正常原生创建的 Stock Manager＋Item Manager（无 System Manager），明确是临时用户。物料两行 `001`／`002`、零价及中文预览无写、正常保存、同批复用、只读回执、旧预览／改摘要／坏UOM拒绝通过；第二次保存故障注入使整批 SQL／回调／请求状态回滚。首次保存没有改写 GL／SLE／价格／既有用户权限等保护范围，整体回滚后新 READ ONLY 连接核物料及子表、档案、Series／Version、User／Auth／分享／评论／默认值等恢复，测试身份及 Contact 无残留，两物理连接关闭。Contact 延后回调未执行，未证明 Redis 缓存字节回滚，也未包含正常 HTTP／GUI 或材料正向原生保存。
 
-fresh 本机同步 r3 实际 PASS，结果 SHA `ecf4190b4500d1f70232de463d82f119b0b4241bac2b8eec6e62cd68c7ed15ab`：2新增／2替换，622来源中其余618保持；旧文件备份、已有Web仅停启各一次、唯一站点 hooks 缓存键失效、新增／修改JS完整HTTP字节与43资源通过，零SQL连接／DDL／业务写。新 owner SHA `db4c2c2b8aa10545c9fd083d33d18d43fdbdd845284abed01b45b0912b4d5a17`；后端源码 SHA `b9450969bc6c426f590feea53ff6e6afea0f984f88dc4c3f2ceb46c265975357`，导入JS SHA `0dbd287058048fb9f4c20eeeee3a991802c720a46720e79ba686ec2fe72d6362`。准备真实普通岗位 HTTP／A-B GUI；本项尚未公开，公网保持下节705。
+fresh 本机同步 r3 实际 PASS，结果 SHA `ecf4190b4500d1f70232de463d82f119b0b4241bac2b8eec6e62cd68c7ed15ab`：2新增／2替换，622来源中其余618保持；旧文件备份、已有Web仅停启各一次、唯一站点 hooks 缓存键失效、新增／修改JS完整HTTP字节与43资源通过，零SQL连接／DDL／业务写。新 owner SHA `db4c2c2b8aa10545c9fd083d33d18d43fdbdd845284abed01b45b0912b4d5a17`；后端源码 SHA `b9450969bc6c426f590feea53ff6e6afea0f984f88dc4c3f2ceb46c265975357`，导入JS SHA `0dbd287058048fb9f4c20eeeee3a991802c720a46720e79ba686ec2fe72d6362`。普通岗位HTTP／A-B正向导入仍待；本项尚未公开，公网保持下节705。
+
+普通GUI账号seed r1在提交前的保护筛选断言失败，完整rollback后fresh只读核原行一致、无User残留，两连接关闭，未尝试提交。root随后唯一执行独立诊断：四个原生安排步骤完成、0commit／0queue、整次rollback及fresh保护通过；定位为User子表循环覆盖DefaultValue的parent排除条件，以及当次新UserPermission正常新增的Permission Log。角色实际均为 Stock Manager＋Item Manager，不据筛选错误放宽旧数据保护。
+
+最终fresh seed r2（helper SHA `75453c4bedf4a17c6159838c0e73d659c881d2047fbf7a62ab794cc372e70fa4`）实际PASS，结果 SHA `960c545296407b0728910cbf1be3b7c5e315a9cd2be6565a61368239a9e18fe2`。正常原生创建全新普通User，仅 Stock Manager＋Item Manager、无 System Manager；已有公司对应User Permission及time_zone／company两默认值正确，单次提交后fresh核密码、公司选择／Item／Profile创建权限和otherCompany拒绝，两连接关闭。原GL Entry／Stock Ledger Entry／Item Price／Company／Role／Item／Profile等七表保护行及旧用户／权限保持；当次UserPermission的唯一Added日志已核；新User日志若存在须为Added及两岗位，其余日志原行保持。create_contact仅一个正常job保持QUEUED，未消费或重放；凭据和context仅本机root600、未Git。
+
+本机GUI r1～r7均正常登录，普通岗位角色及导入JS实际字节通过；r4～r7另核列表JS完整字节。导航／Link定位或候选操作止步提交前，每次preview／commit／resolve／跨版回读均0、unknown=false；各自context关闭但未正常logout，不计实际导入或退出PASS。r7已明确观察业务p提示就绪、两个Link可编辑及准确候选“耗材”，普通click等待时不稳定并消失；报告 SHA `fdbe654968ee78ea091eeffbe7921fc83ac9f28c5073be82a33bdbd43f899d5c`。r4搜索等待失败，r5就绪节点选错，r6准确就绪后只见Group空词GET，原件均保留，未重放。普通HTTP／A-B正向导入、材料正向和共享四行仍待，本批未公开；后继布局诊断正在收集，未据CSS推断宣称根因。档案状态下拉已核源码和真实构造／首次查询均为全部，本次未改产品代码。
+
+小范围Link校准的正常登录、Company选择／只读查询、关闭未预览窗口、UI logout与context关闭已确认，preview／commit／resolve均0且无prepared。其ready文本条件截断且Node错误数组未初始化，未执行Group填选，不记校准整体PASS；结果 SHA `64398564a8849c142fa7fd8dd284886fd462d670a3faf452e3617ee576fa145c`。正常Company候选曾观察GET空词及约500ms后的准确POST，均200；不据此要求所有原生Link必须新增POST。已消费校准稿保持。
+
+布局probe r1在Company阶段调用未建立的dialog截图而失败，未打开导入、未取得Group布局或截图；三业务API仍0、unknown=false，context关闭但正常logout未确认。实际结果 SHA `f8dbd8d8e6158e741bcd0c96bf94327343ee3a0710755f6e439a80a5d18ffe4f`，消费原稿保持；后继仅修helper，不据此判定CSS裁切或更改产品。
 
 此前 native r1 在既有账号选择时停止，r2 在原生 User hooks 重复项预期检查时停止，均零业务门、各一物理连接关闭，原件未重放。独立只读诊断实际核5个既有普通 Stock Manager 均缺 Item.create，零SQL写并关闭，结果 SHA `b69e1abcb3a4c065574935ae5e53439e589cb5fdcf8754b3144c7a47ee8f218a`。随后只读原始 hooks 返回了 ERPNext／HRMS 各自注册的同一 validate 项；该读取稿因 destroy 后重复 close 已闭连接而 exit1，不记整个读取稿 PASS。r3仅更正预期重复项和独立目录，未改业务权限或旧账号。
 
