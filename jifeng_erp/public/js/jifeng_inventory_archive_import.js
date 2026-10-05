@@ -94,7 +94,7 @@ window.JifengInventoryArchiveImport = class JifengInventoryArchiveImport {
 				{ fieldname: "item_group", fieldtype: "Link", options: "Item Group", label: __("新业务物料的默认商品分组"), reqd: !recovering, read_only: recovering },
 				{ fieldname: "stock_uom", fieldtype: "Link", options: "UOM", label: __("新业务物料的默认库存单位"), reqd: !recovering, read_only: recovering },
 				{ fieldname: "preview", fieldtype: "HTML" }] });
-		dialog.$wrapper.addClass("jfe-inventory-catalog-detail");
+		dialog.$wrapper.addClass("jfe-inventory-catalog-detail jfe-inventory-archive-import");
 		const body = dialog.fields_dict.preview.$wrapper.get(0), status = this.element("p", "正在准备导入…"); status.setAttribute("role", "status");
 		const grid = this.element("div", undefined, "jfe-inventory-catalog-scroll"); grid.style.maxHeight = "45vh";
 		body.replaceChildren(this.element("p", __("请按导入模板的列名准备文件；导入会新增档案和业务物料，不覆盖已存记录。档案单位与业务库存单位分别保存。")), status, grid);

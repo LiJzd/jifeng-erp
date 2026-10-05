@@ -23,6 +23,8 @@
 .jfe-inventory-catalog-pager input { width: 80px; text-align: center; padding: 8px; border: 1px solid #d7dce4; border-radius: 4px; }
 .jfe-inventory-catalog-count { margin-left: auto; padding-right: 8px; }
 .jfe-inventory-catalog-detail .modal-body { max-height: calc(100vh - 160px); overflow: auto; }
+/* Let native Link menus extend below the import fields; the modal and preview grid scroll. */
+.jfe-inventory-catalog-detail.jfe-inventory-archive-import .modal-body { max-height: none; overflow: visible; }
 .jfe-inventory-catalog-detail-fields { display: grid; grid-template-columns: minmax(90px, 140px) minmax(120px, 1fr); gap: 0; }
 .jfe-inventory-catalog-detail-fields dt, .jfe-inventory-catalog-detail-fields dd { margin: 0; padding: 8px; border-bottom: 1px solid #ddd; white-space: pre-wrap; overflow-wrap: anywhere; }
 .jfe-inventory-catalog-detail-fields dt { font-weight: normal; background: #f7f8fa; }

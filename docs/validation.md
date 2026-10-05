@@ -18,6 +18,8 @@ fresh 本机同步 r3 实际 PASS，结果 SHA `ecf4190b4500d1f70232de463d82f119
 
 布局probe r1在Company阶段调用未建立的dialog截图而失败，未打开导入、未取得Group布局或截图；三业务API仍0、unknown=false，context关闭但正常logout未确认。实际结果 SHA `f8dbd8d8e6158e741bcd0c96bf94327343ee3a0710755f6e439a80a5d18ffe4f`，消费原稿保持；后继仅修helper，不据此判定CSS裁切或更改产品。
 
+布局probe r2记录截图时弹窗根取得焦点、候选列表已隐藏，不能用于裁切结论。fresh r3等到原生弹窗完成显示再采集，结果 SHA `4ce6cef8a3378c179b6dfac60299027eeb3bfd168710e702f7e8eab03ca11206`：输入框聚焦、候选列表有300px高度，但“耗材”选项超出内容区底边，两个中心命中均落在弹窗根；页面截图确认内容区裁切。正常键盘选项和原生POST退出200／登录页通过，preview／commit／resolve均0、无prepared。源代码仅为导入弹窗增加专用样式，使内容区不裁切原生Link菜单，外层弹窗和预览表分别滚动；共用导入协议模型及2项资源版本检查通过，修复后的普通鼠标操作与正向导入仍待。公网705保持。
+
 此前 native r1 在既有账号选择时停止，r2 在原生 User hooks 重复项预期检查时停止，均零业务门、各一物理连接关闭，原件未重放。独立只读诊断实际核5个既有普通 Stock Manager 均缺 Item.create，零SQL写并关闭，结果 SHA `b69e1abcb3a4c065574935ae5e53439e589cb5fdcf8754b3144c7a47ee8f218a`。随后只读原始 hooks 返回了 ERPNext／HRMS 各自注册的同一 validate 项；该读取稿因 destroy 后重复 close 已闭连接而 exit1，不记整个读取稿 PASS。r3仅更正预期重复项和独立目录，未改业务权限或旧账号。
 
 旧站本次单次登录尝试跳到首页且密码框消失，但业务界面未渲染；只读DOM仅见全局单 `.xlsx` 输入及导入插件注册，无物料模板／预览／提交证据。无选择文件、导入或业务保存，context已关闭。`output/legacy-import-format-readonly-20261006-r1/page-observation.json` 保持此有限范围；旧模板与后续行为继续未核，不据新模板声称已复刻旧格式。
