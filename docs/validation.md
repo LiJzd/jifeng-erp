@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-05 样品档案修复已同步本机运行
+
+根完整审阅同步 helper、依赖的实际 stop／start、loopback 和只读 snapshot 函数，独立复跑三组离线模型后唯一实际执行 r1，退出 0。将已通过 r5 原生业务验证的 `55128c4` 两份 Python 源码同步到既有独立本机 candidate：仅 `workflow.py`、`sample_quotations.py` 改变，旧完整字节分别备份，其他 611 文件、完整 613 来源及 40 资产保持。沿原 owned unit 停／启 Web 各一次，新主进程／worker 身份及 Guest loopback ping 通过；没有迁移、业务／权限写入、清缓存或 Redis 重启。
+
+同步当次完整 935 对象的 raw schema／indexes／data before／after 精确相同，指纹均为 `af6f249bfe00a534fba8fe57bbb925563515e219f8252b7949cb9edac7702ae4`；4 个非 root READONLY 物理连接均释放锁并关闭，未复用历史指纹。原 owner 记录、Redis 服务／进程／socket／run id、队列身份、hooks 原始字节及 site private／public 文件树保持；AOF 只核布局、身份和权限，未声明持久化文件字节相等。实际结果 `output/sample-profile-runtime-sync-20261005-r1/result.json` SHA 为 `db250cbbd87d19817a3b46c75417ec10488ed7e3d59b56c00f8e3ea4f6594565`，新 root600 owner SHA 为 `5f74a738032cdaf0ea30009542f756f8eab8b160afc6182bf1ba26f8e44bd732`。
+
+本次证明本机运行已更新并保持数据；同步后的样品正常认证 HTTP 业务链及 A／B 实际 GUI 尚未执行，Guest ping 不计业务界面验收。公网仍运行已恢复的 `81abd2e`，共用原测试库；样品修复未公开，旧效果 1～4 及全旧模块正式交付仍待。下方“尚未同步”的记录保留为当时状态。
+
 ## 2026-10-05 样品档案修复真实原生验证通过
 
 `55128c4` 的 fresh r5 已完成 17 项实际检查：同一商品的明确空／明确档案与另一商品准确档案分别沿批准样品→报价→原生销售订单→流程单生成，生产数量和精确来源一致；人工计划的档案／BOM／数量／配方在重复生成时保持，普通非样品订单仍带默认档案。不可读、跨公司、错商品和伪造来源拒绝，逆序取消保留历史并禁止继续生产。第二行真实配方验证失败时，第一张流程单在请求回滚前确实可见；验证的是随后整个请求事务回滚，不宣称业务函数内部原子性。全部 935 对象前后精确相同、所有夹具不存在、4 个物理连接关闭，613 来源／40 资源、配置、文件及 Redis AOF 保持。实际结果 SHA `0720d137abbda736bd95ca7e93789263fc822b1f8deae02aacf3be64ccce3f86`。
