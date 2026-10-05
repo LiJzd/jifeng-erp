@@ -9,7 +9,7 @@
 
 r2 prepare→quiesce→before→cache→start 均唯一实际完成，579 包成员（571 跟踪文件＋8 Git 元数据）／35 资产及八服务通过；原生备份和停五应用后的本次完整 934 对象 before／cache／恢复公众和 worker 前一致，指纹 `c99f6ac7300a29ee0100ca2b9691e15d6a02eea5a7c52eb68d2ce68598f725f4`。开放后未证明 SQL 冻结。实际 start inspect SHA `8a44517581e922b157d17fc34ae75d1940060ad9a0fd6cd385268d475181768b`，远端 start 收据 SHA `548c64fa9ee8deaee7ada51e2e36728147fe75537e51f69974d5d191bbc5014c`。无迁移、种子或角色修改，已消费的 r1／r2 阶段及失败原件保留，不重放。
 
-Guest 物料／材料导出各实际 GET 一次均 403，可信 IP TLS 及同 socket 实际 DIRECT 通过（结果 SHA `12cbc2362429a6365b066b761c707ded9d28f3bbfc16d02a5cc3f79bb1dad549`）。随后普通 HTTPS 正常登录、账号匹配及两类空范围只读查询均实际通过；其 GET `/logout` 仅取得 JS 跳板页，服务器会话注销未获证明。公网 GUI r2 的查询状态未知，0 导出并正常退出；r3／r4 的登录前采集未通过，尚不能作为界面验收。样品 `55128c4` 仍仅本机，源码／613／40 保持，新 boot 已只读重新绑定 owner，未做样品正常 HTTP／GUI。全旧模块正式交付继续；最新证据见[验证记录](../../docs/validation.md)，下方按历史批次理解。
+Guest 物料／材料导出各实际 GET 一次均 403，可信 IP TLS 及同 socket 实际 DIRECT 通过（结果 SHA `12cbc2362429a6365b066b761c707ded9d28f3bbfc16d02a5cc3f79bb1dad549`）。随后普通 HTTPS 正常登录、账号匹配及两类空范围只读查询均实际通过；其 GET `/logout` 仅取得 JS 跳板页，服务器会话注销未获证明。公网 GUI r2 的查询状态未知，0 导出并正常退出；r3～r6 的登录前采集未通过，尚不能作为界面验收。样品 `55128c4` 仍仅本机，源码／613／40 保持，新 boot 已只读重新绑定 owner；普通界面链所需13项前置已在本机唯一原生提交，尚待 A/B 业务 GUI 结果，无外网种子。全旧模块正式交付继续；最新证据见[验证记录](../../docs/validation.md)，下方按历史批次理解。
 
 ## 2026-10-05 历史服务恢复：81abd2e
 
