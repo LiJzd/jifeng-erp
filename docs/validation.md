@@ -28,6 +28,16 @@ fresh r2 的 prepare→quiesce→before→cache→start 五阶段各唯一实际
 
 随后根唯一实际执行原生财务只读探查，修正版 helper SHA `3fe250b9005d4b29e83faea5c4007afc258ca72295b158353c2835423afb6856`。本机非 root 主库 READ ONLY 事务实际发现 3 个现有普通财务账号、4 个可用公司范围、16 个费用科目组，未跳过权限范围，目标三个 DocType 无启用 Server Script；新增财务字典 DocType 仍未安装。完整 rollback／destroy 后物理连接关闭，前后 owner 核对通过；私有原生结果 SHA `5b75cf643c3d2c3a600765a6ce6ce5c29641d629508fd3dcb6aceaacb94db92c`。本次没有业务写入、角色／schema 变更、源码同步或服务重启，不代替新增／停用科目的实际业务验证。
 
+原生费用科目随后已完成七项实际业务检查：现有普通财务用户正常新增／查询、本公司本币及父科目身份、同名原生 Duplicate 拒绝、停用后身份不变且真实 Version 留痕、陈旧 modified 拒绝、末级或跨公司／不可读父科目拒绝。仅进程内加载已提交服务，helper SHA `9dc49092143ced55cc56cc7a113ecc8ebb2deb5ad264e5b0a7cb820ec8d50e5c`；目标启用 Workflow／Assignment／Notification／Webhook／Milestone／Server Script 均为零。随后完整事务回滚，新鲜第二个非 root READ ONLY 连接确认 Account 全树 name／company／parent／lft／rgt 投影及 Company 原始行相等，唯一测试 Account／Version 不存在，两个物理连接均关闭。私有原生结果 SHA `918bdc7e10f7f430d2aecb225d2dbc90285d8b72b5ce2014b8aa1af01ddd6e24`；owner／工作源码保持，没有候选同步、schema／角色变更或服务操作，不声明 Redis／全文索引不变。该底层通过不等于新财务字典已安装或界面、付款关联已验收。
+
+样品 GUI 后续已实际完成 `JF-SAMPLE-2026-00140`→已审核报价 `SAL-QTN-2026-00001`→已审核销售订单 `SAL-ORD-2026-00001`→三张草稿 Flow `141／142／143`。三条销售明细各为商业量 1 Nos、显式零价，同款两行保留独立样品／报价／销售子行 ID；两条准确档案自动带入、明确空档案的 141 初始保持空，计划量均为 1。随后 141 普通 UI 选择档案 A 保存，再执行更新档案物料工序，改计划 7／首行材料单件用量 9并保存；再次从本 SO 生成返回 200，按销售订单范围仍是原三张，141 的档案／BOM／计划／材料及来源 ID fresh 回读保持。根实读 partial checkpoint SHA `1dccce319f634bff739dcd206899dbfc95d343adf8feba18e50402cdc49a6448`，12 个所列动作 marker 全部存在、声明的 SHA 与实际文件一致；实看已保存截图中 141 和材料 9，计划 7 依据原生模型回读，截图该处未显示计划字段。A 默认列表显示 6 条、其中本 SO 三条；不能称全库只有三条。完整 A/B 表单和逆向取消仍在执行。
+
+GUI 中断和误路由原件保留：48495 丢失 page/context 时未观察到额外 Flow 保存；51324 普通登录 200 但非 TTY 导致 stdin 关闭，无法继续；74044 TTY 正常恢复同一批记录。一次宽泛菜单匹配曾落委外收货列表，未发业务动作；精确限定当前可见 Sales Order 的 custom-actions 下拉后完成上述重复生成。此后 A 的列表 iframe 缺少 driver scope，正在补正常可见 iframe 点击来完成表单回读，不将 standalone 读取认定为 A 表单已验。没有保存第四张人工 Flow，没有回放已消费生成动作，未更改运行源码／服务或公开版本。
+
+共用工序的明确改名候选已本地提交 `b3e559c`，根独立全文审阅差异与固定 Frappe 改名源码，复跑 39 项后端模型和共享 JS 协议通过。只走原生权限与改名，锁原工序／排序、核对两个版本及稳定排序身份，保留创建摘要；未知结果只读核对。已有 BOM Operation 或 Job Card 主／时间／子工序引用时，原生调用前通用拒绝、不返回来源名：原生 Link 改写会改变批准样品的 BOM 摘要和历史计薪依据。当前仅支持无这些引用的工序改名，删除仍未开放，菜单保持 partial。原生改名默认立即入队全文索引，SQL／请求回滚不能扩大为缓存／索引恢复；真实原生、并发与 A/B GUI 尚未验，未同步候选或公网。
+
+根随后唯一实际执行纯文件冻结 helper，按 `515a9cb`／`29f1f7f` 提取财务 10 个 Git blob；结果 prepared_only=true、files=10。范围为 7 个新增文件与 3 个共享入口／资源 hook 文件，排除工序改名和当前 HEAD 其他增量。新财务字典仍未安装，本机 613／40 与公网 f1 保持；单目标原生 DDL、备份／journal、普通岗位 GUI 在样品链结束后另行执行。
+
 旧站 Guest 诊断 r4 没有再次认证：正常页面加载 200，200ms 至 6s 都只有一组可见的空账号／密码控件，没有隐藏重复输入或可见错误；自动元数据请求通过，另观察到原因未定的 JavaScript SyntaxError。这不能确定此前 r3 登录的成功或失败。报告 SHA `81de19fa90beead0295769b365773de4c14dc49e7a2d92a38d17f2464ff7a76b`，原生观察 JSON SHA `fe4fac1afc0135c4d1be876a20c5c30c1cf03d8672a9e4834814d11e1664cdb1`；列表列头、旧查询／打印仍未核实，零人工业务操作。
 
 下方 `81abd2e`／“导出未发布”均保留为历史批次，当前公开状态以上节为准。
