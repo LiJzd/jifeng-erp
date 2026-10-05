@@ -1,5 +1,19 @@
 # 验证记录
 
+## 2026-10-05 独立外网原生导出门通过（尚未发布）
+
+fresh inspect r2 保持 native 原字节 `de79d06b…`，独立 768 MiB 工具使用现有固定镜像、网络、sites／logs卷及只读旧81源码；根全文审阅 driver／remote body／工具函数，确认 CRLF片段与嵌入 LF源码文本／AST一致，独立 3 组工具／失败清理／完整双934容量模型与 Ruff通过。原r1的5离线门为继承记录，本次r2实际复核另记，不把准备记录当原生结果。
+
+唯一实际执行通过：397,069 字节 stdin、49次实际 SSH DIRECT 核对；577源码／35资源、完整934原生数据／列结构／索引／六序列前后相等，指纹 `3c2220711021033cd4406429ea49fc7539ac1304a6f7b73687fd2e84706045c8`。实际 Administrator 和现有普通业务账号分别生成物料16／材料17列空范围 XLSX，三工作表／文字单元格／响应均核，2次 Guest拒绝，4个新鲜非root主库连接 rollback／关闭后才返回；6,562个 native SELECT／13,172个 session证明 SELECT、0业务写。7个原生 AFTER与7个宿主 AFTER均通过，8服务身份、历史后台 OOM=True／RestartCount0、5层Compose、源码／配置／岗位／site文件均保持。公开范围无贡献档案／SLE，未证明公开非空余额。
+
+工具 create／start／已退出匹配id的 rm 各一次通过，最后唯一名字不存在门通过。清理结果 `passed=true`／`container_preserved=false` 是实际已清理证据；其 `possible_tool_preserved=true` 是未重置的创建历史标志，不能误读为仍有工具残留，已消费原件保持。结果 SHA `765bd9db533b94b9d3d8e7b96d043363973fa71cfeb7713f6117b13fabbe7d17`，私密完整响应 SHA `021a6c297701b347c7c95a763f28e16ebc486fe6419a52832238bca9e8945d4d`，native完整输出 SHA `6b6a17495d3883e92920a2a75021ee4c767419ac41a8299326c2b95ac1971aa4`。候选仍仅进程内编译，`f1baab3`未发布。
+
+此外 fresh Luna 公网正常认证一次后，A／B首页与材料跟踪均加载；正确测试公司、空词／仓库、当日日期分别查询0条，18表头含17数据字段及来源，正常退出到登录页。报告 SHA `fb8858d62765c50e92a88fe01c35938978932a9e4f5342c216dbaf1adfce0882`，根实看B列表截图。首轮误用本机 fixture 公司且未有效选中造成查询拒绝，纠正后成功；首轮无截图，独立纠正说明 SHA `9b4865f54bba567534da9a9037c81265c1eb2863751b3466c88a5135159c9c1d`，冻结原报告保持。没有改应用源码或配置，未将该错误隐藏成首试成功。
+
+隔离提交 `f1baab3` 本机发布包已生成，archive 3,637,953字节／SHA `c9d1d6ff4758e966f6edd2d2690a76190889c34b5602a95d9e6215cb2a7001af`，source manifest SHA `8ae9a372c955913f3962f57143e271e6d7eae83bfc67160c2089eb2d9eba2b85`。根完整阅读 package helper，独立读回全部579 tar成员、逐个571提交blob核对通过，35资源；实际仅本机文件准备，未上传或切换。
+
+本机 WSL 保活结束后再次观察 boot改变，旧9db身份绑定的 sample r1／r2没有执行。fresh runtime recheck-r2 仅五处字面变化，经完整差异／helper／4离线模型与固定SHA核对后唯一执行通过：boot `7f9f7e5f-eb98-4d2d-9fbd-9a7f5a26460a`，原candidate613／assets40／完整source与unit、config、实际PID／socket／Redis readiness保持，新root600 owner SHA `26d55c0a404cae2e7c44b83ec23cd32738e8498be92ed61d6fb23a8050ee189b`，结果 SHA `da8870b08ec2e6ade4f86e00dc1d01f90caf2f41b334b308824ba1160f403e3c`。没有SQL／Frappe／认证／cache／服务操作，不据此声称数据库相等；样品实际门将绑定新身份另行准备。
+
 ## 2026-10-05 外网检查异常的实际只读诊断
 
 fresh diagnose r1 经全文审阅、根独立 3 组模型及 Ruff通过后唯一实际执行（helper `adaa9132…`、manifest `0584536e…`），实际 SSH 直连核对 6 次。完整八服务 raw inspect、stats、内存／cgroup、监听、近期 kernel OOM 和后台日志只存受限私密响应；未在后台执行 Python、Frappe、SQL 或发布阶段。诊断结果通过：八服务 ID／image／StartedAt／RestartCount 与失败前均相同，全部 running，数据库 healthy，前端本机发布端口可连接。
