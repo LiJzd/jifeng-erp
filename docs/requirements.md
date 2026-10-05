@@ -2,9 +2,9 @@
 
 ## 2026-10-05 共享导出已发布，正常界面尚待核对
 
-A/B 已发布同源 `f1baab3`，r2 prepare／quiesce／before／cache／start 均实际完成，继续共用原测试库；579 包成员／571 跟踪文件／35 资产、原结构／角色／站点配置、三个数据服务身份及八服务通过。停服后的本次完整 934 对象在 before／cache／恢复公众和 worker 前一致，开放后不主张数据库冻结；维护保留五层 Compose，末层改为 `f1baab3-inventory-export-r2/compose.inventory-export.r2.yaml`。Guest 两类导出实际 GET 均 403，可信 TLS／同 socket DIRECT 通过；正常公网 GUI r2 登录后查询状态未知，0 导出并正常退出，r3 诊断继续。
+A/B 已发布同源 `f1baab3`，r2 prepare／quiesce／before／cache／start 均实际完成，继续共用原测试库；579 包成员／571 跟踪文件／35 资产、原结构／角色／站点配置、三个数据服务身份及八服务通过。停服后的本次完整 934 对象在 before／cache／恢复公众和 worker 前一致，开放后不主张数据库冻结；维护保留五层 Compose，末层改为 `f1baab3-inventory-export-r2/compose.inventory-export.r2.yaml`。Guest 两类导出实际 GET 均 403，可信 TLS／同 socket DIRECT 通过；普通 API 两类空查询通过，但公网 GUI r2 查询状态未知、0 导出并正常退出，r3～r6 登录前采集未通过。公网界面导出仍待验收。
 
-本机样品 `55128c4` 两源码及 613／40 保持，新 `a614…` boot 的 owner 已只读重新绑定；没有新 SQL、清缓存或服务动作，样品正常 HTTP／A-B GUI 尚未执行。未用发布、Guest 拒绝或数据保护代替完整业务／旧操作习惯验收，全旧模块正式交付目标继续，见[验证记录](validation.md)。
+本机样品 `55128c4` 两源码及 613／40 保持，新 `a614…` boot 的 owner 已只读重新绑定；随后 13 项前置通过原生提交和独立回读，普通用户已登录并打开样品新增表单，尚无完整保存／转单／两版 GUI 证明。本地费用科目查询、新增和启停服务通过 10 项单测，未接入界面或发布；旧站三个财务基础页空表单正在核对。外网测试账号因旧站勘察误用已更换密码，受限账号文件已更新并验证新密码和退出。全旧模块正式交付目标继续，见[验证记录](validation.md)。
 
 ## 2026-10-05 样品明确档案修复已在本机运行
 
