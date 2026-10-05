@@ -1,6 +1,6 @@
 // Native operation row editing: protocol/DOM only, no browser or DB.
 const assert = require("node:assert/strict"), fs = require("node:fs"), vm = require("node:vm");
-const { Element, context, window, calls, messages, tick } = require("./test_product_dictionary_workbench.cjs");
+const { Element, context, window, frappe, calls, messages, tick } = require("./test_product_dictionary_workbench.cjs");
 for (const file of ["jifeng_order_operations", "jifeng_workspace_core"]) vm.runInNewContext(fs.readFileSync(`jifeng_erp/public/js/${file}.js`, "utf8"), context);
 const metadata = () => ({ operation: { fieldtype: "Data", reqd: true }, sequence: { fieldtype: "Int" }, remarks: { fieldtype: "Text" } });
 const archived = (extra = {}) => ({ scope: "shared_operation", name: "OP-A", version: "2026-10-03T00:00:01", ordering_name: null,
@@ -89,6 +89,60 @@ async function main() {
 	const component = window.JifengOrderOperations; delete window.JifengOrderOperations;
 	workspace.openPage("工序", "订单"); assert.equal(opened.length, 1); assert.match(messages.at(-1), /工序页面未能加载/); window.JifengOrderOperations = component;
 	entry.stop();
-	console.log("Order operations models passed: eight columns/inline blank row, native identities, two versions, readonly names, dirty/busy guards, persistent receipt recovery, masked/conflict review and no repeated POST.");
+	await renameModels();
+	console.log("Order operations models passed: eight columns/inline blank row, native identities, two versions, explicit native rename confirmation/recovery, dirty/busy guards, persistent receipt recovery, masked/conflict review and no repeated POST.");
+}
+async function renameModels() {
+	let confirmation;
+	const previousConfirm = frappe.confirm;
+	frappe.confirm = (message, yes, no) => { confirmation = { message, yes, no }; };
+	const bench = new window.JifengOrderOperations(new Element());
+	const mapped = (extra = {}) => archived({ can_rename: true, ordering_name: "SORT-A", ordering_version: "2026-10-03T00:00:02", sequence: 7, ...extra });
+	try {
+		calls.at(-1).resolve(blank()); await tick(); await resolveList([mapped()]); await bench.ready;
+		let row = bench.states[0]; assert.equal(row.controls.operation.readOnly, false);
+		row.controls.remarks.value = "待保存备注"; bench.freeze(row);
+		assert.equal(row.controls.operation.readOnly, true, "rename cannot mix with an unsaved remark or sequence"); bench.cancel(row);
+		row.controls.operation.value = "新工序<svg>"; row.controls.operation.events.get("input")();
+		const before = calls.length; assert.equal(row.saveButton.hidden, true); assert.equal(row.renameButton.hidden, false);
+		assert.equal(row.controls.remarks.readOnly, true); assert.equal(calls.length, before, "typing never auto-saves a name");
+		bench.confirmRename(row); assert.equal(calls.length, before, "rename awaits explicit confirmation");
+		assert.match(confirmation.message, /新工序&lt;svg&gt;/); assert.equal(confirmation.message.includes("<svg>"), false);
+		assert.equal(row.controls.operation.readOnly, true); confirmation.no(); assert.equal(calls.length, before); assert.equal(row.controls.operation.value, "新工序<svg>");
+		bench.confirmRename(row); const writing = confirmation.yes(), post = calls.at(-1), held = post.options.args.payload;
+		assert.equal(post.options.method, "jifeng_erp.order_operations.rename_operation");
+		assert.deepEqual(Object.keys(held).sort(), ["new_name", "operation", "ordering_name", "ordering_version", "version"]);
+		assert.equal(held.operation, "OP-A"); assert.equal(held.new_name, "新工序<svg>");
+		post.resolve({ scope: "shared_operation", old_name: "OP-A", new_name: held.new_name, operation: mapped({ name: held.new_name }) }); await writing;
+		assert.equal(row.archive.name, held.new_name); assert.equal(row.archive.version, held.version, "native rename does not fabricate a modified timestamp");
+		assert.equal(row.unresolved, false); await resolveList([mapped({ name: held.new_name })]);
+		row = bench.states[0]; row.controls.operation.value = "最终名"; bench.freeze(row); bench.confirmRename(row);
+		const unknown = confirmation.yes(), renamePost = calls.at(-1); renamePost.reject(new Error("lost response")); await unknown;
+		assert.equal(row.unresolved, true); assert.equal(row.controls.operation.readOnly, true);
+		const posts = calls.filter((call) => call.options.method.endsWith("rename_operation")).length;
+		bench.confirmRename(row); await bench.rename(row, row.renameCandidate); bench.cancel(row);
+		assert.equal(calls.filter((call) => call.options.method.endsWith("rename_operation")).length, posts, "unknown outcome cannot repeat its POST");
+		const wrongIdentity = bench.resolve(row), read = calls.at(-1);
+		assert.equal(read.options.method, "jifeng_erp.order_operations.resolve_rename"); assert.equal(read.options.args.payload.ordering_name, "SORT-A");
+		read.resolve({ scope: "shared_operation", old_name: held.new_name, new_name: "最终名", status: "current", operation: mapped({ name: "最终名", ordering_name: "OTHER" }) }); await wrongIdentity;
+		assert.equal(row.unresolved, true, "same target name with another stable identity is insufficient");
+		const exact = bench.resolve(row); calls.at(-1).resolve({ scope: "shared_operation", old_name: held.new_name, new_name: "最终名", status: "current", operation: mapped({ name: "最终名" }) }); await exact;
+		assert.equal(row.archive.name, "最终名"); assert.equal(row.unresolved, false); await resolveList([mapped({ name: "最终名" })]);
+		assert.equal(calls.filter((call) => call.options.method.endsWith("rename_operation")).length, posts);
+		const loadUnmapped = bench.query(); calls.at(-1).resolve(result([archived({ can_rename: true })])); await loadUnmapped;
+		row = bench.states[0]; row.controls.operation.value = "未映射已明确改名"; bench.freeze(row); bench.confirmRename(row);
+		const unmappedSuccess = confirmation.yes(); calls.at(-1).resolve({ scope: "shared_operation", old_name: "OP-A", new_name: "未映射已明确改名",
+			operation: archived({ name: "未映射已明确改名", can_rename: true }) }); await unmappedSuccess;
+		assert.equal(row.archive.name, "未映射已明确改名"); assert.equal(row.unresolved, false);
+		await resolveList([archived({ name: "未映射已明确改名", can_rename: true })]);
+		row = bench.states[0]; row.controls.operation.value = "未映射新名"; bench.freeze(row); bench.confirmRename(row);
+		const unmapped = confirmation.yes(); calls.at(-1).reject(new Error("unknown unmapped rename")); await unmapped;
+		const beforeResolve = calls.length, recovery = bench.resolve(row);
+		assert.equal(calls.at(-1).options.method, "jifeng_erp.order_operations.resolve_rename");
+		calls.at(-1).resolve({ scope: "shared_operation", old_name: "未映射已明确改名", new_name: "未映射新名", status: "current", operation: archived({ name: "未映射新名", can_rename: true }) }); await recovery;
+		assert.equal(row.unresolved, true, "unmapped target name cannot prove the original identity");
+		assert.equal(row.conflict, null); assert.equal(calls.length, beforeResolve + 1, "recovery has one read and no write fallback");
+		assert.match(row.review.textContent, /没有稳定排序身份/);
+	} finally { bench.destroy(); frappe.confirm = previousConfirm; }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

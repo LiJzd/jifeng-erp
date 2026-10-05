@@ -180,13 +180,15 @@ class OrderOperationsTest(unittest.TestCase):
             (
                 "Sub Operation",
                 [
-                    {"fieldname": "operation", "fieldtype": "Link"},
+                    {"fieldname": "operation", "fieldtype": "Link", "options": NATIVE},
                     {"fieldname": "time_in_mins", "fieldtype": "Float"},
                     {"fieldname": "note", "fieldtype": "Data"},
                 ],
             ),
         ):
-            meta = Row(fields=[Row(field) for field in fields])
+            meta = Row(
+                fields=[Row(field) for field in fields], allow_rename=doctype == NATIVE
+            )
             meta.get_field = lambda name, meta=meta: next(
                 (df for df in meta.fields if df.fieldname == name), None
             )
@@ -229,6 +231,8 @@ class OrderOperationsTest(unittest.TestCase):
         self.frappe.get_all = Mock(
             side_effect=AssertionError("unfiltered listing forbidden")
         )
+        self.frappe.rename_doc = Mock(side_effect=self.rename_doc)
+        self.rename_mutation = None
         self.db = types.SimpleNamespace(
             get_value=Mock(side_effect=self.get_value),
             savepoint=self.savepoint,
@@ -332,6 +336,34 @@ class OrderOperationsTest(unittest.TestCase):
         return Document(deepcopy(self.tables[dt][name]))
 
     def get_value(self, dt, filters, field, **kwargs):
+        if dt != ORDER:
+            self.assertIn(
+                dt,
+                (
+                    "BOM Operation",
+                    "Job Card",
+                    "Job Card Time Log",
+                    "Job Card Operation",
+                ),
+            )
+            self.assertEqual(field, "name")
+            self.assertTrue(kwargs["for_update"])
+            self.assertEqual(len(filters), 1)
+            rows = (
+                self.protected["BOM"]["operations"]
+                if dt == "BOM Operation"
+                else self.protected.get(dt, [])
+            )
+            if isinstance(rows, dict):
+                rows = [rows]
+            return next(
+                (
+                    "private-source-name"
+                    for row in rows
+                    if all(row.get(key) == value for key, value in filters.items())
+                ),
+                None,
+            )
         self.assertEqual(dt, ORDER)
         self.assertEqual(field, "name")
         return next(
@@ -402,6 +434,244 @@ class OrderOperationsTest(unittest.TestCase):
         document.update(name=name, description="旧描述", **changes)
         document.save()
         return self.module.read_operation(name)
+
+    def rename_doc(self, dt, old, new, **kwargs):
+        self.assertEqual(dt, NATIVE)
+        self.assertEqual(
+            kwargs,
+            {"show_alert": False},
+            "no native permission, naming or merge bypass",
+        )
+        self.get_doc(dt, old).check_permission("write")
+        if not self.metas[dt].allow_rename or new in self.tables[dt]:
+            raise ValueError("native rename rejected")
+        document = self.tables[dt].pop(old)
+        document["name"] = new
+        for row in document.get("sub_operations") or []:
+            if row.get("parent") == old:
+                row["parent"] = new
+            if row.get("operation") == old:
+                row["operation"] = new
+        self.tables[dt][new] = document
+        for row in self.tables[ORDER].values():
+            if row["operation"] == old:
+                row["operation"] = new
+        for row in self.protected["BOM"]["operations"]:
+            if row.get("operation") == old:
+                row["operation"] = new
+        if self.rename_mutation:
+            self.rename_mutation(document)
+        return new
+
+    def rename_payload(self, row, new_name="改名工序"):
+        return {
+            "operation": row["name"],
+            "new_name": new_name,
+            "version": row["version"],
+            "ordering_name": row["ordering_name"],
+            "ordering_version": row["ordering_version"],
+        }
+
+    def test_rename_uses_native_links_preserves_versions_receipt_and_data_history(self):
+        original = self.payload(operation="旧工序", sequence=7, remarks="历史备注")
+        row = self.module.save_operation(original)
+        self.protected["BOM"]["operations"][0]["operation"] = "不相关工序"
+        self.protected["Wage Entry"] = {
+            "operation": row["name"]
+        }  # Data, not a native Link.
+        ordering_before = deepcopy(self.tables[ORDER][row["ordering_name"]])
+        result = self.module.rename_operation(self.rename_payload(row))
+        current = result["operation"]
+        self.assertEqual(
+            (result["old_name"], result["new_name"], current["name"]),
+            ("旧工序", "改名工序", "改名工序"),
+        )
+        self.assertEqual(
+            (current["version"], current["ordering_name"], current["ordering_version"]),
+            (row["version"], row["ordering_name"], row["ordering_version"]),
+        )
+        self.assertEqual((current["sequence"], current["remarks"]), (7, "历史备注"))
+        self.assertEqual(
+            self.tables[ORDER][row["ordering_name"]],
+            ordering_before | {"operation": "改名工序"},
+        )
+        self.assertEqual(
+            self.protected["BOM"]["operations"][0]["operation"], "不相关工序"
+        )
+        self.assertEqual(self.protected["Wage Entry"]["operation"], "旧工序")
+        self.assertEqual(self.module.resolve_creation(original)["status"], "changed")
+        with self.assertRaisesRegex(ValueError, "请求已使用"):
+            self.module.save_operation(original)
+        self.assertTrue(
+            any(
+                call.kwargs.get("for_update")
+                for call in self.frappe.get_doc.call_args_list
+            )
+        )
+        self.frappe.rename_doc.assert_called_once_with(
+            NATIVE, "旧工序", "改名工序", show_alert=False
+        )
+
+    def test_rename_native_child_identity_and_self_link_changes_only(self):
+        row = self.saved()
+        self.tables[NATIVE][row["name"]]["sub_operations"] = [
+            Row(name="SUB", parent=row["name"], operation=row["name"], time_in_mins=5)
+        ]
+        result = self.module.rename_operation(self.rename_payload(row))
+        child = self.tables[NATIVE][result["new_name"]]["sub_operations"][0]
+        self.assertEqual(
+            (child["parent"], child["operation"], child["name"], child["time_in_mins"]),
+            ("改名工序", "改名工序", "SUB", 5),
+        )
+
+    def test_rename_stale_dual_versions_and_strict_shapes_never_call_native(self):
+        row = self.saved()
+        payload = self.rename_payload(row)
+        before = self.state()
+        for changes in (
+            {"version": "2026-01-01T00:00:00"},
+            {"ordering_version": "2026-01-01T00:00:00"},
+            {"ordering_name": None},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(RuntimeError):
+                self.module.rename_operation(payload | changes)
+            self.assertEqual(self.state(), before)
+        for invalid in (
+            payload | {"force": True},
+            payload | {"request_id": str(uuid4())},
+            payload | {"new_name": row["name"]},
+            payload | {"new_name": " 空格 "},
+            {key: value for key, value in payload.items() if key != "ordering_version"},
+        ):
+            with self.assertRaises(ValueError):
+                self.module.rename_operation(invalid)
+        self.frappe.rename_doc.assert_not_called()
+
+    def test_rename_native_capabilities_permissions_and_name_fields_are_authoritative(
+        self,
+    ):
+        row = self.saved()
+        self.assertTrue(row["can_rename"])
+        self.assertFalse(row["field_meta"]["operation"]["read_only"])
+        for configure, restore in (
+            (lambda: self.denials.add((NATIVE, "write")), lambda: self.denials.clear()),
+            (
+                lambda: self.hidden["write"][NATIVE].add("name"),
+                lambda: self.hidden["write"][NATIVE].clear(),
+            ),
+            (
+                lambda: setattr(self.metas[NATIVE], "allow_rename", False),
+                lambda: setattr(self.metas[NATIVE], "allow_rename", True),
+            ),
+        ):
+            configure()
+            self.assertFalse(self.module.read_operation(row["name"])["can_rename"])
+            with self.assertRaises(PermissionError):
+                self.module.rename_operation(self.rename_payload(row))
+            restore()
+        self.document_denials.add((ORDER, row["ordering_name"]))
+        with self.assertRaises(PermissionError):
+            self.module.rename_operation(self.rename_payload(row))
+        self.frappe.rename_doc.assert_not_called()
+
+    def test_rename_referenced_bom_or_payroll_sources_are_generic_and_never_renamed(
+        self,
+    ):
+        row = self.saved()
+        for dt, field in (
+            ("BOM Operation", "operation"),
+            ("Job Card", "operation"),
+            ("Job Card Time Log", "operation"),
+            ("Job Card Operation", "sub_operation"),
+        ):
+            protected_before = deepcopy(self.protected)
+            target = (
+                self.protected["BOM"]["operations"]
+                if dt == "BOM Operation"
+                else self.protected.setdefault(dt, [])
+            )
+            if isinstance(target, dict):
+                target = [target]
+                self.protected[dt] = target
+            target.append({field: row["name"], "name": "private-source-name"})
+            before = self.state()
+            self.db.get_value.reset_mock()
+            with (
+                self.subTest(doctype=dt),
+                self.assertRaisesRegex(ValueError, "已有 BOM 或报工引用") as error,
+            ):
+                self.module.rename_operation(self.rename_payload(row))
+            self.assertNotIn("private-source-name", str(error.exception))
+            self.assertEqual(self.state(), before)
+            self.assertTrue(
+                any(
+                    call.args[:2] == (dt, {field: row["name"]})
+                    for call in self.db.get_value.call_args_list
+                )
+            )
+            self.protected = protected_before
+        self.frappe.rename_doc.assert_not_called()
+
+    def test_rename_duplicate_and_post_rename_projection_failure_roll_back_sql_model(
+        self,
+    ):
+        row = self.saved()
+        self.existing("改名工序")
+        before = self.state()
+        with self.assertRaisesRegex(ValueError, "native rename rejected"):
+            self.module.rename_operation(self.rename_payload(row))
+        self.assertEqual(self.state(), before)
+        self.document_denials.add((NATIVE, "另一个新名"))
+        with self.assertRaises(PermissionError):
+            self.module.rename_operation(self.rename_payload(row, "另一个新名"))
+        self.assertEqual(self.state(), before)
+
+    def test_rename_unrequested_native_or_receipt_mutation_is_atomic(self):
+        row = self.saved()
+        before = self.state()
+        for mutation in (
+            lambda document: document.update(description="unexpected"),
+            lambda document: self.tables[ORDER][row["ordering_name"]].update(
+                request_digest="changed"
+            ),
+            lambda document: self.tables[ORDER][row["ordering_name"]].update(
+                sequence=8
+            ),
+        ):
+            self.rename_mutation = mutation
+            with self.assertRaisesRegex(ValueError, "未请求"):
+                self.module.rename_operation(self.rename_payload(row))
+            self.assertEqual(self.state(), before)
+
+    def test_rename_resolution_uses_stable_order_identity_and_never_guesses_unmapped_target(
+        self,
+    ):
+        row = self.saved()
+        held = self.rename_payload(row)
+        self.module.rename_operation(held)
+        resolved = self.module.resolve_rename(held)
+        self.assertEqual(
+            (
+                resolved["status"],
+                resolved["operation"]["name"],
+                resolved["operation"]["ordering_name"],
+            ),
+            ("current", "改名工序", row["ordering_name"]),
+        )
+        native = self.existing("未映射")
+        unmapped = self.rename_payload(native, "未映射新名")
+        self.module.rename_operation(unmapped)
+        self.frappe.get_doc.reset_mock()
+        self.assertEqual(self.module.resolve_rename(unmapped)["status"], "unknown")
+        self.assertFalse(
+            any(
+                call.args == (NATIVE, "未映射新名")
+                for call in self.frappe.get_doc.call_args_list
+            )
+        )
+        self.frappe.rename_doc.assert_any_call(
+            NATIVE, "未映射", "未映射新名", show_alert=False
+        )
 
     def test_schema_is_separate_global_mapping_without_native_schema_or_roles(self):
         self.assertEqual(

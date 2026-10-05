@@ -261,7 +261,7 @@ def _field_meta(field, *, readonly, creation=False):
         "reqd": field == "operation" or bool(definition and definition.reqd),
         "read_only": bool(readonly or definition and definition.read_only),
         "description": (
-            "所有公司共用；已有工序名称在此页只读。"
+            "所有公司共用；改名须明确确认，已有 BOM 或报工引用时暂不支持。"
             if field == "operation"
             else "仅控制此页排列，不改变生产工序顺序。"
             if field == "sequence"
@@ -279,6 +279,12 @@ def _pack(document, ordering=_UNSET, *, row=None):
     if ordering and ordered["operation"] != native["name"]:
         frappe.throw(CHANGED)
     native_write = _quiet(document, "write")
+    can_rename = bool(
+        native_write
+        and frappe.get_meta(NATIVE).allow_rename
+        and "name" in _columns(NATIVE, "write")
+        and _editable(NATIVE, "name")
+    )
     target = ordering or frappe.new_doc(DOCTYPE)
     if not ordering:
         target.operation = document.name
@@ -303,8 +309,9 @@ def _pack(document, ordering=_UNSET, *, row=None):
         "version": _version(native["modified"]),
         "ordering_name": ordered.get("name"),
         "ordering_version": _version(ordered.get("modified")),
-        "field_meta": {"operation": _field_meta("operation", readonly=True)},
+        "field_meta": {"operation": _field_meta("operation", readonly=not can_rename)},
         "can_write": bool(can_remarks or can_sequence),
+        "can_rename": can_rename,
         **{field: _version(native[field]) for field in AUDIT if field in native},
         **{
             "ordering_" + field: _version(ordered[field])
@@ -352,6 +359,7 @@ def init_operations():
         "ordering_version": None,
         "can_write": bool(can_create),
         "can_create": bool(can_create),
+        "can_rename": False,
         "field_meta": {
             "operation": _field_meta(
                 "operation", readonly=not can_create, creation=True
@@ -376,6 +384,147 @@ def read_operation(operation):
     _read_access()
     _name(operation)
     return _pack(frappe.get_doc(NATIVE, operation))
+
+
+def _rename_payload(payload):
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (ValueError, TypeError):
+            frappe.throw("工序改名请求须为有效对象")
+    fields = {"operation", "new_name", "version", "ordering_name", "ordering_version"}
+    if not isinstance(payload, dict) or set(payload) != fields:
+        frappe.throw("工序改名须提供准确名称和两个来源版本")
+    _name(payload["operation"])
+    _name(payload["new_name"])
+    if payload["operation"] == payload["new_name"]:
+        frappe.throw("工序名称未改变")
+    if payload["ordering_name"] is not None:
+        _name(payload["ordering_name"])
+    return payload
+
+
+def _rename_state(document, new_name):
+    """Only native identity, own child parents and native self-Links may change."""
+    expected = _state(document)
+    expected["name"] = new_name
+    for field in document.meta.fields:
+        if (
+            field.fieldtype == "Link"
+            and field.options == NATIVE
+            and expected.get(field.fieldname) == document.name
+        ):
+            expected[field.fieldname] = new_name
+    for field in document.meta.get_table_fields():
+        for row in expected[field.fieldname]:
+            if row.get("parent") == document.name:
+                row["parent"] = new_name
+            for child in frappe.get_meta(field.options).fields:
+                if (
+                    child.fieldtype == "Link"
+                    and child.options == NATIVE
+                    and row.get(child.fieldname) == document.name
+                ):
+                    row[child.fieldname] = new_name
+    return expected
+
+
+def _guard_rename_references(operation):
+    # Guard-only existence checks never return private source names. Native Link
+    # rewrites would invalidate approved BOM and payroll content signatures.
+    for doctype, field in (
+        ("BOM Operation", "operation"),
+        ("Job Card", "operation"),
+        ("Job Card Time Log", "operation"),
+        ("Job Card Operation", "sub_operation"),
+    ):
+        if frappe.db.get_value(doctype, {field: operation}, "name", for_update=True):
+            frappe.throw(
+                "工序已有 BOM 或报工引用，当前入口暂不支持改名；已保留原工序和历史依据"
+            )
+
+
+@frappe.whitelist(methods=["POST"])
+@_atomic
+def rename_operation(payload):
+    _login()
+    _read_access()
+    payload = _rename_payload(payload)
+    document = _native_write(payload["operation"])
+    if not same_version(document.modified, payload["version"]):
+        frappe.throw(CHANGED, frappe.TimestampMismatchError)
+    ordering = _ordering(document.name, lock=True)
+    if ordering:
+        if ordering.name != payload["ordering_name"] or not same_version(
+            ordering.modified, payload["ordering_version"]
+        ):
+            frappe.throw(CHANGED, frappe.TimestampMismatchError)
+    elif (
+        payload["ordering_name"] is not None or payload["ordering_version"] is not None
+    ):
+        frappe.throw(CHANGED, frappe.TimestampMismatchError)
+    _write_field(NATIVE, "name")
+    if not frappe.get_meta(NATIVE).allow_rename:
+        frappe.throw("原生工序未允许改名", frappe.PermissionError)
+    _guard_rename_references(document.name)
+    expected = _rename_state(document, payload["new_name"])
+    order_before = _state(ordering, exclude={"operation"}) if ordering else None
+    # Native rename keeps modified timestamps, updates Link fields and emits its
+    # own audit comment. Cache/search side effects are not SQL rollback claims.
+    renamed = frappe.rename_doc(
+        NATIVE, document.name, payload["new_name"], show_alert=False
+    )
+    if renamed != payload["new_name"]:
+        frappe.throw("原生改名结果与确认名称不一致，已拒绝本次改名")
+    fresh = frappe.get_doc(NATIVE, renamed, for_update=True)
+    updated = _ordering(renamed, lock=True)
+    if _state(fresh) != expected or not same_version(
+        fresh.modified, payload["version"]
+    ):
+        frappe.throw("工序改名产生了未请求的其它属性变化，已拒绝本次改名")
+    if ordering:
+        if (
+            not updated
+            or updated.name != ordering.name
+            or _state(updated, exclude={"operation"}) != order_before
+            or not same_version(updated.modified, payload["ordering_version"])
+        ):
+            frappe.throw("工序排序及回执出现未请求的变化，已拒绝本次改名")
+    elif updated:
+        frappe.throw("工序改名出现了未请求的排序来源，已拒绝本次改名")
+    return {
+        "scope": SCOPE,
+        "old_name": document.name,
+        "new_name": renamed,
+        "operation": _pack(fresh, updated),
+    }
+
+
+@frappe.whitelist()
+def resolve_rename(payload):
+    """Read a stable ordering identity; an unknown result never permits retry."""
+    _login()
+    _read_access()
+    payload = _rename_payload(payload)
+    result = {
+        "scope": SCOPE,
+        "old_name": payload["operation"],
+        "new_name": payload["new_name"],
+        "status": "unknown",
+        "operation": None,
+    }
+    if payload["ordering_name"] is not None:
+        ordering = frappe.get_doc(DOCTYPE, payload["ordering_name"])
+        _projection(ordering)
+        current = _pack(frappe.get_doc(NATIVE, ordering.operation), ordering)
+        return result | {"status": "current", "operation": current}
+    # An unmapped native name has no stable receipt. Never identify the renamed
+    # source by looking up an independently existing target with the same name.
+    try:
+        current = read_operation(payload["operation"])
+    except frappe.DoesNotExistError:
+        return result
+    return result | {"status": "current", "operation": current}
 
 
 def _scan():

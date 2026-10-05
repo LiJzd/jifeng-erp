@@ -18,7 +18,7 @@ window.JifengOrderOperations = class JifengOrderOperations {
 	build() {
 		this.host.classList.add("jfe-order-operations"); this.host.replaceChildren();
 		this.status = this.element("p", __("正在读取工序…")); this.status.setAttribute("role", "status");
-		const scope = this.element("p", __("共用工序；此页顺序用于排列，生产路线按各商品的 BOM 执行。"), "jfe-order-operations-scope");
+		const scope = this.element("p", __("共用工序；此页顺序用于排列，生产路线按各商品的 BOM 执行。已有 BOM 或报工引用的工序暂不支持改名。"), "jfe-order-operations-scope");
 		this.scroller = this.element("div", undefined, "jfe-order-operations-scroll");
 		const table = this.element("table", undefined, "jfe-order-operations-table"); table.setAttribute("aria-label", __("订单工序"));
 		const headings = this.element("tr"), thead = this.element("thead");
@@ -70,12 +70,12 @@ window.JifengOrderOperations = class JifengOrderOperations {
 			this.states = []; this.tbody.replaceChildren(); this.review.replaceChildren(); this.start = result.start; this.total = result.total;
 			for (const archive of result.rows) this.appendRow(archive);
 			if (this.blank.can_create) this.appendRow(structuredClone(this.blank));
-			this.status.textContent = __("单击行内字段编辑；保存前可取消。空备注将采用工序名，已保存工序名只读。");
+			this.status.textContent = __("单击行内字段编辑；备注和顺序保存前可取消，改名须单独确认。空备注将采用工序名。");
 		} catch { if (!this.disposed && revision === this.revision) this.status.textContent = __("工序来源或权限已变化，未替换当前列表，请刷新后核对。"); }
 		finally { if (!this.disposed && revision === this.revision) { this.loading = false; this.updatePager(); } }
 	}
 	appendRow(archive) {
-		const state = { archive, controls: {}, busy: false, unresolved: false, knownConflict: false, confirming: false, candidate: null, conflict: null };
+		const state = { archive, controls: {}, busy: false, unresolved: false, knownConflict: false, confirming: false, candidate: null, renameCandidate: null, conflict: null };
 		state.review = this.element("div"); this.review.append(state.review);
 		const row = this.element("tr"); state.row = row;
 		for (const field of ["sequence", "operation", "remarks"]) {
@@ -94,8 +94,9 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		}
 		state.actions = this.element("td"); state.owner = this.element("span", archive.owner || ""); state.actions.append(state.owner);
 		state.saveButton = this.button("保存", () => this.save(state)); state.cancelButton = this.button("取消", () => this.cancel(state));
+		state.renameButton = this.button("确认改名", () => this.confirmRename(state));
 		state.resolveButton = this.button("核对保存结果", () => this.resolve(state)); state.adoptButton = this.button("采用已核对当前值", () => this.adopt(state));
-		state.actions.append(state.saveButton, state.cancelButton, state.resolveButton, state.adoptButton); row.append(state.actions);
+		state.actions.append(state.saveButton, state.renameButton, state.cancelButton, state.resolveButton, state.adoptButton); row.append(state.actions);
 		state.creation = this.element("td"); state.modifier = this.element("td"); state.modified = this.element("td"); row.append(state.creation, state.modifier, state.modified);
 		const deletion = this.element("td"); deletion.append(this.button("删除", null, "删除暂不可用，请先核对关联工艺与生产记录")); row.append(deletion);
 		this.states.push(state); this.tbody.append(row); this.setValues(state); this.freeze(state); return state;
@@ -107,12 +108,16 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		state.modifier.textContent = (orderingNewer ? state.archive.ordering_modified_by : state.archive.modified_by) || "";
 		state.modified.textContent = (orderingNewer ? state.archive.ordering_version : state.archive.version) || "";
 	}
-	dirty(state) {
-		return ["sequence", "operation", "remarks"].some((field) => {
-			const control = state.controls[field]; if (!control || control.readOnly || field === "operation" && state.archive.name) return false;
-			const original = field === "operation" ? state.archive.name || "" : state.archive[field] ?? "";
-			return control.value !== String(original).replace(/[\r\n]/g, "");
+	nameDirty(state) { return !!(state.archive.name && state.archive.can_rename && state.controls.operation?.value !== state.archive.name); }
+	otherDirty(state) {
+		return ["sequence", "remarks"].some((field) => {
+			const control = state.controls[field]; if (!control || state.archive.field_meta[field]?.read_only || !state.archive.can_write) return false;
+			return control.value !== String(state.archive[field] ?? "").replace(/[\r\n]/g, "");
 		});
+	}
+	dirty(state) {
+		return this.nameDirty(state) || this.otherDirty(state) || !!(!state.archive.name && state.archive.can_write &&
+			!state.archive.field_meta.operation?.read_only && state.controls.operation?.value);
 	}
 	isDirty() { return this.states.some((state) => state.unresolved || state.candidate && state.busy || this.dirty(state)); }
 	getCloseBlock() {
@@ -122,9 +127,13 @@ window.JifengOrderOperations = class JifengOrderOperations {
 	}
 	freeze(state) {
 		const blocked = state.busy || state.unresolved || state.confirming;
-		for (const [field, control] of Object.entries(state.controls)) control.readOnly = !!(blocked || !state.archive.can_write || state.archive.field_meta[field]?.read_only || field === "operation" && state.archive.name);
+		const renaming = this.nameDirty(state), otherDirty = this.otherDirty(state);
+		for (const [field, control] of Object.entries(state.controls)) control.readOnly = !!(blocked || state.archive.field_meta[field]?.read_only ||
+			(field === "operation" && state.archive.name ? !state.archive.can_rename || otherDirty : !state.archive.can_write || renaming));
 		const dirty = this.dirty(state);
-		state.saveButton.hidden = state.cancelButton.hidden = !(dirty || state.busy); state.saveButton.disabled = blocked || !dirty;
+		state.saveButton.hidden = !(dirty || state.busy) || renaming; state.saveButton.disabled = blocked || !dirty || renaming;
+		state.renameButton.hidden = !renaming; state.renameButton.disabled = blocked || otherDirty;
+		state.cancelButton.hidden = !(dirty || state.busy);
 		state.cancelButton.disabled = blocked; state.resolveButton.hidden = !state.unresolved; state.resolveButton.disabled = state.busy || state.confirming;
 		state.adoptButton.hidden = !state.conflict; state.adoptButton.disabled = state.busy || state.confirming || !state.conflict;
 	}
@@ -133,6 +142,7 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""); return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
 	}
 	payload(state) {
+		if (this.nameDirty(state)) throw new Error("请单独确认改名，不与备注或顺序一起保存");
 		const fresh = !state.archive.name, payload = { operation: fresh ? state.controls.operation?.value || "" : state.archive.name };
 		if (fresh) payload.request_id = state.requestId || (state.requestId = this.requestID());
 		else Object.assign(payload, { version: state.archive.version, ordering_name: state.archive.ordering_name, ordering_version: state.archive.ordering_version });
@@ -174,11 +184,12 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		}
 	}
 	accept(state, archive) {
-		const message = state.knownConflict ? "已采用核对后的当前工序" : "工序已核对保存";
-		state.archive = archive; state.candidate = null; state.unresolved = false; state.knownConflict = false; state.conflict = null; state.requestId = null;
+		const message = state.renameCandidate ? "已核对工序当前名称" : state.knownConflict ? "已采用核对后的当前工序" : "工序已核对保存";
+		state.archive = archive; state.candidate = null; state.renameCandidate = null; state.unresolved = false; state.knownConflict = false; state.conflict = null; state.requestId = null;
 		state.review.replaceChildren(); this.setValues(state); frappe.show_alert({ message: __(message), indicator: "green" });
 	}
 	async resolve(state) {
+		if (state.renameCandidate) return this.resolveRename(state);
 		if (this.disposed || state.busy || state.confirming || !state.unresolved || !state.candidate) return;
 		state.busy = true; state.conflict = null; state.review.replaceChildren(); this.freeze(state);
 		try {
@@ -213,7 +224,56 @@ window.JifengOrderOperations = class JifengOrderOperations {
 	}
 	cancel(state) {
 		if (state.busy || state.unresolved || state.confirming || this.disposed) return;
-		this.setValues(state); state.candidate = null; state.conflict = null; state.knownConflict = false; state.requestId = null; state.review.replaceChildren(); this.freeze(state);
+		this.setValues(state); state.candidate = null; state.renameCandidate = null; state.conflict = null; state.knownConflict = false; state.requestId = null; state.review.replaceChildren(); this.freeze(state);
+	}
+	confirmRename(state) {
+		if (this.disposed || state.busy || state.unresolved || state.confirming || !this.nameDirty(state) || this.otherDirty(state)) return;
+		const newName = state.controls.operation.value;
+		if (!newName || newName.trim() !== newName || newName.length > 140) { frappe.msgprint(__("请填写准确的工序名，前后不要留空格")); return; }
+		const held = { operation: state.archive.name, new_name: newName, version: state.archive.version,
+			ordering_name: state.archive.ordering_name, ordering_version: state.archive.ordering_version };
+		const escape = (value) => value.replace(/[&<>"']/g, (letter) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[letter]));
+		state.confirming = true; this.freeze(state);
+		frappe.confirm(__("确认将工序") + " “" + escape(held.operation) + "” " + __("改为") + " “" + escape(newName) + "”？", () => {
+			state.confirming = false;
+			if (this.disposed || !this.states.includes(state)) return;
+			return this.rename(state, held);
+		}, () => { state.confirming = false; this.freeze(state); });
+	}
+	async rename(state, held) {
+		if (this.disposed || state.busy || state.unresolved || !state.archive.can_rename || !this.nameDirty(state) || this.otherDirty(state) ||
+			state.archive.name !== held.operation || state.archive.version !== held.version || state.archive.ordering_name !== held.ordering_name ||
+			state.archive.ordering_version !== held.ordering_version || state.controls.operation.value !== held.new_name) { this.freeze(state); return; }
+		this.invalidateQuery(); state.renameCandidate = structuredClone(held); state.busy = true; state.conflict = null; state.knownConflict = false; this.freeze(state);
+		try {
+			const response = await this.call("rename_operation", { payload: state.renameCandidate }), reply = response.message, archive = reply?.operation;
+			if (this.disposed || !this.states.includes(state)) return;
+			if (reply?.scope === "shared_operation" && reply.old_name === held.operation && reply.new_name === held.new_name && this.validArchive(archive) &&
+				archive.name === held.new_name && archive.ordering_name === held.ordering_name && archive.version === held.version && archive.ordering_version === held.ordering_version) this.accept(state, archive);
+			else state.unresolved = true;
+		} catch (error) {
+			state.knownConflict = error?.responseJSON?.exc_type === "TimestampMismatchError";
+			state.unresolved = state.knownConflict || !this.definiteFailure(error);
+			if (!state.unresolved) state.renameCandidate = null;
+		} finally {
+			state.busy = false; this.freeze(state);
+			if (state.unresolved) frappe.msgprint(__("改名结果尚未确认，请核对当前工序；本次改名不会重复提交。"));
+			else if (!this.disposed && !this.isDirty()) this.query(this.start);
+		}
+	}
+	async resolveRename(state) {
+		if (this.disposed || state.busy || state.confirming || !state.unresolved || !state.renameCandidate) return;
+		const held = state.renameCandidate; state.busy = true; state.conflict = null; state.review.replaceChildren(); this.freeze(state);
+		try {
+			const response = await this.call("resolve_rename", { payload: held }), reply = response.message, archive = reply?.operation;
+			if (this.disposed || !this.states.includes(state) || reply?.scope !== "shared_operation" || reply.old_name !== held.operation || reply.new_name !== held.new_name) return;
+			if (held.ordering_name && reply.status === "current" && this.validArchive(archive) && archive.ordering_name === held.ordering_name) {
+				if (archive.name === held.new_name) { this.accept(state, archive); return; }
+				if (state.knownConflict) { state.conflict = archive; state.review.append(this.element("p", __("版本已变化，请核对当前工序名称：") + archive.name)); return; }
+			}
+			state.review.append(this.element("p", __(held.ordering_name ? "当前结果不足以确认本次改名，请人工核对；不会重复提交。" : "原工序没有稳定排序身份，无法确认本次改名，请人工核对；不会按目标名称猜测或重复提交。")));
+		} catch { /* Keep the original rename request; there is no POST fallback. */ }
+		finally { state.busy = false; this.freeze(state); if (!this.disposed && !this.isDirty()) this.query(this.start); }
 	}
 	destroy() { this.disposed = true; this.revision++; window.removeEventListener("beforeunload", this.beforeUnload); }
 };
