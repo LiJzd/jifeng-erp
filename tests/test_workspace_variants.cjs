@@ -91,9 +91,19 @@ for (const name of ["类型", "要求"]) {
 	assert.equal(spec.orderDictionary, "订单" + name);
 	assert.equal(spec.doctype, "Jifeng Order Dictionary");
 }
-assert.equal(shared.availability("订单", "镀色"), "partial");
-assert.equal(dispatch(Modern, find("订单", "镀色"))[0].spec.platingColor, true);
-assert.equal(dispatch(Modern, find("订单", "镀色"))[0].spec.doctype, "Jifeng Plating Color");
+const colorSpecs = [];
+for (const module of ["产品", "订单"]) {
+	assert.equal(shared.availability(module, "镀色"), "partial");
+	const call = dispatch(Modern, find(module, "镀色"))[0];
+	assert.equal(call.action, "open", "both color entries use the existing server editor instead of local preview");
+	assert.equal(call.spec.platingColor, true);
+	assert.equal(call.spec.doctype, "Jifeng Plating Color");
+	assert.equal(call.spec.availability, "partial");
+	assert.equal(call.spec.module, module);
+	const { module: presentationModule, ...directorySpec } = call.spec;
+	colorSpecs.push(directorySpec);
+}
+assert.deepEqual(colorSpecs[0], colorSpecs[1], "product and order reuse one color directory and editor without new scope or numbering rules");
 assert.equal(shared.availability("订单", "工序"), "partial");
 assert.equal(dispatch(Modern, find("订单", "工序"))[0].spec.orderOperations, true);
 assert.equal(dispatch(Modern, find("订单", "工序"))[0].spec.doctype, "Jifeng Order Operation");

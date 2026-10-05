@@ -83,9 +83,15 @@ async function main() {
 	masked.destroy();
 	const workspace = Object.create(window.JifengERPWorkspace.Workspace.prototype), opened = [];
 	workspace.formalBridge = { open: (spec) => opened.push(spec) }; workspace.addTab = () => { throw new Error("no preview fallback"); };
-	workspace.openPage("镀色", "订单"); assert.equal(opened[0].platingColor, true); assert.equal(opened[0].availability, "partial");
+	for (const module of ["产品", "订单"]) {
+		workspace.openPage("镀色", module);
+		assert.equal(opened.at(-1).platingColor, true); assert.equal(opened.at(-1).availability, "partial");
+		assert.equal(opened.at(-1).doctype, "Jifeng Plating Color"); assert.equal(opened.at(-1).module, module);
+	}
 	const component = window.JifengPlatingColor; delete window.JifengPlatingColor;
-	workspace.openPage("镀色", "订单"); assert.equal(opened.length, 1); assert.match(messages.at(-1), /镀色页面未能加载/);
+	for (const module of ["产品", "订单"]) {
+		workspace.openPage("镀色", module); assert.equal(opened.length, 2); assert.match(messages.at(-1), /镀色页面未能加载/);
+	}
 	window.JifengPlatingColor = component;
 	console.log("Plating color protocol models: observed 13 columns/6 fields, code/family preservation, scope and response guards, readonly/mask, unknown-result recovery and no POST retries passed.");
 }

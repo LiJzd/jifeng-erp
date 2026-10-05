@@ -135,7 +135,7 @@ const JIFENG_LEGACY_MODULES = [
 const JIFENG_LIVE_ROUTES = {
 	物料: { 物料类别: "Jifeng Inventory Dictionary", 物料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
 	材料: { 材料类别: "Jifeng Inventory Dictionary", 形状: "Jifeng Inventory Dictionary", 颜色: "Jifeng Inventory Dictionary", 材料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
-	产品: { 类别: "Jifeng Product Category", 风格: "Jifeng Product Dictionary", 来源: "Jifeng Product Dictionary", 品牌: "Jifeng Product Dictionary",
+	产品: { 类别: "Jifeng Product Category", 风格: "Jifeng Product Dictionary", 来源: "Jifeng Product Dictionary", 品牌: "Jifeng Product Dictionary", 镀色: "Jifeng Plating Color",
 		产品风格: "Jifeng Product Dictionary", 产品来源: "Jifeng Product Dictionary", 产品品牌: "Jifeng Product Dictionary",
 		产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation",
 		样品制作单: "Jifeng Sample Order", 样品单反审: "Jifeng Sample Order" },
@@ -156,7 +156,7 @@ const JIFENG_LIVE_ROUTES = {
 };
 
 // Server-backed entry whose available operations remain explicitly limited.
-const JIFENG_PARTIAL_ROUTES = { 产品: { 样品制作单: true, 样品单反审: true }, 工资: { 历史: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
+const JIFENG_PARTIAL_ROUTES = { 产品: { 镀色: true, 样品制作单: true, 样品单反审: true }, 工资: { 历史: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
 	物料: { 采购履行核对: true, 跟踪: true }, 材料: { 采购履行核对: true, 跟踪: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true },
 	销售: { 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
 
