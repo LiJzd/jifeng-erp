@@ -18,7 +18,13 @@ fresh 本机同步 r3 实际 PASS，结果 SHA `ecf4190b4500d1f70232de463d82f119
 
 布局probe r1在Company阶段调用未建立的dialog截图而失败，未打开导入、未取得Group布局或截图；三业务API仍0、unknown=false，context关闭但正常logout未确认。实际结果 SHA `f8dbd8d8e6158e741bcd0c96bf94327343ee3a0710755f6e439a80a5d18ffe4f`，消费原稿保持；后继仅修helper，不据此判定CSS裁切或更改产品。
 
-布局probe r2记录截图时弹窗根取得焦点、候选列表已隐藏，不能用于裁切结论。fresh r3等到原生弹窗完成显示再采集，结果 SHA `4ce6cef8a3378c179b6dfac60299027eeb3bfd168710e702f7e8eab03ca11206`：输入框聚焦、候选列表有300px高度，但“耗材”选项超出内容区底边，两个中心命中均落在弹窗根；页面截图确认内容区裁切。正常键盘选项和原生POST退出200／登录页通过，preview／commit／resolve均0、无prepared。源代码仅为导入弹窗增加专用样式，使内容区不裁切原生Link菜单，外层弹窗和预览表分别滚动；共用导入协议模型及2项资源版本检查通过，修复后的普通鼠标操作与正向导入仍待。公网705保持。
+布局probe r2记录截图时弹窗根取得焦点、候选列表已隐藏，不能用于裁切结论。fresh r3等到原生弹窗完成显示再采集，结果 SHA `4ce6cef8a3378c179b6dfac60299027eeb3bfd168710e702f7e8eab03ca11206`：输入框聚焦、候选列表有300px高度，但“耗材”选项超出内容区底边，两个中心命中均落在弹窗根；页面截图确认内容区裁切。正常键盘选项和原生POST退出200／登录页通过，preview／commit／resolve均0、无prepared。`e736b64`仅为导入弹窗增加专用样式，使内容区不裁切原生Link菜单，外层弹窗和预览表分别滚动；共用导入协议模型及2项资源版本检查通过。
+
+fresh裁切同步r1唯一执行通过，结果 SHA `914fafd78bc0894fc614b0be4dcb47b46e52a9d80fecc25a7ef226dfb25502b2`：仅JS／CSS两替换，622来源其余620保持、43资源其余41 URL及顺序保持；旧文件备份、Web停启各一次、唯一app_hooks键失效一次、两资源完整HTTP字节通过，零SQL连接／业务写，Redis身份保持。新owner SHA `5bf6199afc9ca93bb7c80d694da642da0a46dfeb74b41e3f47973ad8a435b63c`，实际导入JS SHA `4b53adacdb57d8d23a75e94909da14e43c8e6ae6159a16d185b234ef3e905b78`／CSS SHA `4926b7d6071035014765371f949a984fa0951d97255869ef31ba0e5de031bdb4`。
+
+Luna fresh GUI r8实际通过，报告 SHA `892e274d0b5df0f310af933c649aa221469b8db7b1ab71fab5f3caffaec96f73`：普通岗位正常鼠标选择原生Link，A物料两行预览／确认→B回读，B材料两行预览／确认→A回读；前导零、零价、中文名称／精确备注及无行错误保持。preview=2、commit=2、resolve=0、跨版回读=2，三资源完整字节均匹配，unknown=false。退出phase实际记录网站POST `cmd=logout` 200、登录表单可见，context正常关闭。pageErrors=0；另有/socket.io/七次及/undefined一次404，不宣称整个HTTP零错误。合成四条记录保留供对比，未删除或重放。
+
+根唯一执行独立fresh READ ONLY r2，结果 SHA `e76d3f560c25e545731e717c5beea736b3f960db67c752ea68d108799d10d6af`：四档案与四对应Item、公司／种类／库存单位、中文备注／零价／前导零、独立UUID4及摘要正确；GL／SLE／Item Price／Company／Role及排除准确四条新增记录后的旧Item／Profile七表原行保持，零SQL写、一物理连接关闭。原prepared只读r1未执行。本批导入及`241b00f`产品镀色窄接线均未公开；产品接线仅派发／组件协议模型通过，没有运行同步或GUI，不据此增加全旧模块正式验收结论。公网705保持。
 
 此前 native r1 在既有账号选择时停止，r2 在原生 User hooks 重复项预期检查时停止，均零业务门、各一物理连接关闭，原件未重放。独立只读诊断实际核5个既有普通 Stock Manager 均缺 Item.create，零SQL写并关闭，结果 SHA `b69e1abcb3a4c065574935ae5e53439e589cb5fdcf8754b3144c7a47ee8f218a`。随后只读原始 hooks 返回了 ERPNext／HRMS 各自注册的同一 validate 项；该读取稿因 destroy 后重复 close 已闭连接而 exit1，不记整个读取稿 PASS。r3仅更正预期重复项和独立目录，未改业务权限或旧账号。
 
