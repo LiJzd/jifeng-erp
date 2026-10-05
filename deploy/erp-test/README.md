@@ -1,10 +1,21 @@
 # 集沣 ERP 外网 A/B 测试站
 
-## 2026-10-05 当前服务已恢复
+## 2026-10-05 当前外网版本：f1baab3
+
+- [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
+- [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)
+
+两套共用原测试库，当前源码 `f1baab396c7d4903f9786b111231d3d85b6c8439`，五应用只读挂载 `/opt/jifeng-erp-test/releases/f1baab3-inventory-export-r2/app`；固定镜像、原 schema／角色／site 配置及三个数据服务身份保持。维护继续使用五层 Compose：沿用下方 `81abd2e` 历史节的前四层，仅以 `/opt/jifeng-erp-test/releases/f1baab3-inventory-export-r2/compose.inventory-export.r2.yaml` 替换第 5 层，不叠加为第六层，也不按旧层启动当前应用。
+
+r2 prepare→quiesce→before→cache→start 均唯一实际完成，579 包成员（571 跟踪文件＋8 Git 元数据）／35 资产及八服务通过；原生备份和停五应用后的本次完整 934 对象 before／cache／恢复公众和 worker 前一致，指纹 `c99f6ac7300a29ee0100ca2b9691e15d6a02eea5a7c52eb68d2ce68598f725f4`。开放后未证明 SQL 冻结。实际 start inspect SHA `8a44517581e922b157d17fc34ae75d1940060ad9a0fd6cd385268d475181768b`，远端 start 收据 SHA `548c64fa9ee8deaee7ada51e2e36728147fe75537e51f69974d5d191bbc5014c`。无迁移、种子或角色修改，已消费的 r1／r2 阶段及失败原件保留，不重放。
+
+Guest 物料／材料导出各实际 GET 一次均 403，可信 IP TLS 及同 socket 实际 DIRECT 通过（结果 SHA `12cbc2362429a6365b066b761c707ded9d28f3bbfc16d02a5cc3f79bb1dad549`）。公网 GUI r2 一次正常登录后查询状态未知，0 导出并正常退出；r3 正在诊断，尚不能作为界面验收。样品 `55128c4` 仍仅本机，源码／613／40 保持，新 boot 已只读重新绑定 owner，未做样品正常 HTTP／GUI。全旧模块正式交付继续；最新证据见[验证记录](../../docs/validation.md)，下方按历史批次理解。
+
+## 2026-10-05 历史服务恢复：81abd2e
 
 导出候选 `f1baab3` 上传后在 before 阶段的完整数据指纹核对失败，未执行缓存更新或源码切换。根已用下列原五层 Compose `start` 原有五个应用容器，保留原容器 ID、镜像、旧 `81abd2e` 源码及三个数据服务；八服务、旧 577 文件／35 资源、hooks 和现有角色实际核验通过。普通外网 HTTPS 登录页／ping 均 200、可信证书和实际 DIRECT 通过，两版继续共用原库。失败的发布目录及原始记录保留，禁止重放原阶段或将新观测值替换旧指纹。恢复结果 SHA `e87d9658600a90520d8df1b040412998f8308448b6fe8d1132f7085491d449e6`；详情见[验证记录](../../docs/validation.md)。
 
-## 2026-10-04 当前外网版本：81abd2e
+## 2026-10-04 历史外网版本：81abd2e
 
 - [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
 - [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)

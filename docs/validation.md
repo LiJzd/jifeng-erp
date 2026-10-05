@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-05 共享导出已发布，公网 GUI 未通过
+
+fresh r2 的 prepare→quiesce→before→cache→start 五阶段各唯一实际完成，A/B 已运行 `f1baab396c7d4903f9786b111231d3d85b6c8439`，仍共用原测试数据库。五应用只读源码挂载切至 `/opt/jifeng-erp-test/releases/f1baab3-inventory-export-r2/app`；五层 Compose 保留原前四层，末层替换为该目录的 `compose.inventory-export.r2.yaml`。579 包成员／571 Git 跟踪文件／35 资产、原 schema／角色／站点配置及三个数据服务身份保持，八服务恢复运行，没有迁移、种子或业务 SQL 写入。
+
+停五应用后采集本次完整 934 对象，before、cache 和恢复公众／worker 前的核对均为 `c99f6ac7300a29ee0100ca2b9691e15d6a02eea5a7c52eb68d2ce68598f725f4`；原生备份完成，较早 live 指纹和 r1 失败原件保留。prepare／quiesce／before／cache 的远端 completed 收据 SHA 依次为 `9fad4e9115923784776bbdd7972f8d72b635a8818c3abd3979c508ad9a591d5b`、`2fbdac36f7e941e35842010a3faf9dcfcd519be17632204e67ebad60e9c2a2b0`、`36bf6001adeaba42a634c304ac4628b85ab3b32cc93fac005e392369ad59b490`、`3a64dfd359ca1a799924034ab9f1075e4a74ad14ac64263173a48c6dca029845`；start 远端收据 SHA `548c64fa9ee8deaee7ada51e2e36728147fe75537e51f69974d5d191bbc5014c`，根实际 start inspect SHA `8a44517581e922b157d17fc34ae75d1940060ad9a0fd6cd385268d475181768b`。开放公众和 worker 后未证明 SQL 继续冻结。
+
+随后实际 Guest 物料／材料各 GET 一次均 403／PermissionError，可信 IP TLS 和同 HTTPS socket 实际 DIRECT 通过，没有认证或业务写入；结果 SHA `12cbc2362429a6365b066b761c707ded9d28f3bbfc16d02a5cc3f79bb1dad549`。Luna 公网 GUI r2 一次正常登录及浏览器实际 DIRECT 已核，但停在查询结果状态未知处：未重试查询，0 次导出点击，正常退出到登录页。该轮不是查询或下载 GUI PASS，r3 诊断进行中；旧格式、总重与全旧模块正式验收仍待。
+
+本机 WSL 原 `7f9…` boot 自然结束，新 boot 为 `a614fc7f-d025-4d9e-9214-c35f6b430d3c`。只读观察确认样品两份 `55128c4` 源码、613 来源／40 资产及原 root600 owner 保持；已有 Web／Redis／MariaDB 自动运行。随后根唯一实际只读重新绑定 owner，仅在内存更新 boot，原 168 稳定 source／unit／site／AOF 配置 pins 保持，新 root600 owner SHA `5660041c2325f8eb8b149faccaf6bfbec1fc99a8f102432485613b09c60427f3`，实际结果 SHA `639b2afe29edcfa6d450014204097012cea9952a64a55da8a3a24c49e1b34f0b`。未发服务命令、执行 SQL、清缓存或登录；本次不证明新 boot 数据相等或 AOF 字节相等，样品正常 HTTP／A-B GUI 尚未执行。
+
+下方 `81abd2e`／“导出未发布”均保留为历史批次，当前公开状态以上节为准。
+
 ## 2026-10-05 样品档案修复已同步本机运行
 
 根完整审阅同步 helper、依赖的实际 stop／start、loopback 和只读 snapshot 函数，独立复跑三组离线模型后唯一实际执行 r1，退出 0。将已通过 r5 原生业务验证的 `55128c4` 两份 Python 源码同步到既有独立本机 candidate：仅 `workflow.py`、`sample_quotations.py` 改变，旧完整字节分别备份，其他 611 文件、完整 613 来源及 40 资产保持。沿原 owned unit 停／启 Web 各一次，新主进程／worker 身份及 Guest loopback ping 通过；没有迁移、业务／权限写入、清缓存或 Redis 重启。
