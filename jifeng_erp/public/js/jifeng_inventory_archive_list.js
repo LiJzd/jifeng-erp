@@ -18,6 +18,13 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 				this.exportButton.title = __("导出当前公司、种类、关键词和状态的全部可见已保存档案；需导出权限。图片列为状态文字，旧导出模板尚未核实。");
 				unavailable.append(this.exportButton); continue;
 			}
+			if (label === "导入") {
+				this.importButton = this.button(label, () => this.openImport());
+				this.importButton.title = __("选择单个 .xlsx 文件，按导入模板的列名准备文件，预览全部行后确认导入。");
+				unavailable.append(this.importButton);
+				this.importTemplateButton = this.button("下载导入模板", () => this.importer().downloadTemplate());
+				unavailable.append(this.importTemplateButton); continue;
+			}
 			const button = this.button(label, () => {}); button.disabled = true;
 			button.title = __(label === "保存" ? "请打开档案后保存。" : "此操作尚未开放。"); unavailable.append(button);
 		}
@@ -31,12 +38,19 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 		});
 		unavailable.append(this.statusChoice); toolbar.after(unavailable);
 	}
-	freezeExport() { if (this.exportButton) this.exportButton.disabled = !!(!this.companyScope || this.disposed || this.openingEditor || this.exporting); }
+	freezeExport() {
+		const blocked = !this.companyScope || this.disposed || this.openingEditor || this.exporting;
+		if (this.exportButton) this.exportButton.disabled = !!(blocked || this.archiveImporter?.getCloseBlock());
+		if (this.importButton) this.importButton.disabled = !!(blocked || this.archiveImporter?.getCloseBlock());
+		if (this.importTemplateButton) this.importTemplateButton.disabled = !!(blocked || this.archiveImporter?.getCloseBlock());
+	}
+	importer() { return this.archiveImporter ||= new window.JifengInventoryArchiveImport(this); }
+	openImport() { return this.importer().open(); }
 	renderPager() { super.renderPager(); this.freezeExport(); }
 	cancelExport() {
 		this.exportController?.abort(); this.exportController = null; this.exporting = false; this.freezeExport();
 	}
-	clearResults() { this.cancelExport(); super.clearResults(); }
+	clearResults() { this.cancelExport(); super.clearResults(); this.archiveImporter?.scopeChanged(); }
 	async exportArchives() {
 		if (this.disposed || this.exporting || this.getCloseBlock()) return;
 		this.changeScope();
@@ -126,10 +140,14 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 	}
 	editorCurrent(company) { return !this.disposed && company === this.companyScope && company === (this.companyControl.get_value() || null); }
 	getCloseBlock() {
+		const importBlock = this.archiveImporter?.getCloseBlock(); if (importBlock) return importBlock;
 		if (this.openingEditor || this.bridge?.inventoryEditor?.loadingOwners?.has(this)) return __("正在读取档案，请稍候。");
 		const active = this.bridge?.inventoryEditor?.active;
 		if (active && [...active.values()].some((state) => state.listOwner === this && !state.closed)) return __("请先关闭档案录入窗口。");
 		return "";
 	}
-	destroy() { this.cancelExport(); super.destroy(); this.freezeExport(); }
+	destroy() {
+		if (this.archiveImporter && !this.archiveImporter.destroy()) return false;
+		this.cancelExport(); super.destroy(); this.freezeExport(); return true;
+	}
 };

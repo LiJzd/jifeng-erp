@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-06 库存档案导入原生验证及本机同步
+
+物料／材料档案新增共用的单文件 `.xlsx` 导入与模板入口，最多1 MiB／100条。全部行先预览，确认后复用既有 Item＋Profile 正常保存及永久创建回执；本地待核记录仅保存批次身份和摘要。前导零、零价、中文、坏行、文件边界、整批回滚及重复批次的10项后端模型通过，前端还覆盖异步 Link 输入、跨页面批次、未知提交和未预约／已确认窗口在存储故障下的关闭；既有列表／导出／生命周期和43资源版本检查通过。采购履行的公司／供应商 Link 未确认输入误用旧ID也已修复，31项模型通过，尚未同步运行。
+
+根全文审阅后唯一执行 native r3，15门实际 PASS，结果 SHA `878d7d18542ce300a531defb9a299843238ff46e02d711403468f3469e43e028`。纯 Stock Manager 的两个写入口拒绝；正向业务使用事务内正常原生创建的 Stock Manager＋Item Manager（无 System Manager），明确是临时用户。物料两行 `001`／`002`、零价及中文预览无写、正常保存、同批复用、只读回执、旧预览／改摘要／坏UOM拒绝通过；第二次保存故障注入使整批 SQL／回调／请求状态回滚。首次保存没有改写 GL／SLE／价格／既有用户权限等保护范围，整体回滚后新 READ ONLY 连接核物料及子表、档案、Series／Version、User／Auth／分享／评论／默认值等恢复，测试身份及 Contact 无残留，两物理连接关闭。Contact 延后回调未执行，未证明 Redis 缓存字节回滚，也未包含正常 HTTP／GUI 或材料正向原生保存。
+
+fresh 本机同步 r3 实际 PASS，结果 SHA `ecf4190b4500d1f70232de463d82f119b0b4241bac2b8eec6e62cd68c7ed15ab`：2新增／2替换，622来源中其余618保持；旧文件备份、已有Web仅停启各一次、唯一站点 hooks 缓存键失效、新增／修改JS完整HTTP字节与43资源通过，零SQL连接／DDL／业务写。新 owner SHA `db4c2c2b8aa10545c9fd083d33d18d43fdbdd845284abed01b45b0912b4d5a17`；后端源码 SHA `b9450969bc6c426f590feea53ff6e6afea0f984f88dc4c3f2ceb46c265975357`，导入JS SHA `0dbd287058048fb9f4c20eeeee3a991802c720a46720e79ba686ec2fe72d6362`。准备真实普通岗位 HTTP／A-B GUI；本项尚未公开，公网保持下节705。
+
+此前 native r1 在既有账号选择时停止，r2 在原生 User hooks 重复项预期检查时停止，均零业务门、各一物理连接关闭，原件未重放。独立只读诊断实际核5个既有普通 Stock Manager 均缺 Item.create，零SQL写并关闭，结果 SHA `b69e1abcb3a4c065574935ae5e53439e589cb5fdcf8754b3144c7a47ee8f218a`。随后只读原始 hooks 返回了 ERPNext／HRMS 各自注册的同一 validate 项；该读取稿因 destroy 后重复 close 已闭连接而 exit1，不记整个读取稿 PASS。r3仅更正预期重复项和独立目录，未改业务权限或旧账号。
+
+旧站本次单次登录尝试跳到首页且密码框消失，但业务界面未渲染；只读DOM仅见全局单 `.xlsx` 输入及导入插件注册，无物料模板／预览／提交证据。无选择文件、导入或业务保存，context已关闭。`output/legacy-import-format-readonly-20261006-r1/page-observation.json` 保持此有限范围；旧模板与后续行为继续未核，不据新模板声称已复刻旧格式。
+
 ## 2026-10-06 705 公开部署及 HTTPS 核验实际通过
 
 独立安装 r2 的 stage／prepare／quiesce／native／start 五份本地实际回执均 PASS，后四阶段 remote_exit_code=0，无自动重试／重连。公网五应用已只读挂载 `70548111a6745c9063c50cf587abade1a52e1c7b`，A/B 共用原测试数据库；候选609文件／601源码／38资源、真实原生 SQL 计划、标准四部件服务器备份、4新 DocType／26 Custom Field 原生安装、旧五表原列／索引定义／旧列值和相关元数据保护、候选 hooks／缓存核对通过。仅替换第五层 Compose，三数据服务身份和五历史容器保持；备份未下载，原生 DDL／updatedb 分步提交，不宣称整批事务回滚。native 回执 SHA `14410a878ca2444ebc22f85c2689d0f45be484c26526ccf22023bc9e236f68ae`，start 回执 SHA `f5aa2a90d9f00b011d28787be75da27492e8adf84ea8496094536a7e466647d6`；五阶段原件均在 `output/sample-finance-flow-public-install-20261006-r2-*-result.json`。

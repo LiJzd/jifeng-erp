@@ -14,11 +14,13 @@ class Element {
 const calls = [], opened = [], controls = [];
 const frappe = { call(options) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
 	calls.push({ options, resolve: (message) => resolve({ message }), reject }); return promise;
-}, ui: { form: { make_control({ df }) { const handlers = {}, control = { value: "", df, handlers, get_value() { return this.value; },
-	$input: { on(events, callback) { for (const event of events.split(" ")) handlers[event.split(".")[0]] = callback; }, off() { control.detached = true; } },
+}, ui: { form: { make_control({ df }) { const handlers = {}, control = { value: "", typed: "", df, handlers, get_value() { return this.value; },
+	get_input_value() { return this.title_value_map?.[this.typed] || this.typed; },
+	$input: { val() { return control.typed; }, on(events, callback) { for (const event of events.split(" ")) handlers[event.split(".")[0]] = callback; }, off() { control.detached = true; } },
 	$link_clear: { on(events, callback) { control.clearHandler = callback; }, off() { control.clearHandler = null; } },
-	clear() { this.value = ""; this.clearHandler?.(); },
-	set(value, notify = true) { this.value = value; if (notify) df.onchange(); } }; controls.push(control); return control; } } } };
+	clear() { this.typed = ""; this.clearHandler?.(); },
+	type(value, notify = true) { this.typed = value; if (notify) handlers.input?.(); },
+	set(value, notify = true) { this.value = this.typed = value; if (notify) df.onchange(); } }; controls.push(control); return control; } } } };
 const window = {}, document = { createElement: (tag) => new Element(tag) };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_procurement_fulfillment.js"), "utf8"), {
 	window, document, frappe, __: (value) => value, localStorage: { setItem() { throw new Error("Do not persist business DTO"); }, getItem() { throw new Error("Do not load business DTO"); } }
@@ -64,10 +66,55 @@ async function main() {
 	await check("initial no automatic or unscoped query", async () => { const before = calls.length, bench = new window.JifengProcurementFulfillment(new Element(), {}); await bench.ready; await bench.query();
 		assert.equal(calls.length, before); assert.match(bench.status.textContent, /公司.*供应商/); assert.equal(bench.isDirty(), false); assert.equal(bench.getCloseBlock(), ""); });
 	const bench = await make();
+	await check("unconfirmed company or supplier text cannot query the previously selected ID", async () => {
+		for (const field of ["company", "supplier"]) {
+			const view = await make(); await query(view); const before = calls.length, selected = view.controls[field].get_value();
+			view.controls[field].type("OTHER-unconfirmed", false); await view.query();
+			assert.equal(view.controls[field].get_value(), selected); assert.equal(view.values()[field], null);
+			assert.equal(calls.length, before); assert.equal(view.rows.length, 0); assert.match(view.status.textContent, /公司.*供应商/);
+		}
+	});
+	await check("native title mapping keeps the exact selected company and supplier IDs", async () => {
+		const view = await make();
+		for (const [field, title] of [["company", "公司标题"], ["supplier", "供应商标题"]]) {
+			const control = view.controls[field]; control.title_value_map = { [title]: control.get_value() }; control.type(title, false);
+		}
+		const call = await query(view); assert.equal(call.options.args.company, "JF"); assert.equal(call.options.args.supplier, "SUP");
+		assert.equal(view.rows[0].name, "PO-A"); await detail(view); assert.equal(view.detail.purchase_order.name, "PO-A");
+	});
+	await check("silent unconfirmed Link text discards a pending list response", async () => {
+		for (const field of ["company", "supplier"]) {
+			const view = await make(), pending = view.query(), call = calls.at(-1);
+			view.controls[field].type("OTHER-unconfirmed", false); call.resolve([fixture()]); await pending;
+			assert.equal(view.rows.length, 0); assert.equal(view.list.children.length, 0); assert.equal(view.scope[field], null);
+		}
+	});
+	await check("silent unconfirmed Link text discards a pending detail response", async () => {
+		for (const field of ["company", "supplier"]) {
+			const view = await make(); await query(view); const pending = view.readDetail("PO-A"), call = calls.at(-1);
+			view.controls[field].type("OTHER-unconfirmed", false); call.resolve(fixture()); await pending;
+			assert.equal(view.rows.length, 0); assert.equal(view.detail, null); assert.equal(view.detailHost.children.length, 0);
+		}
+	});
+	await check("unconfirmed Link text blocks held list and native source buttons", async () => {
+		for (const field of ["company", "supplier"]) {
+			const view = await make(); await query(view); await detail(view);
+			const listButton = view.list.all("button")[0], sourceButton = view.detailHost.all("button")[0];
+			const beforeCalls = calls.length, beforeOpened = opened.length;
+			view.controls[field].type("OTHER-unconfirmed", false); sourceButton.events.get("click")(); listButton.events.get("click")();
+			assert.equal(calls.length, beforeCalls); assert.equal(opened.length, beforeOpened); assert.equal(view.rows.length, 0); assert.equal(view.detail, null);
+		}
+	});
+	await check("raw input fallback also rejects an unconfirmed Link without an input getter", async () => {
+		const view = await make(); delete view.controls.supplier.get_input_value;
+		view.controls.supplier.type("OTHER-unconfirmed", false); const before = calls.length; await view.query(); assert.equal(calls.length, before);
+	});
 	await check("native Link clear removes list/details immediately without input/change and rejects late reads", async () => {
 		for (const field of ["company", "supplier"]) {
 			const view = await make(); await query(view); await detail(view); const before = calls.length;
-			view.controls[field].clear(); assert.equal(view.rows.length, 0); assert.equal(view.detail, null);
+			const selected = view.controls[field].get_value(); view.controls[field].clear();
+			assert.equal(view.controls[field].get_value(), selected); assert.equal(view.values()[field], null);
+			assert.equal(view.rows.length, 0); assert.equal(view.detail, null);
 			assert.equal(view.list.children.length, 0); assert.equal(view.detailHost.children.length, 0); assert.equal(calls.length, before);
 			view.controls[field].set(field === "company" ? "JF" : "SUP");
 			const pending = view.query(), call = calls.at(-1); view.controls[field].clear(); call.resolve([fixture()]); await pending;

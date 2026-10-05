@@ -44,8 +44,20 @@ window.JifengProcurementFulfillment = class JifengProcurementFulfillment {
 		this.host.append(title, note, toolbar, this.status, this.list, this.detailHost);
 		this.scope = this.values();
 	}
+	validName(value) {
+		return typeof value === "string" && !!value && value === value.trim() &&
+			[...value].length <= 140 && !/[\x00-\x1f\x7f]/.test(value);
+	}
+	linkValue(control) {
+		const value = control.get_value() || "";
+		// Native Link maps a displayed title back to its exact stored name.
+		const input = control.get_input_value?.() ?? control.$input?.val?.();
+		if (typeof input === "string" && input !== value) return null;
+		return this.validName(value) ? value : null;
+	}
 	values() {
-		return Object.fromEntries([...Object.entries(this.controls).map(([key, control]) => [key, control.get_value() || ""]),
+		return Object.fromEntries([...Object.entries(this.controls).map(([key, control]) =>
+			[key, ["company", "supplier"].includes(key) ? this.linkValue(control) : control.get_value() || ""]),
 			["search", this.search.value || ""]]);
 	}
 	sameScope(left, right) { return !!left && !!right && Object.keys(right).every((key) => left[key] === right[key]); }
