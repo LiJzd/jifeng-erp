@@ -1,5 +1,23 @@
 # 验证记录
 
+## 2026-10-05 两版实际导出与文件独立核对
+
+fresh r6 在已核新运行身份上复用原浏览器 session，A 材料页面明确设库存降序并核 `aria-sort=descending`，只点击一次取得 8,700 字节新文件，然后正常导航 `/logout`→`/login`，根实看登录表单截图。r6 报告 SHA `6bd51b7e7b4101a5342e48a556e2a4a84e3ca1a5724e16af6810e2196aa49421`。根以 r4 的另外三份及 r6 的修正材料文件唯一执行 fresh 文件检查 r2：完整三工作表 A／B 逐单元格相等，16／17 列、完整范围／降序／13＋0 与 139＋0／2.5 与 50、未知总重为空以及全部精确文字单元格、无公式／超链接／图片／宏通过。r2 helper SHA `ef2347a8d33371878a558f9112551cb974c28a69727153a88d229af8aab9677e`，结果 SHA `6e7cafa175b06169426f8480b8b511f3118566c0233103423ceb126f79b46aa8`；旧 r1 failed／r4原下载与报告／r5中断原件保留。一次展示登录截图使用了不存在的文件名，随后从 r6报告读取准确 `login-confirmed.png` 并查看，未重放验证或界面操作。
+
+Luna 使用本机已有的 bundled Playwright 与隔离可见 Chrome，正常页面登录后从 A／B 物料和材料页各点击一次导出，实际收到四个 download 事件及成功提示，文件为 8,700～8,829 字节。根读取四份 XLSX 时发现 r4 报告的 A 材料降序断言不准确：其条件工作表实际写“默认顺序”，另外三份的公司／日期／搜索／全仓范围及降序条件准确；旧文件及报告原字节保留。独立 r1 文件检查保持 failed，不能称四份同范围文件已全部通过。r4 报告 SHA `52282cc5482ccdb052bfdd5bef2d1cdd14d75f4eb8717554ea908fcf70900f70`，检查 helper SHA `be14561b4ad9b6aae29014c7af11ad607cdb473baecb13e5acf5c46a8b988eea`，失败留于 `output/inventory-tracking-export-gui-files-20261005-r1-failure.json`；真实修正及界面退出继续。
+
+补验 r5 导航时本机连接拒绝，尚未重新导出或退出。根只读 poll 确认旧 keepalive 78205 已终止，WSL 新 boot 为 `9dbab3c5-20d4-4d71-b366-ed38a2d9d435`，原两个 enabled systemd 服务自动运行；根没有重启服务或重放 stage。fresh recheck 唯一执行，完整 613 候选／40 资源、原固定来源／配置／unit 全一致；只将 owner base 的已观察 boot 更新，实际 PID／cgroup／argv／工作目录／socket root600 和 Redis readiness 双核通过，新 owner SHA `d7b1368e0e345523417b835ede4b6684ecbd3b74c7aa4c5b05b973149d8a5ce4`。helper SHA `dcc6c47cb2a97b9e6d86e19393c6b2d238668f0534a53b4b4d820f4ab7b7bd9e`，结果 `output/inventory-tracking-export-runtime-recheck-20261005-r1.json`；没有 SQL／Frappe init／认证／显式缓存或服务动作，也不把认证后的数据库称为冻结。
+
+外网导出隔离候选已本地提交 `f1baab396c7d4903f9786b111231d3d85b6c8439`，准确父提交为当前公开 `81abd2e`。根独立核干净 detached tree、准确四路径（两应用／两测试）、571 个跟踪文件及 hooks／setup／stock reports 原字节；相同导出源已过本机原生及正常 HTTP 门。候选未打包、上传或切换，公网 934 对象／既有岗位的实际导出门仍待。全旧模块正式可用目标继续，菜单映射不能替代验收。
+
+## 2026-10-05 跟踪导出已同步本机，正常下载通过
+
+根全文审阅 fresh stage r3 最小差异与本地绑定程序，八组模型／Ruff 通过后唯一实际执行成功。仅新增导出 Python、替换共享 JS，其他 611 原文件保持；613 源／444 模块／40 完整资源、准确 app_hooks 单键备份删除一次及普通重建通过。只停／启独立 owned web 各一次，原进程组退出、新 master／worker 身份通过，Redis／AOF身份及配置保持。原精确 Decimal 三处 before／恢复入口前／after 保护保留，另核原 native3 前后基线；935 对象两口径及原基线文件均保持，没有业务／权限／DDL动作。helper `5e361499c91e3bbd58020333799cc80c1210e12fe62faa405bb39c512a3d5644`／manifest `8fd62725464dcbff556e30518cb1a63790a1878797f34a2801c86c51c69f6eb8`，实际结果 SHA `15452801f0e1146c24bb864d980d3fb1b03fdfae2a64af9a2393c7bdcb52cc02`，新 owner SHA `447c93904ad1a152b1461e622e4e907a89204ef32fec79db30c06cc4163aac51`。旧 stage2 失败保持，未重放。
+
+随后根完整审阅 normal HTTP helper／prepare，三组离线模型／Ruff通过，绑定实际 native3 和 stage3 双 SHA后唯一实际执行通过：55 请求（47 GET／8 POST）、每次真实 loopback TCP、40 完整带版本资源、普通密码登录及身份／CSRF、A/B 两入口、分别带两版来源的 16／17 列完整 XLSX及相同 cells、物料 13／139 与零仓、材料 2.5／50、仓库／零值筛选、完整长条件 POST、正常退出／两类 Guest 拒绝均核。文件在进程内解包，真实 MIME／原框架 attachment header、三工作表、完整条件及 literal cells通过，没有业务保存；普通认证的 session 写入是预期，不称 HTTP SQL 零写。helper `36f1d7598d8f5a02e29f7f6763d25362522e94d4fbd21da7a235d55ba38c571f`／manifest `a3888054f8a91d59cd1c7dec9b15c2793d7661834d0f167e3cb2c3e55852d3a7`，结果 SHA `e958baee45ad28ef57559425b0b34e26c64226c31d347171755647169cbb99af`。
+
+实际按钮点击／浏览器下载正在由 Luna 验收，HTTP 来源头不当作 GUI 证明。外网未切换，继续 `81abd2e` 共用原测试数据；原旧模板、总重规则及全旧模块正式可用目标仍待。
+
 ## 2026-10-05 跟踪导出真实原生验收通过，运行同步待验
 
 原生 StockBalance 使用未消费的流式游标；r2 验收脚本在迭代完成前额外查询连接属性，与驱动冲突。fresh r3 将属性复核延到完整消费或真实 native cursor 关闭后，未消费时拒绝新 SQL，保留连接身份、零写入和 READ ONLY 保护；四组离线模型重现原冲突并覆盖消费、提前退出及异常。除 ConnectionAudit／main 外原 12 个函数 AST 保持，全部原固定来源未改变，旧失败记录未重放或修改。
@@ -9,6 +27,8 @@
 helper SHA `47ef0726b588be3f09f7aae1a8d8d267bb908025045f6a5ab526a09e6690e578`／manifest SHA `99992382d66afe253f25d8044338d7a12c6e17419543cbaa9c9d56313a24b970`；实际结果 `output/inventory-tracking-export-native-20261004-r3/result.json` SHA `f45ea9ee931cd924d0904694ebbc619155e9734aa44b41b83705c70e3881c40d`。本次仅进程内编译候选，未 stage、HTTP、下载 GUI 或外网发布；原模板和总重规则仍未核实。外网继续 `81abd2e` 共享测试库，全旧模块正式可用目标未完成。
 
 fresh export-stage r2 经完整差异、固定来源与六模型复核后根唯一执行，保持失败：frame 准确定位 main 404 的完整 before 与 native 基线比较，尚未尝试停止／启动 web、删除缓存或同步文件。结果 SHA `5ad9f49d777e06fae9b0bff348cdcc6a101af010bb4398ae598620001622b182`；helper `71e0adb02a2e2aeaaa531fb167ba1c98f1eb995ab15ad54ddccf8f562ce31201`／manifest `0310a8bc1123e25fdb369ff113a88cef705fc8a0af979d43134323bd123feec4`。只读源码核两条链使用相同 snapshot 定义，但原生 CONVERSION_MAP 把 NEWDECIMAL 转成 float，直接驱动保留 Decimal；离线复现相同值的 typed 编码指纹不同。未保存真实 before 差异，不能据此排除其他真实变化；独立只读双口径检查正在准备，旧失败记录不重放。
+
+随后 fresh codec-readonly r1 仅在固定原 snapshot AST 的唯一连接表达式添加真实框架 CONVERSION_MAP，使用作用域 import 代理核实际连接，没有全局 patch 或 Frappe init。四组离线模型通过，根完整读 helper 并明确补 MySQLdb/converters.py 固定来源后冻结／唯一执行：四个完整快照和八个真实非 root READ ONLY 连接全部闭合，22,528 属性证明查询通过。精确 Decimal 口径完整 935 对象前后同为 `7969c1edb5b72cc15cb0947234d36f902f80886b133cd88089250cf711debe05`；原生口径前后与旧 native3 完整基线一致。两口径仅 86 表数据指纹不同，行数、结构及索引差异均为零；本次真实数据、来源、配置、运行身份、Redis／AOF和空队列保持。没有同步、服务启停、显式缓存变更或业务／元数据动作。helper `4d634d2ef553279e2c8cb3b5b2bb6acfc29b5f53a8068733d107dc238ac97601`／manifest `bab5e2f039831799c2e94b2f0187f577e4eb176f9294ecad8fa9783097a34c6c`，实际结果 SHA `59fdcc70df59e046d8f005024d06fa9750b8ce9a17b1bb742615398b51c2a6be`，实际精确 raw-after 文件 SHA `07a32fac4ec3b03c9e244cc74e94cd4ca235dd8bf5d8660ec3bda3ef2ba88bbe`。fresh stage r3 将继续保留两套基线；尚未执行，旧 stage r2 保持失败。
 
 ## 2026-10-04 库存跟踪完整 Excel 导出候选（未发布）
 
