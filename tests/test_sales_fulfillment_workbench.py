@@ -281,6 +281,86 @@ class TestSalesFulfillment(unittest.TestCase):
         self.assertNotIn("billed_amt", result["items"][0])
         self.assertNotIn("stock_qty", result["items"][0])
 
+    def test_flow_unit_snapshots_remain_distinct_and_keep_exact_decimal_conversion(self):
+        self.flow(stock_uom="Dozen", source_uom="Carton", source_stock_uom="Piece",
+                  source_conversion_factor=Decimal("12.500000000000000001"), source_qty=Decimal("1.250000000001"))
+        result = self.read()
+        flow = result["flows"][0]
+        self.assertEqual((flow["stock_uom"], flow["source_uom"], flow["source_stock_uom"]),
+                         ("Dozen", "Carton", "Piece"))
+        self.assertEqual(flow["source_conversion_factor"], "12.500000000000000001")
+        self.assertEqual(flow["source_qty"], "1.250000000001")
+        self.assertEqual((result["items"][0]["uom"], result["items"][0]["stock_uom"]), ("Pair", "Nos"))
+        self.assertEqual(self.query(), [result])
+        for writer in (self.frappe.db.commit, self.frappe.db.set_value, self.frappe.new_doc, self.frappe.delete_doc):
+            writer.assert_not_called()
+
+    def test_changed_order_keeps_persisted_flow_units_instead_of_current_child_units(self):
+        snapshot = self.flow(stock_uom="Dozen", source_uom="Carton", source_stock_uom="Piece",
+                             source_conversion_factor=Decimal("12.500000000000000001"))
+        snapshot.source_changed = 1
+        self.first.update(uom="Box", stock_uom="Nos", conversion_factor=Decimal("6"))
+        result = self.read()
+        flow = result["flows"][0]
+        self.assertEqual(flow["source_changed"], 1)
+        self.assertEqual((flow["stock_uom"], flow["source_uom"], flow["source_stock_uom"], flow["source_conversion_factor"]),
+                         ("Dozen", "Carton", "Piece", "12.500000000000000001"))
+        self.assertEqual((result["items"][0]["uom"], result["items"][0]["stock_uom"],
+                          result["items"][0]["conversion_factor"]), ("Box", "Nos", "6"))
+
+    def test_flow_unit_read_mask_and_native_omission_never_fall_back_to_full_document(self):
+        units = {"stock_uom": "Dozen", "source_uom": "Carton", "source_stock_uom": "Piece",
+                 "source_conversion_factor": Decimal("12.500000000000000001")}
+        snapshot = self.flow(**units)
+        for denied_by in ("read", "mask", "native_projection"):
+            with self.subTest(denied_by=denied_by):
+                if denied_by == "read":
+                    self.hidden[self.module.FLOW] = set(units)
+                elif denied_by == "mask":
+                    for field in units:
+                        self.metas[self.module.FLOW][field].mask = 1
+                else:
+                    self.omitted[self.module.FLOW] = set(units)
+                result = self.read()
+                self.assertTrue(set(units).isdisjoint(result["flows"][0]))
+                self.assertEqual({field: snapshot[field] for field in units}, units)
+                for value in units.values():
+                    self.assertNotIn(str(value), repr(result))
+                self.hidden.clear()
+                self.omitted.clear()
+                for field in units:
+                    self.metas[self.module.FLOW][field].mask = 0
+        for field in units:
+            self.metas[self.module.FLOW][field].mask = 1
+        self.mask_levels[self.module.FLOW, None] = {0}
+        self.assertEqual(self.read()["flows"][0]["source_conversion_factor"], "12.500000000000000001")
+
+    def test_legacy_flow_without_unit_snapshots_never_borrows_order_units_or_conversion(self):
+        self.flow()
+        self.first.conversion_factor = Decimal("2")
+        flow = self.read()["flows"][0]
+        for field in ("stock_uom", "source_uom", "source_stock_uom", "source_conversion_factor"):
+            self.assertIsNone(flow[field])
+
+    def test_flow_unit_snapshot_edit_or_mask_revoke_during_read_rejects_whole_result(self):
+        snapshot = self.flow(stock_uom="Dozen", source_uom="Carton", source_stock_uom="Piece",
+                             source_conversion_factor=Decimal("12.500000000000000001"))
+        self.invoice()
+        for mutation in (lambda: snapshot.update(source_conversion_factor=Decimal("9")),
+                         lambda: self.metas[self.module.FLOW]["source_uom"].update(mask=1)):
+            calls = []
+            def change(_name, mutation=mutation):
+                calls.append(True)
+                if len(calls) == 2:
+                    mutation()
+            self.doc_hooks["Account"] = change
+            with self.subTest(mutation=mutation), self.assertRaises(PermissionError):
+                self.read()
+            self.assertEqual(len(calls), 2)
+            snapshot.source_conversion_factor = Decimal("12.500000000000000001")
+            self.metas[self.module.FLOW]["source_uom"].mask = 0
+        self.doc_hooks.clear()
+
     def test_list_or_full_document_hidden_sources_reject_without_identifiers(self):
         for denial in (self.list_denied, self.denied):
             value = ("Item", "ITEM") if denial is self.list_denied else ("Item", "ITEM", "read")

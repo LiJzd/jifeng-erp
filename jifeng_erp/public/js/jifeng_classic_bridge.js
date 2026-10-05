@@ -66,12 +66,207 @@ window.JifengClassicBridge = class JifengClassicBridge {
 
 	canClose(key) {
 		const entry = this.frames.get(key);
+		if (this.supplierPaymentCloseBlock(entry)) return false;
 		return entry?.workbench ? !entry.workbench.isDirty() : !this.isDirty(entry?.iframe);
 	}
 
 	closeBlock(key) {
 		const entry = this.frames.get(key);
+		const paymentBlock = this.supplierPaymentCloseBlock(entry);
+		if (paymentBlock) return paymentBlock;
 		return entry?.workbench ? entry.workbench.getCloseBlock() : this.frameCloseBlock(entry?.iframe);
+	}
+
+	supplierPaymentCloseBlock(entry) {
+		const state = entry?.supplierPayment;
+		if (!state) return "";
+		// A late native route may finish after our wait expired. Only its exact
+		// draft form releases the pending guard; native dirty checks then apply.
+		if (state.phase === "unresolved" && state.target && this.nativeForm(entry, state.key, state.target)) {
+			state.release?.(); entry.supplierPayment = null; return "";
+		}
+		return state.phase === "unresolved" ? "原生收付款结果尚未确认，请先在此窗口核对结果。" : "正在读取原生发票或准备收付款草稿，请稍候。";
+	}
+
+	nativeForm(entry, key, target) {
+		if (this.frames.get(key) !== entry || entry.iframe?.isConnected === false) return null;
+		const child = entry.iframe?.contentWindow, route = child?.frappe?.get_route?.(), frm = child?.cur_frm;
+		return Array.isArray(route) && route.length === 3 && route[0] === "Form" && route[1] === target.doctype && route[2] === target.name &&
+			frm?.doctype === target.doctype && frm.docname === target.name && frm.doc?.doctype === target.doctype && frm.doc.name === target.name &&
+			frm.cscript?.is_onload === false ? frm : null;
+	}
+
+	waitNativeForm(entry, key, target) {
+		return new Promise(resolve => {
+			let attempts = 0, timer;
+			const finish = value => { clearInterval(timer); resolve(value); };
+			const check = () => {
+				const frm = this.nativeForm(entry, key, target);
+				if (frm) finish(frm);
+				else if (this.frames.get(key) !== entry || entry.iframe?.isConnected === false || ++attempts >= 300) finish(null);
+			};
+			timer = setInterval(check, 50); check();
+		});
+	}
+
+	watchNativeFormLoad(entry, key, accepts) {
+		const child = entry.iframe.contentWindow, hooks = child.frappe.route_hooks;
+		if (!hooks) throw new Error("Native form hooks unavailable");
+		const previous = hooks.after_load;
+		let timer, settle, done = false;
+		const promise = new Promise(resolve => { settle = resolve; });
+		const finish = frm => {
+			if (done) return; done = true; clearTimeout(timer);
+			if (hooks.after_load === handler) {
+				if (previous) hooks.after_load = previous; else delete hooks.after_load;
+			}
+			settle(frm);
+		};
+		const handler = frm => {
+			let priorCompleted = false;
+			try { previous?.(frm); priorCompleted = true; }
+			finally { finish(priorCompleted && this.frames.get(key) === entry && entry.iframe.isConnected !== false && accepts(frm) ? frm : null); }
+		};
+		hooks.after_load = handler;
+		timer = setTimeout(() => finish(null), 15000);
+		return { promise, cancel: () => finish(null) };
+	}
+
+	supplierPaymentAllowed(entry, key, identity, frm) {
+		const child = entry.iframe.contentWindow, doc = frm?.doc;
+		return !!frm && this.nativeForm(entry, key, { doctype: "Purchase Invoice", name: identity.name }) === frm &&
+			doc.company === identity.company && doc.supplier === identity.supplier && !doc.__islocal && doc.docstatus === 1 && !doc.on_hold &&
+			typeof doc.outstanding_amount === "number" && Number.isFinite(doc.outstanding_amount) && doc.outstanding_amount !== 0 &&
+			!this.isDirty(entry.iframe) && !!frm.get_docinfo?.()?.permissions?.read &&
+			!!child.frappe.model.can_read("Purchase Invoice") && !!child.frappe.model.can_create("Payment Entry") &&
+			(!doc.__onload?.make_payment_via_journal_entry || !!child.frappe.model.can_create("Journal Entry")) &&
+			frm.cscript?.frm === frm && typeof frm.cscript.make_payment_entry === "function" && typeof frm.cscript.make_mapped_payment_entry === "function";
+	}
+
+	async openSupplierPayment(identity) {
+		const validName = value => typeof value === "string" && !!value && value === value.trim() &&
+			[...value].length <= 140 && !/[\x00-\x1f\x7f]/.test(value);
+		if (!identity || Object.keys(identity).length !== 3 || !["company", "supplier", "name"].every(field => validName(identity[field]))) return false;
+		const spec = { title: "原生收付款：" + identity.name, module: "财务", kind: "form", doctype: "Purchase Invoice",
+			route: ["Form", "Purchase Invoice", identity.name] };
+		const key = "formal:财务:" + spec.title;
+		let entry = this.frames.get(key);
+		this.open(spec);
+		entry ||= this.frames.get(key);
+		if (!entry || this.frames.get(key) !== entry) return false;
+		if (entry.supplierPayment || this.frameCloseBlock(entry.iframe) || this.isDirty(entry.iframe)) {
+			frappe.msgprint(__("请先核对当前原生窗口中的收付款或未保存内容。")); return false;
+		}
+		const state = { phase: "opening", key }; entry.supplierPayment = state;
+		try {
+			if (await entry.ready === false) return false;
+			const target = { doctype: "Purchase Invoice", name: identity.name };
+			let frm = await this.waitNativeForm(entry, key, target);
+			if (!frm || this.isDirty(entry.iframe)) return false;
+			const oldDoc = frm.doc;
+			const fresh = this.watchNativeFormLoad(entry, key, loaded => loaded === frm && loaded.doc !== oldDoc &&
+				loaded.doc?.doctype === target.doctype && loaded.doc.name === target.name);
+			try {
+				// Native with_doc can leave its Promise pending on a failed GET.
+				// The after_load wait owns the timeout and proves actual readiness.
+				Promise.resolve(frm.reload_doc()).catch(() => fresh.cancel());
+				if (!await fresh.promise) return false;
+			} finally { fresh.cancel(); }
+			frm = await this.waitNativeForm(entry, key, target);
+			if (!this.supplierPaymentAllowed(entry, key, identity, frm)) {
+				frappe.msgprint(__("当前发票不符合原生收付款条件，请核对公司、供应商、权限、状态、暂停付款和当前余额。")); return false;
+			}
+			return await this.makeNativeSupplierPayment(entry, key, identity, frm, state);
+		} catch {
+			frappe.msgprint(__("原生收付款入口未完成，请在原生窗口核对发票和结果；不会自动重试。")); return false;
+		} finally { if (entry.supplierPayment === state && state.phase !== "unresolved") entry.supplierPayment = null; }
+	}
+
+	makeNativeSupplierPayment(entry, key, identity, frm, state) {
+		const child = entry.iframe.contentWindow, script = frm.cscript, original = script.make_mapped_payment_entry;
+		const descriptor = Object.getOwnPropertyDescriptor(script, "make_mapped_payment_entry");
+		const nativeEntry = script.make_payment_entry, entryDescriptor = Object.getOwnPropertyDescriptor(script, "make_payment_entry");
+		const expectedDoctype = frm.doc.__onload?.make_payment_via_journal_entry ? "Journal Entry" : "Payment Entry";
+		return new Promise(resolve => {
+			let started = false, done = false, prompt, promptTimer, mappingTimer, mappingLoad;
+			const release = () => {
+				clearInterval(promptTimer); clearTimeout(mappingTimer); mappingLoad?.cancel();
+				if (script.make_mapped_payment_entry === mapped) {
+					if (descriptor) Object.defineProperty(script, "make_mapped_payment_entry", descriptor);
+					else delete script.make_mapped_payment_entry;
+				}
+				if (script.make_payment_entry === blockedEntry) {
+					if (entryDescriptor) Object.defineProperty(script, "make_payment_entry", entryDescriptor);
+					else delete script.make_payment_entry;
+				}
+				if (state.release === release) delete state.release;
+			};
+			state.release = release;
+			const finish = value => {
+				if (done) return; done = true; clearInterval(promptTimer); clearTimeout(mappingTimer); mappingLoad?.cancel();
+				// Only this PI controller remains guarded for an unknown result.
+				// Do not let its Payment button dispatch another mapping meanwhile.
+				if (state.phase !== "unresolved") release();
+				resolve(value);
+			};
+			const knownFailure = () => {
+				if (!done) finish(false);
+				else if (state.phase === "unresolved") { release(); if (entry.supplierPayment === state) entry.supplierPayment = null; }
+			};
+			const blockedEntry = () => false;
+			const mapped = (...args) => {
+				if (started || done) return;
+				if (!this.supplierPaymentAllowed(entry, key, identity, frm)) { finish(false); return; }
+				started = true; state.phase = "mapping";
+				let request, responseDoc;
+				const load = mappingLoad = this.watchNativeFormLoad(entry, key, loaded => loaded.doc?.doctype === expectedDoctype &&
+					loaded.doc.company === identity.company && loaded.doc.docstatus === 0 && !!loaded.doc.__islocal);
+				// The request itself can remain pending even after after_load expires.
+				// Bound the caller independently, retaining only the local PI guard.
+				mappingTimer = setTimeout(() => { state.phase = "unresolved"; finish(false); }, 15000);
+				try {
+					request = original.apply(script, args);
+					if (!request?.then) throw new Error("Native mapper did not return its request");
+					Promise.all([Promise.resolve(request).then(response => {
+						const value = response?.message; responseDoc = Array.isArray(value) ? value[0] : value;
+						if (response?.exc || responseDoc?.doctype !== expectedDoctype || !responseDoc.name || responseDoc.company !== identity.company)
+							throw new Error("Native payment mapping did not return its draft");
+						state.target = { doctype: responseDoc.doctype, name: responseDoc.name };
+					}), load.promise]).then(async ([, loaded]) => {
+						if (done) {
+							if (state.phase === "unresolved" && this.nativeForm(entry, key, state.target)) {
+								release(); if (entry.supplierPayment === state) entry.supplierPayment = null;
+							}
+							return;
+						}
+						const current = loaded && await this.waitNativeForm(entry, key, state.target);
+						if (done) return;
+						if (!current) state.phase = "unresolved";
+						finish(!!current);
+					}).catch(() => { load.cancel(); knownFailure(); });
+				} catch { load.cancel(); knownFailure(); }
+				return request;
+			};
+			script.make_mapped_payment_entry = mapped;
+			// Keep the native Payment button from opening another date prompt or
+			// mapping while this exact native invocation is still outstanding.
+			script.make_payment_entry = blockedEntry;
+			// The native controller discards frappe.prompt's Dialog return value.
+			// Capture only this synchronous invocation, retaining native validation,
+			// reference-date callback and either Payment Entry / Journal Entry branch.
+			const nativePrompt = child.frappe.prompt;
+			child.frappe.prompt = (...args) => { prompt = nativePrompt.apply(child.frappe, args); return prompt; };
+			try { nativeEntry.call(script); }
+			catch { if (started) state.phase = "unresolved"; finish(false); }
+			finally { child.frappe.prompt = nativePrompt; }
+			if (!started && !done) {
+				if (!prompt) { finish(false); return; }
+				state.phase = "prompt";
+				promptTimer = setInterval(() => {
+					if (!started && (!prompt.is_visible || this.frames.get(key) !== entry || entry.iframe.isConnected === false)) finish(false);
+				}, 50);
+			}
+		});
 	}
 
 	frameCloseBlock(frame) {
@@ -189,6 +384,10 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	mount(host, spec) {
+		if (spec.salesFulfillment) {
+			const workbench = new window.JifengSalesFulfillment(host, this, spec.module || "销售");
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		if (spec.financeDictionary) {
 			const workbench = new window.JifengFinanceDictionary(host, spec.financeDictionary, this);
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };

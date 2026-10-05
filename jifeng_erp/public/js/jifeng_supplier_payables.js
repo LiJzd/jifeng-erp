@@ -39,7 +39,7 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 		this.status = this.element("p", __("请选择公司、供应商和明确的截止日期。"), "jfe-supplier-payables-status");
 		this.status.setAttribute("role", "status"); this.status.setAttribute("aria-live", "polite");
 		this.scopeLabel = this.element("p", undefined, "jfe-supplier-payables-scope");
-		const note = this.element("p", __("按截止日期显示原生应付来源，金额按公司本币展示。点击凭证号查看原生单据。"), "jfe-supplier-payables-note");
+		const note = this.element("p", __("按截止日期显示原生应付来源，金额按公司本币展示。采购发票可打开原生收付款草稿；金额取发票当前余额，请在原生单据中核对、保存和审核。"), "jfe-supplier-payables-note");
 		const scroller = this.element("div", undefined, "jfe-supplier-payables-scroll");
 		this.table = this.element("table"); this.table.setAttribute("aria-label", __("供应商应付核对"));
 		const head = this.element("thead"), heading = this.element("tr");
@@ -185,6 +185,8 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 			const number = this.element("td");
 			const open = this.element("button", row.voucher_no, "jfe-supplier-payables-source"); open.type = "button";
 			open.addEventListener("click", () => this.openSource(source)); number.append(open);
+			if (row.voucher_type === "Purchase Invoice" && this.bridge?.openSupplierPayment)
+				number.append(this.button("原生收付款草稿", () => this.openPayment(source)));
 			tr.append(this.element("td", this.sourceLabel(row.voucher_type)), number, this.element("td", row.posting_date),
 				this.element("td", row.due_date ?? "—"), this.element("td", row.payable_account), this.element("td", row.currency));
 			for (const field of ["invoiced", "paid", "credit_note", "outstanding"])
@@ -198,6 +200,21 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 		this.invalidate("已打开来源凭证；返回后请重新查询应付核对。");
 		this.bridge.open({ title: this.sourceLabel(source.doctype) + "：" + source.name, module: "财务", kind: "form", doctype: source.doctype,
 			route: ["Form", source.doctype, source.name] });
+	}
+	async openPayment(source) {
+		if (this.disposed || !this.visible || this.loading || source.doctype !== "Purchase Invoice" ||
+			!this.resultContext || !this.sameContext(this.resultContext, this.context()) ||
+			!this.rows.some(row => row.voucher_type === source.doctype && row.voucher_no === source.name) ||
+			!this.bridge?.openSupplierPayment) return;
+		// Cutoff amounts are never inputs to native payment mapping.
+		const identity = { company: this.resultContext.company, supplier: this.resultContext.supplier, name: source.name };
+		this.invalidate("已打开原生收付款入口；返回后请重新查询应付核对。");
+		const revision = this.revision;
+		try { await this.bridge.openSupplierPayment(identity); }
+		catch {
+			if (!this.disposed && this.visible && revision === this.revision)
+				this.status.textContent = __("原生入口未能打开，请核对原生发票和权限。返回后请重新查询。");
+		}
 	}
 	isDirty() { return false; }
 	getCloseBlock() { return ""; }

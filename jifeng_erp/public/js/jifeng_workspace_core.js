@@ -104,7 +104,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "销售",
 		groups: [
 			{ name: "基础资料", items: ["客户类型", "客户等级", "客户分类", "客户档案", "入库部门", "入库类型", "商品信息", "条码打印", "销售员", "条码标题", "收款方式", "快递公司", "销售页脚", "零售倍率", "库位模式"] },
-			{ name: "正式业务", items: ["销售订单", "零售开单", "零售单记录", "零售开班", "零售结班", "发货单", "销售发票", "已过账销售台账", "分批回货成本试算"] },
+			{ name: "正式业务", items: ["销售订单", "销售履行核对", "零售开单", "零售单记录", "零售开班", "零售结班", "发货单", "销售发票", "已过账销售台账", "分批回货成本试算"] },
 			{ name: "销售操作", items: ["销售入库", "前台开单", "销售调拨", "库位下架", "销售反审", "销售跟踪", "成品出库", "客户返修"] },
 			{ name: "仓库管理", items: ["销售盘点", "差异处理", "库存", "盘点明细", "PDA数据", "库存明细", "库位库存", "库位修改", "库存排行", "历史库存", "库存预警"] },
 			{ name: "报表分析", items: ["销售单查询", "日报表", "销售报表", "销售分析", "销售排行", "入库排行", "进销存", "入库明细", "明细查询", "调拨明细", "下架明细", "销售比", "新款分析", "明细成本", "同比", "部门同比", "导购同比", "客户同比", "品牌同比", "类别同比"] },
@@ -158,7 +158,7 @@ const JIFENG_LIVE_ROUTES = {
 // Server-backed entry whose available operations remain explicitly limited.
 const JIFENG_PARTIAL_ROUTES = { 产品: { 镀色: true, 样品制作单: true, 样品单反审: true }, 工资: { 历史: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
 	物料: { 采购履行核对: true, 跟踪: true }, 材料: { 采购履行核对: true, 跟踪: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true },
-	销售: { 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
+	销售: { 销售履行核对: true, 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
 
 const JIFENG_LIVE_CATALOGS = {
 	物料: { 浏览: "物料" },
@@ -174,7 +174,7 @@ const JIFENG_LIVE_PAGES = {
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
 		算料汇总: { name: "jifeng-order-material-workbench", mode: "summary" } },
 	权限: { 权限管理: "permission-manager" },
-	销售: { 零售开单: "point-of-sale", 前台开单: "point-of-sale" },
+	销售: { 销售履行核对: { salesFulfillment: true }, 零售开单: "point-of-sale", 前台开单: "point-of-sale" },
 };
 
 const JIFENG_LIVE_CREATE = {
@@ -421,7 +421,7 @@ class JifengLegacyWorkspace {
 				}
 				this.formalBridge.open({ title: name, module: moduleName, kind: "page", financeDictionary: livePage.financeDictionary, availability: "partial" }); return;
 			}
-			for (const [flag, component] of [["procurementFulfillment", "JifengProcurementFulfillment"], ["supplierPayables", "JifengSupplierPayables"], ["inventoryTracking", "JifengInventoryTracking"]]) {
+			for (const [flag, component] of [["procurementFulfillment", "JifengProcurementFulfillment"], ["salesFulfillment", "JifengSalesFulfillment"], ["supplierPayables", "JifengSupplierPayables"], ["inventoryTracking", "JifengInventoryTracking"]]) {
 				if (!livePage[flag]) continue;
 				if (!this.formalBridge || !window[component]) {
 					frappe.msgprint(__("核对页面未能加载，请刷新后重试。")); return;

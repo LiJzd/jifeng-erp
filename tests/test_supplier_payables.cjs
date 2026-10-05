@@ -202,6 +202,43 @@ test("source names render as text and open only the exact native Form before cle
 		assert.match(model.view.status.textContent, /查询未完成/);
 	}
 });
+test("only current invoice rows dispatch native payment identity without cutoff money", async () => {
+	const model = await make(), actions = [];
+	model.bridge.openSupplierPayment = async identity => { actions.push(plain(identity)); return true; };
+	await select(model);
+	for (const outstanding of ["-30.00", "0", "9007199254740993.017"]) {
+		await populate(model, response([source({ outstanding }), source({ voucher_type: "Payment Entry", voucher_no: "PE-1" })]));
+		const buttons = model.view.tbody.descendants("button");
+		assert.deepEqual(buttons.map(button => button.textContent), ["PI-0001", "原生收付款草稿", "PE-1"]);
+		await model.view.openPayment({ doctype: "Purchase Invoice", name: "PI-0001" });
+		assert.deepEqual(actions.at(-1), { company: "集沣", supplier: "SUP-0001", name: "PI-0001" });
+		assert.equal(model.view.rows.length, 0);
+		buttons[1].click(); assert.equal(actions.length, ["-30.00", "0", "9007199254740993.017"].indexOf(outstanding) + 1);
+	}
+	assert.ok(model.calls.every(call => call.options.type === "GET"));
+});
+test("stale hidden destroyed and fabricated payable actions cannot prepare a payment", async () => {
+	for (const change of [model => { model.view.supplierControl.typed = "OTHER"; }, model => model.view.setVisible(false),
+		model => model.view.destroy(), model => model.view.invalidate()]) {
+		const model = await make(), actions = []; model.bridge.openSupplierPayment = identity => actions.push(identity);
+		await select(model); await populate(model); change(model);
+		await model.view.openPayment({ doctype: "Purchase Invoice", name: "PI-0001" }); assert.equal(actions.length, 0);
+	}
+	const model = await make(), actions = []; model.bridge.openSupplierPayment = identity => actions.push(identity);
+	await select(model); await populate(model);
+	await model.view.openPayment({ doctype: "Payment Entry", name: "PI-0001" });
+	await model.view.openPayment({ doctype: "Purchase Invoice", name: "PI-OTHER" }); assert.equal(actions.length, 0);
+});
+test("failed payment entry is not retried and cannot overwrite a newer report query", async () => {
+	const model = await make(); let reject, attempts = 0;
+	model.bridge.openSupplierPayment = () => { attempts++; return new Promise((_, no) => { reject = no; }); };
+	await select(model); await populate(model);
+	const action = model.view.openPayment({ doctype: "Purchase Invoice", name: "PI-0001" });
+	await populate(model, response([source({ outstanding: "7.00" })]));
+	reject(new Error("private native details")); await action;
+	assert.equal(attempts, 1); assert.equal(model.view.tbody.descendants("td")[9].textContent, "7.00");
+	assert.ok(!model.host.textContent.includes("private native details"));
+});
 test("unsynchronized filters cannot open a previously visible source", async () => {
 	const model = await make(); await select(model); await populate(model);
 	const button = model.view.tbody.descendants("button")[0]; model.view.supplierControl.typed = "OTHER";
