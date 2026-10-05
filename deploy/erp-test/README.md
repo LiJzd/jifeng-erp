@@ -1,5 +1,13 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-06 当前状态：705 候选目录完整，公开前置未通过
+
+公网仍运行 `f1baab3`、既有五层 Compose 和原共用测试库。`70548111a6745c9063c50cf587abade1a52e1c7b` 发布包已实际 DIRECT 上传；独立只读核查通过 609 文件（601 源码＋8 最小 Git 元数据）的 SHA／mode、固定镜像内 Git 身份及 UID 1000 读取权限，结果 SHA `d96938b40af91689d1349478ba64f89a74e9a9ca8d3a15fffa3c061933a371f7`。包 SHA `98dede38b168b81822464b20bd87f1b81d98925b36e4fc6da7d270d0e241b22b`、3,836,979 字节；原上传稿宿主无 Git 的失败和原件保持，没有重传、重放解包或切换当前 app。
+
+公开只读 preflight r1 的拒绝规则 `exact_eight_project_containers` 已由独立诊断查明：13 总容器＝8 核心＋5 历史工具，native 未开始、零 SQL。r2 实测失败、零 DDL／零提交，物理连接 1／1 关闭，8 核心及 5 历史容器身份保持；后续只读 index-read PASS 确认 Sales Order Item 只有 `item_code_warehouse_index` 复合索引，没有单列 `item_code`，13 份原生源码 pin 与本机全匹配。MariaDB 原生查单列索引时排除复合索引，故候选 `drop_index` 不等于真实 DROP SQL；当前是候选准入误判及 rollback cleanup 错误待修正。下一步捕获实际生成 SQL 的 dry-run 尚未执行、备份或安装，r2 失败不能改记整体 PASS。详细原件 SHA 见[验证记录](../../docs/validation.md)。
+
+本机关闭修复五项真实 GUI 已通过，当前公开 4 新 DocType／26 Custom Field 尚未安装。完整样品／财务／流程增量未发布；下方保留各阶段历史状态和已消费稿，不重放。
+
 ## 2026-10-06 当前运行与后继候选
 
 本机关闭修复五项实际 GUI 已通过。后继包已通过实际 DIRECT 上传两个原件，解包终验因宿主无 Git 中止，原件和失败保持；现用既有镜像准备只读核验，不重传／解包重放。元数据只读 preflight r1 返回宿主失败，native summary 未生成，正在仅读既有结果和宿主实际事实。尚未停服／安装／切换当前 f1，不能把下面本地包验证称为公网增量已发布。详细结果见[验证记录](../../docs/validation.md)。

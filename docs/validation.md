@@ -1,5 +1,19 @@
 # 验证记录
 
+## 2026-10-06 候选服务器只读核查通过，元数据前置准入仍待修正
+
+`7054811` 已解包候选的独立只读核查实际 PASS：两个上传原件的 SHA／字节／600 权限、609 文件的 SHA／mode、601 源码 Git OID 和 8 最小 Git 元数据均吻合；既有固定镜像内 Git 核 HEAD／tree／shallow／无 remote，UID 1000 可读全部公开文件。结果 SHA `d96938b40af91689d1349478ba64f89a74e9a9ca8d3a15fffa3c061933a371f7`，6 次同真实 SSH socket DIRECT。创建与解包意图 marker 存在，原上传成功收据不存在；没有重传、重放解包或写远端新收据，原 r1 宿主无 Git 的失败保持。该结果只证明候选目录完整，未切换运行源码、服务、站点或 SQL。
+
+财务关闭修复五项真实 GUI 已通过，结果 SHA `8f3553b3c2f535eaba0b35fbcaabde731ef63ff7e16e989682d3bef7610d65b5`；具体关闭、保存后回读及真草稿确认范围保留在下节。
+
+旧公开只读 preflight r1 的实际失败规则为 `exact_eight_project_containers`。独立只读诊断 SHA `b0f660dc3593278858b5dd9a495fc7c7c3bf14e970033376b0acf7e93501eede` 确认项目总数 13＝8 个运行核心服务＋5 个历史工具容器，当前 f1 挂载吻合；native 未开始、零 SQL，未创建工具容器或操作既有服务。旧失败原件保留。
+
+r2 只读 preflight 已实测失败，结果 SHA `c6643ef9268bef553f527d235c618349a583a6d93da2f59c6b6de5e9ea7c4c38`；独立诊断实际 PASS 的 SHA 为 `d883f5af9dec0104f7c6fcaafa23a3b5be44653bd61f44bd0b65b9c663ec8b4d`。实际 934 表，目标 4 新 DocType／26 Custom Field 均不存在；五份 schema 候选中四份符合预期，Sales Order Item 的 `drop_index=[item_code]` 被过粗准入规则 `no_existing_column_or_index_schema_changes` 拒绝。cleanup 中原生 rollback 自动 begin 又被 `only_known_read_sql` 拒绝，物理连接仍已关闭（1／1）；零 DDL、零提交，8 核心及 5 历史容器身份保持。
+
+后续独立只读 index-read 实际 PASS，结果 SHA `a1f73b706c0dfc69d155fed3d8874299904b9ca712f55da5533a72e5b311eb57`：Sales Order Item 只有 `item_code_warehouse_index` 复合索引（`item_code` seq 1／`warehouse` seq 2），没有单列 `item_code`。远端 13 份原生源码 pin 与本机独立核对全匹配；MariaDB 原生 `get_column_index` 明确排除复合索引。因此 r2 的候选列表不能证明会生成真实 DROP SQL，失败主要是候选准入误判及 cleanup 错误；r2 失败原件保持，不能改记整体 PASS。下一步在实装前捕获原生实际生成 SQL 的 dry-run，目前尚未执行、备份或安装。
+
+公网继续 `f1baab3` 和原共用测试库，完整样品／财务／流程增量未发布；全部旧模块正式交付目标仍未完成。下方保留先前各阶段记录，未改写旧失败或提前记后续成功。
+
 ## 2026-10-06 财务两版界面与取消来源按钮实际结果
 
 修复后实际 GUI 五门全部通过：A 收款／B 付款未改直接关闭，A 费用备注正常 UI 仅保存一次 200 后直接关闭，B 回读新备注后直接关闭；真正修改的 B 付款草稿仍显示未保存确认，放弃后新查询为原值。新版本 URL 在 A/B 可见，零新增／删除／额外种子／直接 API 保存或重复保存。context 已关闭，未核服务端 logout。结果 SHA `8f3553b3c2f535eaba0b35fbcaabde731ef63ff7e16e989682d3bef7610d65b5`，根独立核 runner／唯一 marker／7 图片 SHA 及五项结果，实看保存后列表和真草稿确认截图。下方“正在复查”是前一阶段的历史状态。

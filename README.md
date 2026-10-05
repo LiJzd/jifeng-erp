@@ -1,5 +1,11 @@
 # 集沣 ERPNext 业务扩展
 
+## 2026-10-06 候选核查通过，公开安装仍受阻
+
+[A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)和[B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)仍运行 `f1baab3`，共用原测试数据。财务关闭修复的五项实际 GUI 已通过；`7054811` 候选已直连上传，独立只读核查确认 609 文件、601 源码的 Git 身份及应用用户读取权限通过。
+
+公开元数据前置 r1 被项目容器总数检查拦住，独立诊断确认 13 个容器中有 8 个核心服务、5 个历史工具容器，native 未开始、零 SQL。r2 仍为实际失败、零 DDL／零提交；最新只读索引核查确认 Sales Order Item 只有 `item_code_warehouse_index` 复合索引，没有单列 `item_code`，候选 `drop_index` 不等于真实删除 SQL。候选准入误判及 cleanup 错误待修正，下一步捕获原生实际生成 SQL，尚未执行、备份或安装。完整增量未发布，全部旧模块第一版正式可用仍未完成。详见[验证记录](docs/validation.md)和[外网说明](deploy/erp-test/README.md)；下方保留各阶段历史状态。
+
 ## 2026-10-06 当前外网测试入口
 
 [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)和[B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)已运行 `f1baab3`，共用原测试数据、权限和业务服务，八服务已只读复核运行。账号见本机受限 `output/ERP外网测试账号.private.txt`。
