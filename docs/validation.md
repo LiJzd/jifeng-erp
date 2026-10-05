@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-10-05 财务界面账号准备与流程按钮同步
+
+财务 GUI User seed r1 在提交前发现原生自分享产生 `Shared Comment`，审计白名单漏记，已完整回滚并关闭连接；私有结果 SHA `7528607af5bd9c4a73a177e34cc8434c2a846220dfc74a43b412d91c7b69f7cb`。同稿只读 inspect SHA `2e9ef13f40e3e96eeb6ec6805962c7597ea2d7d69d182fb876b8ff7581a773b4` 确认 User／Auth／相关范围无残留。消费稿未修改或重放。根核对原生 DocShare／Comment／mention 代码后审阅 fresh r2 完整差异，唯一执行 SHA `b53a46bfb4b9fd90f6e3bf9a18cf05b1cec35755f773033420d514e5c2569056` 成功：先新只读连接核旧 User／Auth／11 范围含 Comment 均不存在，再正常创建一名 Accounts Manager 用户并提交一次，第三连接核密码、公司读选和三个字典可创建。三连接关闭，原 13 前置、样品演员岗位、公司和 Accounts Manager Role 保持。私有结果 SHA `35dc6d4f80c7df6a451a6e92b793f62d3c11339a386de4ef23a0557eeecbbaa2`。原生自分享产生一个 Shared Comment；Contact 创建仅正常入队一项、状态 QUEUED／pending，未消费或重放，旧队列项保持。凭据仅在 root600 本地私密 context，未进 Git／输出。A/B 浏览器操作正在验收。
+
+取消来源按钮候选 `399a78a` 已唯一同步本地运行。根全文审阅 helper SHA `f1d598d2b864e4847e6bb5a0d4121036ef6a1e3b5245ff013b2d9090cfe5d4ae`，仅原子替换 Flow JS 一份并备份原字节，620 来源中其余 619 和 42 资产保持；原生单 DocType 清缓存后新 FormMeta 包含完整冻结 JS。一个非 root READ ONLY 连接零 SQL 写、rollback 并物理关闭，无 Web 停启，Web／Redis 单元、进程、socket／run ID 保持。原 owner 保留，新 root600 owner SHA `ead94c4313e400ea5617fe2a308546acd07684603d79c5b2c6a2315bd316d25a`。允许原生 metadata／通知／路由缓存失效，不声明 Redis 内容不变。实际 disabled／提示 GUI 继续；公网仍 f1，共用原测试库。
+
 ## 2026-10-05 财务字典本地单目标安装完成
 
 从 r1 已确认的停止／源码状态，根全文审阅 fresh r2 后唯一实际执行成功：helper SHA `630e41374e67a4f05bccee166d8802e5daf8dc6799feb51457c7127ca90de327`，结果 SHA `c016c53ed79c2715b3103cab3be96f4242c68364f8901e1b911d530ce946cb79`。校验精确内容版本 URL，复用原备份，不重做文件安装／备份／停服；仅首次导入一个 DocType、提交一次、新连接只读验明并启动既有 Web 一次，Guest ping 通过。三连接均关闭。根另实际读取 committed metadata：1 个 DocType、8 个字段、3 个岗位权限、新表 0 行，DDL／返回／commit／start journal 均存在。
