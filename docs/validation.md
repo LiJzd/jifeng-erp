@@ -30,6 +30,12 @@ Luna fresh GUI r8实际通过，报告 SHA `892e274d0b5df0f310af933c649aa221469b
 
 旧站本次单次登录尝试跳到首页且密码框消失，但业务界面未渲染；只读DOM仅见全局单 `.xlsx` 输入及导入插件注册，无物料模板／预览／提交证据。无选择文件、导入或业务保存，context已关闭。`output/legacy-import-format-readonly-20261006-r1/page-observation.json` 保持此有限范围；旧模板与后续行为继续未核，不据新模板声称已复刻旧格式。
 
+## 2026-10-06 导入公开增量准备及现网只读核对
+
+独立候选 `0e6105d55d5e5821afb20779de5d05d46320c5fc`／tree `2af129ec42c8109ca2626149388cf9b02d9a57a8` 以705为唯一parent，只新增导入后端／JS、修改列表JS／档案CSS及705 hooks的一条资源引用，共5生产文件。603来源／39资源、598旧来源及36旧资源保持；不包含本机采购／应付、工序改名或产品镀色接线，无schema／角色／种子改动。候选10后端模型、2AST／2JS语法及导入／列表两项CJS通过。根独立核压缩包611成员全部字节／mode／SHA、603 Git blob、8最小浅Git元数据及唯一commit对象、资源版本／顺序通过；包3,860,913字节，SHA `73399c3ee2b154b017f2353359c8475d07a21b57d99de7423a3f84a39a1a1d64`，manifest SHA `c5cbb93782a75901d775c6e99497a6451f3668ac57f9b45a8bf37e0c89a3a08f`。本地发布branch已提交，master及原index保持，无push／上传／部署。首个校验驱动因未设置candidate Python路径而停止于模型加载；原件保留，后继仅修RAM校验路径并完成尚未执行的Git／打包步骤。
+
+普通公网账号fresh HTTPS只读核对实际PASS，结果 SHA `5df670c2cfee72f6f28b3dfd8d7be638f096453a7a7f769e8b78e2945d540ad4`：10请求可信TLS且同实际socket DIRECT，A/B的38版本URL、两个旧资源完整字节、物料／材料原init各200且`can_create_item`／`can_link_item`／`can_write`均true；正常CSRF退出及fresh Guest403，无业务保存。fresh服务器只读核对实际PASS，结果 SHA `11270a413b0c4cffdbe80f458dcabf8fdfa973dd166d2610f4fd128ef7423d81`：当前705完整609／601／38文件匹配原manifest，八运行core及五历史容器身份前后保持；五Compose首、第五实际0600，中三0644，保护配置仅读SHA／mode，五次同SSH socket DIRECT，无远端文件写／DB／停服。不能用本次运行观察替代发布停服后的新SQL快照；公网仍705，增量发布草稿正在准备。
+
 ## 2026-10-06 705 公开部署及 HTTPS 核验实际通过
 
 独立安装 r2 的 stage／prepare／quiesce／native／start 五份本地实际回执均 PASS，后四阶段 remote_exit_code=0，无自动重试／重连。公网五应用已只读挂载 `70548111a6745c9063c50cf587abade1a52e1c7b`，A/B 共用原测试数据库；候选609文件／601源码／38资源、真实原生 SQL 计划、标准四部件服务器备份、4新 DocType／26 Custom Field 原生安装、旧五表原列／索引定义／旧列值和相关元数据保护、候选 hooks／缓存核对通过。仅替换第五层 Compose，三数据服务身份和五历史容器保持；备份未下载，原生 DDL／updatedb 分步提交，不宣称整批事务回滚。native 回执 SHA `14410a878ca2444ebc22f85c2689d0f45be484c26526ccf22023bc9e236f68ae`，start 回执 SHA `f5aa2a90d9f00b011d28787be75da27492e8adf84ea8496094536a7e466647d6`；五阶段原件均在 `output/sample-finance-flow-public-install-20261006-r2-*-result.json`。
