@@ -38,6 +38,9 @@ class Record(dict):
     def precision(self, _field):
         return 6
 
+    def reload(self):
+        return self
+
 
 def load_module():
     def throw(message, exception=ValueError):
@@ -142,7 +145,7 @@ class SampleQuotationTests(unittest.TestCase):
         snapshot = self.module.source_snapshot(self.sample, sample_row)
         return Record(
             name=name,
-            item_code="RING",
+            item_code=sample_row.item_code,
             qty=1,
             uom="Box",
             conversion_factor=12,
@@ -174,9 +177,21 @@ class SampleQuotationTests(unittest.TestCase):
         return quote
 
     @contextmanager
-    def native_sources(self):
+    def native_sources(self, *, sample_reader=None, profiles=()):
         """Only replace native persistence/permission boundaries, not source helpers."""
         self.sample.docstatus = self.sample.get("docstatus", 1)
+
+        class NativeSalesOrder(Record):
+            @property
+            def items(order):
+                return order["items"]
+
+            def __deepcopy__(order, memo):
+                result = NativeSalesOrder()
+                memo[id(order)] = result
+                result.update({key: deepcopy(value, memo) for key, value in dict.items(order)})
+                return result
+
         rows = [
             Record(
                 origin,
@@ -191,7 +206,7 @@ class SampleQuotationTests(unittest.TestCase):
             )
             for index, origin in enumerate(self.origins, 1)
         ]
-        self.sales_order = Record(
+        self.sales_order = NativeSalesOrder(
             doctype="Sales Order",
             name="SO",
             docstatus=1,
@@ -207,9 +222,38 @@ class SampleQuotationTests(unittest.TestCase):
         }
         records.update({("Quotation Item", row.name): row for row in self.origins})
         records.update({("Sales Order Item", row.name): row for row in rows})
+        records.update({("Item", row.item_code): Record(name=row.item_code, stock_uom=row.stock_uom)
+                        for row in self.origins})
+        records.update({("Jifeng Product Profile", row.name): row for row in profiles})
         self.native_records = records
+        self.created_flows = {}
+        self.profile_lookups = []
+
+        class NativeFlow(Record):
+            def __init__(flow, values):
+                super().__init__(values)
+                flow.__dict__["flags"] = types.SimpleNamespace(from_sales_order=False)
+
+            def __deepcopy__(flow, memo):
+                result = NativeFlow({})
+                memo[id(flow)] = result
+                result.update({key: deepcopy(value, memo) for key, value in dict.items(flow)})
+                return result
+
+            def insert(flow):
+                self.module.validate_sample_flow(flow)
+                flow.name = f"FLOW-{len(self.created_flows) + 1}"
+                self.created_flows[flow.name] = flow
+                return flow
 
         def get_value(doctype, filters, fields="name", *, as_dict=False, **kwargs):
+            if doctype == "Jifeng Product Profile":
+                self.profile_lookups.append(filters)
+            if doctype == "Jifeng Flow Order":
+                return next(
+                    (name for name, flow in self.created_flows.items()
+                     if flow.source_key == filters["source_key"]), None
+                )
             if isinstance(filters, str):
                 record = records.get((doctype, filters))
             else:
@@ -234,11 +278,21 @@ class SampleQuotationTests(unittest.TestCase):
 
         def sample(name, *, active=True, **kwargs):
             self.assertEqual(name, self.sample.name)
+            if sample_reader:
+                return sample_reader(name, active=active, **kwargs)
             if active and self.sample.docstatus != 1:
                 raise ValueError("sample is not an active approved source")
             return self.sample
 
-        self.frappe.get_doc = lambda doctype, name, **kwargs: records[(doctype, name)]
+        def get_doc(doctype, name=None, **kwargs):
+            if isinstance(doctype, dict):
+                self.assertEqual(doctype["doctype"], "Jifeng Flow Order")
+                return NativeFlow(doctype)
+            if doctype == "Jifeng Flow Order":
+                return self.created_flows[name]
+            return records[(doctype, name)]
+
+        self.frappe.get_doc = get_doc
         readable = set(
             self.module.QUOTE_FIELDS
             + self.module.QUOTE_ITEM_FIELDS
@@ -315,6 +369,57 @@ class SampleQuotationTests(unittest.TestCase):
                 )
                 yield
 
+    @contextmanager
+    def approved_profile_sources(self, choices=(None, "RING"), items=("RING", "RING")):
+        """Run the real sample approval/read gates; fake only native storage/meta."""
+        support_path = pathlib.Path(__file__).with_name("test_sample_orders.py")
+        spec = importlib.util.spec_from_file_location("profile_sample_model_support", support_path)
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        environment = support.TestSampleOrders("runTest")
+        environment.setUp()
+        try:
+            environment.record("Company", "JF")
+            environment.record("Customer", "CUSTOMER", disabled=0)
+            environment.record("UOM", "Nos", must_be_whole_number=0)
+            profiles = []
+            for item in set(items):
+                environment.record("Item", item, stock_uom="Nos", disabled=0,
+                                   is_stock_item=1, has_variants=0)
+                # The real schema permits exactly one profile per Item.
+                environment.record("Jifeng Product Profile", item, company="JF", item_code=item,
+                                   bom="PLAN-BOM-" + item, supplier_product_code="CODE-" + item,
+                                   specification="SPEC-" + item, requirements="", packaging="",
+                                   materials=[Record(item_code="RAW", qty_per_unit=2, unit_price=3)],
+                                   operations=[Record(operation="POLISH", unit_price=4)])
+                profiles.append(Record(environment.records[("Jifeng Product Profile", item)]))
+            sample = environment.draft(name="SAMPLE", bom=None, count=len(items))
+            sample.company, sample.customer = "JF", "CUSTOMER"
+            for row, item, profile in zip(sample.items, items, choices):
+                row.item_code, row.product_profile = item, profile
+            environment.service.validate_sample_order(sample)
+            environment.persist(sample)
+            environment.service.before_submit_sample_order(sample)
+            sample.docstatus = 1
+            environment.persist(sample)
+            self.sample = Record(sample.as_dict())
+            self.sample["items"] = [Record(row) for row in self.sample["items"]]
+            self.origins = [self.origin(row, f"QUOTE-ROW-{index}")
+                            for index, row in enumerate(self.sample["items"], 1)]
+            for origin in self.origins:
+                origin.jf_sample_source_digest = self.sample.approved_digest
+            self.quote["items"] = self.origins
+
+            def read(name, *, active=True, lock=False):
+                if active:
+                    return environment.service.read_sample_source(name, for_update=lock)
+                return environment.service.read_sample_history(name, for_update=lock)
+
+            with self.native_sources(sample_reader=read, profiles=profiles):
+                yield environment
+        finally:
+            environment.doCleanups()
+
     def sample_flow(self, *, fresh=False, row_index=0):
         row = self.sales_order["items"][row_index]
         fields = self.module.sample_fields_for_flow(self.sales_order, row)
@@ -341,6 +446,72 @@ class SampleQuotationTests(unittest.TestCase):
             self.origins[0].jf_sample_source_snapshot,
             self.origins[1].jf_sample_source_snapshot,
         )
+
+    def test_sample_flow_creation_keeps_same_item_explicit_empty_and_selected_profile(self):
+        with self.approved_profile_sources():
+            names = self.workflow.create_sales_order_flows(self.sales_order.name)
+            empty, selected = [self.created_flows[name] for name in names]
+            self.assertEqual(empty.item_code, selected.item_code)
+            self.assertIsNone(empty.profile)
+            self.assertIsNone(empty.bom)
+            self.assertIsNone(empty.get("materials"))
+            self.assertIsNone(empty.get("operations"))
+            self.assertEqual(selected.profile, "RING")
+            self.assertEqual(selected.bom, "PLAN-BOM-RING")
+            self.assertEqual(selected.materials[0]["qty_per_unit"], 2)
+            self.assertEqual(selected.operations[0]["operation"], "POLISH")
+            self.assertNotEqual(empty.jf_sample_order_item, selected.jf_sample_order_item)
+            self.assertFalse(self.profile_lookups, "sample creation never looks up a profile by Item")
+
+    def test_sample_flow_creation_uses_each_different_item_exact_selected_profile(self):
+        with self.approved_profile_sources(choices=("RING", "SPHERE"), items=("RING", "SPHERE")):
+            names = self.workflow.create_sales_order_flows(self.sales_order.name)
+            self.assertEqual([(self.created_flows[name].item_code, self.created_flows[name].profile)
+                              for name in names], [("RING", "RING"), ("SPHERE", "SPHERE")])
+
+    def test_unselected_hidden_profile_does_not_block_sample_flow_creation(self):
+        with self.approved_profile_sources(choices=(None, None)) as environment:
+            environment.denials.add(("Jifeng Product Profile", "read"))
+            names = self.workflow.create_sales_order_flows(self.sales_order.name)
+            self.assertTrue(all(self.created_flows[name].profile is None for name in names))
+            self.assertFalse(self.profile_lookups)
+
+    def test_selected_sample_profile_hidden_company_or_item_change_refuses_creation(self):
+        for change in ("hidden", "company", "item_code"):
+            with self.subTest(change=change), self.approved_profile_sources() as environment:
+                if change == "hidden":
+                    environment.denials.add(("Jifeng Product Profile", "read"))
+                else:
+                    environment.records[("Jifeng Product Profile", "RING")][change] = "OTHER"
+                with self.assertRaises(PermissionError if change == "hidden" else ValueError):
+                    self.workflow.create_sales_order_flows(self.sales_order.name)
+                self.assertFalse(self.created_flows)
+
+    def test_forged_profile_snapshot_is_rejected_before_flow_creation(self):
+        with self.approved_profile_sources():
+            row = self.sales_order["items"][0]
+            snapshot = self.module.source_snapshot(self.sample, self.sample["items"][0])
+            snapshot["product_profile"] = "RING"
+            forged = self.module._json(snapshot)
+            row.jf_sample_source_snapshot = self.origins[0].jf_sample_source_snapshot = forged
+            with self.assertRaises(ValueError):
+                self.workflow.create_sales_order_flows(self.sales_order.name)
+            self.assertFalse(self.created_flows)
+
+    def test_existing_sample_flow_manual_profile_recipe_and_plan_are_not_overwritten(self):
+        with self.approved_profile_sources():
+            names = self.workflow.create_sales_order_flows(self.sales_order.name)
+            flow = self.created_flows[names[0]]
+            original = deepcopy(flow)
+            flow.profile, flow.bom, flow.planned_qty = "RING", "MANUAL-BOM", 7
+            flow.materials = [Record(item_code="RAW", qty_per_unit=9)]
+            flow.operations = [Record(operation="MANUAL")]
+            flow.previous = original
+            self.module.validate_sample_flow(flow)
+            self.assertEqual(self.workflow.create_sales_order_flows(self.sales_order.name), names)
+            self.assertEqual((flow.profile, flow.bom, flow.planned_qty), ("RING", "MANUAL-BOM", 7))
+            self.assertEqual(flow.materials[0]["qty_per_unit"], 9)
+            self.assertEqual(flow.operations[0]["operation"], "MANUAL")
 
     def test_production_quantity_is_not_commercial_limit(self):
         self.check_quote()
@@ -806,7 +977,7 @@ class SampleQuotationTests(unittest.TestCase):
                         self.sales_order, self.sales_order["items"][0]
                     )
                 ),
-                set(fields),
+                set(fields) | {"profile"},
             )
             for field in fields:
                 for value in (None, "forged"):

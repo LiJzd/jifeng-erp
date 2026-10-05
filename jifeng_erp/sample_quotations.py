@@ -906,6 +906,9 @@ def sample_fields_for_flow(order, row, *, active=True, lock=False):
         **{field: origin.get(field) for field in SOURCE_FIELDS},
         "jf_source_quotation": quote.name,
         "jf_source_quotation_item": origin.name,
+        # _quote_row has checked this exact JSON against the approved sample.
+        # This is a creation default, not an immutable production/source field.
+        "profile": json.loads(origin.jf_sample_source_snapshot)["product_profile"] or None,
     }
 
 

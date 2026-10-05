@@ -141,7 +141,14 @@ def create_sales_order_flows(sales_order):
                 frappe.throw("流程单来源标识冲突，请检查订单明细")
             created.append(existing)
             continue
-        profile = frappe.db.get_value("Jifeng Product Profile", {"item_code": row.item_code}, "name")
+        sample_fields = None
+        if row.get("jf_sample_order"):
+            from jifeng_erp.sample_quotations import sample_fields_for_flow
+
+            sample_fields = sample_fields_for_flow(order, row)
+            profile = sample_fields["profile"]
+        else:
+            profile = frappe.db.get_value("Jifeng Product Profile", {"item_code": row.item_code}, "name")
         flow = frappe.get_doc({
             "doctype": "Jifeng Flow Order", "source_key": key,
             "sales_order": order.name, "sales_order_item": row.name,
@@ -154,10 +161,8 @@ def create_sales_order_flows(sales_order):
             "requirements": row.get("jf_requirements"), "packaging": row.get("jf_packaging"),
             "requirements_attachment": row.get("jf_requirements_attachment"),
         })
-        if row.get("jf_sample_order"):
-            from jifeng_erp.sample_quotations import sample_fields_for_flow
-
-            flow.update(sample_fields_for_flow(order, row))
+        if sample_fields is not None:
+            flow.update(sample_fields)
         if profile:
             template = frappe.get_doc("Jifeng Product Profile", profile)
             template.check_permission("read")

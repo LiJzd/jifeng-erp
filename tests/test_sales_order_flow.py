@@ -48,20 +48,25 @@ class Record(dict):
     def save(self, **kwargs):
         return self
 
+    def set(self, field, value):
+        self[field] = value
+
     def get_items_and_operations_from_bom(self):
         self.bom_loaded = True
 
 
 class FakeDatabase:
-    def __init__(self, flows, requests):
+    def __init__(self, flows, requests, profiles):
         self.flows = flows
         self.requests = requests
+        self.profiles = profiles
 
     def get_value(self, doctype, lookup, field, **kwargs):
         if doctype == "Sales Order":
             return lookup
         if doctype == "Jifeng Product Profile":
-            return None
+            return next((name for name, profile in self.profiles.items()
+                         if profile.item_code == lookup["item_code"]), None)
         if doctype == "Jifeng Flow Order":
             if isinstance(lookup, str):
                 if field == "material_request":
@@ -82,6 +87,7 @@ class TestSalesOrderFlow(unittest.TestCase):
         self.flows = {}
         self.work_orders = {}
         self.requests = {}
+        self.profiles = {}
         self.bom = Record(name="BOM-1", item="RING", company="JF", docstatus=1, is_active=1)
         self.order = Record(
             doctype="Sales Order", name="SO-0001", docstatus=1,
@@ -109,7 +115,7 @@ class TestSalesOrderFlow(unittest.TestCase):
             get_permlevel_access=lambda **kwargs: [0],
             get_field=lambda field: Record(fieldname=field, fieldtype="Table" if field == "items" else "Data",
                                           options="Sales Order Item" if field == "items" else None, permlevel=0, mask=0))
-        frappe.db = FakeDatabase(self.flows, self.requests)
+        frappe.db = FakeDatabase(self.flows, self.requests, self.profiles)
         frappe.get_all = lambda doctype, **kwargs: list(self.work_orders if doctype == "Work Order" else self.flows)
 
         def get_doc(doctype, name=None, **kwargs):
@@ -133,6 +139,8 @@ class TestSalesOrderFlow(unittest.TestCase):
                 return self.bom
             if doctype == "Item":
                 return Record(name=name, stock_uom="Nos")
+            if doctype == "Jifeng Product Profile":
+                return self.profiles[name]
             raise AssertionError(doctype)
 
         frappe.get_doc = get_doc
@@ -157,6 +165,23 @@ class TestSalesOrderFlow(unittest.TestCase):
         self.assertEqual((flow.sales_order, flow.sales_order_item), ("SO-0001", "ROW-1"))
         self.assertEqual((flow.requirements, flow.packaging), ("刻字", "礼盒"))
         self.assertEqual((flow.source_qty, flow.planned_qty), (10, 10))
+
+    def test_ordinary_sales_flow_keeps_native_profile_default_and_manual_plan_on_reuse(self):
+        self.profiles["RING"] = Record(name="RING", item_code="RING", company="JF",
+            bom="PROFILE-BOM", supplier_product_code="CODE", specification="SPEC",
+            requirements="档案要求", packaging="档案包装",
+            materials=[Record(item_code="RAW", qty_per_unit=2, unit_price=3)],
+            operations=[Record(operation="POLISH", unit_price=4)])
+        names = self.workflow.create_sales_order_flows(self.order.name)
+        flow = self.flows[names[0]]
+        self.assertEqual((flow.profile, flow.bom), ("RING", "PROFILE-BOM"))
+        self.assertEqual(flow.materials[0]["qty_per_unit"], 2)
+        self.assertEqual(flow.requirements, "刻字")
+        flow.profile, flow.bom, flow.planned_qty = None, "MANUAL-BOM", 7
+        flow.materials = [Record(item_code="RAW", qty_per_unit=9)]
+        self.assertEqual(self.workflow.create_sales_order_flows(self.order.name), names)
+        self.assertEqual((flow.profile, flow.bom, flow.planned_qty), (None, "MANUAL-BOM", 7))
+        self.assertEqual(flow.materials[0].qty_per_unit, 9)
 
     def test_source_changes_flag_review_without_overwriting_plan(self):
         name = self.workflow.create_sales_order_flows(self.order.name)[0]
