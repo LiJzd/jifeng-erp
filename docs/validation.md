@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-10-05 外网检查异常的实际只读诊断
+
+fresh diagnose r1 经全文审阅、根独立 3 组模型及 Ruff通过后唯一实际执行（helper `adaa9132…`、manifest `0584536e…`），实际 SSH 直连核对 6 次。完整八服务 raw inspect、stats、内存／cgroup、监听、近期 kernel OOM 和后台日志只存受限私密响应；未在后台执行 Python、Frappe、SQL 或发布阶段。诊断结果通过：八服务 ID／image／StartedAt／RestartCount 与失败前均相同，全部 running，数据库 healthy，前端本机发布端口可连接。
+
+后台 `OOMKilled=true`，RestartCount仍 0、ExitCode=0；其实际 cgroup 上限和最高使用均 536,870,912 字节，当前使用 259,465,216 字节。系统日志在同一后台 cgroup 记录 `CONSTRAINT_MEMCG`、task=python、uid=1000，确有内存限制杀进程事件；服务主进程仍在运行，没有重启。三条事件的服务器时间 12:53:11+0800，与本机失败结果写入 12:53:05 相差数秒，未声明已测双方时钟偏差。当前主机 MemAvailable约 782 MiB、另有交换区，不据退出 137 推断主机整体内存耗尽。后续原生检查改为独立工具容器准备，与 Web 的 512 MiB 隔离；实际工具创建、清理及原生岗位／完整 934 数据门尚未执行。结果 SHA `c55525a7908568271ca53bb2e797c283401d7e2bd0bab2ad02f84dfbe6e6da36`，私密完整响应 SHA `2203f5342581d19aa23994a5eacbb55472c90905466fc7aacf0a0855b420facf`。旧 failed 与全部诊断原件保留。
+
 ## 2026-10-05 外网导出发布前只读检查未通过
 
 根全文审阅 fresh inspect r1 后，独立 5 组离线门与 Ruff、冻结文件 SHA 核对通过，唯一实际执行 driver `ec07d056…`／native `de79d06b…`／manifest `ae576d84…`。379,450 字节 stdin 的实际 SSH 直连核对共 42 次，未回退代理。远端原生进程退出 137，stdout／stderr 均为零，没有取得原生数据库、岗位导出或连接清理的证明，不能把模型或空输出记成成功。外围 AFTER 的五层 Compose、当前源码／配置／旧 receipt、受保护文件核对通过；八服务状态门因 `runtime_state_image_restart_oom` 失败。当前原因及服务状态需 fresh 只读诊断，不据 137 单独断言 OOM。
