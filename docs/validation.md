@@ -2,6 +2,12 @@
 
 ## 2026-10-06 财务两版界面与取消来源按钮实际结果
 
+修复后实际 GUI 五门全部通过：A 收款／B 付款未改直接关闭，A 费用备注正常 UI 仅保存一次 200 后直接关闭，B 回读新备注后直接关闭；真正修改的 B 付款草稿仍显示未保存确认，放弃后新查询为原值。新版本 URL 在 A/B 可见，零新增／删除／额外种子／直接 API 保存或重复保存。context 已关闭，未核服务端 logout。结果 SHA `8f3553b3c2f535eaba0b35fbcaabde731ef63ff7e16e989682d3bef7610d65b5`，根独立核 runner／唯一 marker／7 图片 SHA 及五项结果，实看保存后列表和真草稿确认截图。下方“正在复查”是前一阶段的历史状态。
+
+随后上传 helper SHA `62a9e53c6ba57ee9f414dda7b6c34b3fca168d651436b2d38f8d489c80f01e7c` 经根全文审阅后唯一执行。2 个冻结原件已上传、新目录解包循环执行后，最后调用宿主 Git 失败（服务器无该程序）；45 次同一真实 SSH socket DIRECT、系统／环境／WinHTTP／Clash TUN 观察留私密证据，未走代理回退、未重传或重放。结果原件保留，不能计整个上传终验 PASS；另准备使用现有固定运行镜像 Git 的只读核验，暂未切换运行源码／服务／SQL。
+
+公开元数据只读 preflight r1 同样仅唯一执行，21 次同 socket DIRECT；宿主返回已知失败，native summary 未生成、八服务身份后门未完成，不能宣称 native 条件通过或数据库连接门结果。结果 SHA `a0d5143e066cc9ec5277145d5ab48f076356dbfd86923819fb79dca04fea72e0`，已消费稿保留，准备只读核明确失败规则和实际宿主状态，不重放／放宽权限／改 schema。公网继续原 f1；完整增量尚未发布。
+
 关闭修复已唯一同步本机：根全文审 helper SHA `bca2ac54f504e553269ab52a6d5c3b76923285c50446b5d37332a673460c030a` 后实际执行，旧 JS root600 备份、620 中其余 619 与 42 资产保持，只替换目标 JS 并删除唯一站点 app_hooks 缓存键，已有 Web 停启各一次。新 owner SHA `e256f51ae2e71b5d38c9c215d04fc62c385292443c3a5cdb6a23d93696141675` 在 HTTP 前保存；Guest ping、新版本 URL 及 14,947 字节 SHA `f42275b1a6f130488c811f975a799cf297757ae89718db0c4f7392d64c7d2018` 实际通过。结果 SHA `be2ebb75d2f456e279dc59c162e1f529dcf0e2278efc497aa8d3773a5eb9803d`，根独立读取核零错误、零 SQL 连接、delete／HTTP 回执存在。旧 owner／消费稿保持，Redis 身份保持但不宣称缓存字节相等；实际关闭 GUI 正在复查。
 
 后继隔离 release `7054811` 仅比 `0d56b3c` 换上述 JS，其他 600 来源／37 资产 URL 保持；601 跟踪文件、38 版本资产和 parent 已独立核。发布包 609 文件（另 8 最小 Git 元数据）、3,836,979 字节，SHA `98dede38b168b81822464b20bd87f1b81d98925b36e4fc6da7d270d0e241b22b`；根实际逐成员核安全路径、无链接、字节和 SHA、最小 Git 仅该 detached commit，普通 master／index／工作树未切换。候选 manifest SHA `f2099b8ee55acafd6fb8a7c1b66adc8ca7e002773d989bf9bfd91b210b289c8e`，包清单 SHA `cafaf8989a33636d1234747dc7a1de36abe7ec28767546e7be859d72256d4ffa`。尚未传输／公开安装。
