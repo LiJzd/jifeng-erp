@@ -94,14 +94,17 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 			const writable = name ? !!entry.can_write : !!entry.can_create;
 			const dialog = new frappe.ui.Dialog({ title: this.type + (name ? "修改" : "新增"), no_submit_on_enter: true,
 				fields: [
-					{ fieldname: "legacy_number", fieldtype: "Data", label: __("编号"), default: entry.legacy_number || "", read_only: 1, placeholder: __("保存时生成") },
-					{ fieldname: "value", fieldtype: "Data", label: __("名称"), reqd: 1, default: entry.value || "", read_only: !writable },
-					{ fieldname: "remarks", fieldtype: "Data", label: __("备注"), default: entry.remarks || "", read_only: !writable },
-					{ fieldname: "inactive", fieldtype: "Check", label: __("停用"), default: Number(entry.inactive || 0), read_only: !writable }
+					{ fieldname: "legacy_number", fieldtype: "Data", label: __("编号"), read_only: 1, placeholder: __("保存时生成") },
+					{ fieldname: "value", fieldtype: "Data", label: __("名称"), reqd: 1, read_only: !writable },
+					{ fieldname: "remarks", fieldtype: "Data", label: __("备注"), read_only: !writable },
+					{ fieldname: "inactive", fieldtype: "Check", label: __("停用"), read_only: !writable }
 				] });
+			// Frappe applies field defaults asynchronously; finish hydration before taking the clean baseline.
+			await dialog.set_values(this.rowValues(entry));
+			if (this.disposed || company !== this.companyName()) return;
 			dialog.$wrapper.addClass("jfe-finance-editor");
 			const state = { dialog, entry, company, writable, request_id: name ? null : crypto.randomUUID(), saving: false, unresolved: false, closed: false };
-			this.editors.add(state); state.original = JSON.stringify(this.values(state));
+			this.editors.add(state); state.original = JSON.stringify(this.rowValues(entry));
 			if (writable) dialog.set_primary_action(__("保存"), () => this.save(state));
 			if (entry.can_create) dialog.add_custom_action(__("新增"), () => this.newEntry(state));
 			dialog.add_custom_action(__("核对保存结果"), () => this.resolve(state));
@@ -118,8 +121,11 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 		return { legacy_number: state.dialog.get_value("legacy_number") || "", value: state.dialog.get_value("value") || "",
 			remarks: state.dialog.get_value("remarks") || "", inactive: Number(!!state.dialog.get_value("inactive")) };
 	}
-	payload(state) {
-		return { company: state.company, dictionary_type: this.type, ...this.values(state),
+	rowValues(row) {
+		return { legacy_number: row.legacy_number || "", value: row.value || "", remarks: row.remarks || "", inactive: Number(!!Number(row.inactive)) };
+	}
+	payload(state, values = this.values(state)) {
+		return { company: state.company, dictionary_type: this.type, ...values,
 			...(state.entry.name ? { name: state.entry.name, modified: state.entry.modified } : { request_id: state.request_id }) };
 	}
 	matches(state, row) {
@@ -133,7 +139,7 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 	}
 	async accepted(state, row) {
 		state.entry = row; state.writable = !!row.can_write; state.unresolved = false;
-		await state.dialog.set_value("legacy_number", row.legacy_number); state.original = JSON.stringify(this.values(state));
+		const values = this.rowValues(row); await state.dialog.set_values(values); state.original = JSON.stringify(values);
 		this.query(this.start);
 	}
 	guard(state) {
@@ -150,9 +156,11 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 	}
 	async save(state) {
 		if (!state.writable || state.saving || state.unresolved || state.closed || !state.dialog.get_values()) return;
-		state.attempt = this.values(state); state.saving = true; this.freeze(state);
+		state.attempt = this.values(state); const payload = this.payload(state, state.attempt); state.saving = true;
 		try {
-			const row = await this.api("save_dictionary", { payload: this.payload(state) }, "POST");
+			// Read-only refresh uses each control's cached value, so commit the input values first.
+			await state.dialog.set_values(state.attempt); this.freeze(state);
+			const row = await this.api("save_dictionary", { payload }, "POST");
 			if (!this.matches(state, row)) throw Error("Unconfirmed finance save");
 			await this.accepted(state, row); frappe.show_alert({ message: __("已保存"), indicator: "green" });
 		} catch (error) {
@@ -173,7 +181,6 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 					frappe.confirm(__("服务器记录与当前草稿不同，读取服务器当前内容并放弃草稿？"), async () => {
 						state.saving = true; this.freeze(state);
 						try {
-							await state.dialog.set_values({ legacy_number: row.legacy_number, value: row.value, remarks: row.remarks || "", inactive: Number(row.inactive) });
 							await this.accepted(state, row); frappe.show_alert({ message: __("已读取服务器当前内容"), indicator: "blue" });
 						} finally { state.saving = false; this.freeze(state); }
 					});
