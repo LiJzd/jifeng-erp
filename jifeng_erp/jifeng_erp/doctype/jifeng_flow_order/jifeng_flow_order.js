@@ -4,26 +4,54 @@ frappe.ui.form.on("Jifeng Flow Order", {
     },
     refresh(frm) {
         if (frm.is_new()) return;
-        const call = async (method, doctype) => {
+        // Keep the saved source-state guard aligned with workflow.validate_flow_source.
+        // The server also checks the current source document before every generation.
+        const source_block_reason = () => {
+            const blocked = { Cancelled: "取消", Merged: "合并", Split: "拆分" };
+            if (Object.hasOwn(blocked, frm.doc.source_status)) {
+                return `来源订单已${blocked[frm.doc.source_status]}，当前流程单不能生成采购、领料或生产草稿。`;
+            }
+            if (frm.doc.sales_order && frm.doc.source_status === "Closed") {
+                return "来源销售订单已关闭，当前流程单不能生成采购、领料或生产草稿。";
+            }
+            if (frm.doc.source_changed) return "源订单有变更，请先核对变更并标记源单已核对，再生成采购、领料或生产草稿。";
+            return "";
+        };
+        const source_ready = () => {
+            const reason = source_block_reason();
+            if (reason) frappe.msgprint(reason);
+            return !reason;
+        };
+        const add_generation_button = (label, action) => {
+            const button = frm.add_custom_button(label, () => {
+                if (source_ready()) return action();
+            });
+            const reason = source_block_reason();
+            if (reason) button.prop("disabled", true).attr("title", reason);
+        };
+        const call = async (method, doctype, generating = false) => {
             if (frm.is_dirty()) await frm.save();
+            if (generating && !source_ready()) return;
             const r = await frm.call(method);
             await frm.reload_doc();
             if (doctype && r.message) frappe.set_route("Form", doctype, r.message);
         };
         if (frm.doc.profile) frm.add_custom_button("更新档案物料与工序", () => call("load_profile"));
-        frm.add_custom_button("生成采购申请草稿", () => call("make_request", "Material Request"));
-        frm.add_custom_button("生成按单配料出库草稿", () => {
+        add_generation_button("生成采购申请草稿", () => call("make_request", "Material Request", true));
+        add_generation_button("生成按单配料出库草稿", () => {
             frappe.prompt([{
                 fieldname: "warehouse", label: "领料来源仓库", fieldtype: "Link",
                 options: "Warehouse", reqd: 1,
                 get_query: () => ({ filters: { company: frm.doc.company, is_group: 0, disabled: 0 } }),
             }], async (values) => {
+                if (!source_ready()) return;
                 if (frm.is_dirty()) await frm.save();
+                if (!source_ready()) return;
                 const result = await frm.call("make_material_issue", { warehouse: values.warehouse });
                 if (result.message) frappe.set_route("Form", "Stock Entry", result.message);
             }, "选择领料仓库", "生成草稿");
         });
-        frm.add_custom_button("生成生产工单草稿", () => call("make_work_order", "Work Order"));
+        add_generation_button("生成生产工单草稿", () => call("make_work_order", "Work Order", true));
         frm.add_custom_button("查看本流程生产工单", () =>
             frappe.set_route("List", "Work Order", { jf_flow_order: frm.doc.name }));
         frm.add_custom_button("打开成本试算", () => call("make_preview", "Jifeng Cost Preview"));
@@ -80,6 +108,11 @@ frappe.ui.form.on("Jifeng Flow Order", {
             frm.set_intro(pending ? "来源单位尚未明确，请先确认计划库存单位和数量，再核对源订单变更。" :
                 "源订单有变更，请核对计划数量、采购和加工单后标记已核对。", "orange");
             frm.add_custom_button("标记源单已核对", () => call("acknowledge_source"));
+        }
+        const reason = source_block_reason();
+        if (reason) {
+            const pending = !["stock_v1", "manual_verified_v1"].includes(frm.doc.quantity_basis) || !frm.doc.stock_uom;
+            frm.set_intro(reason + (pending ? "计划库存单位和数量也尚未确认，请先完成计划单位核对。" : ""), "orange");
         }
         frm.add_custom_button("查看实际委外费用", async () => {
             const r = await frappe.call({ method: "jifeng_erp.workflow.receipt_costs", args: { flow_order: frm.doc.name } });
