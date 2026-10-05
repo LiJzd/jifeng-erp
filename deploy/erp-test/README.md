@@ -1,6 +1,17 @@
 # 集沣 ERP 外网 A/B 测试站
 
-## 2026-10-06 当前部署：705 原生安装、启动与 HTTPS 核验通过
+## 2026-10-06 当前部署：0e610 档案导入升级及外网核验通过
+
+- [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
+- [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)
+
+两套继续共用原测试库。当前公开源码为 `0e6105d55d5e5821afb20779de5d05d46320c5fc`，611包文件／603源码／39资源；仅新增导入后端和JS、修改列表JS／档案CSS／hooks五个生产文件。独立上传、controls stage、prepare、quiesce、before、cache（含独立verify）、start均实际通过，未更改表结构、角色、用户或业务数据。四部分标准备份保留服务器私有目录；停应用后取得的完整SQL快照在before／cache／verify相同，开放后不承诺数据库冻结。
+
+维护保留前四层Compose，第五层改为 `/opt/jifeng-erp-test/installs/inventory-import-public-20261006-r1/compose.inventory-import.r1.yaml`，仅替换五应用只读源码挂载；固定已有镜像，八核心服务运行、三数据服务身份及五历史容器保持。第一层和当前第五层均0600，中三层0644。此次实际上传及各阶段均核同SSH socket的DIRECT分流，没有代理回退或自动重放。
+
+新的普通账号HTTPS验收11请求实际通过：可信IP证书、同实际socket DIRECT、A/B同CSRF和全部39版本资源URL、三份变动资源完整SHA、物料／材料导入初始化及商品创建／分组／单位选择权限、正常退出后fresh Guest403；零业务保存。本机两批四行跨版导入GUI及数据保护此前已通过，仍与公网GUI范围分开。全旧模块第一版正式交付尚未完成，产品镀色接线和本机采购／应付不包含在本批。账号使用本地受限 `output/ERP外网测试账号.private.txt`；详细实际回执见[验证记录](../../docs/validation.md)。
+
+## 2026-10-06 历史部署：705 原生安装、启动与 HTTPS 核验通过
 
 公网五应用已切至 `70548111a6745c9063c50cf587abade1a52e1c7b`，A/B 继续共用原测试数据库。独立安装 r2 的 stage／prepare／quiesce／native／start 五阶段实际 PASS：候选609文件／601源码／38资源、真实原生 SQL 计划、标准四部件服务器备份、4新 DocType／26 Custom Field 原生安装、旧五表结构／索引定义／旧业务值及相关元数据保护、候选 hooks／缓存核对通过。备份仅留服务器受控私有目录，未下载；原生 DDL／updatedb 分步提交，不承诺整批事务回滚。
 

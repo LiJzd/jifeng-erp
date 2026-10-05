@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-06 导入增量公开部署及HTTPS验收实际通过
+
+公网已切至 `0e6105d55d5e5821afb20779de5d05d46320c5fc`／tree `2af129ec42c8109ca2626149388cf9b02d9a57a8`，A/B继续共用原测试库。611文件／603源码／8最小Git元数据／39资源准确，598旧源码及36旧版本URL保持；仅5个生产文件，无DDL／迁移／角色／用户／业务写。上传解包实际PASS SHA `217ca590bd10c25fb4cc645a345c6d37608f456bfe063e02689c4e859e09777e`，固定镜像内Git及UID1000读取核验通过；服务器真实解包回执独立只读核对SHA `8bd028479d69142624e0496217d5cffdedb7f687e9110fe64d8fc3337e3d6d31`，没有重传或重放。
+
+根完整审阅后执行独立controls stage／prepare／quiesce／before／cache／start，六份真实回执均PASS且remote_exit_code=0。回执SHA依次为 `f69721a59f6c7da3f5794f2fe82ff9623c1e2e1d1bb501f628e99e1d287eac85`、`75adbe76905bcf9597256ee5718cac78098a9b0ed81872cb1375edc8c77bb3e6`、`9e27b3802e3813603ead1873d363dfabe336a02645f13a527ba80b185d7eb700`、`417a3a0fbc0dccd42436409d9454e702222af474bb8ff6b1f096f99c354e2bc1`、`9696be22ad4c0c2620026b1770b06fa2a6ae4fb19e70d675615b68a0fd723d43`、`1f106885e7b1e25a896d3e44decc64466e46e4db7a422b3e2c0110d7a2d79954`。四部件标准备份仅留服务器受控私有目录。before／cache及单独新容器verify完整SQL快照相同，原公开／私有文件保持，所有只读物理连接关闭；唯一显式失效键为本站app_hooks。只有五个应用停启／换源码，三个数据服务及五历史容器身份保持，固定镜像不pull／build。当前第五层为 `installs/inventory-import-public-20261006-r1/compose.inventory-import.r1.yaml`，保持前四层。开放后未证明SQL冻结。
+
+根新的普通HTTPS唯一执行实际PASS，结果SHA `0d3506b2f2b4755433d7d4a787b7b76239b929acb8657edf93434b9980e6fa7c`：11请求均可信TLS且同实际socket DIRECT，普通QA身份、A/B同CSRF／全部39版本URL、三份变动资源完整字节SHA、物料／材料init_import各200且创建／分组／单位选择权限全true、正常CSRF退出及fresh Guest403通过。0业务POST／0业务保存／0模板或备份下载／0种子／0角色更改；此为HTTPS与运行发布验收，不代替本机已通过的四行GUI或尚未完成的全旧模块正式验收。
+
+本次发布driver未执行前的根审查发现异常分支可能保留最后DIRECT检查前的passed=true，已在执行前修为false并重冻pins；六阶段实际使用driver SHA `19ea5f2e294234e783c8ffe051729ea246eccb3540965f422793ade896ee636c`及review-pins SHA `f9c18cd3d9941ce956bf21578b6811adacc1c0dd9c4df2b50d2692991e321f51`，其他七份输入保持。独立705恢复草稿仅准备／AST验证，未上传或执行，不称实际回退PASS。下方保留此前各批的当时状态，按本节识别当前公开版本。
+
+公网匿名浏览器检查由Luna单次执行各独立稿：r2 SHA `ff637a1bc89b45b2eed24bb6bce10aeb7f860aa68095239043fb92526b31b643`在helper-integrity采集失败；r3 SHA `827d6e3e4d22f2b8b27c4a7d85fa78bb639736e86be291994090021bfc869f7e`在controller-collection失败。root随后对独立文件collector普通CLI读取实际成功，避免PS5.1的多行`-c`传参；r4 SHA `2637061268f24b3244bb43bf4d78bbe77b889ebedf23f5575174c7a6c7138120`匿名HTTP200、登录表单可见、controller读取和独立Chrome主进程选择成功，但无目标443 socket，实际DIRECT未证。各context关闭，未QA浏览器登录／业务保存／下载，不记公网GUI PASS，不把此限制混同已经通过的11请求HTTPS验收；原稿、profile和实际报告保持。
+
 ## 2026-10-06 库存档案导入原生验证及本机同步
 
 物料／材料档案新增共用的单文件 `.xlsx` 导入与模板入口，最多1 MiB／100条。全部行先预览，确认后复用既有 Item＋Profile 正常保存及永久创建回执；本地待核记录仅保存批次身份和摘要。前导零、零价、中文、坏行、文件边界、整批回滚及重复批次的10项后端模型通过，前端还覆盖异步 Link 输入、跨页面批次、未知提交和未预约／已确认窗口在存储故障下的关闭；既有列表／导出／生命周期和43资源版本检查通过。采购履行的公司／供应商 Link 未确认输入误用旧ID也已修复，31项模型通过，尚未同步运行。
