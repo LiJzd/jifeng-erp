@@ -1,18 +1,26 @@
 # 验证记录
 
-## 2026-10-06 候选服务器只读核查通过，元数据前置准入仍待修正
+## 2026-10-06 705 公开部署及 HTTPS 核验实际通过
 
-`7054811` 已解包候选的独立只读核查实际 PASS：两个上传原件的 SHA／字节／600 权限、609 文件的 SHA／mode、601 源码 Git OID 和 8 最小 Git 元数据均吻合；既有固定镜像内 Git 核 HEAD／tree／shallow／无 remote，UID 1000 可读全部公开文件。结果 SHA `d96938b40af91689d1349478ba64f89a74e9a9ca8d3a15fffa3c061933a371f7`，6 次同真实 SSH socket DIRECT。创建与解包意图 marker 存在，原上传成功收据不存在；没有重传、重放解包或写远端新收据，原 r1 宿主无 Git 的失败保持。该结果只证明候选目录完整，未切换运行源码、服务、站点或 SQL。
+独立安装 r2 的 stage／prepare／quiesce／native／start 五份本地实际回执均 PASS，后四阶段 remote_exit_code=0，无自动重试／重连。公网五应用已只读挂载 `70548111a6745c9063c50cf587abade1a52e1c7b`，A/B 共用原测试数据库；候选609文件／601源码／38资源、真实原生 SQL 计划、标准四部件服务器备份、4新 DocType／26 Custom Field 原生安装、旧五表原列／索引定义／旧列值和相关元数据保护、候选 hooks／缓存核对通过。仅替换第五层 Compose，三数据服务身份和五历史容器保持；备份未下载，原生 DDL／updatedb 分步提交，不宣称整批事务回滚。native 回执 SHA `14410a878ca2444ebc22f85c2689d0f45be484c26526ccf22023bc9e236f68ae`，start 回执 SHA `f5aa2a90d9f00b011d28787be75da27492e8adf84ea8496094536a7e466647d6`；五阶段原件均在 `output/sample-finance-flow-public-install-20261006-r2-*-result.json`。
 
-财务关闭修复五项真实 GUI 已通过，结果 SHA `8f3553b3c2f535eaba0b35fbcaabde731ef63ff7e16e989682d3bef7610d65b5`；具体关闭、保存后回读及真草稿确认范围保留在下节。
+本批独立 HTTPS 实际 PASS，结果 SHA `8c0deea2318cfe09afbc253f52f04dc1c505ec2a3e37318fa345200f319d2a50`：14请求均可信 TLS／实际 DIRECT，普通 QA 单次登录与身份、A/B 页面同 CSRF及全部38版本资源 URL、新增三资源完整字节 SHA通过；样品元数据／样品列表和三类财务列表五个只读门均200，列表均0行，正常CSRF退出后Guest拒绝通过。零业务保存、种子或备份下载，不使用浏览器。
+
+公网 GUI 的单次匿名登录页导航200且登录框可见，但 Chrome socket／Clash映射采集Error、未证DIRECT，已停止并关闭context；未QA登录、业务页面或重试，不能计GUI PASS。原件 `output/playwright/public705-direct-proof-singleprobe-20261006/proof.json` SHA `b97cf224c908b768ac279847e127ac5a6e54974d25eac8c69fb353cdf2d98027`。本机财务关闭修复五项 GUI 的 SHA `8f3553b3c2f535eaba0b35fbcaabde731ef63ff7e16e989682d3bef7610d65b5` 保持独立专项范围，不能代替本批公网 GUI；全部旧模块第一版正式可用仍未完成。
+
+### 发布前失败记录（已消费原件保持）
+
+安装 r1 的 prepare 实际失败 SHA `a45b77cabf635f942c3b395c8941a7c11849877e8d7d11abd0cdc31fee0131ad`。只读诊断 SHA `6158d307098518653f07bdd836f02073bfefc73389493e9b2d092faa1e3b6be2` 命中 `owned_path_mode`；只有两次只读Docker命令 exit0，native plan intent／summary均不存在，native／backup／停服未开始。五旧 Compose mode读取 SHA `e418c657a6e7cd5979f92b3f32e9845381bdd14df9d1477c6e17f31c149f2254` 确认首份 root:root0600、其余四份0644，五SHA与原基线一致。fresh r2 仅修正此权限事实检查和独立名称，native源码保持原字节，未chmod旧文件或重放／回写r1。特殊命名的原诊断文件保持。
+
+此前候选目录独立只读核查 SHA `d96938b40af91689d1349478ba64f89a74e9a9ca8d3a15fffa3c061933a371f7` 核609文件、601源码Git身份／8最小Git元数据及UID1000读取权限通过，6次同SSH socket DIRECT；创建／解包marker存在，原上传成功receipt不存在。宿主无Git的上传终验失败原件保留，没有重传／重放解包或伪造原远端成功receipt。
 
 旧公开只读 preflight r1 的实际失败规则为 `exact_eight_project_containers`。独立只读诊断 SHA `b0f660dc3593278858b5dd9a495fc7c7c3bf14e970033376b0acf7e93501eede` 确认项目总数 13＝8 个运行核心服务＋5 个历史工具容器，当前 f1 挂载吻合；native 未开始、零 SQL，未创建工具容器或操作既有服务。旧失败原件保留。
 
 r2 只读 preflight 已实测失败，结果 SHA `c6643ef9268bef553f527d235c618349a583a6d93da2f59c6b6de5e9ea7c4c38`；独立诊断实际 PASS 的 SHA 为 `d883f5af9dec0104f7c6fcaafa23a3b5be44653bd61f44bd0b65b9c663ec8b4d`。实际 934 表，目标 4 新 DocType／26 Custom Field 均不存在；五份 schema 候选中四份符合预期，Sales Order Item 的 `drop_index=[item_code]` 被过粗准入规则 `no_existing_column_or_index_schema_changes` 拒绝。cleanup 中原生 rollback 自动 begin 又被 `only_known_read_sql` 拒绝，物理连接仍已关闭（1／1）；零 DDL、零提交，8 核心及 5 历史容器身份保持。
 
-后续独立只读 index-read 实际 PASS，结果 SHA `a1f73b706c0dfc69d155fed3d8874299904b9ca712f55da5533a72e5b311eb57`：Sales Order Item 只有 `item_code_warehouse_index` 复合索引（`item_code` seq 1／`warehouse` seq 2），没有单列 `item_code`。远端 13 份原生源码 pin 与本机独立核对全匹配；MariaDB 原生 `get_column_index` 明确排除复合索引。因此 r2 的候选列表不能证明会生成真实 DROP SQL，失败主要是候选准入误判及 cleanup 错误；r2 失败原件保持，不能改记整体 PASS。下一步在实装前捕获原生实际生成 SQL 的 dry-run，目前尚未执行、备份或安装。
+后续独立只读 index-read 实际 PASS，结果 SHA `a1f73b706c0dfc69d155fed3d8874299904b9ca712f55da5533a72e5b311eb57`：Sales Order Item 只有 `item_code_warehouse_index` 复合索引（`item_code` seq 1／`warehouse` seq 2），没有单列 `item_code`。远端13份原生源码pin与本机独立核对全匹配，原生 `get_column_index` 排除复合索引，故候选列表不证明真实DROP。后来的安装r2 prepare捕获真实原生语句，通过精确新增范围门，保留既有复合索引；只读preflight r2的准入误判及cleanup失败原件不能改记PASS。
 
-公网继续 `f1baab3` 和原共用测试库，完整样品／财务／流程增量未发布；全部旧模块正式交付目标仍未完成。下方保留先前各阶段记录，未改写旧失败或提前记后续成功。
+下方保留先前各阶段当时的未发布／旧版本状态；本次部署、HTTPS、本机GUI专项和未完成的公网GUI／全模块正式验收各按实际证据判断。
 
 ## 2026-10-06 财务两版界面与取消来源按钮实际结果
 

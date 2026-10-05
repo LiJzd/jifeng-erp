@@ -1,12 +1,12 @@
 # 集沣 ERP 外网 A/B 测试站
 
-## 2026-10-06 当前状态：705 候选目录完整，公开前置未通过
+## 2026-10-06 当前部署：705 原生安装、启动与 HTTPS 核验通过
 
-公网仍运行 `f1baab3`、既有五层 Compose 和原共用测试库。`70548111a6745c9063c50cf587abade1a52e1c7b` 发布包已实际 DIRECT 上传；独立只读核查通过 609 文件（601 源码＋8 最小 Git 元数据）的 SHA／mode、固定镜像内 Git 身份及 UID 1000 读取权限，结果 SHA `d96938b40af91689d1349478ba64f89a74e9a9ca8d3a15fffa3c061933a371f7`。包 SHA `98dede38b168b81822464b20bd87f1b81d98925b36e4fc6da7d270d0e241b22b`、3,836,979 字节；原上传稿宿主无 Git 的失败和原件保持，没有重传、重放解包或切换当前 app。
+公网五应用已切至 `70548111a6745c9063c50cf587abade1a52e1c7b`，A/B 继续共用原测试数据库。独立安装 r2 的 stage／prepare／quiesce／native／start 五阶段实际 PASS：候选609文件／601源码／38资源、真实原生 SQL 计划、标准四部件服务器备份、4新 DocType／26 Custom Field 原生安装、旧五表结构／索引定义／旧业务值及相关元数据保护、候选 hooks／缓存核对通过。备份仅留服务器受控私有目录，未下载；原生 DDL／updatedb 分步提交，不承诺整批事务回滚。
 
-公开只读 preflight r1 的拒绝规则 `exact_eight_project_containers` 已由独立诊断查明：13 总容器＝8 核心＋5 历史工具，native 未开始、零 SQL。r2 实测失败、零 DDL／零提交，物理连接 1／1 关闭，8 核心及 5 历史容器身份保持；后续只读 index-read PASS 确认 Sales Order Item 只有 `item_code_warehouse_index` 复合索引，没有单列 `item_code`，13 份原生源码 pin 与本机全匹配。MariaDB 原生查单列索引时排除复合索引，故候选 `drop_index` 不等于真实 DROP SQL；当前是候选准入误判及 rollback cleanup 错误待修正。下一步捕获实际生成 SQL 的 dry-run 尚未执行、备份或安装，r2 失败不能改记整体 PASS。详细原件 SHA 见[验证记录](../../docs/validation.md)。
+前四层 Compose 保持，第五层现为 `/opt/jifeng-erp-test/installs/sample-finance-flow-20261006-r2/compose.sample-finance-flow.r2.yaml`，仅改变五应用只读 app source；固定已有镜像，无 pull／build，八核心服务运行，三数据服务身份和五历史容器保持。已消费安装 r1 在首份旧 Compose 实为0600、检查误要求0644处失败，native／backup／停服未开始；r2 仅修正首份0600／其余四份0644的检查及独立名称，不 chmod 旧文件或重放原稿。原上传、preflight及安装失败原件保持，详见[验证记录](../../docs/validation.md)。
 
-本机关闭修复五项真实 GUI 已通过，当前公开 4 新 DocType／26 Custom Field 尚未安装。完整样品／财务／流程增量未发布；下方保留各阶段历史状态和已消费稿，不重放。
+本批可信 HTTPS 的14次实际 DIRECT 请求、普通 QA 登录身份、A/B 页面同 CSRF及38版本资源 URL、新增三资源完整字节、样品与三类财务只读接口、正常退出后 Guest 拒绝通过，零业务保存。公网 GUI 仅到匿名登录页，DIRECT 采集失败后停止，未业务登录／重试；本机关闭修复五项 GUI 与公网 GUI 明确分开，全部旧模块正式交付仍未完成。下方保留各阶段当时状态和已消费稿。
 
 ## 2026-10-06 当前运行与后继候选
 

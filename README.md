@@ -1,10 +1,10 @@
 # 集沣 ERPNext 业务扩展
 
-## 2026-10-06 候选核查通过，公开安装仍受阻
+## 2026-10-06 当前外网部署：705 增量与 HTTPS 核验通过
 
-[A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)和[B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)仍运行 `f1baab3`，共用原测试数据。财务关闭修复的五项实际 GUI 已通过；`7054811` 候选已直连上传，独立只读核查确认 609 文件、601 源码的 Git 身份及应用用户读取权限通过。
+[A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)和[B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)现共用 `7054811` 业务源码和原测试数据库。独立安装 r2 的 stage／prepare／quiesce／native／start 五阶段实际 PASS；标准四份服务器备份、4 新 DocType／26 Custom Field 原生安装及旧五表／相关元数据保护通过。仅替换第五层 Compose 的五应用只读源码挂载，三数据服务及五历史容器保持。
 
-公开元数据前置 r1 被项目容器总数检查拦住，独立诊断确认 13 个容器中有 8 个核心服务、5 个历史工具容器，native 未开始、零 SQL。r2 仍为实际失败、零 DDL／零提交；最新只读索引核查确认 Sales Order Item 只有 `item_code_warehouse_index` 复合索引，没有单列 `item_code`，候选 `drop_index` 不等于真实删除 SQL。候选准入误判及 cleanup 错误待修正，下一步捕获原生实际生成 SQL，尚未执行、备份或安装。完整增量未发布，全部旧模块第一版正式可用仍未完成。详见[验证记录](docs/validation.md)和[外网说明](deploy/erp-test/README.md)；下方保留各阶段历史状态。
+本批可信 HTTPS 的 14 次实际 DIRECT 请求、普通 QA 登录身份、A/B 页面与 38 个版本资源 URL、新增三资源完整字节、样品和三类财务只读接口及正常退出／Guest 拒绝通过；零业务保存。公网 GUI 仅到匿名登录页，DIRECT 采集失败后停止，未登录业务测试，不能计 PASS。本机关闭修复五项 GUI 是独立专项；全部旧模块第一版正式可用仍未完成。详见[验证记录](docs/validation.md)和[外网说明](deploy/erp-test/README.md)，下方保留各阶段当时状态和旧失败。
 
 ## 2026-10-06 当前外网测试入口
 
