@@ -19,6 +19,7 @@ app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css",
                    "/assets/jifeng_erp/css/jifeng_tool_archive.css",
                    "/assets/jifeng_erp/css/jifeng_procurement_fulfillment.css",
                    "/assets/jifeng_erp/css/jifeng_supplier_payables.css",
+                   "/assets/jifeng_erp/css/jifeng_finance_dictionary.css",
                    "/assets/jifeng_erp/css/jifeng_modern.css"]
 app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jifeng_erp/js/jifeng_hr_dictionary.js",
                   "/assets/jifeng_erp/js/jifeng_source_reports.js",
@@ -42,6 +43,7 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_salary_history.js",
                   "/assets/jifeng_erp/js/jifeng_procurement_fulfillment.js",
                   "/assets/jifeng_erp/js/jifeng_supplier_payables.js",
+                  "/assets/jifeng_erp/js/jifeng_finance_dictionary.js",
                   "/assets/jifeng_erp/js/jifeng_workspace_core.js",
                   "/assets/jifeng_erp/js/jifeng_modern_workspace.js"]
 

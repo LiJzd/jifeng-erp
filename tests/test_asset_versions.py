@@ -20,7 +20,7 @@ def load_hooks(path):
 class TestAssetVersions(unittest.TestCase):
     def test_all_desk_assets_keep_paths_and_order_with_valid_content_revisions(self):
         hooks = load_hooks(ROOT / "hooks.py")
-        self.assertEqual((len(hooks.app_include_css), len(hooks.app_include_js)), (15, 25))
+        self.assertEqual((len(hooks.app_include_css), len(hooks.app_include_js)), (16, 26))
         self.assertTrue(urlsplit(hooks.app_include_js[0]).path.endswith("jifeng_classic_bridge.js"))
         self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_inventory_catalog.js?" in u),
                         next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_inventory_archive_list.js?" in u))
@@ -40,7 +40,7 @@ class TestAssetVersions(unittest.TestCase):
                         next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_workspace_core.js?" in u))
         self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_salary_history.js?" in u),
                         next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_workspace_core.js?" in u))
-        for component in ("jifeng_procurement_fulfillment", "jifeng_supplier_payables", "jifeng_inventory_tracking"):
+        for component in ("jifeng_procurement_fulfillment", "jifeng_supplier_payables", "jifeng_inventory_tracking", "jifeng_finance_dictionary"):
             self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if component + ".js?" in u),
                             next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_workspace_core.js?" in u))
         self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_tool_costs.js?" in u),

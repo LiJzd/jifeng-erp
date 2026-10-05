@@ -14,6 +14,7 @@ const window = { addEventListener() {}, removeEventListener() {}, JifengSalaryHi
 window.JifengProcurementFulfillment = class {};
 window.JifengSupplierPayables = class {};
 window.JifengInventoryTracking = class {};
+window.JifengFinanceDictionary = class {};
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
@@ -105,6 +106,11 @@ for (const [module, name, flag] of [["物料", "采购履行核对", "procuremen
 }
 assert.equal(shared.availability("销售", "销售跟踪"), "preview");
 assert.equal(shared.availability("财务", "电镀账"), "preview");
+for (const name of ["收款银行", "付款银行", "费用科目"]) {
+	assert.equal(shared.availability("财务", name), "partial");
+	assert.equal(dispatch(Modern, find("财务", name))[0].spec.financeDictionary, name);
+	assert.deepEqual(dispatch(Modern, find("财务", name)), dispatch(Classic, find("财务", name)));
+}
 for (const name of ["样品制作单", "样品单反审"]) {
 	assert.equal(shared.availability("产品", name), "partial");
 	assert.equal(dispatch(Modern, find("产品", name))[0].spec.doctype, "Jifeng Sample Order");

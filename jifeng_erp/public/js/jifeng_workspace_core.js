@@ -157,7 +157,7 @@ const JIFENG_LIVE_ROUTES = {
 
 // Server-backed entry whose available operations remain explicitly limited.
 const JIFENG_PARTIAL_ROUTES = { 产品: { 样品制作单: true, 样品单反审: true }, 工资: { 历史: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
-	物料: { 采购履行核对: true, 跟踪: true }, 材料: { 采购履行核对: true, 跟踪: true }, 财务: { 供应商应付核对: true },
+	物料: { 采购履行核对: true, 跟踪: true }, 材料: { 采购履行核对: true, 跟踪: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true },
 	销售: { 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
 
 const JIFENG_LIVE_CATALOGS = {
@@ -168,7 +168,8 @@ const JIFENG_LIVE_CATALOGS = {
 const JIFENG_LIVE_PAGES = {
 	物料: { 采购履行核对: { procurementFulfillment: true }, 跟踪: { inventoryTracking: true } },
 	材料: { 采购履行核对: { procurementFulfillment: true }, 跟踪: { inventoryTracking: true } },
-	财务: { 供应商应付核对: { supplierPayables: true } },
+	财务: { 供应商应付核对: { supplierPayables: true }, 收款银行: { financeDictionary: "收款银行" },
+		付款银行: { financeDictionary: "付款银行" }, 费用科目: { financeDictionary: "费用科目" } },
 	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers", 历史: { salaryHistory: true } },
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
 		算料汇总: { name: "jifeng-order-material-workbench", mode: "summary" } },
@@ -414,6 +415,12 @@ class JifengLegacyWorkspace {
 		}
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
+			if (livePage.financeDictionary) {
+				if (!this.formalBridge || !window.JifengFinanceDictionary) {
+					frappe.msgprint(__("财务资料页面未能加载，请刷新后重试。")); return;
+				}
+				this.formalBridge.open({ title: name, module: moduleName, kind: "page", financeDictionary: livePage.financeDictionary, availability: "partial" }); return;
+			}
 			for (const [flag, component] of [["procurementFulfillment", "JifengProcurementFulfillment"], ["supplierPayables", "JifengSupplierPayables"], ["inventoryTracking", "JifengInventoryTracking"]]) {
 				if (!livePage[flag]) continue;
 				if (!this.formalBridge || !window[component]) {

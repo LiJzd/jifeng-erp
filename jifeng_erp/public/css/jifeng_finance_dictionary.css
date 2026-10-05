@@ -1,0 +1,17 @@
+.jfe-finance-dictionary { height: 100%; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.jfe-finance-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.jfe-finance-company { width: 240px; }
+.jfe-finance-company .form-group { margin-bottom: 0; }
+.jfe-finance-toolbar > input { padding: 7px 10px; min-width: 220px; border: 1px solid #d7dde5; border-radius: 4px; }
+.jfe-finance-check { display: flex; align-items: center; gap: 5px; margin: 0; }
+.jfe-finance-status { margin: 0; color: #5b6573; }
+.jfe-finance-scroll { overflow: auto; flex: 1; min-height: 140px; border: 1px solid #d7dde5; }
+.jfe-finance-scroll table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.jfe-finance-scroll th, .jfe-finance-scroll td { padding: 9px 12px; border-bottom: 1px solid #e5e9ef; text-align: left; white-space: pre-wrap; }
+.jfe-finance-scroll th { position: sticky; top: 0; background: #f4f6f9; }
+.jfe-finance-scroll td:nth-child(3) { min-width: 240px; }
+.jfe-finance-editor .modal-dialog { max-width: 440px; }
+.jfe-finance-editor .frappe-control[data-fieldtype="Data"] .form-group { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 8px; margin-bottom: 9px; }
+.jfe-finance-editor .frappe-control[data-fieldtype="Data"] .control-label { text-align: right; margin: 0; }
+.jfe-finance-editor .frappe-control[data-fieldtype="Check"] { margin-left: 70px; }
+.jfe-finance-editor .modal-footer .btn-primary { background: #08b966; border-color: #08b966; }

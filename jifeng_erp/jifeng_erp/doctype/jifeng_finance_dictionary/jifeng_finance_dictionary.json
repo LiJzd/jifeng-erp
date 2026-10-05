@@ -1,0 +1,24 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Finance Dictionary",
+ "module": "Jifeng ERP",
+ "title_field": "value",
+ "search_fields": "legacy_number,value",
+ "track_changes": 1,
+ "field_order": ["company", "dictionary_type", "legacy_number", "value", "remarks", "inactive", "account", "request_id"],
+ "fields": [
+  {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "dictionary_type", "fieldtype": "Select", "label": "财务词典类型", "options": "收款银行\n付款银行\n费用科目", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "legacy_number", "fieldtype": "Data", "label": "编号", "in_list_view": 1, "read_only": 1, "no_copy": 1, "description": "保存时按本系统公司和类型独立分号，银行最小两位、费用最小三位；不推断旧编号算法或序列起点。"},
+  {"fieldname": "value", "fieldtype": "Data", "label": "名称", "reqd": 1, "in_list_view": 1, "description": "本系统要求名称非空，保存输入原文。"},
+  {"fieldname": "remarks", "fieldtype": "Small Text", "label": "备注"},
+  {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1},
+  {"fieldname": "account", "fieldtype": "Link", "label": "记账科目关联", "options": "Account", "read_only": 1, "no_copy": 1, "description": "可选高级关联，使用独立设置入口；未关联词条不能用于过账。"},
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "新建请求身份", "hidden": 1, "read_only": 1, "set_only_once": 1, "no_copy": 1, "print_hide": 1}
+ ],
+ "permissions": [
+  {"role": "Accounts User", "read": 1, "select": 1, "create": 1, "write": 1},
+  {"role": "Accounts Manager", "read": 1, "select": 1, "create": 1, "write": 1, "delete": 1},
+  {"role": "Auditor", "read": 1, "select": 1}
+ ]
+}
