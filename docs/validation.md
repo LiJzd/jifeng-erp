@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-06 财务两版界面与取消来源按钮实际结果
+
+本机普通 Accounts Manager 已从 A 创建收款银行／付款银行／费用科目，B 原生编辑窗口回读四字段与只读编号（01／01／001）。收款银行跨版改名、停用、启用及回读通过；B 最新修改保存 200，A 陈旧保存仅一次 417，前景提示“财务词典已被修改，请重新读取后保存”，A 新查询仍为 B 最新值。无盲目重试，7 个保存 marker 的结果已知。原 final／verified 的两项 marker 哈希抄写错误保持，fresh corrected-evidence SHA `d46760026769dbe8e58f6fd67ff62b2f4b1d694a48fd704e826218fd1974ed30` 动态重算；根独立核 7 marker／2 图片实际 SHA，实看最终列表。自有两个页面 context 已关闭；UI logout 不可见，不声明服务端注销。
+
+实际发现未编辑窗口以及已保存窗口关闭误报未保存修改，未计关闭门通过。修复 `bce3d54` 等待原生异步初始化再记录基准，冻结控件前同步当前输入并保留保存前 payload，确认后填回完整服务端值。针对异步默认值／只读缓存刷新／真实草稿保护／确认后关闭的回归检查通过，且对旧源码在未编辑窗口断言处确实失败；语法和 diff 检查通过。实际新脚本同步、修复后 GUI 仍待，不据模型宣称已解决公网行为。
+
+取消来源 Flow 141 的 fresh GUI r2 已由普通 UI 确认三生成按钮可见、disabled 且有中文原因，成本试算可用，计划 7／材料 9 保持，零业务按钮点击、零页面异常。根核 JSON／图片 SHA 并实看截图；结果 SHA `f96ac186a30d4a55026b9942f811321e32cf858bce86d4d5fcb37699ed504efb`，图片 SHA `4d3f47cb42e107ed90b3873172bfe986f25c7b156d13f1760700c8adf234a1a4`。r1 因校验器错误阻断正常 Desk 只读 POST 且使用错误 locator 未验门，原件保留；r2 放行普通读取后通过，不伪称 r1 成功，也未观察到专门历史按钮。
+
+隔离 release `0d56b3c`（parent 公网 f1）已冻结 601 文件／40 变更／38 资产，根独立核 Git tree、来源、字节和版本 URL；正常 master／index 未切换，未 push。它尚缺上述关闭修复，不用于上线，后继候选正在准备。最近公网只读核对八服务均运行、同 SSH socket DIRECT，未改公网；当前仍 f1 与原共用测试库。完整旧模块正式可用、四效果／144、财务业务单据接入／旧简拼打印及其他未验范围继续。
+
 ## 2026-10-05 财务界面账号准备与流程按钮同步
 
 财务 GUI User seed r1 在提交前发现原生自分享产生 `Shared Comment`，审计白名单漏记，已完整回滚并关闭连接；私有结果 SHA `7528607af5bd9c4a73a177e34cc8434c2a846220dfc74a43b412d91c7b69f7cb`。同稿只读 inspect SHA `2e9ef13f40e3e96eeb6ec6805962c7597ea2d7d69d182fb876b8ff7581a773b4` 确认 User／Auth／相关范围无残留。消费稿未修改或重放。根核对原生 DocShare／Comment／mention 代码后审阅 fresh r2 完整差异，唯一执行 SHA `b53a46bfb4b9fd90f6e3bf9a18cf05b1cec35755f773033420d514e5c2569056` 成功：先新只读连接核旧 User／Auth／11 范围含 Comment 均不存在，再正常创建一名 Accounts Manager 用户并提交一次，第三连接核密码、公司读选和三个字典可创建。三连接关闭，原 13 前置、样品演员岗位、公司和 Accounts Manager Role 保持。私有结果 SHA `35dc6d4f80c7df6a451a6e92b793f62d3c11339a386de4ef23a0557eeecbbaa2`。原生自分享产生一个 Shared Comment；Contact 创建仅正常入队一项、状态 QUEUED／pending，未消费或重放，旧队列项保持。凭据仅在 root600 本地私密 context，未进 Git／输出。A/B 浏览器操作正在验收。
