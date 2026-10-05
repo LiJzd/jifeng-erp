@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-06 外网测试部署交接的fresh只读核验
+
+用户授权自行找可用服务器部署。沿用此前实际盘点选中的杭州 `116.62.241.148` 独立ERP项目，当前公开源码仍 `0e6105d55d5e5821afb20779de5d05d46320c5fc`／tree `2af129ec42c8109ca2626149388cf9b02d9a57a8`，A/B共用原测试库；本轮没有重复部署或改动已消费发布稿。
+
+root完整审阅fresh helper SHA `1f19e0f28253de5cbd76125ba508f0745a43349cd13b439685ea0587247f0cef` 后唯一执行，实际exit0／PASS；回执SHA `0e576363fde1d6e7dd80da61c180bf67c674f435bb76c8c1d53ceb83de007cfb`（忽略目录 `output/erp-public-deployment-final-readonly-20261006-r1-result.json`）。八核心服务全部running／无OOM，五应用固定镜像、只读source挂载与ERP网络正确，当前受限manifest的完整611包文件逐字节／长度／模式／root属主准确，检查前后八运行服务身份保持。没有读取SQL或站点凭据，没有声明全库冻结或重新验历史容器。
+
+四次匿名HTTPS实际核验：ping200／pong，login200／HTML，A／B均301准确跳转login；默认可信IP TLS、每次前中后匹配相同实际socket DIRECT。SSH同一真实socket三次DIRECT，WinINET／WinHTTP／环境代理和Mihomo实际TUN前后记录，未清代理或回退。SSH／HTTPS关闭；零上传／文件下载／SQL／业务POST／源码切换／重启／浏览器／测试账号登录。普通账号登录验收仍采用下节此前实际11请求结果；本轮匿名可达不扩大公网GUI或全旧模块正式验收。凭据文件未输出、提交或更改。
+
 ## 2026-10-06 导入增量公开部署及HTTPS验收实际通过
 
 公网已切至 `0e6105d55d5e5821afb20779de5d05d46320c5fc`／tree `2af129ec42c8109ca2626149388cf9b02d9a57a8`，A/B继续共用原测试库。611文件／603源码／8最小Git元数据／39资源准确，598旧源码及36旧版本URL保持；仅5个生产文件，无DDL／迁移／角色／用户／业务写。上传解包实际PASS SHA `217ca590bd10c25fb4cc645a345c6d37608f456bfe063e02689c4e859e09777e`，固定镜像内Git及UID1000读取核验通过；服务器真实解包回执独立只读核对SHA `8bd028479d69142624e0496217d5cffdedb7f687e9110fe64d8fc3337e3d6d31`，没有重传或重放。
