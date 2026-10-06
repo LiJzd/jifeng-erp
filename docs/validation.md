@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-07 界面增量发布候选及产品导出源码
+
+基于当前公网准确提交`0e6105d55d5e5821afb20779de5d05d46320c5fc`准备独立界面候选`f07d7be2150913f6509302c4700e5fd5e0599714`，父提交准确相同，仅客户档案JS、库存档案列表JS、库存档案CSS及两份已有CJS模型改变。603源码中另598字节保持，39资产路径和顺序保持，3版本变化／36保持；14 CSS、25 JS，后端、hooks、导航、schema及角色沿用公网原版本。本机采购、工资、财务和新产品导出均未附带。
+
+`D:/codex-temp/frontend-archive-habits-public-20261007-r1`根全文审阅并独立核15冻结文件、9公共函数AST后，唯一执行本地准备PASS。四个JS／CJS语法门和两个准确候选CJS模型通过；独立私有Git index生成release commit/ref，本机main HEAD `a11722d`、原index及工作树状态保持。只用本地file协议准备一可达／实际commit的浅包，611成员含603源码及8最小Git元数据；根独立逐成员核字节、长度、模式及包SHA通过。没有WAN、SQL、native、服务、GUI或发布操作；已消费准备稿不重放。
+
+helper `ff45f18f3f8f6789027434db9217469cdcbfa90b377921e7916be516c350b21b`，inputs `655c68032b7853312b609952d4bc8f4a03bc6827f36c2c76a1519f732504220c`，freeze `c35376328b440843853a62dca8d7014566b86a81c7c0fb0c41f772b1e474ea6f`；准备结果`ac26f4ff12bcbd76c083087c733b32a3fc3c0bd3574ff3cd7ad665394a18ab58`。源码清单`fe395aafd6f0306cefaf3a68b3dd7739415dfd446e18d70931716802a503a255`，包清单`ccf76ff057da3a21b2d861907a454417c7f233ec00ba3e1b02236d38a59fd7f7`，3,872,145字节包`5404e7bd5e815c877732f72e9c6f55ddcffe51555f4b8f2bc992ffedf06a141e`。后续公网实际检查和发布另取fresh事实，当前公网仍0e610。
+
+产品档案导出源码另本地提交`a11722db5554fcd6b8c452aadeef8903d24fee42`，五文件范围准确。沿当前公司、关键词、包含停用条件读取全部已保存可见档案，不限当前页；28字段采用当前表单模板，缺任一完整读取／mask／export权限或来源改变时整次拒绝。两图仅状态文字，不导附件URL或内部ID；原生Profile只给System Manager默认export，未新增授权。两轮逐行／集合核对及序列化后的fresh原生RO快照复查均有模型覆盖，清理成功后才返回；这是有界复查，不宣称并发原子保证。
+
+离页、公司ABA、筛选变化、取消、打开编辑器及迟到response/blob守卫覆盖，原编辑、上传和未知保存回执保持。新导出Python9、旧产品Python52、库存导出Python8、工具导出Python16及新旧两组CJS、语法／AST／diff通过；根逐段审阅及独立静态审查未发现确定阻断。backend SHA `c15946db698ce3222b3b1a178e44c3d5adb1ed2aceb4278da2f9e64c0a073eed`、JS `752bcd19235c10dfd2aa6e19dc8013bd3a1c3e59c356d4bc2fe787b129e24c06`。尚未安装运行、实际端点、普通岗位权限或GUI下载验证；旧导出模板仍未知，不调整367／233 formal／86 preview／30 partial／13 navigation／5 tool的分类或全模块验收结论。
+
 ## 2026-10-07 库存档案三视图及本机同步通过
 
 工程提交`43656338e80b12db651d75775361d3c5736008e4`仅库存档案JS、共享CSS内archive专属选择器及已有CJS模型。双种类三模式复用已核DTO，切换不RPC／改变revision或筛选页码；独立模式滚动、查询中切换、迟到响应、准确ID编辑回航和原草稿／导入／导出owner保持均覆盖。图片只复用imageCell，无其他字段回退；导出仍是全部当前筛选。archive list、catalog workbench、catalog bridge、archive lifecycle、archive import workbench、archive export六组CJS模型，JS／CJS语法和diff检查PASS，根及独立子智能体静态审未见阻断。真实浏览器布局／DOM自然clamp及旧卡面布局未验；367派发分类不变，不能据模型宣称全入口正式验收。
