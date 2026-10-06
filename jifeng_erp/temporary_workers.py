@@ -69,9 +69,9 @@ def _permitted(meta):
     return fields | {"name", "modified"}
 
 
-def _person(company, name):
+def _person(company, name, *, lock=False):
     _scope(company)
-    person = frappe.get_doc("Employee", name)
+    person = frappe.get_doc("Employee", name, for_update=True) if lock else frappe.get_doc("Employee", name)
     person.check_permission("read")
     _permitted(person.meta)
     if person.company != company or person.status != "Active":
@@ -80,10 +80,47 @@ def _person(company, name):
     frappe.get_doc({"doctype": WAGE, "company": company, "employee": name}).check_permission("create")
     # A native permission callback can change employee scope. Read it again
     # after the create check, before looking up the private qualification field.
-    current = frappe.get_doc("Employee", name)
+    current = frappe.get_doc("Employee", name, for_update=True) if lock else frappe.get_doc("Employee", name)
     current.check_permission("read")
     _permitted(current.meta)
     return current if current.company == company and current.status == "Active" else None
+
+
+def _versions(person, source, company):
+    return {
+        "employee_version": _digest({"name": person.name, "company": company, "status": person.status,
+            "employee_name": person.employee_name, "modified": _modified(person.modified)}),
+        "supplement_version": _digest({field: (_modified(source[field]) if field == "modified" else source[field])
+                                     for field in SOURCE_FIELDS}),
+    }
+
+
+def require_temporary_selection(company, employee, selection):
+    """Recheck an explicit selection for a new batch, after its source locks.
+
+    The caller holds Employee before taking Supplement, like native wage
+    creation. This is not a grant from the client or a historical wage marker.
+    Existing-request recovery and ordinary wage edits do not call this guard.
+    """
+    if (not isinstance(selection, dict) or set(selection) != {
+            "company", "employee", "employee_version", "supplement_version"}
+            or selection["company"] != company or selection["employee"] != employee):
+        _changed()
+    for field in ("employee_version", "supplement_version"):
+        value = selection[field]
+        if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+            _changed()
+    _text(employee, "员工")
+    person = _person(company, employee, lock=True)
+    if person is None:
+        _changed()
+    source = frappe.db.get_value(SUPPLEMENT, {"company": company, "employee": employee},
+                                list(SOURCE_FIELDS), as_dict=True, for_update=True)
+    if (not source or not source.get("name") or source.get("company") != company
+            or source.get("employee") != employee or source.get("term_type") != "临时"):
+        _changed()
+    if any(selection[field] != value for field, value in _versions(person, source, company).items()):
+        _changed()
 
 
 def _capture(company, keyword="", employee=None):
@@ -127,11 +164,7 @@ def _capture(company, keyword="", employee=None):
             continue
         if not source.get("name"):
             _changed()
-        employee_version = _digest({"name": person.name, "company": company, "status": person.status,
-            "employee_name": person.employee_name, "modified": _modified(person.modified)})
-        supplement_version = _digest({field: (_modified(source[field]) if field == "modified" else source[field])
-                                     for field in SOURCE_FIELDS})
-        rows.append({**projection, "employee_version": employee_version, "supplement_version": supplement_version})
+        rows.append({**projection, **_versions(person, source, company)})
     return rows
 
 

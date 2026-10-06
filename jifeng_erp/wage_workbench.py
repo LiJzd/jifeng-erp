@@ -8,6 +8,7 @@ import frappe
 from frappe.utils import getdate
 from jifeng_erp.payroll import nonnegative
 from jifeng_erp.piece_workers import require_piece_worker
+from jifeng_erp.temporary_workers import require_temporary_selection
 from jifeng_erp.wage_rate_references import REFERENCE_FIELDS
 
 
@@ -175,10 +176,8 @@ def batch_status(request_id, company, employee):
 
 @frappe.whitelist(methods=["POST"])
 def save_drafts(payload):
-    if not frappe.has_permission(WAGE, "create"):
-        frappe.throw("没有新增计薪记录的权限", frappe.PermissionError)
     payload = frappe.parse_json(payload)
-    if not isinstance(payload, dict) or set(payload) != INPUT_FIELDS:
+    if not isinstance(payload, dict) or set(payload) not in (INPUT_FIELDS, INPUT_FIELDS | {"temporary_selection"}):
         frappe.throw("工资录入请求字段不完整或包含未支持字段")
     request_id = _request_id(payload["request_id"])
     rows = payload["rows"]
@@ -198,7 +197,7 @@ def save_drafts(payload):
                                            allow_nan=False).encode()).hexdigest()
     # This also serializes two POSTs for an identical request before the native
     # unique key and source locks. No commit belongs inside this API.
-    _person(payload["company"], payload["employee"], lock=True)
+    person = _person(payload["company"], payload["employee"], lock=True, active=False)
     existing = _batch_rows(request_id, payload["company"], payload["employee"])
     if existing:
         expected_keys = [request_id + f":{index:03d}" for index in range(len(rows))]
@@ -206,6 +205,10 @@ def save_drafts(payload):
                 row["fingerprint"] != fingerprint for row in existing):
             frappe.throw("录入请求内容已变化，请先核对原先保存结果")
         return {"wages": existing, "reused": True}
+    if not frappe.has_permission(WAGE, "create"):
+        frappe.throw("没有新增计薪记录的权限", frappe.PermissionError)
+    if person.company != payload["company"] or person.status != "Active":
+        frappe.throw("计薪员工必须是当前公司的在职员工")
     component = frappe.get_doc("Salary Component", payload["salary_component"])
     component.check_permission("read")
     _fields(component, ("type", "disabled"))
@@ -244,6 +247,12 @@ def save_drafts(payload):
         prepared.append(doc)
     frappe.db.savepoint("jifeng_wage_workbench")
     try:
+        # All Job Card/Work Order locks and native create/field checks above
+        # precede Supplement, matching the existing native wage lock order.
+        # Only an explicit temporary selection opts a new batch into this
+        # check; source versions remain part of its exact request fingerprint.
+        if "temporary_selection" in payload:
+            require_temporary_selection(payload["company"], payload["employee"], payload["temporary_selection"])
         # All original native controller validations, permission checks and
         # source quantity locks run inside one transaction, including the last
         # row. A failed row leaves no partial batch for the next attempt.

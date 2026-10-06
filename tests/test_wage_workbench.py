@@ -21,6 +21,10 @@ class Doc(types.SimpleNamespace):
             raise PermissionError("denied")
 
 
+class Source(dict):
+    __getattr__ = dict.__getitem__
+
+
 class TestWageWorkbench(unittest.TestCase):
     def setUp(self):
         self.persisted = []
@@ -34,10 +38,12 @@ class TestWageWorkbench(unittest.TestCase):
         frappe.session = types.SimpleNamespace(user="Administrator")
         frappe.has_permission = Mock(return_value=True)
         frappe.PermissionError = PermissionError
+        self.supplement = Source(name="SUP-1", employee="E-1", company="C-1", term_type="临时",
+                                 wage_method="计件", modified="2026-10-01 08:00:00")
         frappe.db = types.SimpleNamespace(savepoint=Mock(side_effect=self.savepoint),
                                          rollback=Mock(side_effect=self.rollback), commit=Mock(),
                                          sql=Mock(side_effect=self.current_read),
-                                         get_value=Mock(return_value=Doc(name="SUP-1", wage_method="计件", modified="2026-10-01 08:00:00")))
+                                         get_value=Mock(return_value=self.supplement))
         utils = types.ModuleType("frappe.utils")
         utils.getdate = lambda value: datetime.date.fromisoformat(str(value))
         scope = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils})
@@ -55,13 +61,20 @@ class TestWageWorkbench(unittest.TestCase):
         piece_scope = patch.dict(sys.modules, {"jifeng_erp.piece_workers": self.piece_workers})
         piece_scope.start()
         self.addCleanup(piece_scope.stop)
+        spec = importlib.util.spec_from_file_location("workbench_temporary_workers", ROOT / "temporary_workers.py")
+        self.temporary_workers = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.temporary_workers)
+        temporary_scope = patch.dict(sys.modules, {"jifeng_erp.temporary_workers": self.temporary_workers})
+        temporary_scope.start()
+        self.addCleanup(temporary_scope.stop)
         spec = importlib.util.spec_from_file_location("wage_workbench_under_test", ROOT / "wage_workbench.py")
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
         self.frappe = frappe
         self.docs = {
             ("Company", "C-1"): Doc(),
-            ("Employee", "E-1"): Doc(company="C-1", status="Active", employee_name="合成人员"),
+            ("Employee", "E-1"): Doc(name="E-1", company="C-1", status="Active", employee_name="合成人员",
+                modified="2026-10-01 07:00:00", meta=Doc()),
             ("Salary Component", "PAY"): Doc(type="Earning", disabled=0),
             ("Operation", "OP-1"): Doc(),
             ("Job Card", "JC-1"): Doc(name="JC-1", company="C-1", docstatus=1, work_order="WO-1",
@@ -88,6 +101,93 @@ class TestWageWorkbench(unittest.TestCase):
                 "quantity": 2 if job_card else 0, "stock_uom": "Nos" if job_card else "",
                 "piece_rate": 3 if job_card else 0, "hours": 1, "hourly_rate": 4,
                 "extra_amount": 0, "notes": "合成单元测试"}
+
+    def temporary_payload(self, *, timed=False):
+        payload = copy.deepcopy(self.payload)
+        if timed:
+            payload["rows"] = [self.row(job_card="")]
+        payload["temporary_selection"] = {"company": "C-1", "employee": "E-1",
+            **self.temporary_workers._versions(self.docs[("Employee", "E-1")], self.supplement, "C-1")}
+        return payload
+
+    def test_temporary_selection_creates_native_draft_after_original_source_locks(self):
+        payload = self.temporary_payload()
+        ordered = Mock()
+        ordered.attach_mock(self.frappe.get_doc, "document")
+        ordered.attach_mock(self.frappe.db.get_value, "qualification")
+        result = self.module.save_drafts(payload)
+        self.assertFalse(result["reused"])
+        self.assertEqual(self.native_inserts, 1)
+        self.assertFalse(hasattr(self.persisted[0], "temporary_selection"), "selection is a new-request predicate, not stored historical classification")
+        calls = ordered.mock_calls
+        card = next(index for index, call in enumerate(calls) if call[0] == "document"
+                    and call.args == ("Job Card", "JC-1") and call.kwargs.get("for_update"))
+        work = next(index for index, call in enumerate(calls) if call[0] == "document"
+                    and call.args == ("Work Order", "WO-1") and call.kwargs.get("for_update"))
+        qualifiers = [index for index, call in enumerate(calls) if call[0] == "qualification" and call.kwargs.get("for_update")]
+        self.assertTrue(qualifiers and all(index > card and index > work for index in qualifiers))
+        self.frappe.db.commit.assert_not_called()
+
+    def test_temporary_manual_timing_keeps_no_job_card_rule_and_checks_temporary_source(self):
+        payload = self.temporary_payload(timed=True)
+        self.module.save_drafts(payload)
+        self.assertEqual(self.persisted[0].hours, 1)
+        self.assertEqual(self.persisted[0].quantity, 0)
+        self.assertFalse(getattr(self.persisted[0], "job_card", None))
+
+    def test_changed_temporary_source_rejects_whole_new_batch_before_any_insert(self):
+        payload = self.temporary_payload()
+        payload["rows"].append(self.row(job_card=""))
+        for field, value in (("term_type", "长期"), ("modified", "2026-10-02 08:00:00"),
+                             ("name", "SUP-REPLACED"), ("employee", "E-2"), ("company", "C-2")):
+            with self.subTest(field=field):
+                previous = self.supplement[field]
+                self.supplement[field] = value
+                with self.assertRaisesRegex(ValueError, "重新查询"):
+                    self.module.save_drafts(payload)
+                self.assertEqual(self.native_inserts, 0)
+                self.assertEqual(self.persisted, [])
+                self.supplement[field] = previous
+        self.docs[("Employee", "E-1")].modified = "2026-10-02 07:00:00"
+        with self.assertRaisesRegex(ValueError, "重新查询"):
+            self.module.save_drafts(payload)
+        self.assertEqual(self.persisted, [])
+
+    def test_saved_temporary_request_recovers_before_later_eligibility_and_create_changes(self):
+        payload = self.temporary_payload()
+        first = self.module.save_drafts(payload)
+        person = self.docs[("Employee", "E-1")]
+        person.status, person.company, person.modified = "Left", "C-2", "2026-10-02 07:00:00"
+        self.supplement.update(term_type="长期", modified="2026-10-02 08:00:00")
+        self.frappe.has_permission.return_value = False
+        self.frappe.db.get_value.reset_mock()
+        second = self.module.save_drafts(copy.deepcopy(payload))
+        self.assertTrue(second["reused"])
+        self.assertEqual(first["wages"], second["wages"])
+        self.assertEqual(self.module.batch_status(payload["request_id"], "C-1", "E-1")["wages"], first["wages"])
+        self.frappe.db.get_value.assert_not_called()
+        self.assertEqual(self.native_inserts, 1)
+
+    def test_selection_removal_or_replacement_cannot_change_saved_request_fingerprint(self):
+        payload = self.temporary_payload()
+        self.module.save_drafts(payload)
+        for change in (lambda p: p.pop("temporary_selection"),
+                       lambda p: p["temporary_selection"].update(supplement_version="0" * 64)):
+            altered = copy.deepcopy(payload)
+            change(altered)
+            with self.assertRaisesRegex(ValueError, "内容已变化"):
+                self.module.save_drafts(altered)
+        self.assertEqual(self.native_inserts, 1)
+
+    def test_invalid_explicit_selection_does_not_fall_back_to_ordinary_wages(self):
+        for selection in (None, {}, {"company": "C-1", "employee": "E-1"},
+                          {**self.temporary_payload()["temporary_selection"], "employee": "E-2"}):
+            payload = self.temporary_payload(timed=True)
+            payload["temporary_selection"] = selection
+            with self.assertRaisesRegex(ValueError, "重新查询"):
+                self.module.save_drafts(payload)
+        self.assertFalse(self.persisted)
+        self.assertEqual(self.native_inserts, 0)
 
     def test_history_reference_pair_preserves_exact_request_and_changes_reject_reuse(self):
         self.payload["rows"][0].update(piece_rate_reference="OLD-1",

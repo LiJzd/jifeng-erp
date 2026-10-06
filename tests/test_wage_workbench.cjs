@@ -22,13 +22,17 @@ vm.runInContext(source + "\nglobalThis.Workbench = JifengWageWorkbench;", contex
 function workbench() {
     storage.clear();
     const object = Object.create(context.Workbench.prototype);
-    Object.assign(object, { rows: [], busy: false, frozen: false,
+    Object.assign(object, { rows: [], busy: false, frozen: false, personRevision: 0, temporarySelection: null,
         requestId: crypto.randomUUID(), storageKey: "SYNTHETIC-PENDING", batchPerson: { company: "C-1", employee: "E-1" } });
     const elements = {};
     object.root = { querySelector: selector => elements[selector] ||= { checked: false, innerHTML: "", textContent: "" } };
-    const values = { company: "C-1", employee: "E-1", payroll_date: "2026-10-01", salary_component: "PAY" };
+    const values = { company: "C-1", employee: "E-1", payroll_date: "2026-10-01", salary_component: "PAY",
+        work_date: "2026-10-01", operation: "OP-1" };
     object.controls = Object.fromEntries(Object.entries(values).map(([field, value]) => [field, {
-        get_value: () => values[field], set_value: next => { values[field] = next; }, df: {}, refresh: () => {} }]));
+        get_value: () => values[field], set_value: next => { values[field] = next; object.controls[field].df.onchange?.(); },
+        df: {}, refresh: () => {} }]));
+    object.personState = { company: values.company, employee: values.employee };
+    for (const field of ["company", "employee"]) object.controls[field].df.onchange = () => object.personChanged();
     object.lock = frozen => { object.frozen = frozen; };
     object.renderRows = () => {};
     return object;
@@ -82,7 +86,7 @@ async function main() {
         "verified clean selection pre-fills exact company and employee");
 
     const temporaryRow = { name: "TEMP-1", company: "C-2", status: "Active",
-        employee_version: "employee-v1", supplement_version: "supplement-v1" };
+        employee_version: "a".repeat(64), supplement_version: "b".repeat(64) };
     let temporaryCalls = [];
     frappe.call = async options => { temporaryCalls.push(options); return { message: { ...options.args, eligible: true } }; };
     const temporary = workbench();
@@ -92,6 +96,60 @@ async function main() {
     check(temporaryCalls[0].type === "GET" && temporaryCalls[0].method.endsWith("select_temporary_worker") &&
         Object.keys(temporaryCalls[0].args).sort().join(",") === "company,employee,employee_version,supplement_version",
         "temporary eligibility is read-only and binds the exact two list versions");
+    check(Object.isFrozen(temporary.temporarySelection) && temporary.temporarySelection.employee_version === temporaryRow.employee_version,
+        "verified temporary selection retains only the immutable exact request context");
+    temporary.personChanged();
+    check(temporary.temporarySelection !== null, "unchanged late Link validation does not erase a verified temporary selection");
+    let dialogs = 0;
+    frappe.db = { get_value: async () => ({ message: { employee_name: "合成临工" } }) };
+    frappe.ui = { Dialog: class {
+        constructor(options) {
+            dialogs++; this.options = options; this.values = {};
+            this.fields_dict = Object.fromEntries(options.fields.filter(field => field.fieldname).map(field => {
+                this.values[field.fieldname] = field.default;
+                return [field.fieldname, { df: field, get_value: () => this.values[field.fieldname] }];
+            }));
+        }
+        get_value(field) { return this.values[field]; }
+        show() { this.is_visible = true; }
+        hide() { this.is_visible = false; this.on_hide?.(); }
+    } };
+    const timingValues = { work_date: "2026-10-01", operation: "OP-1", job_card: "", quantity: 0,
+        piece_rate: 0, hours: 1, hourly_rate: 10, extra_amount: 0, notes: "合成协议检查" };
+    await temporary.entryDialog(true);
+    await temporary.activeDialog.options.primary_action(timingValues);
+    check(temporary.rows.length === 1 && Object.isFrozen(temporary.batchPerson.temporary_selection) &&
+        temporary.payload().temporary_selection.supplement_version === temporaryRow.supplement_version,
+        "real first-row action binds the verified temporary source to the immutable batch context");
+    const originalBatchSelection = JSON.stringify(temporary.payload().temporary_selection);
+    temporary.controls.company.set_value("C-OTHER"); temporary.controls.company.set_value("C-2");
+    temporary.controls.employee.set_value("OTHER-PERSON"); temporary.controls.employee.set_value("TEMP-1");
+    check(temporary.temporarySelection === null && JSON.stringify(temporary.payload().temporary_selection) === originalBatchSelection,
+        "manual company/employee ABA clears current selection but never downgrades an existing temporary batch");
+    let explicitSends = 0;
+    frappe.call = async options => { if (options.method.endsWith("save_drafts")) explicitSends++; throw new Error("lost response"); };
+    await temporary.save(); await temporary.save();
+    check(explicitSends === 1 && temporary.frozen && JSON.stringify(temporary.sentPayload.temporary_selection) === originalBatchSelection,
+        "unknown explicit temporary batch remains frozen, retains exact original context and is never resubmitted");
+    temporary.saved([{ name: "SYNTHETIC-TEMP-WAGE", docstatus: 0 }]);
+    check(temporary.batchPerson === null, "confirmed saved batch clears its creation-only temporary source snapshot");
+    await temporary.entryDialog(true);
+    await temporary.activeDialog.options.primary_action(timingValues);
+    check(!Object.hasOwn(temporary.payload(), "temporary_selection"),
+        "next ordinary manual batch keeps the original six-field request without null or historical context");
+    const alternate = workbench();
+    frappe.call = async options => ({ message: { ...options.args, eligible: true } });
+    await alternate.chooseTemporaryWorker("C-2", temporaryRow);
+    await alternate.choosePieceWorker("C-2", "TEMP-1");
+    check(alternate.temporarySelection === null, "explicit piece-worker selection clears temporary intent even for the same person");
+    const lateEntry = workbench(); let finishName;
+    frappe.db.get_value = () => new Promise(resolve => { finishName = resolve; });
+    const countBeforeEntry = dialogs, pendingEntry = lateEntry.entryDialog(true);
+    lateEntry.controls.employee.set_value("OTHER"); lateEntry.controls.employee.set_value("E-1");
+    finishName({ message: { employee_name: "合成人员" } }); await pendingEntry;
+    check(dialogs === countBeforeEntry && !lateEntry.activeDialog && !lateEntry.rows.length,
+        "late employee-name lookup after ABA cannot create a new wage dialog or batch");
+    frappe.call = async options => { temporaryCalls.push(options); return { message: { ...options.args, eligible: true } }; };
     const dirtyTemporary = workbench();
     dirtyTemporary.rows = [{}];
     check(await dirtyTemporary.chooseTemporaryWorker("C-2", temporaryRow) === false && temporaryCalls.length === 1,
@@ -109,8 +167,8 @@ async function main() {
         if (kind === "list_changed") current = false;
         if (kind === "person_changed") delayed.controls.employee.set_value("MANUALLY-CHANGED");
         if (kind === "route_changed") frappe.get_route = () => ["List", "Jifeng Wage Entry"];
-        finish({ message: { company: "C-2", employee: "TEMP-1", employee_version: "employee-v1",
-            supplement_version: "supplement-v1", eligible: true } });
+        finish({ message: { company: "C-2", employee: "TEMP-1", employee_version: temporaryRow.employee_version,
+            supplement_version: temporaryRow.supplement_version, eligible: true } });
         check(await pendingChoice === false && delayed.value("company") === "C-1" &&
             delayed.value("employee") === (kind === "person_changed" ? "MANUALLY-CHANGED" : "E-1"),
             `late ${kind} selection does not replace a clean or changed wage page`);
@@ -124,6 +182,38 @@ async function main() {
     check(await interrupted.chooseTemporaryWorker("C-2", temporaryRow, () => current) === false &&
         interrupted.value("company") === "C-1" && interrupted.value("employee") === "E-1" && !interrupted.selectionBusy,
         "changing selector during asynchronous company refill restores the original clean selection");
+
+    const aba = workbench(); let finishABA;
+    frappe.call = () => new Promise(resolve => { finishABA = resolve; });
+    const abaChoice = aba.chooseTemporaryWorker("C-2", temporaryRow);
+    aba.controls.company.set_value("C-OTHER"); aba.controls.company.set_value("C-1");
+    finishABA({ message: { ...temporaryCalls[0].args, eligible: true } });
+    check(await abaChoice === false && aba.value("employee") === "E-1" && !aba.temporarySelection,
+        "company A-B-A during GET invalidates the old choice even when current values match");
+
+    for (const kind of ["manual_aba", "new_draft", "disconnect"]) {
+        const restoring = workbench(); let current = true, finishRestore, employeeSets = 0;
+        const companySet = restoring.controls.company.set_value, employeeSet = restoring.controls.employee.set_value;
+        restoring.controls.company.set_value = async value => {
+            companySet(value);
+            if (value === "C-2") current = false;
+            if (value === "C-1") await new Promise(resolve => { finishRestore = resolve; });
+        };
+        restoring.controls.employee.set_value = value => { employeeSets++; employeeSet(value); };
+        frappe.call = async options => ({ message: { ...options.args, eligible: true } });
+        const lateRestore = restoring.chooseTemporaryWorker("C-2", temporaryRow, () => current);
+        for (let spin = 0; spin < 12 && !finishRestore; spin++) await Promise.resolve();
+        check(typeof finishRestore === "function", "test reaches the first asynchronous restore setter");
+        if (kind === "manual_aba") {
+            employeeSet("USER-NEW"); restoring.personChanged(true);
+            employeeSet("E-1"); restoring.personChanged(true);
+        }
+        if (kind === "new_draft") restoring.rows = [{}];
+        if (kind === "disconnect") restoring.root.isConnected = false;
+        finishRestore();
+        check(await lateRestore === false && employeeSets === 0 && !restoring.temporarySelection,
+            `invalid ${kind} after the first restore await never executes an employee rollback`);
+    }
 
     for (const mode of ["piece", "temporary"]) {
         const blank = workbench(); let employee = "";

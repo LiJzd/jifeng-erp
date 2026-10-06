@@ -13,6 +13,8 @@ class JifengWageWorkbench {
         this.requestId = this.requestID();
         this.busy = false;
         this.frozen = false;
+        this.personRevision = 0;
+        this.temporarySelection = null;
         this.storageKey = "jifeng_wage_pending:" + frappe.session.user;
         window.addEventListener("beforeunload", event => {
             if (this.is_dirty()) { event.preventDefault(); event.returnValue = ""; }
@@ -55,11 +57,21 @@ class JifengWageWorkbench {
             { fieldname: "salary_component", fieldtype: "Link", label: "收入工资项目", options: "Salary Component", reqd: 1 },
         ];
         for (const df of fields) {
+            if (["company", "employee"].includes(df.fieldname)) {
+                const previous = df.onchange;
+                df.onchange = () => { this.personChanged(); return previous?.(); };
+            }
             const parent = document.createElement("div");
             parent.dataset.wageField = df.fieldname;
             this.root.querySelector("[data-wage-fields]").appendChild(parent);
             this.controls[df.fieldname] = frappe.ui.form.make_control({ parent, df, render_input: true });
             if (df.default) this.controls[df.fieldname].set_value(df.default);
+        }
+        this.personState = { company: this.value("company"), employee: this.value("employee") };
+        for (const field of ["company", "employee"]) {
+            this.controls[field].$input?.on?.("input.jifeng-wage-person change.jifeng-wage-person", event => {
+                if (event.originalEvent) this.personChanged(true);
+            });
         }
         this.controls.employee.get_query = () => ({ filters: { company: this.value("company"), status: "Active" } });
         this.controls.salary_component.get_query = () => ({ filters: { type: "Earning", disabled: 0 } });
@@ -87,13 +99,25 @@ class JifengWageWorkbench {
         });
         this.root.querySelector("[data-wage-rows]").addEventListener("click", event => {
             const button = event.target.closest("[data-remove-wage]");
-            if (button && !this.frozen && !this.busy) { this.rows.splice(Number(button.dataset.removeWage), 1); this.renderRows(); }
+            if (button && !this.frozen && !this.busy) {
+                this.rows.splice(Number(button.dataset.removeWage), 1);
+                if (!this.rows.length) this.batchPerson = null;
+                this.renderRows();
+            }
         });
         this.renderRows();
         this.restorePending();
     }
 
     value(field) { return this.controls[field].get_value() ?? ""; }
+    personChanged(manual = false) {
+        const person = { company: this.value("company"), employee: this.value("employee") };
+        const changed = !this.personState || person.company !== this.personState.company || person.employee !== this.personState.employee;
+        this.personState = person;
+        if (!manual && !changed) return;
+        this.temporarySelection = null;
+        if (manual || !this.applyingTemporarySelection) this.personRevision = (this.personRevision || 0) + 1;
+    }
     requestID() {
         if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
         const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -133,6 +157,7 @@ class JifengWageWorkbench {
             }
             await this.controls.company.set_value(company);
             await this.controls.employee.set_value(employee);
+            this.temporarySelection = null;
             return true;
         } catch (error) { frappe.msgprint("计件人员资格核对失败，请回到计件人员重新查询。"); return false; }
         finally {
@@ -143,7 +168,7 @@ class JifengWageWorkbench {
     async chooseTemporaryWorker(company, row, stillCurrent = () => true) {
         if (this.selectionBusy || this.is_dirty()) { frappe.msgprint("请先保存或核对当前工资草稿，再选择临工。"); return false; }
         if (!row || row.company !== company || row.status !== "Active" || !row.name ||
-                !row.employee_version || !row.supplement_version) {
+                !["employee_version", "supplement_version"].every(field => typeof row[field] === "string" && /^[0-9a-f]{64}$/.test(row[field]))) {
             frappe.msgprint("临工名单已失效，请重新查询后选择。"); return false;
         }
         if (this.companyReady) {
@@ -152,18 +177,24 @@ class JifengWageWorkbench {
             if (this.selectionBusy || this.is_dirty()) return false;
         }
         const previous = { company: this.value("company"), employee: this.value("employee") };
+        const previousSelection = this.temporarySelection, revision = this.personRevision || 0;
         const args = { company, employee: row.name,
             employee_version: row.employee_version, supplement_version: row.supplement_version };
         const connected = () => this.root.isConnected !== false &&
             (typeof frappe.get_route !== "function" || frappe.get_route()?.[0] === "jifeng-wage-workbench") &&
             !(typeof window !== "undefined" && window.frameElement && !window.frameElement.isConnected);
         if (!connected() || !stillCurrent()) return false;
+        const current = () => connected() && stillCurrent() && !this.is_dirty() && revision === (this.personRevision || 0);
         let applied = false;
         const restore = async () => {
-            if (applied && this.value("company") === company &&
+            if (applied && connected() && !this.is_dirty() && revision === (this.personRevision || 0) && this.value("company") === company &&
                     [previous.employee, args.employee].includes(this.value("employee"))) {
                 await this.controls.company.set_value(previous.company);
+                if (!connected() || this.is_dirty() || revision !== (this.personRevision || 0) ||
+                        this.value("company") !== previous.company || ![previous.employee, args.employee].includes(this.value("employee"))) return;
                 await this.controls.employee.set_value(previous.employee);
+                if (connected() && !this.is_dirty() && revision === (this.personRevision || 0) &&
+                        this.value("company") === previous.company && this.value("employee") === previous.employee) this.temporarySelection = previousSelection;
             }
         };
         const locked = ["company", "employee"].map(field => ({
@@ -178,15 +209,17 @@ class JifengWageWorkbench {
             if (!selected?.eligible || Object.entries(args).some(([field, value]) => selected[field] !== value)) {
                 throw new Error("人员选择结果不匹配");
             }
-            if (!connected() || !stillCurrent() || this.is_dirty()) return false;
+            if (!current()) return false;
             if (previous.company !== this.value("company") || previous.employee !== this.value("employee")) {
                 frappe.msgprint("公司或姓名已变化，请重新查询临工。"); return false;
             }
             applied = true;
+            this.applyingTemporarySelection = true;
             await this.controls.company.set_value(company);
-            if (!connected() || !stillCurrent()) { await restore(); return false; }
+            if (!current() || this.value("company") !== company || this.value("employee") !== previous.employee) { await restore(); return false; }
             await this.controls.employee.set_value(args.employee);
-            if (!connected() || !stillCurrent()) { await restore(); return false; }
+            if (!current() || this.value("company") !== company || this.value("employee") !== args.employee) { await restore(); return false; }
+            this.temporarySelection = Object.freeze({ ...args });
             return true;
         } catch (error) {
             await restore();
@@ -194,6 +227,7 @@ class JifengWageWorkbench {
         }
         finally {
             for (const { control, readOnly } of locked) { control.df.read_only = readOnly; control.refresh(); }
+            this.applyingTemporarySelection = false;
             this.selectionBusy = false;
         }
     }
@@ -308,8 +342,13 @@ class JifengWageWorkbench {
         this.requirePerson();
         if (this.rows.length >= 20) throw new Error("每次最多录入二十道工序，请先保存当前明细。");
         const selectedPerson = { employee: this.value("employee"), company: this.value("company") };
+        const selectedRevision = this.personRevision || 0;
+        const temporarySelection = this.temporarySelection ? Object.freeze({ ...this.temporarySelection }) : null;
+        if (temporarySelection && (temporarySelection.company !== selectedPerson.company || temporarySelection.employee !== selectedPerson.employee)) {
+            throw new Error("临工来源与当前公司或员工不一致，请重新选择。");
+        }
         const person = await frappe.db.get_value("Employee", selectedPerson.employee, "employee_name");
-        if (selectedPerson.employee !== this.value("employee") || selectedPerson.company !== this.value("company")) return;
+        if (selectedRevision !== (this.personRevision || 0) || selectedPerson.employee !== this.value("employee") || selectedPerson.company !== this.value("company")) return;
         const employeeName = person.message.employee_name || selectedPerson.employee;
         const fields = [
             { fieldname: "work_date", fieldtype: "Date", label: "日期", default: this.value("work_date"), reqd: 1 },
@@ -335,7 +374,7 @@ class JifengWageWorkbench {
                 if (dialog.working) return;
                 dialog.working = true;
                 try {
-                    if (selectedPerson.employee !== this.value("employee") || selectedPerson.company !== this.value("company")) throw new Error("公司或员工选择已变化，请重新录入。");
+                    if (selectedRevision !== (this.personRevision || 0) || selectedPerson.employee !== this.value("employee") || selectedPerson.company !== this.value("company")) throw new Error("公司或员工选择已变化，请重新录入。");
                     if (values.job_card && (!source || source.job_card !== values.job_card)) throw new Error("请等待来源读取完成，再核对工序。");
                     if (values.job_card && (source.operation !== values.operation)) throw new Error("工序必须与所选报工单一致。");
                     if (this.rows.some(row => row.job_card && row.job_card === values.job_card)) throw new Error("这道报工单已加入明细，请先核对原行。");
@@ -345,7 +384,8 @@ class JifengWageWorkbench {
                     }
                     const reference = history?.reference() || {};
                     if (reference.piece_rate_reference && !(Number(values.quantity) > 0)) throw new Error("调用历史计件工价后请填写正数计件数量。");
-                    if (!this.rows.length) this.batchPerson = { ...selectedPerson, employee_name: employeeName };
+                    if (!this.rows.length) this.batchPerson = { ...selectedPerson, employee_name: employeeName,
+                        ...(temporarySelection ? { temporary_selection: temporarySelection } : {}) };
                     this.rows.push({ work_date: values.work_date, operation: values.operation, job_card: values.job_card || "",
                         source_modified: source?.source_modified || "", work_order_modified: source?.work_order_modified || "",
                         stock_uom: source?.stock_uom || "", quantity: timed ? 0 : Number(values.quantity || 0),
@@ -458,6 +498,7 @@ class JifengWageWorkbench {
     payload() {
         return { request_id: this.requestId, company: this.batchPerson.company, employee: this.batchPerson.employee,
             payroll_date: this.value("payroll_date"), salary_component: this.value("salary_component"),
+            ...(this.batchPerson.temporary_selection ? { temporary_selection: { ...this.batchPerson.temporary_selection } } : {}),
             rows: this.rows.map(({ flow_order, ...row }) => row) };
     }
     async save() {
@@ -500,6 +541,7 @@ class JifengWageWorkbench {
         this.root.querySelector("[data-wage-result]").innerHTML = "已保存计薪记录草稿：" + wages.map(row =>
             `<a href="${frappe.utils.get_form_link("Jifeng Wage Entry", row.name)}">${this.esc(row.name)}${row.docstatus === 2 ? "（已取消）" : ""}</a>`).join("、") + "。核对后按原生工资流程审核。";
         this.rows = [];
+        this.batchPerson = null;
         this.sentPayload = null;
         this.clearPending();
         this.requestId = this.requestID();

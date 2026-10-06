@@ -60,7 +60,10 @@ class TestTemporaryWorkers(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
 
-    def get_doc(self, doctype, name=None):
+    def get_doc(self, doctype, name=None, **kwargs):
+        if kwargs:
+            self.assertEqual(doctype, "Employee")
+            self.assertEqual(kwargs, {"for_update": True})
         if isinstance(doctype, dict):
             self.assertEqual(doctype, {"doctype": "Jifeng Wage Entry", "company": "C-1", "employee": "E-1"})
             return self.probe
@@ -90,7 +93,7 @@ class TestTemporaryWorkers(unittest.TestCase):
         self.assertEqual(doctype, "Jifeng Employee Supplement")
         self.assertEqual(filters, {"company": "C-1", "employee": "E-1"})
         self.assertEqual(fields, ["name", "employee", "company", "term_type", "modified"])
-        self.assertEqual(kwargs, {"as_dict": True, "for_update": False})
+        self.assertIn(kwargs, ({"as_dict": True, "for_update": False}, {"as_dict": True, "for_update": True}))
         self.lookup_count += 1
         result = Row({field: self.source[field] for field in fields}) if self.source else None
         if self.after_lookup:
@@ -102,6 +105,60 @@ class TestTemporaryWorkers(unittest.TestCase):
 
     def selection(self, row):
         return self.module.select_temporary_worker("C-1", row["name"], row["employee_version"], row["supplement_version"])
+
+    def saved_selection(self, row=None):
+        row = row or self.listed()["rows"][0]
+        return {"company": "C-1", "employee": "E-1", "employee_version": row["employee_version"],
+                "supplement_version": row["supplement_version"]}
+
+    def test_new_batch_checks_exact_versions_with_employee_then_supplement_current_locks(self):
+        selection = self.saved_selection()
+        self.frappe.get_doc.reset_mock()
+        self.frappe.db.get_value.reset_mock()
+        self.module.require_temporary_selection("C-1", "E-1", selection)
+        self.frappe.get_doc.assert_any_call("Employee", "E-1", for_update=True)
+        self.frappe.db.get_value.assert_called_once_with("Jifeng Employee Supplement",
+            {"company": "C-1", "employee": "E-1"}, list(self.module.SOURCE_FIELDS), as_dict=True, for_update=True)
+        self.assertTrue(all(value == "select" for value in self.company["checks"]))
+        self.assertFalse(self.frappe.has_permission("Jifeng Employee Supplement", "read"))
+
+    def test_new_batch_rejects_changed_identity_classification_and_both_versions(self):
+        selection = self.saved_selection()
+        for document, field, value in (
+                (self.person, "modified", datetime(2026, 10, 2)), (self.person, "employee_name", "改名"),
+                (self.person, "company", "C-2"), (self.person, "status", "Left"),
+                (self.source, "term_type", "长期"), (self.source, "modified", datetime(2026, 10, 2)),
+                (self.source, "name", "REPLACED"), (self.source, "employee", "E-2"), (self.source, "company", "C-2")):
+            with self.subTest(field=field, value=value):
+                original = document[field]
+                document[field] = value
+                with self.assertRaisesRegex(ValueError, "重新查询"):
+                    self.module.require_temporary_selection("C-1", "E-1", selection)
+                document[field] = original
+
+    def test_new_batch_private_predicate_requires_fresh_native_permissions(self):
+        selection = self.saved_selection()
+        for document, permission in ((self.company, "select"), (self.person, "read"), (self.probe, "create")):
+            with self.subTest(permission=permission):
+                document["denied"] = {permission}
+                self.frappe.db.get_value.reset_mock()
+                with self.assertRaises(PermissionError):
+                    self.module.require_temporary_selection("C-1", "E-1", selection)
+                self.frappe.db.get_value.assert_not_called()
+                document["denied"] = set()
+        self.fields.remove("status")
+        with self.assertRaises(PermissionError):
+            self.module.require_temporary_selection("C-1", "E-1", selection)
+        self.frappe.db.get_value.assert_not_called()
+
+    def test_malformed_new_batch_selection_does_not_lookup_private_qualification(self):
+        selection = self.saved_selection()
+        for value in (None, {}, {**selection, "company": "C-2"}, {**selection, "employee": "E-2"},
+                      {**selection, "employee_version": "bad"}, {**selection, "extra": True}):
+            self.frappe.db.get_value.reset_mock()
+            with self.assertRaisesRegex(ValueError, "重新查询"):
+                self.module.require_temporary_selection("C-1", "E-1", value)
+            self.frappe.db.get_value.assert_not_called()
 
     def test_select_only_hr_user_can_use_narrow_service_without_supplement_grant(self):
         result = self.listed()
