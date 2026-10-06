@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 工资分类代码已换入，本地元数据维护待继续
+
+根全文审阅R7差异、109冻结文件／94输入摘要及独立审阅后，唯一执行R7安装。原生只读预检通过，Web由该操作停止，9份代码成功换入，636来源／45资产及627份原文件完整元数据保持，app_hooks准确失效一次；失败收据`c6b0e9b012f5d98c4b0d19bfe544b8a5136f8d77b960fe4da60796cfe55c3bcc`。正常DocType.save在读取旧字段时被准确锁查询门拒绝；没有DDL、commit或搜索写入意图记录，未自动回退、重新启动或重放。
+
+根另fresh primary RO核实56张受保护表的完整schema、业务、授权和元数据与R7原before完全相等，五新增字段及列仍未安装；636来源、627完整文件元数据、45资产URL保持，原Web进程组为空且服务inactive，数据及非Web服务／队列保持。检查收据`2ae1097fb4a3a5804e4c75024cb74280ffe9e8840560272c30cb6e350c01b462`。本地测试Web保持受控停止；公网f07及A/B共用测试数据未改。
+
+独立原生读取诊断仅调用get_doc(DocType,Wage,for_update=True)，准确父锁执行一次，首条DocField子锁在执行前截获并拒绝，与准确原生QB构造匹配；正常rollback及物理关闭后fresh56再次与原before相等，收据`38b4651ff81da9506d2d6795507190ed8409c62ffecaaf2fc63abb5ecb2ee7ca`。该诊断使用READ WRITE事务进行读取和父锁，不称为只读事务、安装或业务验收；没有save／main重放、业务、DDL或commit。源码核实原生还要锁定fields、permissions、actions、links、states五子表；新R8维护方案只准备准确六种元数据锁，从这次已核状态继续，不重复换代码、app_hooks失效或停Web，仍需根及独立审阅后才派发。
+
 ## 2026-10-07 人事岗位与现存测试资料只读核实
 
 工资分类安装器经根和独立审阅后实际尝试R2／R3／R4／R5，各只执行一次，没有重放。R2／R3在创建安装命名空间前分别因Git blob返回值契约和metadata anchor键名失败；R4只读保护扫描误拒原保护表`__Auth`；R5在原生只读preflight错校验数据库LocalProxy类型。四次均未进入Web停启、源替换、原生元数据save或DDL。R4失败收据`1ba88263d45d49cdb847927c69f5d9bced92af7246461b3acbab8a15083cf529`，R5失败收据`b798ae57392956d61efecedbdb7e00f81fdecf6438494b733ad435829c9d4e3e`；前者四、后者五私有记录root600。根另fresh primary RO复查R5原before的56张选定表，完整schema、原业务、Auth／权限及元数据投影全相等，回滚关闭，收据`dac569419e6448ffde057e921bb56d251963a2bbd32e5011015490931bacf642`。
