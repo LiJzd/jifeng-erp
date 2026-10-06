@@ -5,6 +5,7 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 		this.host = host; this.kind = kind; this.sales = kind === "销售客户";
 		this.companyScope = null; this.page = 1; this.pageSize = 100; this.total = this.totalPages = null;
 		this.rows = []; this.revision = this.openRevision = 0; this.disposed = this.opening = false; this.editor = null;
+		this.visible = true; this.openRequest = null;
 		this.statusFilter = "在用";
 		this.fields = [["legacy_number", "编号"], ["legacy_code", "代码"], ["category", "分类"], ["grade", "级别"],
 			...(this.sales ? [["customer_kind", "类型"]] : []), ["display_name", "名称"], ...(this.sales ? [["discount", "折扣"]] : []),
@@ -86,7 +87,7 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 		this.host.append(toolbar, this.limits, this.status, this.scroller, pager); this.renderPager(); this.freezeToolbar();
 	}
 	freezeToolbar() {
-		const locked = !!(this.disposed || this.opening || this.editor);
+		const locked = !!(this.disposed || !this.visible || this.opening || this.editor);
 		this.flags(this.companyControl, { read_only: locked });
 		this.statusSelect.disabled = this.search.disabled = this.queryButton.disabled = locked;
 		this.newButton.disabled = !!(locked || !this.companyScope || !this.readyArchive?.can_write ||
@@ -106,6 +107,7 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 		if (this.settingCompany || this.disposed) return;
 		const desired = this.companyControl.get_value() || null;
 		if (desired === this.companyScope) return;
+		if (this.openRequest) this.cancelOpening();
 		if (this.editor || this.opening) {
 			this.settingCompany = true;
 			try { await this.companyControl.set_value(this.companyScope); } finally { this.settingCompany = false; }
@@ -144,11 +146,11 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 		return Number.isSafeInteger(value) && value > 0 ? value : null;
 	}
 	current(sequence, args) {
-		return !this.disposed && sequence === this.revision && args.kind === this.kind && args.company === this.companyScope &&
+		return !this.disposed && this.visible && sequence === this.revision && args.kind === this.kind && args.company === this.companyScope &&
 			args.company === (this.companyControl.get_value() || null) && args.search === this.search.value && args.status === this.statusFilter;
 	}
 	async query(target = 1) {
-		if (this.disposed || this.editor || this.opening) return;
+		if (this.disposed || !this.visible || this.editor || this.opening) return;
 		this.syncCompany(); const page = this.pageNumber(target);
 		if (!this.companyScope || !page) { this.revision++; this.clearResults(); this.status.textContent = __(!this.companyScope ? "请选择当前公司。" : "请输入有效页码。"); return; }
 		const args = { kind: this.kind, company: this.companyScope, search: this.search.value, status: this.statusFilter, page, page_size: this.pageSize };
@@ -214,33 +216,47 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 	}
 	async openNew() { if (this.newButton.disabled) return; return this.open(null); }
 	async openExisting(name) { this.syncCompany(); if (!this.rows.some((row) => row.name === name)) return; return this.open(name); }
+	openCurrent(request) {
+		return !this.disposed && this.visible && this.openRequest === request && request.revision === this.openRevision &&
+			request.company === this.companyScope && (this.settingCompany || request.company === (this.companyControl.get_value() || null));
+	}
+	cancelOpening() {
+		const request = this.openRequest; this.openRequest = null; this.opening = false; this.openRevision++;
+		if (request?.state?.initializing) this.closeEditor(request.state);
+		this.freezeToolbar();
+	}
 	async open(name) {
-		if (this.disposed || this.opening || this.editor) return;
+		if (this.disposed || !this.visible || this.opening || this.editor) return;
 		this.syncCompany(); if (!this.companyScope) return;
-		const company = this.companyScope, sequence = ++this.openRevision; this.opening = true; this.freezeToolbar();
+		const company = this.companyScope, request = { company, revision: ++this.openRevision, state: null };
+		this.openRequest = request; this.opening = true; this.freezeToolbar();
 		try {
 			const response = await this.call(name ? "read_archive" : "init_archive", { kind: this.kind, company, ...(name ? { name } : {}) });
-			if (this.disposed || sequence !== this.openRevision || company !== this.companyScope || !this.settingCompany && company !== (this.companyControl.get_value() || null)) return;
+			if (!this.openCurrent(request)) return;
 			if (!this.validArchive(response.message, company, name)) throw new Error("Wrong customer archive scope");
-			await this.buildEditor(response.message);
+			await this.buildEditor(response.message, request);
 		} catch {
-			if (this.editor && !this.editor.closed) this.closeEditor();
-			if (!this.disposed && sequence === this.openRevision) this.status.textContent = __("客户档案未能打开，请核对权限后重试。");
-		} finally { if (sequence === this.openRevision) this.opening = false; this.freezeToolbar(); }
+			const current = this.openCurrent(request);
+			if (request.state) this.closeEditor(request.state);
+			if (current) this.status.textContent = __("客户档案未能打开，请核对权限后重试。");
+		} finally {
+			if (this.openRequest === request) { this.openRequest = null; this.opening = false; this.freezeToolbar(); }
+		}
 	}
 	requestID() { return crypto.randomUUID(); }
 	editorCurrent(state) {
 		return !this.disposed && !state.closed && this.editor === state && state.company === this.companyScope &&
 			(this.settingCompany || state.company === (this.companyControl.get_value() || null));
 	}
-	async buildEditor(archive) {
+	async buildEditor(archive, request) {
+		if (!this.openCurrent(request)) return;
 		const dialog = new frappe.ui.Dialog({ title: __(this.sales ? "客户档案" : "订单客户"), size: "large", no_submit_on_enter: true,
 			fields: [{ fieldname: "customer_editor", fieldtype: "HTML" }] });
 		dialog.$wrapper.addClass("jfe-customer-dialog");
 		const state = { dialog, archive, company: archive.company, controls: {}, customerControls: {}, dictionaryRevisions: {}, dictionaryVersions: {}, dictionaryNames: {},
-			busy: false, unknown: false, closed: false, setting: false, customerRevision: 0, customerVersion: archive.customer_version,
+			busy: false, unknown: false, closed: false, setting: false, initializing: true, customerRevision: 0, customerVersion: archive.customer_version,
 			requestId: archive.name ? null : this.requestID(), candidate: null, conflict: null };
-		this.editor = state; this.freezeToolbar();
+		request.state = state; this.editor = state; this.freezeToolbar();
 		const body = dialog.fields_dict.customer_editor.$wrapper.get(0), form = this.element("div", undefined, "jfe-customer-editor-fields");
 		state.message = this.element("p");
 		for (const [field, label] of this.fields) {
@@ -273,8 +289,9 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 		footer.append(state.newButton, state.saveButton, state.closeButton, state.resolveButton, state.adoptButton);
 		body.append(this.element("p", __("当前公司") + "：" + state.company), state.message, form, state.dictionaryStatus, native,
 			this.element("p", __("编号自动预填，以保存结果为准。")), state.review, footer);
-		this.guardClose(state); await this.applyArchive(state, archive);
-		if (!this.editorCurrent(state)) { this.closeEditor(); return; }
+		this.guardClose(state); await this.applyArchive(state, archive, () => this.openCurrent(request) && this.editorCurrent(state));
+		if (!this.openCurrent(request) || !this.editorCurrent(state)) { this.closeEditor(state); return; }
+		state.initializing = false;
 		dialog.show();
 	}
 	guardClose(state) {
@@ -288,15 +305,20 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 		state.dialog.on_hide = () => { state.closed = true; this.invalidateEditor(state); if (this.editor === state) this.editor = null; this.freezeToolbar(); };
 	}
 	invalidateEditor(state) { state.customerRevision++; for (const field of Object.keys(this.dictionaryTypes)) state.dictionaryRevisions[field] = (state.dictionaryRevisions[field] || 0) + 1; }
-	async applyArchive(state, archive) {
+	async applyArchive(state, archive, stillCurrent = () => this.editorCurrent(state)) {
+		if (!stillCurrent()) return;
 		state.archive = archive; state.customerVersion = archive.customer_version; this.invalidateEditor(state); state.setting = true;
 		state.sourceMode = archive.name || !archive.can_create_customer ? "existing" : "create";
 		state.dictionaryVersions = { ...archive.dictionary_versions }; state.dictionaryValues = { ...archive.dictionary_values }; state.dictionaryNames = {};
 		try {
-			for (const [field, control] of Object.entries(state.controls)) await control.set_value(archive.profile[field] ?? "");
-			await state.customerControl.set_value(archive.profile.customer ?? "");
-			await state.modeControl.set_value(state.sourceMode === "create" ? "新建业务客户" : "关联已有客户");
-			for (const [field, control] of Object.entries(state.customerControls)) await control.set_value(archive.customer_defaults[field] ?? "");
+			for (const [field, control] of Object.entries(state.controls)) {
+				await control.set_value(archive.profile[field] ?? ""); if (!stillCurrent()) return;
+			}
+			await state.customerControl.set_value(archive.profile.customer ?? ""); if (!stillCurrent()) return;
+			await state.modeControl.set_value(state.sourceMode === "create" ? "新建业务客户" : "关联已有客户"); if (!stillCurrent()) return;
+			for (const [field, control] of Object.entries(state.customerControls)) {
+				await control.set_value(archive.customer_defaults[field] ?? ""); if (!stillCurrent()) return;
+			}
 		} finally { state.setting = false; }
 		state.displayed = Object.fromEntries(Object.entries(state.controls).map(([field, control]) => [field, control.get_value()]));
 		for (const field of Object.keys(this.dictionaryTypes)) state.dictionaryNames[field] = state.controls[field].get_value() || "";
@@ -402,9 +424,12 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 		state.confirming = false; this.freeze(state);
 		if (yes && this.editorCurrent(state)) { await action(); return true; } return false;
 	}
-	closeEditor() {
-		const state = this.editor; if (!state || state.closed) return;
-		state.closed = true; this.invalidateEditor(state); state.nativeHide(); this.editor = null; this.freezeToolbar();
+	closeEditor(state = this.editor) {
+		if (this.openRequest && (!state || this.openRequest.state === state)) this.cancelOpening();
+		if (!state || state.closed) return;
+		state.closed = true; this.invalidateEditor(state); state.nativeHide?.();
+		if (this.editor === state) this.editor = null;
+		this.freezeToolbar();
 	}
 	payload(state) {
 		const values = this.values(state), result = { kind: this.kind, company: state.company, profile: {}, dictionary_versions: {} };
@@ -508,9 +533,22 @@ window.JifengCustomerArchive = class JifengCustomerArchive {
 			try { await this.accept(state, row, "已采用服务器当前值；未重复保存。"); } finally { state.busy = false; if (!state.closed) this.freeze(state); }
 		}, () => { state.confirming = false; if (!state.closed) this.freeze(state); });
 	}
+	setVisible(value) {
+		if (this.disposed || this.visible === !!value) return;
+		this.visible = !!value;
+		if (!this.visible) {
+			const opening = this.openRequest; this.revision++;
+			// Only an unfinished opening is discarded. Existing drafts and
+			// save/receipt recovery keep their original ownership and close guard.
+			this.cancelOpening();
+			if (!this.editor) this.status.textContent = __(opening ? "打开已取消，请重新选择档案。" : "页面已离开，请重新查询。");
+		}
+		this.freezeToolbar();
+	}
 	destroy() {
 		if (this.disposed) return;
 		this.disposed = true; this.revision++; this.openRevision++; this.permissionRevision = (this.permissionRevision || 0) + 1;
+		this.openRequest = null; this.opening = false;
 		window.removeEventListener?.("beforeunload", this.beforeUnload); this.closeEditor(); this.clearResults(); this.host.replaceChildren();
 	}
 	dispose() { this.destroy(); }

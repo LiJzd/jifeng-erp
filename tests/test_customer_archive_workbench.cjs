@@ -1,6 +1,7 @@
 // Scoped reads, explicit native sources and unknown-write recovery; no browser/DB/network.
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 const calls = [], confirms = [], messages = [];
+let controlPause;
 class Element {
 	constructor(tag = "div") { this.tag = tag; this.children = []; this.events = new Map(); this.attributes = {}; this.value = ""; this._text = ""; this.scrollTop = this.scrollLeft = 0; this.classList = { add() {} }; }
 	set textContent(value) { this._text = String(value); this.children = []; }
@@ -22,6 +23,7 @@ const frappe = { ui: { Dialog, form: { make_control({ df }) {
 	return { df, value: null, refresh() {}, get_value() { return this.value; }, async set_value(value) {
 		this.value = df.fieldtype === "Data" && typeof value === "string" ? value.replace(/[\r\n]/g, "") : value;
 		await df.onchange?.();
+		if (controlPause?.field === df.fieldname) { const pause = controlPause; controlPause = null; await pause.promise; }
 	} };
 } } }, call(options) { let resolve, reject; const pending = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ options, resolve: (message) => resolve({ message }), reject }); return pending; },
 	confirm(message, yes, no) { confirms.push({ message, yes, no }); }, msgprint(message) { messages.push(message); } };
@@ -58,6 +60,7 @@ function archive({ name = "PROFILE-A", company = "Company A", kind = "销售客�
 const copy = (value) => JSON.parse(JSON.stringify(value));
 function page(call, rows, total = rows.length) { return { ...call.options.args, rows, total, total_pages: Math.ceil(total / call.options.args.page_size), readonly: true }; }
 async function tick() { await new Promise(setImmediate); }
+function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 async function bench(kind = "销售客户", capability = {}) {
 	const value = new window.JifengCustomerArchive(new Element(), kind); await value.ready;
 	const pending = value.companyControl.set_value("Company A");
@@ -206,10 +209,88 @@ async function completePaginationAndClamp() {
 	assert.equal(value.total, 0); assert.equal(value.page, 1); assert.equal(value.pageLabel.textContent, "0/0"); value.destroy();
 }
 
+async function pendingOpenNavigation(kind) {
+	const value = await bench(kind); await list(value);
+	const old = value.openExisting("PROFILE-A"), oldCall = calls.at(-1);
+	assert.equal(value.opening, true); value.setVisible(false);
+	assert.equal(value.opening, false); assert.equal(value.editor, null);
+	assert.match(value.status.textContent, /打开已取消/);
+	const hiddenCalls = calls.length; await value.openNew(); assert.equal(calls.length, hiddenCalls);
+	value.setVisible(true);
+	const latest = value.openNew(), latestCall = calls.at(-1);
+	oldCall.resolve(archive({ kind })); await old;
+	assert.equal(value.editor, null); assert.equal(value.opening, true, "old finally cannot unlock the new opening");
+	latestCall.resolve(archive({ name: null, kind })); await latest;
+	assert.equal(value.editor.archive.name, null); assert.equal(value.editor.dialog.hidden, false);
+	value.closeEditor();
+	const closed = value.openNew(), closedCall = calls.at(-1); value.closeEditor();
+	const reopened = value.openExisting("PROFILE-A"), reopenedCall = calls.at(-1);
+	closedCall.resolve(archive({ name: null, kind })); await closed;
+	assert.equal(value.opening, true); reopenedCall.resolve(archive({ kind })); await reopened;
+	assert.equal(value.editor.archive.name, "PROFILE-A"); value.destroy();
+}
+
+async function pendingListNavigation() {
+	for (const fails of [false, true]) {
+		const value = await bench(), pending = value.query(), old = calls.at(-1);
+		assert.match(value.status.textContent, /正在查询/); value.setVisible(false); value.setVisible(true);
+		assert.match(value.status.textContent, /请重新查询/); assert.equal(value.queryButton.disabled, false);
+		if (fails) old.reject(new Error("stale query failed")); else old.resolve(page(old, [archive({ writable: false })]));
+		await pending; assert.equal(value.rows.length, 0); assert.match(value.status.textContent, /请重新查询/);
+		await list(value); assert.equal(value.rows.length, 1); assert.match(value.status.textContent, /查询完成/); value.destroy();
+	}
+}
+
+async function pendingOpenCompanyABA() {
+	const value = await bench(), old = value.openNew(), oldCall = calls.at(-1);
+	const away = value.companyControl.set_value("Company B"), awayCall = calls.at(-1);
+	const back = value.companyControl.set_value("Company A"), backCall = calls.at(-1);
+	backCall.resolve(archive({ name: null })); await back;
+	awayCall.resolve(archive({ name: null, company: "Company B" })); await away;
+	oldCall.resolve(archive({ name: null })); await old;
+	assert.equal(value.companyScope, "Company A"); assert.equal(value.editor, null); assert.equal(value.opening, false);
+	const state = await create(value); assert.equal(state.dialog.hidden, false); value.destroy();
+}
+
+async function initializingEditorNavigation() {
+	for (const fails of [false, true]) {
+		const value = await bench(), pause = deferred(); controlPause = { field: "legacy_number", ...pause };
+		const old = value.openNew(); calls.at(-1).resolve(archive({ name: null })); await tick();
+		const stale = value.editor; assert.equal(stale.initializing, true); assert.equal(stale.dialog.hidden, true);
+		value.setVisible(false); assert.equal(stale.closed, true); assert.equal(value.editor, null);
+		value.setVisible(true); const current = await create(value);
+		if (fails) pause.reject(new Error("stale control initialization failed")); else pause.resolve();
+		await old;
+		assert.equal(value.editor, current, "stale build/catch must not close the current editor");
+		assert.equal(current.dialog.hidden, false); assert.equal(stale.dialog.hidden, true); value.destroy();
+	}
+	const value = await bench(), pause = deferred(); controlPause = { field: "legacy_number", ...pause };
+	const failed = value.openNew(); calls.at(-1).resolve(archive({ name: null })); await tick();
+	pause.reject(new Error("current control initialization failed")); await failed;
+	assert.equal(value.editor, null); assert.equal(value.opening, false); assert.match(value.status.textContent, /未能打开/);
+	const retried = await create(value); assert.equal(retried.dialog.hidden, false); value.destroy();
+}
+
+async function hiddenDraftAndUnknownRecovery() {
+	const value = await bench(), state = await create(value); await state.controls.display_name.set_value("保留的合成客户");
+	const draft = copy(value.payload(state)), saving = value.save(state), post = calls.at(-1);
+	value.setVisible(false); value.setVisible(true);
+	assert.equal(value.editor, state); assert.equal(state.closed, false); assert.equal(state.busy, true);
+	post.reject(new Error("transport result unknown")); await saving;
+	assert.equal(state.unknown, true); assert.deepEqual(copy(value.payload(state)), draft);
+	const writes = calls.filter((call) => call.options.type === "POST").length;
+	const resolving = value.resolve(state), receipt = calls.at(-1); value.setVisible(false);
+	receipt.resolve({ status: "found", archive: saved(state) }); await resolving; value.setVisible(true);
+	assert.equal(value.editor, state); assert.equal(state.unknown, false); assert.equal(state.archive.name, "PROFILE-A");
+	assert.equal(calls.filter((call) => call.options.type === "POST").length, writes); value.destroy();
+}
+
 async function main() {
 	await observedFieldsAndSafeRows("销售客户"); await observedFieldsAndSafeRows("订单客户");
 	await capabilitiesAndExplicitSource(); await scopeAndDictionaryRaces(); await sourceResponseRaceAndScopeRejection();
 	await unknownCreationRecovery(); await creationReceiptAndEditedProfile(); await completePaginationAndClamp();
-	console.log("Customer archive models passed: observed 19/17 fields and 16 columns, safe dictionary text, native capabilities/explicit links, leaf pickers, Company/customer/dictionary races, profile-only edits, dirty close and no repeated POST after unknown results.");
+	await pendingOpenNavigation("销售客户"); await pendingOpenNavigation("订单客户"); await pendingOpenCompanyABA();
+	await pendingListNavigation(); await initializingEditorNavigation(); await hiddenDraftAndUnknownRecovery();
+	console.log("Customer archive models passed: observed 19/17 fields and 16 columns, native capabilities/explicit links, Company/customer/dictionary races, pending open/navigation/ABA ownership, stale control initialization, dirty drafts and unknown-write recovery without repeated POST.");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
