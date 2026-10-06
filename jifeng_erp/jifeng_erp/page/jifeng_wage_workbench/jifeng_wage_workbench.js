@@ -63,7 +63,7 @@ class JifengWageWorkbench {
         }
         this.controls.employee.get_query = () => ({ filters: { company: this.value("company"), status: "Active" } });
         this.controls.salary_component.get_query = () => ({ filters: { type: "Earning", disabled: 0 } });
-        this.controls.company.set_value(frappe.defaults.get_user_default("Company") || "");
+        this.companyReady = this.controls.company.set_value(frappe.defaults.get_user_default("Company") || "");
         this.root.addEventListener("dblclick", event => {
             const field = event.target.closest("[data-wage-field]")?.dataset.wageField;
             if (field === "employee") this.guard(() => this.nameDoubleClick());
@@ -112,6 +112,11 @@ class JifengWageWorkbench {
     }
     async choosePieceWorker(company, employee) {
         if (this.selectionBusy || this.is_dirty()) { frappe.msgprint("请先保存或核对当前工资草稿，再选择计件人员。"); return false; }
+        if (this.companyReady) {
+            try { await this.companyReady; }
+            catch { frappe.msgprint("默认公司尚未核实，请核对公司后重试人员选择。"); return false; }
+            if (this.selectionBusy || this.is_dirty()) return false;
+        }
         const previous = { company: this.value("company"), employee: this.value("employee") };
         const locked = ["company", "employee"].map(field => ({
             control: this.controls[field], readOnly: this.controls[field].df.read_only,
@@ -140,6 +145,11 @@ class JifengWageWorkbench {
         if (!row || row.company !== company || row.status !== "Active" || !row.name ||
                 !row.employee_version || !row.supplement_version) {
             frappe.msgprint("临工名单已失效，请重新查询后选择。"); return false;
+        }
+        if (this.companyReady) {
+            try { await this.companyReady; }
+            catch { frappe.msgprint("默认公司尚未核实，请核对公司后重试人员选择。"); return false; }
+            if (this.selectionBusy || this.is_dirty()) return false;
         }
         const previous = { company: this.value("company"), employee: this.value("employee") };
         const args = { company, employee: row.name,

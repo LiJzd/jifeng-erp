@@ -125,6 +125,29 @@ async function main() {
         interrupted.value("company") === "C-1" && interrupted.value("employee") === "E-1" && !interrupted.selectionBusy,
         "changing selector during asynchronous company refill restores the original clean selection");
 
+    for (const mode of ["piece", "temporary"]) {
+        const initializing = workbench(); let finishCompany, reads = 0;
+        initializing.companyReady = new Promise(resolve => { finishCompany = resolve; });
+        frappe.call = async options => { reads++; return { message: { ...options.args, eligible: true } }; };
+        const select = () => mode === "piece" ? initializing.choosePieceWorker("C-2", "E-2") :
+            initializing.chooseTemporaryWorker("C-2", temporaryRow);
+        const first = select(), second = select();
+        check(reads === 0, `${mode} qualification waits for the native initial Company validation`);
+        initializing.controls.company.set_value("C-DEFAULT"); finishCompany();
+        const results = await Promise.all([first, second]);
+        check(results.filter(Boolean).length === 1 && reads === 1 && initializing.value("company") === "C-2" &&
+            initializing.value("employee") === (mode === "piece" ? "E-2" : "TEMP-1"),
+            `${mode} snapshots stable initial values and serializes parallel choices`);
+        const changedDraft = workbench(); let finishDraftCompany, changedReads = 0;
+        changedDraft.companyReady = new Promise(resolve => { finishDraftCompany = resolve; });
+        frappe.call = async options => { changedReads++; return { message: { ...options.args, eligible: true } }; };
+        const late = mode === "piece" ? changedDraft.choosePieceWorker("C-2", "E-2") :
+            changedDraft.chooseTemporaryWorker("C-2", temporaryRow);
+        changedDraft.rows = [{}]; finishDraftCompany();
+        check(await late === false && changedReads === 0 && changedDraft.value("employee") === "E-1",
+            `${mode} cannot overwrite a draft created while initialization was pending`);
+    }
+
     const unknown = workbench();
     unknown.rows = [{ quantity: 0, hours: 1, hourly_rate: 10, flow_order: "", job_card: "" }];
     const calls = [];
