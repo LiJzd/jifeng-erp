@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 外网普通账号13请求与产品验收前置继续
+
+`frontend-archive-habits-public-functional-https-20261007-r1`根全文审161行diff、12冻结文件、5继承函数和全部finally AST保持，另查实际f07库存／客户backend的page_size1及total_pages契约后唯一执行PASS。现存非Administrator账号只正常登录一次、正常CSRF退出一次，没有改密码、用户、角色或业务。13次实际可信TLS同HTTPS socket DIRECT请求依次覆盖登录／身份、A/B两个页面的39版本URL出现、三变动CSS／JS完整正文SHA与字节、准确actor公司四类档案GET查询、退出及fresh Guest403；12次200、1次403。原连接前／中／后及每64KiB检查保留，系统／env／WinHTTP／Mihomo TUN观察前后记录；不清代理环境、不回退、不重登或重放。根独立重读13条DIRECT／trusted_tls、4契约门、3资源及正常退出Guest证据。
+
+四查询（物料、材料、销售客户、订单客户）均为全部状态／空关键词／page1／page_size1，准确公司、total／total_pages／rows等完整契约通过，但均total0／rows0，没有保存，也未观察公网真实GUI。39资源只是页面URL出现数，实际完整资源GET仅3份：库存CSS、客户JS、库存列表JS；不据此称39资源HTTP或非空档案验收。helper`3e8d18205ae6822b89fc7603f0893334e69ced91f9669dc27b4b5e734ae661fb`、freeze`9c8dd083757bc7877b0e591ba3336a02bf72684933ae9ce61d0060689682e2e8`、结果`e293d4252a8a0260475dfc84fe307a3f0b2d23c8237154336be764087af3b200`。原已消费发布/匿名RO回执不改。
+
+本机产品普通岗位资格此前在旧worker roster门停止、SQL0且账号事实null。根审新`product-archive-export-ordinary-process-owner-refresh-20261007-r1`10冻结文件、8继承函数AST和完整差异后唯一refresh PASS；943 owner来源pins、633完整源码／元数据、45资产、原master／unit／数据服务／socket保持，二次完整新成员观察原字节相同，仅新owner的Web roster替换，原891 owner永久不改。五私有记录root600，root独立核943pins／非Web／全其它owner字段／原观察字节通过；没有重启、native、SQL、HTTP或资格测试。新owner`1a711b49f94bd8baae70f4ea51eeded6d472d7addd8b0d91ee3b51bbd8e24c43`，receipt`b217c4ad22a174c174eb5dfd87916c66818010e3f734276b502b9292856e8478`，helper`93af1dabfacd09dd37a1b46dc03f72952e6c2bc4ba04e3a23f87622cfa9ef934`。资格R2另绑定实际收据，不重放R1；实际普通岗位、105已保存产品XLSX及GUI仍待。所有旧模块正式目标、367入口分类继续；以下保留各阶段时点。
+
 ## 2026-10-07 f07界面候选实际外网发布与独立复核
 
 `frontend-archive-habits-public-deploy-20261007-r1`根全文审四helper差异、27文件＋2payload冻结、准确来源／资产集合，独立核6 driver／11 host／9 native继承函数AST保持。仅3生产前端＋2已有模型，相对0e610另598来源／36版本URL保持，39路径及顺序保持。基线绑定实际fresh 6f2和actual upload 422收据；八核心服务和九配置按旧成熟shape准确投影，running来自fresh原guard，历史容器明确notcovered，没有伪造旧状态。
