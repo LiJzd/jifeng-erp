@@ -145,9 +145,40 @@ def install():
     _install_wage_source_permissions()
     _install_wage_reversal_permissions()
     _install_separation_permissions()
+    _install_receipt_export_permission()
     from jifeng_erp.desktop_entry import repair_legacy_desktop_entry
 
     repair_legacy_desktop_entry()
+
+
+def _install_receipt_export_permission():
+    """Install the stock supervisor receipt export default on a fresh site."""
+    from frappe.permissions import update_permission_property
+    from jifeng_erp.receipt_export_permissions import same_permission_rules, stock_receipt_export_policy
+
+    doctype = "Purchase Receipt"
+    native_meta = frappe.get_meta("DocPerm")
+    custom_meta = frappe.get_meta("Custom DocPerm")
+    native_flags = {df.fieldname for df in native_meta.fields if df.fieldtype == "Check"}
+    custom_flags = {df.fieldname for df in custom_meta.fields if df.fieldtype == "Check"}
+    if native_flags != custom_flags:
+        return {"status": "permission_schema_requires_review", "doctype": doctype}
+    fields = ("role", "permlevel", *sorted(native_flags))
+    native = frappe.get_all("DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    custom = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    status, desired = stock_receipt_export_policy(native, custom, fields=fields)
+    if status != "install_default":
+        return {"status": status, "doctype": doctype}
+
+    # The native API clones every original rule and saves just this flag. Its
+    # CustomDocPerm lifecycle clears the native permission cache. The caller
+    # owns the transaction and deployment journal; this function never commits.
+    update_permission_property(doctype, "Stock Manager", 0, "export", 1, validate=False)
+    current = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    unchanged = frappe.get_all("DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    if not same_permission_rules(current, desired, fields=fields) or not same_permission_rules(unchanged, native, fields=fields):
+        frappe.throw("收货单导出权限安装结果不一致，请回滚本次权限安装后检查。")
+    return {"status": "installed", "doctype": doctype, "role": "Stock Manager", "permission": "export"}
 
 
 def _install_wage_source_permissions():
