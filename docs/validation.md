@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 工资分类R8停止与命名规则诊断
+
+R8 continuation经根完整差异及独立源码审阅后封存：helper `3a2402b1ceb9ce990f893f2dbaa0b3bf5269d13f9817ba2cfe689bac81db4d88`、manifest `a83fbcdb8dc8b44257d2a18865b6be39ed1ec9e3dcdebd5a1e98dfb6db3febe0`、freeze `f3e2cb3c9a42d57d96267623e8156c4c3b93c487c496978251d3f838bcdaa586`，118冻结文件／95输入逐摘要保持。新命名空间唯一执行，在`old_metadata_full_definition_identity_held`停止，失败收据`36caa87792d4c87d3627ef359b7da482764f5ade1d108a67e096688812b1b19b`。只继承R7受控停止和636来源，没有重复换源、停Web或app_hooks失效；八记录root600，没有DDL、commit或搜索意图记录，未重放或自动恢复。
+
+根另唯一正常保存诊断在首条父DocType DML前始终拒绝执行，只经过准确六项元数据读锁和原生校验器；正常flags恢复、rollback及物理连接关闭后，fresh56完整schema／业务／授权／元数据与R7原before前后相等，636来源、受控停Web、非Web服务及队列保持。收据`9462b4cd01a6f0c1d6803d62175ae4145f3d4938d33436d81a54d19b32ad386f`。诊断使用READ WRITE事务进行原生读取，不称为只读事务、安装或业务验收；实际DML、DDL、commit均0。
+
+唯一父定义差异是`naming_rule`原NULL变为`Expression (old style)`，准确来自冻结原生`patch_old_naming_expressions`对既有`format:JF-WAGE-{YYYY}-{#####}`表达式的处理，原autoname保持。R9仅准备准确这一项维护和Version parent changed；原／只读preflight投影仍保持NULL，其他旧定义、源JSON及migration hash公式不扩张。五新增字段及列尚未安装，Web继续受控停止；公网f07、外网A/B及共享测试数据未改。QA HR Manager账号和普通岗位回滚包只有源码准备，不能将失败收据作为成功安装owner。
+
 ## 2026-10-07 工资分类代码已换入，本地元数据维护待继续
 
 根全文审阅R7差异、109冻结文件／94输入摘要及独立审阅后，唯一执行R7安装。原生只读预检通过，Web由该操作停止，9份代码成功换入，636来源／45资产及627份原文件完整元数据保持，app_hooks准确失效一次；失败收据`c6b0e9b012f5d98c4b0d19bfe544b8a5136f8d77b960fe4da60796cfe55c3bcc`。正常DocType.save在读取旧字段时被准确锁查询门拒绝；没有DDL、commit或搜索写入意图记录，未自动回退、重新启动或重放。
