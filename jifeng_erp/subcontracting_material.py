@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 import frappe
 
 from jifeng_erp.subcontracting import _column, _order_items, _orders, _readable_documents, _scope
+from jifeng_erp.ledger_source_guard import LedgerSourceGuard
 from jifeng_erp.sample_source_queries import check_protected_reference
 
 
@@ -18,7 +19,7 @@ def _transfer_quantity(row):
     return qty
 
 
-def material_movements(orders, selected_items, entries, rm_item_code=None, supplier=None):
+def material_movements(orders, selected_items, entries, rm_item_code=None, supplier=None, *, guard=None):
     """Resolve each native material row before applying finished-good filters."""
     supplied = {row.name: row for order in orders.values() for row in order.get("supplied_items")}
     all_items = {row.name: row for order in orders.values() for row in order.get("items")}
@@ -56,6 +57,8 @@ def material_movements(orders, selected_items, entries, rm_item_code=None, suppl
                 continue
             qty = _transfer_quantity(row)
             selected = selected_items[item.name]
+            if guard and selected.get("jf_flow_order"):
+                guard.document(frappe.get_doc("Jifeng Flow Order", selected["jf_flow_order"]))
             check_protected_reference("Jifeng Flow Order", selected.get("jf_flow_order"), company=entry.company)
             result.append({
                 "company": entry.company, "posting_date": entry.posting_date,
@@ -80,12 +83,14 @@ def material_movements(orders, selected_items, entries, rm_item_code=None, suppl
 
 
 def subcontracting_material_ledger(filters=None):
-    filters, start, end = _scope(filters, ("Stock Entry", "Subcontracting Order"))
+    guard = LedgerSourceGuard("subcontracting_material")
+    filters, start, end = _scope(filters, ("Stock Entry", "Subcontracting Order"), guard=guard)
     if filters.rm_item_code:
-        if not frappe.get_list("Item", filters={"name": filters.rm_item_code},
+        if not guard.query("get_list", "Item", filters={"name": filters.rm_item_code},
                                pluck="name", limit_page_length=1):
             frappe.throw("没有读取所选委外原料的权限", frappe.PermissionError)
-        frappe.get_doc("Item", filters.rm_item_code).check_permission("read")
+        item = guard.document(frappe.get_doc("Item", filters.rm_item_code))
+        item.check_permission("read")
     query = {"company": filters.company, "docstatus": 1,
              "posting_date": ["between", [str(start), str(end)]]}
     if filters.subcontracting_order:
@@ -94,17 +99,17 @@ def subcontracting_material_ledger(filters=None):
         query["subcontracting_order"] = ["is", "set"]
     entries = _readable_documents("Stock Entry", {
         **query, "purpose": "Send to Subcontractor", "is_return": 0,
-    })
+    }, guard=guard)
     entries.update(_readable_documents("Stock Entry", {
         **query, "purpose": "Material Transfer", "is_return": 1,
-    }))
+    }, guard=guard))
     names = {entry.subcontracting_order for entry in entries.values()}
     # Check every visible movement's source first. Supplier filtering belongs to
     # the resolved source Order, not Stock Entry's optional supplier field.
     source_filters = frappe._dict({**filters, "supplier": None})
-    orders = _orders(source_filters, names=names, complete=True)
+    orders = _orders(source_filters, names=names, complete=True, guard=guard)
     selected_items = _order_items(orders, filters)
-    rows = material_movements(orders, selected_items, entries, filters.rm_item_code, filters.supplier)
+    rows = material_movements(orders, selected_items, entries, filters.rm_item_code, filters.supplier, guard=guard)
     columns = [
         _column("posting_date", "记账日期", "Date"),
         _column("posting_time", "记账时间", "Time", width=100),
@@ -128,4 +133,5 @@ def subcontracting_material_ledger(filters=None):
         _column("supplied_item", "来源原料明细", width=165),
         _column("stock_entry_detail", "本行明细", width=165),
     ]
+    guard.finish()
     return columns, rows

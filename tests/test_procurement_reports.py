@@ -5,8 +5,9 @@ import pathlib
 import sys
 import types
 import unittest
+import fixture_adapter
 from decimal import Decimal
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 
 class Record(dict):
@@ -20,42 +21,6 @@ class Record(dict):
 
 class TestProcurementReports(unittest.TestCase):
     def setUp(self):
-        self.frappe = types.ModuleType("frappe")
-        self.frappe._dict = Record
-        self.frappe.PermissionError = PermissionError
-
-        def throw(message, error=ValueError):
-            raise error(message)
-
-        self.frappe.throw = throw
-        utils = types.ModuleType("frappe.utils")
-        utils.cint = lambda value: int(value or 0)
-        scope = types.ModuleType("jifeng_erp.inventory_scope")
-        scope.column = lambda field, label, kind="Data", options=None, width=130: {
-            "fieldname": field, "label": label, "fieldtype": kind, "options": options}
-
-        def decimal_number(value):
-            result = Decimal(str(value if value not in (None, "") else 0))
-            if not result.is_finite():
-                raise ValueError("有限数字")
-            return result
-
-        scope.decimal_number = decimal_number
-        scope.report_scope = Mock(side_effect=lambda filters, doctypes: (
-            Record(filters or {}), (filters or {})["from_date"], (filters or {})["to_date"]))
-        scope.readable_documents = Mock(side_effect=self.readable)
-        scope.selected_warehouses = Mock(side_effect=lambda filters: {"GROUP": ["MAIN", "REJECT"]}.get(
-            filters.warehouse, [filters.warehouse]))
-        self.frappe.get_list = Mock(side_effect=lambda doctype, filters, **kwargs: list(self.candidates(doctype, filters, visible=True)))
-        self.frappe.get_doc = Mock(side_effect=lambda doctype, name: self.documents[doctype][name])
-        self.frappe.get_all = Mock(side_effect=self.get_all)
-        self.frappe.db = types.SimpleNamespace(get_value=Mock(return_value="CNY"))
-        path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "procurement_reports.py"
-        with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.utils": utils,
-                                    "jifeng_erp.inventory_scope": scope}):
-            spec = importlib.util.spec_from_file_location("procurement_reports_under_test", path)
-            self.module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(self.module)
         self.hidden, self.full_denied = set(), set()
         self.filters = Record(company="JF", from_date="2026-09-01", to_date="2026-09-30")
         self.request_row = Record(name="MRI-1", idx=1, item_code="RAW", item_name="原料", stock_uom="Kg",
@@ -85,6 +50,8 @@ class TestProcurementReports(unittest.TestCase):
             "Jifeng Flow Order": {"FLOW": Record(name="FLOW", company="JF", item_code="FG",
                                                 materials=[Record(item_code="RAW", uom="Box")])},
         }
+
+        fixture_adapter.procurement(self)
 
     def candidates(self, doctype, query, visible=False):
         def matches(doc):

@@ -6,6 +6,7 @@ import frappe
 from frappe.utils import cint, date_diff, getdate, today
 
 from jifeng_erp.sample_source_queries import check_protected_reference
+from jifeng_erp.ledger_source_guard import LedgerSourceGuard
 
 
 STATUS_LABELS = {"Draft": "草稿", "Open": "待收回", "Partially Received": "部分收回",
@@ -17,15 +18,20 @@ def _column(field, label, kind="Data", options=None, width=130):
     return {"fieldname": field, "label": label, "fieldtype": kind, "options": options, "width": width}
 
 
-def _scope(filters, doctypes):
+def _scope(filters, doctypes, *, guard=None):
     filters = frappe._dict(filters or {})
     for doctype in doctypes:
         if not frappe.has_permission(doctype, "read"):
             frappe.throw("没有委外单据读取权限", frappe.PermissionError)
     if not filters.company or not filters.from_date or not filters.to_date:
         frappe.throw("请选择公司、开始日期和结束日期")
-    if not frappe.get_list("Company", filters={"name": filters.company}, pluck="name", limit_page_length=1):
+    query = guard.query if guard else lambda method, doctype, **kwargs: getattr(frappe, method)(doctype, **kwargs)
+    if not query("get_list", "Company", filters={"name": filters.company}, pluck="name", limit_page_length=1):
         frappe.throw("没有查看该公司的权限", frappe.PermissionError)
+    if guard:
+        company = guard.document(frappe.get_doc("Company", filters.company), permission="select")
+        if not company.has_permission("select"):
+            frappe.throw("没有查看该公司的权限", frappe.PermissionError)
     start, end = getdate(filters.from_date), getdate(filters.to_date)
     if start > end:
         frappe.throw("开始日期不能晚于结束日期")
@@ -36,18 +42,24 @@ def _scope(filters, doctypes):
         query = {"name": filters[field]}
         if field in ("flow_order", "subcontracting_order"):
             query["company"] = filters.company
-        if not frappe.get_list(doctype, filters=query, pluck="name", limit_page_length=1):
+        names = guard.query("get_list", doctype, filters=query, pluck="name", limit_page_length=1) if guard else frappe.get_list(doctype, filters=query, pluck="name", limit_page_length=1)
+        if not names:
             frappe.throw("没有读取所选委外查询条件的权限", frappe.PermissionError)
-        frappe.get_doc(doctype, filters[field]).check_permission("read")
+        document = frappe.get_doc(doctype, filters[field])
+        if guard:
+            guard.document(document)
+        document.check_permission("read")
     return filters, start, end
 
 
-def _readable_documents(doctype, query, complete=False):
-    names = frappe.get_list(doctype, filters=query, pluck="name", distinct=True, limit_page_length=0)
+def _readable_documents(doctype, query, complete=False, *, guard=None):
+    names = guard.query("get_list", doctype, filters=query, pluck="name", distinct=True, limit_page_length=0) if guard else frappe.get_list(doctype, filters=query, pluck="name", distinct=True, limit_page_length=0)
     result = {}
     for name in names:
         doc = frappe.get_doc(doctype, name)
         if doc.has_permission("read"):
+            if guard:
+                guard.document(doc)
             result[name] = doc
     if complete:
         # This comparison is bounded by already readable source parents. Never return
@@ -58,7 +70,7 @@ def _readable_documents(doctype, query, complete=False):
     return result
 
 
-def _orders(filters, start=None, end=None, names=None, complete=False):
+def _orders(filters, start=None, end=None, names=None, complete=False, *, guard=None):
     query = {"company": filters.company, "docstatus": 1}
     if names is not None:
         if not names:
@@ -70,7 +82,7 @@ def _orders(filters, start=None, end=None, names=None, complete=False):
         query["transaction_date"] = ["between", [str(start), str(end)]]
     if filters.supplier:
         query["supplier"] = filters.supplier
-    result = _readable_documents("Subcontracting Order", query, complete=complete)
+    result = _readable_documents("Subcontracting Order", query, complete=complete, guard=guard)
     if complete and names is not None and set(names) != set(result):
         frappe.throw("无法完整读取已提交委外订单来源，请核对来源或读取权限", frappe.PermissionError)
     return result
@@ -91,19 +103,19 @@ def _order_items(orders, filters):
     return items
 
 
-def _receipt_closure(company, order_items):
+def _receipt_closure(company, order_items, *, guard=None):
     if not order_items:
         return {}
     query = [["Subcontracting Receipt", "company", "=", company],
              ["Subcontracting Receipt", "docstatus", "=", 1],
              ["Subcontracting Receipt Item", "subcontracting_order_item", "in", list(order_items)]]
-    receipts = _readable_documents("Subcontracting Receipt", query, complete=True)
+    receipts = _readable_documents("Subcontracting Receipt", query, complete=True, guard=guard)
     order_names = list({row["subcontracting_order"] for row in order_items.values()})
     receipts.update(_readable_documents("Subcontracting Receipt", [
         ["Subcontracting Receipt", "company", "=", company],
         ["Subcontracting Receipt", "docstatus", "=", 1],
         ["Subcontracting Receipt Item", "subcontracting_order", "in", order_names],
-    ], complete=True))
+    ], complete=True, guard=guard))
     originals = [name for name, doc in receipts.items() if not doc.is_return]
     if originals:
         # A return can have a damaged/missing order link. Include all returns against
@@ -111,7 +123,7 @@ def _receipt_closure(company, order_items):
         returns = _readable_documents("Subcontracting Receipt", {
             "company": company, "docstatus": 1, "is_return": 1,
             "return_against": ["in", originals],
-        }, complete=True)
+        }, complete=True, guard=guard)
         receipts.update(returns)
     return receipts
 
@@ -238,11 +250,12 @@ def _movement(doc, row, order_item, accepted, rejected, loss, source=None):
 
 
 def subcontracting_progress(filters=None):
-    filters, start, end = _scope(filters, ("Subcontracting Order", "Subcontracting Receipt"))
-    orders = _orders(filters, start, end)
+    guard = LedgerSourceGuard("subcontracting_progress")
+    filters, start, end = _scope(filters, ("Subcontracting Order", "Subcontracting Receipt"), guard=guard)
+    orders = _orders(filters, start, end, guard=guard)
     items = _order_items(orders, filters)
     all_items = _order_items(orders, frappe._dict()) if items else {}
-    receipts = _receipt_closure(filters.company, all_items)
+    receipts = _receipt_closure(filters.company, all_items, guard=guard)
     totals = {name: {field: Decimal(0) for field in ("accepted_qty", "rejected_qty", "loss_qty", "returned_qty")} for name in items}
     for movement in receipt_movements(items, receipts, all_items):
         for field in totals[movement["order_item"]]:
@@ -260,6 +273,8 @@ def subcontracting_progress(filters=None):
         overdue = max(date_diff(today(), due), 0) if due and pending > 0 else 0
         if cint(filters.only_pending) and pending <= 0 or cint(filters.only_overdue) and overdue <= 0:
             continue
+        if item.get("jf_flow_order"):
+            guard.document(frappe.get_doc("Jifeng Flow Order", item["jf_flow_order"]))
         check_protected_reference("Jifeng Flow Order", item.get("jf_flow_order"), company=item["company"])
         rows.append({"subcontracting_order": item["subcontracting_order"], "order_item": name,
                      "transaction_date": item["transaction_date"], "supplier": item["supplier"],
@@ -280,28 +295,30 @@ def subcontracting_progress(filters=None):
         _column("schedule_date", "交期", "Date"), _column("overdue_days", "逾期天数", "Int"),
         _column("order_item", "来源订单明细", width=165),
     ]
+    guard.finish()
     return columns, sorted(rows, key=lambda r: (str(r["schedule_date"] or ""), r["subcontracting_order"], r["order_item"]))
 
 
 def subcontracting_receipt_ledger(filters=None):
-    filters, start, end = _scope(filters, ("Subcontracting Order", "Subcontracting Receipt"))
+    guard = LedgerSourceGuard("subcontracting_receipt")
+    filters, start, end = _scope(filters, ("Subcontracting Order", "Subcontracting Receipt"), guard=guard)
     query = {"company": filters.company, "docstatus": 1,
              "posting_date": ["between", [str(start), str(end)]]}
     if filters.supplier:
         query["supplier"] = filters.supplier
-    selected = _readable_documents("Subcontracting Receipt", query)
+    selected = _readable_documents("Subcontracting Receipt", query, guard=guard)
     originals = {doc.return_against for doc in selected.values() if doc.is_return and doc.return_against}
     source_docs = _readable_documents("Subcontracting Receipt", {
         "name": ["in", list(originals)], "company": filters.company, "docstatus": 1, "is_return": 0,
-    }, complete=True) if originals else {}
+    }, complete=True, guard=guard) if originals else {}
     order_names = {row.subcontracting_order for doc in [*selected.values(), *source_docs.values()]
                    for row in doc.items if row.subcontracting_order and not row.get("secondary_item_type")}
     if filters.subcontracting_order:
         order_names &= {filters.subcontracting_order}
-    orders = _orders(filters, names=order_names, complete=True)
+    orders = _orders(filters, names=order_names, complete=True, guard=guard)
     items = _order_items(orders, filters)
     all_items = _order_items(orders, frappe._dict()) if items else {}
-    receipts = _receipt_closure(filters.company, all_items)
+    receipts = _receipt_closure(filters.company, all_items, guard=guard)
     for doc in selected.values():
         for row in doc.items:
             if row.get("secondary_item_type") or filters.item_code and row.item_code != filters.item_code:
@@ -312,6 +329,8 @@ def subcontracting_receipt_ledger(filters=None):
                 frappe.throw("委外收回或退货缺少订单来源，无法生成订单收回台账，请先核对")
     rows = [row for row in receipt_movements(items, receipts, all_items) if row["receipt"] in selected]
     for row in rows:
+        if row.get("flow_order"):
+            guard.document(frappe.get_doc("Jifeng Flow Order", row["flow_order"]))
         check_protected_reference("Jifeng Flow Order", row.get("flow_order"), company=filters.company)
     columns = [_column("posting_date", "记账日期", "Date"), _column("receipt", "收回/退回单", "Link", "Subcontracting Receipt", 175),
                _column("entry_type", "业务类型", width=110)] + _source_columns() + [
@@ -324,6 +343,7 @@ def subcontracting_receipt_ledger(filters=None):
         _column("source_receipt_item", "原收回明细", width=165), _column("receipt_item", "本行明细", width=165),
         _column("order_item", "来源订单明细", width=165),
     ]
+    guard.finish()
     return columns, rows
 
 

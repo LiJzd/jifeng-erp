@@ -20,7 +20,7 @@ def decimal_number(value):
     return number
 
 
-def report_scope(filters, doctypes):
+def report_scope(filters, doctypes, *, guard=None):
     filters = frappe._dict(filters or {})
     for doctype in doctypes:
         if not frappe.has_permission(doctype, "read"):
@@ -28,8 +28,13 @@ def report_scope(filters, doctypes):
     if not filters.company or not filters.from_date or not filters.to_date:
         frappe.throw("请选择公司、开始日期和结束日期")
     # Stock/Purchase users can select Company without reading its full profile.
-    if not frappe.get_list("Company", filters={"name": filters.company}, pluck="name", limit_page_length=1):
+    query = guard.query if guard else lambda method, doctype, **kwargs: getattr(frappe, method)(doctype, **kwargs)
+    if not query("get_list", "Company", filters={"name": filters.company}, pluck="name", limit_page_length=1):
         frappe.throw("没有查询该公司的权限", frappe.PermissionError)
+    if guard:
+        company = guard.document(frappe.get_doc("Company", filters.company), permission="select")
+        if not company.has_permission("select"):
+            frappe.throw("没有查询该公司的权限", frappe.PermissionError)
     start, end = getdate(filters.from_date), getdate(filters.to_date)
     if start > end:
         frappe.throw("开始日期不能晚于结束日期")
@@ -40,18 +45,24 @@ def report_scope(filters, doctypes):
         query = {"name": filters[field]}
         if field in ("warehouse", "flow_order"):
             query["company"] = filters.company
-        if not frappe.get_list(doctype, filters=query, pluck="name", limit_page_length=1):
+        names = guard.query("get_list", doctype, filters=query, pluck="name", limit_page_length=1) if guard else frappe.get_list(doctype, filters=query, pluck="name", limit_page_length=1)
+        if not names:
             frappe.throw("没有读取所选业务查询条件的权限", frappe.PermissionError)
-        frappe.get_doc(doctype, filters[field]).check_permission("read")
+        document = frappe.get_doc(doctype, filters[field])
+        if guard:
+            guard.document(document)
+        document.check_permission("read")
     return filters, start, end
 
 
-def readable_documents(doctype, query, complete=False):
-    names = frappe.get_list(doctype, filters=query, pluck="name", distinct=True, limit_page_length=0)
+def readable_documents(doctype, query, complete=False, *, guard=None):
+    names = guard.query("get_list", doctype, filters=query, pluck="name", distinct=True, limit_page_length=0) if guard else frappe.get_list(doctype, filters=query, pluck="name", distinct=True, limit_page_length=0)
     documents = {}
     for name in names:
         doc = frappe.get_doc(doctype, name)
         if doc.has_permission("read"):
+            if guard:
+                guard.document(doc)
             documents[name] = doc
     if complete:
         expected = set(frappe.get_all(doctype, filters=query, pluck="name", distinct=True, limit_page_length=0))
@@ -60,18 +71,27 @@ def readable_documents(doctype, query, complete=False):
     return documents
 
 
-def selected_warehouses(filters):
+def selected_warehouses(filters, *, guard=None):
     """Include disabled leaf warehouses with history, never infer hidden children."""
     query = {"company": filters.company, "is_group": 0}
     if filters.warehouse:
         warehouse = frappe.get_doc("Warehouse", filters.warehouse)
+        if guard:
+            guard.document(warehouse, extra=("lft", "rgt") if warehouse.is_group else ())
         warehouse.check_permission("read")
         if warehouse.is_group:
             query.update({"lft": [">", warehouse.lft], "rgt": ["<", warehouse.rgt]})
         else:
             query["name"] = warehouse.name
-    rows = frappe.get_list("Warehouse", filters=query, fields=["name"], limit_page_length=0)
-    return [row.name for row in rows if frappe.get_doc("Warehouse", row.name).has_permission("read")]
+    rows = guard.query("get_list", "Warehouse", filters=query, fields=["name"], limit_page_length=0) if guard else frappe.get_list("Warehouse", filters=query, fields=["name"], limit_page_length=0)
+    result = []
+    for row in rows:
+        document = frappe.get_doc("Warehouse", row.name)
+        if document.has_permission("read"):
+            if guard:
+                guard.document(document)
+            result.append(row.name)
+    return result
 
 
 def stock_items(filters):

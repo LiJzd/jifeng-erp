@@ -5,8 +5,9 @@ import pathlib
 import sys
 import types
 import unittest
+import fixture_adapter
 from decimal import Decimal
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 
 class Row(dict):
@@ -19,22 +20,6 @@ class Row(dict):
 
 class TestSubcontractingMovements(unittest.TestCase):
     def setUp(self):
-        frappe = types.ModuleType("frappe")
-        frappe._dict = Row
-        frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
-        utils = types.ModuleType("frappe.utils")
-        utils.cint = lambda value: int(value or 0)
-        utils.getdate = lambda value: value
-        utils.today = lambda: "2026-09-30"
-        utils.date_diff = lambda *args: 0
-        references = types.ModuleType("jifeng_erp.sample_source_queries")
-        references.check_protected_reference = Mock(return_value=False)
-        with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils,
-                                      "jifeng_erp.sample_source_queries": references}):
-            path = pathlib.Path(__file__).parents[1] / "jifeng_erp/subcontracting.py"
-            spec = importlib.util.spec_from_file_location("subcontracting_test_subject", path)
-            self.report = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(self.report)
         self.order = {"O1": Row(name="O1", subcontracting_order="SCO", item_code="FG", stock_uom="Nos",
                                  company="JF", supplier="SUP", jf_flow_order="FLOW", qty=10, conversion_factor=1)}
         self.row = Row(name="R1", subcontracting_order_item="O1", subcontracting_order="SCO",
@@ -48,6 +33,8 @@ class TestSubcontractingMovements(unittest.TestCase):
                               warehouse="Good", rejected_warehouse="Rejected")
         self.return_doc = self.doc("RETURN", [self.return_row], is_return=1, return_against="SCR")
 
+        fixture_adapter.subcontracting(self)
+
     @staticmethod
     def doc(name, rows, **kwargs):
         return types.SimpleNamespace(name=name, items=rows, company="JF", supplier="SUP", supplier_name="Supplier",
@@ -58,14 +45,7 @@ class TestSubcontractingMovements(unittest.TestCase):
         return self.report.receipt_movements(self.order, {"SCR": self.original, "RETURN": self.return_doc})
 
     def ledger(self, selected=None):
-        filters = Row(company="JF")
-        selected = selected if selected is not None else {"SCR": self.original, "RETURN": self.return_doc}
-        with patch.object(self.report, "_scope", return_value=(filters, "2026-09-01", "2026-09-30")), \
-                patch.object(self.report, "_readable_documents", side_effect=[selected, {"SCR": self.original}]), \
-                patch.object(self.report, "_orders", return_value={}), \
-                patch.object(self.report, "_order_items", return_value=self.order), \
-                patch.object(self.report, "_receipt_closure", return_value={"SCR": self.original, "RETURN": self.return_doc}):
-            return self.report.subcontracting_receipt_ledger(filters)[1]
+        return fixture_adapter.subcontracting_ledger(self, selected)
 
     def test_each_voucher_uses_own_stock_conversion(self):
         rows = self.movements()

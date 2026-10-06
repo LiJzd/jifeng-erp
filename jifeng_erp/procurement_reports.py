@@ -5,6 +5,7 @@ from decimal import Decimal
 import frappe
 from frappe.utils import cint
 
+from jifeng_erp.ledger_source_guard import LedgerSourceGuard, table
 from jifeng_erp.inventory_scope import (
     column, decimal_number, readable_documents, report_scope, selected_warehouses,
 )
@@ -20,7 +21,7 @@ def _exact_document(doctype, name, cache):
         frappe.throw("采购凭证明细缺少可核对的来源，请先核对")
     key = (doctype, name)
     if key not in cache:
-        documents = readable_documents(doctype, {"name": name}, complete=True)
+        documents = readable_documents(doctype, {"name": name}, complete=True, guard=cache.get("ledger_guard"))
         if name not in documents:
             frappe.throw("采购凭证关联的来源不存在，请先核对")
         cache[key] = documents[name]
@@ -61,6 +62,9 @@ def _context(doc, row, cache):
             frappe.throw("采购商品不在流程单商品或物料分析中，请先核对")
         # Analysis can use an alternate purchasing UOM while quantities below
         # use the voucher's stored conversion into the Item's stock UOM.
+        guard = cache.get("ledger_guard")
+        if guard:
+            guard.document(item, tables={"uoms": table("UOM Conversion Detail", {"uom"})})
         units = {item.stock_uom} | {unit.uom for unit in item.get("uoms") or []}
         if materials and not any(material.get("uom") in units for material in materials):
             frappe.throw("流程单物料单位无法与采购商品单位核对，请先核对")
@@ -82,12 +86,13 @@ def _item_match(row, filters):
             and (not filters.flow_order or row.get("jf_flow_order") == filters.flow_order))
 
 
-def _related_parents(doctype, references):
+def _related_parents(doctype, references, guard=None):
     """Find exact child references without hiding candidates behind permissions."""
-    parents = frappe.get_all(doctype + " Item", filters={"docstatus": 1, "parenttype": doctype},
-                            or_filters=references, pluck="parent", distinct=True, limit_page_length=0)
+    query = guard.query if guard else lambda method, doctype, **kwargs: getattr(frappe, method)(doctype, **kwargs)
+    parents = query("get_all", doctype + " Item", filters={"docstatus": 1, "parenttype": doctype},
+                    or_filters=references, pluck="parent", distinct=True, limit_page_length=0)
     return readable_documents(doctype, {"name": ["in", list(set(parents))], "docstatus": 1},
-                              complete=True) if parents else {}
+                              complete=True, guard=guard) if parents else {}
 
 
 def _request_link(request, row):
@@ -140,7 +145,8 @@ def _request_coverage(request, cache):
         return cache[key]
     identities = [item.name for item in request.items]
     references = {"material_request": request.name, "material_request_item": ["in", identities]}
-    orders = _related_parents("Purchase Order", references)
+    guard = cache.get("ledger_guard")
+    orders = _related_parents("Purchase Order", references, guard)
     commitments = {}
     for order in orders.values():
         cache[("Purchase Order", order.name)] = order
@@ -158,11 +164,11 @@ def _request_coverage(request, cache):
     if orders:
         receipt_references.update(purchase_order=["in", list(orders)],
                                   purchase_order_item=["in", [key[1] for key in commitments]])
-    receipts = _related_parents("Purchase Receipt", receipt_references)
+    receipts = _related_parents("Purchase Receipt", receipt_references, guard)
     originals = {name: doc for name, doc in receipts.items() if not doc.is_return}
     if originals:
         returns = readable_documents("Purchase Receipt", {"docstatus": 1, "is_return": 1,
-                                      "return_against": ["in", list(originals)]}, complete=True)
+                                      "return_against": ["in", list(originals)]}, complete=True, guard=guard)
         receipts.update(returns)
     for name, document in receipts.items():
         cache[("Purchase Receipt", name)] = document
@@ -216,11 +222,12 @@ def _request_coverage(request, cache):
 
 
 def purchase_request_ledger(filters=None):
-    filters, start, end = report_scope(filters, ("Material Request",))
-    warehouses = set(selected_warehouses(filters)) if filters.warehouse else None
+    guard = LedgerSourceGuard("purchase_request")
+    filters, start, end = report_scope(filters, ("Material Request",), guard=guard)
+    warehouses = set(selected_warehouses(filters, guard=guard)) if filters.warehouse else None
     documents = readable_documents("Material Request", {"company": filters.company, "docstatus": 1,
-        "material_request_type": "Purchase", "transaction_date": ["between", [str(start), str(end)]]})
-    rows, cache = [], {}
+        "material_request_type": "Purchase", "transaction_date": ["between", [str(start), str(end)]]}, guard=guard)
+    rows, cache = [], {"ledger_guard": guard}
     for doc in documents.values():
         for row in doc.items:
             if not _item_match(row, filters) or warehouses is not None and row.warehouse not in warehouses:
@@ -253,6 +260,7 @@ def purchase_request_ledger(filters=None):
                column("received_qty", "库存已收数量", "Float"),
                column("remaining_qty", "尚未订购数量", "Float"), column("pending_qty", "待采购数量", "Float"),
                column("schedule_date", "需求日期", "Date"), column("request_item", "申请明细", width=175)]
+    guard.finish()
     return columns, sorted(rows, key=lambda row: (str(row["transaction_date"]), row["material_request"], row["idx"]))
 
 
@@ -309,23 +317,25 @@ def _receipt_quantities(doc, row, cache):
 
 
 def purchase_receipt_ledger(filters=None):
-    filters, start, end = report_scope(filters, ("Purchase Receipt",))
-    warehouses = set(selected_warehouses(filters)) if filters.warehouse else None
+    guard = LedgerSourceGuard("purchase_receipt")
+    filters, start, end = report_scope(filters, ("Purchase Receipt",), guard=guard)
+    warehouses = set(selected_warehouses(filters, guard=guard)) if filters.warehouse else None
     query = {"company": filters.company, "docstatus": 1,
              "posting_date": ["between", [str(start), str(end)]]}
     if filters.supplier:
         query["supplier"] = filters.supplier
     if cint(filters.only_returns):
         query["is_return"] = 1
-    documents = readable_documents("Purchase Receipt", query)
+    documents = readable_documents("Purchase Receipt", query, guard=guard)
     # A list-visible return can fail full read due to an inaccessible return_against
     # link. Report an incomplete source rather than silently dropping that return.
-    listed = frappe.get_list("Purchase Receipt", filters=query, pluck="name", distinct=True, limit_page_length=0)
+    listed = guard.query("get_list", "Purchase Receipt", filters=query, pluck="name", distinct=True, limit_page_length=0)
     for name in set(listed) - set(documents):
         if frappe.get_doc("Purchase Receipt", name).is_return:
             frappe.throw("无法读取采购退货或其完整来源，请核对来源读取权限", frappe.PermissionError)
-    currency = frappe.db.get_value("Company", filters.company, "default_currency")
-    cache, rows = {}, []
+    company = guard.document(frappe.get_doc("Company", filters.company), permission="select", extra=("default_currency",))
+    currency = company.default_currency
+    cache, rows = {"ledger_guard": guard}, []
     for doc in documents.values():
         for row in doc.items:
             if not _item_match(row, filters):
@@ -371,6 +381,7 @@ def purchase_receipt_ledger(filters=None):
                column("conversion_rate", "单据汇率", "Float"),
                column("source_receipt", "原采购收货单", "Link", "Purchase Receipt", 185),
                column("source_receipt_item", "原收货明细", width=180), column("receipt_item", "本行明细", width=180)]
+    guard.finish()
     return columns, sorted(rows, key=lambda row: (str(row["posting_date"]), str(row["posting_time"] or ""),
                                                 row["purchase_receipt"], row["idx"]))
 

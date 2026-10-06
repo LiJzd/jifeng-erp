@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-06 财务报告字段保护接入本地源码
+
+已接入r2的五个生产模块及对应测试。相对r1，仅在两份readable_documents及叶仓候选循环中，把guard来源登记后移至原生完整Document.read通过后；普通不完整范围仍整张排除不可读父单，complete来源集合仍有缺失即拒绝，显式所选范围仍按原权限拒绝。数量／金额逻辑保持；Company select、父Table、子parenttype、所需字段及mask、条件单位输入和完成复核保留。根在独立候选和接入仓库后各运行118项模型通过：76旧业务断言、30字段保护、4默认共享scope、8排除／完整来源边界。测试夹具补原生API与父子身份，实际guard／finish执行；不是原生模型证明。
+
+根唯一执行 `native-ledger-field-mask-native-20261006-r2` 实际PASS，结果SHA256 `1b45fabbd9455ed3c349ab44bf6209551117d00012e6dea6600a6cbf12008b1d`。继承已审r1完整只读契约，仅改准确r2路径／manifest／两变动模块pin；两个新进程各一真实mysqlclient Unix连接、SESSION RO先于BEGIN、回滚／destroy／物理关闭通过。五源函数与完整PO／PR文档逐类型精确相等，采购收货1行，其余4报告空；真实原生父Table／子parenttype／字段read与mask正向保持，来源hooks／控制器Mixin／四ContextVar／report aliases均核实。626运行来源／45资产URL／owner1bfa前后保持，尚未安装本机运行或发布公网。此夹具不覆盖native拒绝分支、query_report角色入口、并发或全库冻结；新排除分支由上述实际模型验证，不借r1结果称r2通过。
+
+r2源码manifest SHA256 `7faf9404536dfb4e0feeffcfdc1a3bf203560386ce30371f46398b362d87f39e`，完整差异 `e71492e9788fefca642ada4268b51b1e35482cffac4cffe5faea6bc67da59ab0`，最小兼容修复 `0fe82ee017f44cbb1eefeb6ecd3446c4e375489821b2378f0790618cb5b54495`；原生probe `8af1fee4b7eeb4e5dc57dfc8e44374e81702c2508661bb8853d3484c302137ce`、launcher `2d62cf0e6b78ffcdd6f8cff80f4d46e167f6045d6d5c3aa1439f7fdafd46b5bc`、manifest `b5c4844ed88c2fa39a0143eeb5dc3e7f4e518018dbd13b24c12a23ce4d8919cd`。本夹具基准82次SQL／SQL约0.119秒，候选626次／约0.527秒，各候选源函数约0.54～1.39秒，新增成本不据此推断生产容量或GUI延迟。旧四财务账入口及金额口径仍待；本改动保护现有报告，没有将四账改为正式。
+
+旧站DIRECT r8已唯一实际失败，configs启动阶段安全错误仍是controller_read_failed，连接数0／未DNS或创建浏览器／未登录旧站，listener和socket关闭、根独立CIM核对应profile Chrome0。原guard报告SHA `1656d0efaae78ddb6916a0e62ac451535bd79c3508128360463ecf15964c67d6`，driver `15e85755670799a18c3527d4260a1d55ed7a7071a18814bc977953a116461958`保持。不能确定请求是否发到controller，也没有DIRECT证明；后续只离线修正父子进程固定错误传递，禁止重复实际尝试或代理回退。
+
 ## 2026-10-06 销售原生表单补充验收 A/B 通过
 
 `sales-native-form-ab-gui-20261006-r9` 唯一实际运行 PASS，根复核原报告及准确profile进程：普通用户登录200，两版均从共享销售页读取同一订单摘要／3子行／3流程详情，原生Sales Order准确route、doctype／docname／doc、`is_onload=false`和桥接is-ready同时成立。本侧本阶段六类必要读取均200，Sales Order和Cost Center元数据分别观察；销售共享JS完整HTTP字节准确。A关闭原生标签、B销售面包屑后重开共享入口均通过，本轮回航后未重新查询。正常logout POST200、context关闭，根独立CIM核Chrome为0；无业务保存、提交、mapper或公网变更。业务阻断／capture failure／pageerror／业务HTTP错误均0，既有socket.io及undefined环境404单独保留，不称全页面无错误。
