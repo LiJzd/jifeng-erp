@@ -1,6 +1,22 @@
 # 验证记录
 
-## 2026-10-06 应付查询原生确认事件竞态修复（源码，未同步）
+## 2026-10-06 本机应付确认修复同步与 A／B 查询验收（公开版本未更新）
+
+共享应付确认事件修复 `4681d91832d83e0f5fc2d768612bcc83aea4a78b` 已由 root 完整审阅单文件同步稿后唯一实际同步本机。仅替换供应商应付 JS：新字节 SHA `e2737885012386a47e224e026d0eafe397fdf5f656940494b231fa20e0ff81df`；623 来源中的其余 622 文件及 metadata 保持，44 资源中的其余 43 URL 保持。旧文件私有备份，仅已有 Web 停／启各一次及本站 app_hooks 失效一次，Redis 身份与队列保持；零 SQL／DDL／业务／权限写、零 WAN 传输。本次实际同步回执 SHA `0b7b89429c546cfbe5d3fe76446bdbaa6cb640bdcdffce1c401a8804c70f0809`，新 owner SHA `2cc8ef9bb3a0a3c0e527340b56e39dfe1b3cef3753565cc5b1a14ff1ff2a240a`，完整运行来源 digest `f69d3637aeb323d4fff6fab765c5423badffdc2d799e8222875c681ca6fc672e`。公开测试版本仍为下文 `0e6105d`，本机增量尚未发布。
+
+仅 Luna 子智能体操作浏览器。r17 的准确 AP GET 200／DTO 正确，但 helper 对供应商 wrapper 的定位匹配两节点，未到可见行断言；原运行失败保留，未重放。全新 r18 实际 A 版可见应付查询及采购发票打开／回航重查通过：CNY、原金额 120、已付 40、贷项 0、未付 80。选择原生供应商候选后 36 ms 即查询，查询后的控件仍在 inside_change_event，两次 GET 均返回 200／准确一行；未记录回调完整排序，不扩大为该精确回调排序的证明。
+
+r18 唯一原生付款 mapper 一次，生成可见 `__islocal=1`／`docstatus=0` Pay 草稿；公司／供应商／准确 PI 引用及 paid／allocated 80 匹配，无保存或提交。随后关闭时预期脏稿确认未在十秒内出现，弃稿 UI 结果未确认；正常退出／context 关闭。B 版未执行，报告 SHA `dd71a91e1258b7c6a79dd35e69bb28d067456987a7ed5759fd73fc8ade46a348`。五条原生辅助读取被 helper 拦截，实际参数未留存；pageerror／critical HTTP error 为零。不将这次局部通过称为完整付款流程或两版正式验收。 独立源码审查确认 helper 的 waitNativeFrame 只检查 doc 身份，未等待桥接要求的准确 route／docname 及 cscript.is_onload=false；原生 after_load 在 is_onload 清除前触发，映射中的 closeBlock 会先显示等待提示而不进入脏稿确认。实际报告没有加载状态、桥接阶段、closeBlock 或 __unsaved，故尚不能确定本次原因；__islocal=1 也不能代替原生 is_dirty 证据。
+
+全新 r19 仅 B 版查询／准确 PI 及财务面包屑回航：可见 120／40／0／80、CNY／PI 当前 80 和返回重查均通过，快速选择至查询 56 ms，两次 AP GET 均 200。mapper 请求／创建／保存／提交为零，正常退出并关闭 context。总体保留 failed-closed：POST get_dimensions 的准确唯一参数 `with_cost_center_and_project=true`、POST doc_has_references 的准确 `doctype=Purchase Invoice`／本张 PI 被检查脚本拦截，不能称完整原生加载。实际报告 SHA `c9a26a94d47d7ca9688a7184269e0c10eff8b660abea237715c1742e198c2f33`；r5 after 唯一实际严格 27 全表／身份／来源相等 PASS，物理只读连接关闭，complete SHA `4dc33b41e642bf269209f8faf4892652cbaad4f8d162725059c5ddbd3adc08f9`。两个原生主源函数已独立重读，前者只有维度 SELECT 和静态列表扩展，后者只统计引用；后继检查规则只能接受已证的准确参数，不放开 unreconcile 写方法或其它凭证。
+
+全新 r20 按上述主源及实测参数收紧检查规则，仅放行无参数／准确 true 的维度读取和准确本张 PI 两键引用 count，未放开其它凭证或 unreconcile 写方法；26 项 guard／脱敏检查及静态语法通过。唯一实际 GUI：B 版查询／PI 当前余额／财务面包屑回航及重查均通过，两个 GET 200 和 120／40／0／80 正确；同一 iframe 的原生 Form 路由数组、doctype／docname／doc 身份、`cscript.is_onload=false`、is-ready 均实际记录。mapper 为零，普通账号正常 login／logout 各一次，context 关闭，五项 JS 完整字节准确，pageerror／critical HTTP 为零。总体仍保留 failed-closed，仅剩 GET getdoctype 的 `doctype=Cost Center`／`with_parent=1`／原生缓存时间参数被拦；不能扩大为原生辅助元数据全部通过。实际报告 SHA `a741cf796eef0c809d75938580a5df6813d156219759f4eab2569c8aec3f92e4`。r6 前后各唯一物理只读连接并关闭，27 完整业务表／两身份权限／采购链／销售来源／623 运行来源严格相等，无元数据例外；before record SHA `acef0cb6cf9aa6b7191e92f2b8cbb9e3663f0e651bc7454d2586f44806091826`，实际 after complete SHA `0c8a6e791a6bfa41d08e8d01d1e1d92a7e92ace43c4ab4e9cf62b4138f54bdeb`。本批不再重跑；后继须先核成本中心／项目原生 metadata 规则，付款关闭验证还需准确目标／完整加载与原生 dirty 状态证据。全旧模块正式验收继续待完成。
+
+r4 SQL 前／后各唯一新建一条物理 PyMySQL 连接，SESSION READ ONLY 先于 BEGIN，前后核只读及固定库，finally rollback／关闭。27 张关键业务完整表、两普通身份／角色／UP／公司权限、准确采购链、销售来源及 623 运行来源严格相等，无接受元数据例外；PI／PE／准确引用各一张，未新增持久付款或改变金额。before record SHA `f2e046ca211ef6c3a5bb15289fdbed5f68b5666638c12c71d9b4941a5580537d`，after record SHA `07981069c72703c39333c5de9ab0e55445a96854f63dc7f5b38230958e89875e`，strict comparison SHA `883e19e08a431eb460607ec8fdf6223d9cd07fb8885f9288c4e27a7ab8d64ea5`，实际 after complete SHA `292572fcce70fd3a910b5effe2a4a42abf9b0fb26e9c5a0ef744ef9b824b32bb`。这是所选范围相等，不是全库／Redis 字节冻结；login／session／User 时间戳在范围外。PI 原生表无 _seen 列，r3 未核 schema 而套用 Sales Order 的 _seen 例外，已失败保留并改用全新 r4 严格相等，不修改原生 schema。
+
+销售权限性能候选仅在忽略目录准备，未应用或执行。root 及独立源码审查确认阻断：完整 SO 权限的晚回调可撤销或改变外部 Item／BOM 等来源，而候选早期 pair 后只重新校验 Flow／SO；旧代码会在晚回调后重新读来源，候选可能新增允许路径。必须保留晚阶段新鲜来源门或另行证明真实依赖闭包后才可优化；现有 source_check 调用记录替身不足以证明内容不变。候选补丁 SHA `a0ed87f4feb9d721866111f42cf6e2dc4177b7121c0f9bd77aac100c34e75255`，不宣称性能已改善。
+
+## 2026-10-06 历史应付查询原生确认事件竞态修复（当时仅源码）
 
 r14实际准确query_payables GET公司／供应商／截止日／科目均匹配，00:56:58.425Z发出、00:56:58.679Z因net::ERR_ABORTED结束；最终页面“筛选已变化，请重新查询”、无金额。公司／供应商input和control-value身份准确，mapper／保存／提交0，正常退出／context关闭，阻断／pageerror／critical HTTP0。报告SHA `b3dbb75705791e29edcfd8e65f4ecf6b2968fa564bd73d77ef1e6b4226e0f732`。源码可证Link／Date异步set_model_value后才触发onchange，现有无条件invalidate会取消已经使用相同完整条件发出的查询；该时序不能仅用helper多等解释为产品已正常。
 
