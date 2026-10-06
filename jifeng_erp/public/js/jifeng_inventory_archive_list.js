@@ -6,13 +6,28 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 	}
 	call(method, args) { return frappe.call({ method: "jifeng_erp.inventory_archive_list." + method, args }); }
 	build() {
+		this.mode = "列表模式";
+		this.modeScroll = new Map(["列表模式", "图片模式", "列表图文"].map((mode) => [mode, { top: 0, left: 0 }]));
+		this.modeButtons = new Map();
 		this.fields = [...this.fields, ["$owner", "操作"], ["$creation", "日期"],
 			["$modified_by", "修改人"], ["$modified", "修改日期"], ["$edit", "修改"], ["$delete", "删除"]];
 		super.build();
+		this.views = new Map([["列表模式", this.scroller.firstElementChild],
+			["图片模式", this.element("div", undefined, "jfe-inventory-archive-pictures")],
+			["列表图文", this.element("div", undefined, "jfe-inventory-archive-text-list")]]);
+		for (const [mode, view] of this.views) {
+			view.classList.add("jfe-inventory-archive-view"); view.setAttribute("aria-label", __(this.kind + "档案 · " + mode));
+			if (mode !== "列表模式") this.scroller.append(view);
+		}
+		this.scroller.addEventListener("scroll", () => this.rememberModeScroll());
 		const toolbar = this.host.firstElementChild;
 		toolbar.prepend(this.button("新增", () => this.openEditor(), "primary"));
 		const unavailable = this.element("div", undefined, "jfe-inventory-archive-actions");
-		for (const label of ["图片模式", "列表图文", "导出", "导入", "保存", "更新简拼", "打印"]) {
+		for (const label of ["列表模式", "图片模式", "列表图文", "导出", "导入", "保存", "更新简拼", "打印"]) {
+			if (this.modeScroll.has(label)) {
+				const button = this.button(label, () => this.setMode(label)); this.modeButtons.set(label, button);
+				unavailable.append(button); continue;
+			}
 			if (label === "导出") {
 				this.exportButton = this.button(label, () => this.exportArchives());
 				this.exportButton.title = __("导出当前公司、种类、关键词和状态的全部可见已保存档案；需导出权限。图片列为状态文字，旧导出模板尚未核实。");
@@ -36,7 +51,27 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 		this.statusChoice.addEventListener("change", () => {
 			this.statusFilter = this.statusChoice.value; this.invalidate("档案状态已改变，请查询。");
 		});
-		unavailable.append(this.statusChoice); toolbar.after(unavailable);
+		unavailable.append(this.statusChoice); toolbar.after(unavailable); this.showMode();
+	}
+	rememberModeScroll() {
+		// Empty results during an RPC can clamp the DOM scroll to zero. Keep the saved position until it returns.
+		if (this.total !== null) this.modeScroll.set(this.mode, { top: this.scroller.scrollTop, left: this.scroller.scrollLeft });
+	}
+	restoreModeScroll() {
+		const scroll = this.modeScroll.get(this.mode);
+		this.scroller.scrollTop = scroll.top; this.scroller.scrollLeft = scroll.left;
+	}
+	showMode() {
+		for (const [mode, view] of this.views) view.hidden = mode !== this.mode;
+		for (const [mode, button] of this.modeButtons) button.setAttribute("aria-pressed", String(mode === this.mode));
+	}
+	setMode(mode) {
+		if (this.disposed || !this.modeScroll.has(mode) || mode === this.mode) return;
+		this.rememberModeScroll(); this.mode = mode; this.showMode(); this.renderRows(); this.restoreModeScroll();
+	}
+	invalidate(message) {
+		for (const mode of this.modeScroll.keys()) this.modeScroll.set(mode, { top: 0, left: 0 });
+		super.invalidate(message); this.restoreModeScroll();
 	}
 	freezeExport() {
 		const blocked = !this.companyScope || this.disposed || this.openingEditor || this.exporting;
@@ -50,7 +85,11 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 	cancelExport() {
 		this.exportController?.abort(); this.exportController = null; this.exporting = false; this.freezeExport();
 	}
-	clearResults() { this.cancelExport(); super.clearResults(); this.archiveImporter?.scopeChanged(); }
+	clearResults() {
+		this.cancelExport(); super.clearResults();
+		for (const [mode, view] of this.views) if (mode !== "列表模式") view.replaceChildren();
+		this.archiveImporter?.scopeChanged();
+	}
 	async exportArchives() {
 		if (this.disposed || this.exporting || this.getCloseBlock()) return;
 		this.changeScope();
@@ -90,33 +129,58 @@ window.JifengInventoryArchiveList = class JifengInventoryArchiveList extends win
 	}
 	renderRows() {
 		this.tbody.replaceChildren();
+		for (const [mode, view] of this.views) if (mode !== "列表模式") view.replaceChildren();
 		for (const row of this.rows) {
-			const tr = this.element("tr"); tr.tabIndex = 0; tr.setAttribute("aria-label", __("打开档案"));
-			for (const [field] of this.fields) {
-				const td = this.element("td");
-				if (field === "image") this.imageCell(row.image, td);
-				else if (field === "$edit") td.append(this.button("修改", () => this.openEditor(row.name)));
-				else if (field === "$delete") {
-					const button = this.button("删除", () => {}); button.disabled = true;
-					button.title = __("删除尚未开放，请通过停用保留历史档案。"); td.append(button);
-				} else td.textContent = String((field.startsWith("$") ? row.audit[field.slice(1)] : row.profile[field]) ?? "");
-				tr.append(td);
+			if (this.mode === "列表模式") {
+				const tr = this.element("tr"); this.bindArchiveOpen(tr, row);
+				for (const [field] of this.fields) {
+					const td = this.element("td"); this.archiveCell(row, field, td); tr.append(td);
+				}
+				this.tbody.append(tr);
+			} else {
+				const card = this.element("article", undefined, "jfe-inventory-archive-card"); this.bindArchiveOpen(card, row);
+				const image = this.element("div", undefined, "jfe-inventory-archive-image"); this.imageCell(row.image, image);
+				const content = this.element("div", undefined, "jfe-inventory-archive-content");
+				content.append(this.element("h3", row.profile.display_name ?? row.profile.legacy_number ?? row.name));
+				const fields = this.element("dl", undefined, "jfe-inventory-archive-fields");
+				for (const [field, label] of this.fields) {
+					if (["image", "$edit", "$delete"].includes(field)) continue;
+					const value = this.element("dd"); this.archiveCell(row, field, value);
+					fields.append(this.element("dt", __(label)), value);
+				}
+				const actions = this.element("div", undefined, "jfe-inventory-archive-card-actions");
+				this.archiveCell(row, "$edit", actions); this.archiveCell(row, "$delete", actions);
+				content.append(fields, actions); card.append(image, content); this.views.get(this.mode).append(card);
 			}
-			tr.addEventListener("dblclick", (event) => { if (!event.target?.closest?.("button")) this.openEditor(row.name); });
-			tr.addEventListener("keydown", (event) => {
-				if (event.key === "Enter" && event.target === tr) { event.preventDefault(); this.openEditor(row.name); }
-			});
-			this.tbody.append(tr);
 		}
 	}
+	archiveCell(row, field, target) {
+		if (field === "image") this.imageCell(row.image, target);
+		else if (field === "$edit") target.append(this.button("修改", () => this.openEditor(row.name)));
+		else if (field === "$delete") {
+			const button = this.button("删除", () => {}); button.disabled = true;
+			button.title = __("删除尚未开放，请通过停用保留历史档案。"); target.append(button);
+		} else target.textContent = String((field.startsWith("$") ? row.audit[field.slice(1)] : row.profile[field]) ?? "");
+	}
+	bindArchiveOpen(target, row) {
+		target.tabIndex = 0; target.setAttribute("aria-label", __("打开档案")); target.setAttribute("data-archive-name", row.name);
+		target.addEventListener("dblclick", (event) => { if (!event.target?.closest?.("button")) this.openEditor(row.name); });
+		target.addEventListener("keydown", (event) => {
+			if (event.key === "Enter" && event.target === target) { event.preventDefault(); this.openEditor(row.name); }
+		});
+	}
 	async query(page = 1) {
+		if (this.disposed) return;
+		this.changeScope(); this.rememberModeScroll();
 		const pending = super.query(page);
-		const scope = { revision: this.revision, company: this.companyScope, search: this.search.value,
+		const scope = { revision: this.revision, kind: this.kind, company: this.companyScope, search: this.search.value,
 			status: this.statusFilter, page: this.pageNumber(page) };
 		if (scope.company && scope.page) this.pendingScope = scope;
 		try { await pending; } finally { if (this.pendingScope === scope) this.pendingScope = null; }
-		if (!this.disposed && this.total !== null) this.status.textContent = this.total ?
-			__("查询完成，可点击修改或双击行打开档案。") : __("没有可见记录。");
+		if (this.current(scope.revision, scope) && this.total !== null) {
+			this.restoreModeScroll(); this.status.textContent = this.total ?
+				__("查询完成，可点击修改、双击记录或按回车打开档案。") : __("没有可见记录。");
+		}
 	}
 	async openEditor(name = null) {
 		this.changeScope();
