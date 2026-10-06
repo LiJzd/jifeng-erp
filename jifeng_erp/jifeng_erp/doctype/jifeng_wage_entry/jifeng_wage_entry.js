@@ -13,6 +13,78 @@
     };
     const sourceSnapshot = frm => JSON.stringify([frm.doc.company, frm.doc.employee, frm.doc.operation, frm.doc.stock_uom,
         frm.doc.work_date, frm.doc.piece_rate]);
+    const timestamp = value => {
+        if (typeof value !== "string") return null;
+        const parts = value.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?$/);
+        return parts ? `${parts[1]}T${parts[2]}.${(parts[3] || "").padEnd(6, "0")}` : null;
+    };
+    const closeClassification = frm => {
+        const owner = frm._jifeng_classification_owner;
+        if (!owner) return;
+        frm._jifeng_classification_owner = null;
+        owner.observer?.disconnect();
+        owner.dialog?.hide();
+    };
+    const readClassification = async frm => {
+        const held = frm.doc, name = held.name, version = held.modified;
+        const identity = JSON.stringify([held.company, held.employee, held.docstatus]);
+        if (![1, 2].includes(held.docstatus) || frm.is_new() || frm.is_dirty() || !timestamp(version)) return;
+        closeClassification(frm);
+        const owner = frm._jifeng_classification_owner = { doc: held };
+        const current = () => {
+            if (frm._jifeng_classification_owner !== owner || frm.doc !== held || window.cur_frm !== frm ||
+                frm.is_dirty() || held.name !== name || held.modified !== version ||
+                JSON.stringify([held.company, held.employee, held.docstatus]) !== identity) return false;
+            const route = frappe.get_route();
+            if (route[0] !== "Form" || route[1] !== "Jifeng Wage Entry" || route[2] !== name) return false;
+            const element = frm.wrapper?.[0];
+            if (!element?.isConnected || !element.getClientRects().length) return false;
+            try { return !window.frameElement || !!window.frameElement.getClientRects().length; }
+            catch { return false; }
+        };
+        if (!current()) { closeClassification(frm); return; }
+        // Native forms are also hosted in tabs. Leaving and returning to the
+        // same tab must not revive its previous request or dialog.
+        const watched = new Set();
+        for (const origin of [frm.wrapper[0], window.frameElement]) {
+            for (let node = origin; node?.nodeType === 1; node = node.parentElement) watched.add(node);
+        }
+        owner.observer = new MutationObserver(records => {
+            // An ancestor may be removed and reattached before this callback.
+            // The recorded removal invalidates the old request permanently.
+            const left = records.some(record => record.type === "attributes" ||
+                record.type === "childList" && [...record.removedNodes].some(node => watched.has(node)));
+            if (left && frm._jifeng_classification_owner === owner) closeClassification(frm);
+        });
+        for (const node of watched) owner.observer.observe(node, { childList: true,
+            ...(["BODY", "HTML"].includes(node.tagName) ? {} : { attributes: true, attributeFilter: ["hidden", "style"] }) });
+        try {
+            const response = await frappe.call({ method: "jifeng_erp.wage_personnel_classification.read_classification",
+                type: "GET", silent: true, args: { name, version } });
+            if (!current()) return;
+            const value = response.message;
+            if (!value || value.readonly !== true || value.scope !== "wage_personnel_classification" ||
+                value.name !== name || timestamp(value.version) !== timestamp(version) || value.docstatus !== held.docstatus ||
+                value.classification_basis !== "first_native_submission" ||
+                !["已核实", "档案未记录", "无权核实", "历史未记录"].includes(value.status) ||
+                ![null, "临时", "长期"].includes(value.personnel_type) ||
+                (value.status === "已核实" && (!value.personnel_type || !timestamp(value.recorded_at))) ||
+                (value.recorded_at !== null && !timestamp(value.recorded_at))) throw new Error("invalid classification");
+            const dialog = owner.dialog = new frappe.ui.Dialog({ title: "审核时人员类型", fields: [
+                { fieldname: "status", fieldtype: "Data", label: "核实状态", read_only: 1 },
+                { fieldname: "personnel_type", fieldtype: "Data", label: "人员类型", read_only: 1 },
+                { fieldname: "recorded_at", fieldtype: "Datetime", label: "核实时间", read_only: 1 },
+            ] });
+            dialog.set_values({ status: value.status, personnel_type: value.personnel_type || "未记录",
+                recorded_at: value.recorded_at });
+            dialog.on_hide = () => { if (frm._jifeng_classification_owner === owner) closeClassification(frm); };
+            dialog.show();
+        } catch {
+            if (current()) frappe.msgprint("人员类型读取未完成，请核对原工资和人员档案的读取权限后重试。");
+        } finally {
+            if (frm._jifeng_classification_owner === owner && !owner.dialog) closeClassification(frm);
+        }
+    };
     frappe.ui.form.on("Jifeng Wage Entry", {
         async job_card(frm) {
             const request = frm._jifeng_source_request = (frm._jifeng_source_request || 0) + 1;
@@ -42,6 +114,7 @@
         work_date: clearReference,
         piece_rate: clearReference,
         refresh(frm) {
+            closeClassification(frm);
             frm.set_intro("每单对应一名员工的一道工序。多人计件由主管先审核工资分配；分配生成的计薪记录保持原份额、工价和来源。审核后可生成工资附加项草稿，工资负责人提交后进入工资单。", "blue");
             const allocated = Boolean(frm.doc.wage_allocation);
             if (allocated) for (const field of ["employee", "company", "job_card", "work_order", "flow_order", "operation",
@@ -58,6 +131,9 @@
                     const response = await frm.call("make_additional_salary");
                     frappe.set_route("Form", "Additional Salary", response.message);
                 });
+            }
+            if ([1, 2].includes(frm.doc.docstatus) && !frm.is_new()) {
+                frm.add_custom_button("查看审核时人员类型", () => readClassification(frm), "集沣 ERP");
             }
         },
     });
