@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-10-07 人事岗位与现存测试资料只读核实
+
+根审阅并唯一执行 `wage-classification-ordinary-account-fixture-discovery-20261007-r1`，actual receipt `ac02eaec05dd4dc305ffad2258b869e291b6fa47f1d21c5d62cc60b51bc88b30`。18 个冻结文件及7个继承 utility AST保持；两次 fresh primary Unix READ ONLY查询均回滚关闭，前后记录原字节相等，四记录root600。633来源、45资产、1a owner及实际商品原生验收收据保持，没有密码查询、业务／账号／角色／schema／服务修改。
+
+限定 enabled非Administrator、HR User或HR Manager、排除System Manager的账号集合中，HR User 1、存储规则候选1，HR Manager 0；这是限定集合发现，不是全站账号不存在或普通原生权限通过。准确先前QA seed收据及其两个员工、唯一补充档案、无附件／经历子行的计件资料和无Job Card手工工资草稿均核实；没有读取其它人事业务。授权摘要 `65852384d88f6cdc6081531c1822c925c76f3355af2a11dd61d31bb88205eacd`，QA投影摘要 `a15a69d917c72f77609d1563c11a4d5cf15352b460b5428ea2fa2909f676e0fd`。当前新增五个DocField及物理列均0，分类安装及普通岗位验收待执行；公网f07保持。
+
 ## 2026-10-07 商品完整Excel已通过实际原生只读验收
 
 `product-archive-export-native-readonly-20261007-r1`经根全文审helper、准确继承Audit差异、18冻结文件和7公共函数AST后唯一执行PASS。复用实际发现的现存非Administrator System Manager，原生Company select、Product Profile read/export、Item/File read与完整字段mask通过；该账号有44业务角色，不推作窄权限库存岗位。七门及五后置守卫全部通过，actual receipt `d1df2ab37ba5457053a6ce3de72ba02b1a77f20654c8db8d0023f1027d18481c`，根独立重读原SHA、七门／五守卫和root600记录。
