@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-07 商品完整Excel已通过实际原生只读验收
+
+`product-archive-export-native-readonly-20261007-r1`经根全文审helper、准确继承Audit差异、18冻结文件和7公共函数AST后唯一执行PASS。复用实际发现的现存非Administrator System Manager，原生Company select、Product Profile read/export、Item/File read与完整字段mask通过；该账号有44业务角色，不推作窄权限库存岗位。七门及五后置守卫全部通过，actual receipt `d1df2ab37ba5457053a6ce3de72ba02b1a77f20654c8db8d0023f1027d18481c`，根独立重读原SHA、七门／五守卫和root600记录。
+
+完整105条已保存产品、原生分页100＋5，当前28列XLSX的2968个单元格（含表头）逐格等于直接原生来源；文字格式和字面值保持，没有公式、超链接、外部链接或嵌入图片。完整文件摘要 `19209373164a51bf262043a009fc9a50fc13e071b340503813f509779bd376d8`。相同关键词返回1行／56单元格，空结果返回0行／28表头单元格；原生build_response的文件体、类型与下载响应头和内存XLSX一致，没有持久保存原始文件或DTO。现存Stock Manager＋Item Manager可read而不可export，105条筛选和空结果两次准确PermissionError、零文件体。
+
+20121次原生只读调用、40285次实际session RO证明查询，主连接1＋fresh复核4个物理Unix连接均回滚关闭，业务写入0。限定Profile／Item／File／Company及授权图前后原字节相等，摘要 `ed1d523f05b628d01f8eec23b0e770f9f5fd044ee4f7e8fbd1f8dde1d35e7af1`；633完整来源／元数据、45资产和1a owner保持。helper `f68469bbcae98eb3bece87ac636d61945c023fbc91f3cda8fc3ee728b778086e`、plan `e2fb0a08f13e69e584991aeaaf1d44fc3afcffd849fdda54372a19b6a28728cd`、freeze `04baeaa8adec558bedfc6214f27a189932546946054213f0022e337c01817fa1`。没有种账号、改权限／表结构／业务、HTTP、GUI、服务操作或WAN；不声明全数据库相等。
+
+停用过滤实际调用通过，但当前停用行0，不能据此证明有停用行时的排除；File实际0，真实私有图片绑定／附件读取及下载尚未覆盖。当前28字段不是未知旧模板的验收，原生响应不是浏览器下载。GUI仍需现存准确账号正常登录凭证，不改密码或角色。本机产品增量尚未发布，公网仍f07；工资分类安装和全部旧模块正式可用目标继续，以下保留各阶段时点。
+
 ## 2026-10-07 首次审核人员分类快照源码与表单入口
 
 后端`b671639`本地提交7文件：首次原生工资审核固定类型、核实时间和准确来源；草稿由当前审核岗位重新核实，已审核／取消单保护原值，改单新审核重新取值；旧已审核空快照不补推。类型和来源沿现有permlevel1，未授新角色。普通HR Manager的狭窄历史GET依当前准确Wage／Company／Employee和原Supplement读取及字段mask守门，仅返回原类型和核实时间，不返回来源身份／摘要。准确来源摘要含name＋creation，拒同名重建替代；取消payload省略不可读字段沿服务器原值保留。
