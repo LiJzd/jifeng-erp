@@ -81,6 +81,7 @@ class JifengWageWorkbench {
         this.root.querySelector("[data-wage-save]").addEventListener("click", () => this.guard(() => this.save()));
         this.root.querySelector("[data-wage-check]").addEventListener("click", () => this.guard(() => this.checkResult()));
         this.root.querySelector("[data-wage-records]").addEventListener("click", () => {
+            if (this.selectionBusy) { frappe.msgprint("正在核对人员，请稍后查看工资明细。"); return; }
             if (this.is_dirty()) { frappe.msgprint("请先保存当前录入或核对保存结果，再查看工资明细。"); return; }
             frappe.set_route("List", "Jifeng Wage Entry", { work_date: frappe.datetime.get_today() });
         });
@@ -134,9 +135,61 @@ class JifengWageWorkbench {
             this.selectionBusy = false;
         }
     }
+    async chooseTemporaryWorker(company, row, stillCurrent = () => true) {
+        if (this.selectionBusy || this.is_dirty()) { frappe.msgprint("请先保存或核对当前工资草稿，再选择临工。"); return false; }
+        if (!row || row.company !== company || row.status !== "Active" || !row.name ||
+                !row.employee_version || !row.supplement_version) {
+            frappe.msgprint("临工名单已失效，请重新查询后选择。"); return false;
+        }
+        const previous = { company: this.value("company"), employee: this.value("employee") };
+        const args = { company, employee: row.name,
+            employee_version: row.employee_version, supplement_version: row.supplement_version };
+        const connected = () => this.root.isConnected !== false &&
+            (typeof frappe.get_route !== "function" || frappe.get_route()?.[0] === "jifeng-wage-workbench") &&
+            !(typeof window !== "undefined" && window.frameElement && !window.frameElement.isConnected);
+        if (!connected() || !stillCurrent()) return false;
+        let applied = false;
+        const restore = async () => {
+            if (applied && this.value("company") === company &&
+                    [previous.employee, args.employee].includes(this.value("employee"))) {
+                await this.controls.company.set_value(previous.company);
+                await this.controls.employee.set_value(previous.employee);
+            }
+        };
+        const locked = ["company", "employee"].map(field => ({
+            control: this.controls[field], readOnly: this.controls[field].df.read_only,
+        }));
+        this.selectionBusy = true;
+        for (const { control } of locked) { control.df.read_only = true; control.refresh(); }
+        try {
+            const result = await frappe.call({ type: "GET",
+                method: "jifeng_erp.temporary_workers.select_temporary_worker", args });
+            const selected = result.message;
+            if (!selected?.eligible || Object.entries(args).some(([field, value]) => selected[field] !== value)) {
+                throw new Error("人员选择结果不匹配");
+            }
+            if (!connected() || !stillCurrent() || this.is_dirty()) return false;
+            if (previous.company !== this.value("company") || previous.employee !== this.value("employee")) {
+                frappe.msgprint("公司或姓名已变化，请重新查询临工。"); return false;
+            }
+            applied = true;
+            await this.controls.company.set_value(company);
+            if (!connected() || !stillCurrent()) { await restore(); return false; }
+            await this.controls.employee.set_value(args.employee);
+            if (!connected() || !stillCurrent()) { await restore(); return false; }
+            return true;
+        } catch (error) {
+            await restore();
+            frappe.msgprint("临工资格核对失败，请回到临工名单重新查询。"); return false;
+        }
+        finally {
+            for (const { control, readOnly } of locked) { control.df.read_only = readOnly; control.refresh(); }
+            this.selectionBusy = false;
+        }
+    }
     is_dirty() { return this.rows.length > 0 || this.frozen || this.busy || Boolean(this.activeDialog && this.activeDialog.is_visible); }
     get_close_block() {
-        if (this.selectionBusy) return "正在核对计件人员，请稍后关闭。";
+        if (this.selectionBusy) return "正在核对人员，请稍后关闭。";
         if (this.busy) return "正在保存，请稍后关闭。";
         if (this.frozen) return "保存结果尚未核实，请先核对保存结果再关闭。";
         return "";
@@ -172,7 +225,7 @@ class JifengWageWorkbench {
     }
     async guard(action) {
         try {
-            if (this.selectionBusy) throw new Error("正在核对计件人员，请稍后操作。");
+            if (this.selectionBusy) throw new Error("正在核对人员，请稍后操作。");
             await action();
         }
         catch (error) { if (!error?._server_messages) frappe.msgprint(error.message || "工资操作未完成，请核对提示后重试。"); }
@@ -182,7 +235,7 @@ class JifengWageWorkbench {
         if (!this.value("work_date") || !this.value("payroll_date")) throw new Error("请填写日期和计薪日期。");
     }
     editable() {
-        if (this.selectionBusy) throw new Error("正在核对计件人员，请稍后操作。");
+        if (this.selectionBusy) throw new Error("正在核对人员，请稍后操作。");
         if (this.busy || this.frozen) throw new Error("请先核对当前保存结果，再继续录入。");
         if (this.rows.length && (this.batchPerson.employee !== this.value("employee") || this.batchPerson.company !== this.value("company"))) {
             throw new Error("请先保存当前员工的录入，再更换公司或姓名。");
@@ -398,7 +451,7 @@ class JifengWageWorkbench {
             rows: this.rows.map(({ flow_order, ...row }) => row) };
     }
     async save() {
-        if (this.selectionBusy) throw new Error("正在核对计件人员，请稍后保存。");
+        if (this.selectionBusy) throw new Error("正在核对人员，请稍后保存。");
         if (this.busy) return;
         if (this.frozen) return this.checkResult();
         if (!this.rows.length) throw new Error("请先双击姓名或工序，加入工资明细。");

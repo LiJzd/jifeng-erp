@@ -344,10 +344,10 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		dialog.show();
 	}
 
-	openPersonnel(name) {
+	openPersonnel(name, options = {}) {
 		this.personnelEditor ||= new window.JifengPersonnelArchive(this);
 		// The native RPC displays permission or validation errors.
-		return this.personnelEditor.open(name).catch(() => {});
+		return this.personnelEditor.open(name, options).catch(() => false);
 	}
 
 	openInventory(kind, name, options = {}) {
@@ -361,7 +361,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	}
 
 	async selectPieceWorker(company, employee) {
-		if (this.selectingPieceWorker) return false;
+		if (this.selectingPieceWorker || this.selectingTemporaryWorker) return false;
 		this.selectingPieceWorker = true;
 		try {
 			const key = "formal:工资:工资录入";
@@ -383,7 +383,35 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		} finally { this.selectingPieceWorker = false; }
 	}
 
+	async selectTemporaryWorker(company, row, stillCurrent = () => true) {
+		const validName = value => typeof value === "string" && !!value && value === value.trim() && [...value].length <= 140 && !/[\x00-\x1f\x7f]/.test(value);
+		if (this.selectingTemporaryWorker || this.selectingPieceWorker || typeof stillCurrent !== "function" || !stillCurrent() ||
+			!validName(company) || !row || !validName(row.name) || row.company !== company || row.status !== "Active" ||
+			!["employee_version", "supplement_version"].every(field => typeof row[field] === "string" && /^[0-9a-f]{64}$/.test(row[field]))) return false;
+		const selected = Object.freeze({ ...row }); this.selectingTemporaryWorker = true;
+		try {
+			const key = "formal:工资:工资录入";
+			let entry = this.frames.get(key);
+			const blocked = () => entry && (this.frameCloseBlock(entry.iframe) || this.isDirty(entry.iframe));
+			if (blocked()) { frappe.msgprint(__("请先保存或核对工资录入中的草稿，再选择临工。")); return false; }
+			this.open({ title: "工资录入", module: "工资", kind: "page", route: ["jifeng-wage-workbench"] });
+			entry = this.frames.get(key);
+			if (!entry || await entry.ready === false || !stillCurrent()) return false;
+			const connected = () => this.frames.get(key) === entry && entry.iframe?.isConnected !== false;
+			if (!connected() || blocked()) return false;
+			const child = entry.iframe.contentWindow;
+			await child.frappe.set_route("jifeng-wage-workbench");
+			if (!connected() || !stillCurrent() || blocked() || typeof child.jifeng_wage_workbench?.chooseTemporaryWorker !== "function") return false;
+			return await child.jifeng_wage_workbench.chooseTemporaryWorker(company, selected, () => connected() && stillCurrent()) === true;
+		} catch { frappe.msgprint(__("临工选择未完成，请核对工资草稿、来源或权限后重试。")); return false; }
+		finally { this.selectingTemporaryWorker = false; }
+	}
+
 	mount(host, spec) {
+		if (spec.temporaryWorkers) {
+			const workbench = new window.JifengTemporaryWorkers(host, this, spec.temporaryWorkers);
+			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
+		}
 		if (spec.salesFulfillment) {
 			const workbench = new window.JifengSalesFulfillment(host, this, spec.module || "销售");
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };

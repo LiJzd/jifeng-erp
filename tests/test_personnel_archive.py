@@ -258,6 +258,36 @@ class TestPersonnelArchive(unittest.TestCase):
         self.assertTrue(result["field_meta"]["employee"]["gender"]["reqd"])
         self.assertFalse(result["field_meta"]["histories"]["work_history"]["read_only"])
 
+    def test_temporary_initializer_is_visible_unsaved_and_does_not_change_existing_archive(self):
+        before = self.state()
+        result = self.module.init_archive("JF", term_type="临时")
+        self.assertEqual(result["supplement"]["term_type"], "临时")
+        self.assertEqual(result["employee"]["company"], "JF")
+        self.assertIsNone(result["name"])
+        self.assertFalse(result["field_meta"]["supplement"]["term_type"]["read_only"])
+        self.assertEqual(self.state(), before)
+
+    def test_temporary_initializer_cannot_hide_a_denied_type_or_accept_unknown_type(self):
+        for permission in ("read", "write"):
+            with self.subTest(permission=permission):
+                self.hidden[(self.module.SUPPLEMENT, permission)] = {"term_type"}
+                with self.assertRaises(PermissionError):
+                    self.module.init_archive(term_type="临时")
+                self.hidden.clear()
+        with self.assertRaisesRegex(ValueError, "人员类型"):
+            self.module.init_archive(term_type="Full-time")
+
+    def test_explicit_new_temporary_type_survives_normal_archive_save_without_account_changes(self):
+        initialized = self.module.init_archive("JF", term_type="临时")
+        account_before = deepcopy((self.users, self.user_permissions, self.auth))
+        result = self.module.save_archive({"employee": {"company": "JF", "first_name": "临工",
+            "gender": "Male", "date_of_birth": "1990-01-01", "date_of_joining": "2026-10-01"},
+            "supplement": {"term_type": initialized["supplement"]["term_type"]}})
+        self.assertEqual(result["supplement"]["term_type"], "临时")
+        self.assertEqual(result["employee"]["status"], "Active")
+        self.assertEqual(self.documents[(self.module.SUPPLEMENT, "SUPP-OLD-NAME")]["term_type"], "长期")
+        self.assertEqual((self.users, self.user_permissions, self.auth), account_before)
+
     def test_new_company_is_resolved_before_native_document_create_permissions(self):
         self.default_company, self.denied_companies = "OTHER", {"OTHER"}
         self.assertTrue(self.module.init_archive()["can_write"])

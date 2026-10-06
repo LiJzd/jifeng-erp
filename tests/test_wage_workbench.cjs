@@ -81,6 +81,50 @@ async function main() {
     check(await selection.choosePieceWorker("C-2", "E-2") && selection.value("company") === "C-2" && selection.value("employee") === "E-2",
         "verified clean selection pre-fills exact company and employee");
 
+    const temporaryRow = { name: "TEMP-1", company: "C-2", status: "Active",
+        employee_version: "employee-v1", supplement_version: "supplement-v1" };
+    let temporaryCalls = [];
+    frappe.call = async options => { temporaryCalls.push(options); return { message: { ...options.args, eligible: true } }; };
+    const temporary = workbench();
+    check(await temporary.chooseTemporaryWorker("C-2", temporaryRow) &&
+        temporary.value("company") === "C-2" && temporary.value("employee") === "TEMP-1",
+        "temporary selection uses its own current classification service, independent of piece-pay eligibility");
+    check(temporaryCalls[0].type === "GET" && temporaryCalls[0].method.endsWith("select_temporary_worker") &&
+        Object.keys(temporaryCalls[0].args).sort().join(",") === "company,employee,employee_version,supplement_version",
+        "temporary eligibility is read-only and binds the exact two list versions");
+    const dirtyTemporary = workbench();
+    dirtyTemporary.rows = [{}];
+    check(await dirtyTemporary.chooseTemporaryWorker("C-2", temporaryRow) === false && temporaryCalls.length === 1,
+        "temporary selection cannot overwrite existing manual wage drafts");
+    frappe.call = async options => ({ message: { ...options.args, eligible: true, supplement_version: "new-v2" } });
+    const mismatched = workbench();
+    check(await mismatched.chooseTemporaryWorker("C-2", temporaryRow) === false && mismatched.value("employee") === "E-1",
+        "a changed classification/version reply cannot refill the wage page");
+    for (const kind of ["closed", "list_changed", "person_changed", "route_changed"]) {
+        const delayed = workbench();
+        let finish, current = true;
+        frappe.call = () => new Promise(resolve => { finish = resolve; });
+        const pendingChoice = delayed.chooseTemporaryWorker("C-2", temporaryRow, () => current);
+        if (kind === "closed") delayed.root.isConnected = false;
+        if (kind === "list_changed") current = false;
+        if (kind === "person_changed") delayed.controls.employee.set_value("MANUALLY-CHANGED");
+        if (kind === "route_changed") frappe.get_route = () => ["List", "Jifeng Wage Entry"];
+        finish({ message: { company: "C-2", employee: "TEMP-1", employee_version: "employee-v1",
+            supplement_version: "supplement-v1", eligible: true } });
+        check(await pendingChoice === false && delayed.value("company") === "C-1" &&
+            delayed.value("employee") === (kind === "person_changed" ? "MANUALLY-CHANGED" : "E-1"),
+            `late ${kind} selection does not replace a clean or changed wage page`);
+        delete frappe.get_route;
+    }
+    const interrupted = workbench();
+    let current = true;
+    const setCompany = interrupted.controls.company.set_value;
+    interrupted.controls.company.set_value = async value => { setCompany(value); if (value === "C-2") current = false; };
+    frappe.call = async options => ({ message: { ...options.args, eligible: true } });
+    check(await interrupted.chooseTemporaryWorker("C-2", temporaryRow, () => current) === false &&
+        interrupted.value("company") === "C-1" && interrupted.value("employee") === "E-1" && !interrupted.selectionBusy,
+        "changing selector during asynchronous company refill restores the original clean selection");
+
     const unknown = workbench();
     unknown.rows = [{ quantity: 0, hours: 1, hourly_rate: 10, flow_order: "", job_card: "" }];
     const calls = [];

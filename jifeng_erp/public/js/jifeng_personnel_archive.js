@@ -6,20 +6,34 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 		this.active = new Map();
 	}
 
-	async open(name) {
-		const key = name || "new";
+	archiveKey(name, options = {}) {
+		return name || (options.term_type === "临时" ? "new:临时" : "new") +
+			(options.company ? ":" + options.company : "");
+	}
+
+	async open(name, options = {}) {
+		if (options.stillCurrent && (typeof options.stillCurrent !== "function" || !options.stillCurrent())) return;
+		const key = this.archiveKey(name, options);
 		if (this.active.has(key)) return this.active.get(key).dialog;
 		if (this.opening.has(key)) return this.opening.get(key);
-		const pending = this.load(name).finally(() => this.opening.delete(key));
+		const pending = this.load(name, options).finally(() => this.opening.delete(key));
 		this.opening.set(key, pending);
 		return pending;
 	}
 
-	async load(name) {
+	async load(name, options = {}) {
+		const current = () => !options.stillCurrent ||
+			(typeof options.stillCurrent === "function" && options.stillCurrent());
+		if (!current()) return;
+		const key = this.archiveKey(name, options);
+		const args = name ? { name } : {
+			...(options.company ? { company: options.company } : {}),
+			...(options.term_type ? { term_type: options.term_type } : {}),
+		};
 		const response = await frappe.call({ method: "jifeng_erp.personnel_archive." +
-			(name ? "read_archive" : "init_archive"), args: name ? { name } : {}, freeze: true });
+			(name ? "read_archive" : "init_archive"), args, freeze: true });
 		const archive = response.message;
-		if (!archive) return;
+		if (!archive || !current()) return;
 		const bindings = [];
 		const fields = [{ fieldname: "company_section", fieldtype: "Section Break" }];
 		const meta = archive.field_meta || {};
@@ -107,16 +121,23 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 				})),
 			});
 		}
-		const dialog = new frappe.ui.Dialog({ title: archive.name ? "人事档案" : "新增人事档案",
+		const dialog = new frappe.ui.Dialog({ title: archive.name ? "人事档案" :
+			(archive.supplement?.term_type === "临时" ? "新增临工档案" : "新增人事档案"),
 			size: "extra-large", fields, no_submit_on_enter: true });
 		dialog.$wrapper.addClass("jfe-personnel-editor");
 		const state = { archive, dialog, bindings, tables, saving: false, confirming: false, closed: false };
-		this.active.set(name || "new", state);
+		this.active.set(key, state);
 		this.renderTabs(state);
 		this.guardClose(state);
 		if (archive.can_write) dialog.set_primary_action(archive.name ? "保存" : "新增", () => this.save(state));
 		dialog.add_custom_action(__("关闭"), () => dialog.hide());
 		await dialog.set_values(this.initialValues(state));
+		if (!current()) {
+			state.closed = true;
+			this.active.delete(key);
+			dialog.$wrapper.remove();
+			return;
+		}
 		this.installDictionaries(state);
 		state.original = JSON.stringify(this.payload(state));
 		const beforeUnload = (event) => {
@@ -129,7 +150,7 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 		dialog.on_hide = () => {
 			for (const chooser of state.dictionaryDialogs || []) chooser.hide();
 			window.removeEventListener("beforeunload", beforeUnload);
-			this.active.delete(name || "new");
+			this.active.delete(key);
 		};
 		dialog.show();
 		return dialog;

@@ -16,6 +16,7 @@ window.JifengSalesFulfillment = class {};
 window.JifengSupplierPayables = class {};
 window.JifengInventoryTracking = class {};
 window.JifengFinanceDictionary = class {};
+window.JifengTemporaryWorkers = class {};
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
@@ -109,6 +110,12 @@ assert.equal(shared.availability("订单", "工序"), "partial");
 assert.equal(dispatch(Modern, find("订单", "工序"))[0].spec.orderOperations, true);
 assert.equal(dispatch(Modern, find("订单", "工序"))[0].spec.doctype, "Jifeng Order Operation");
 assert.equal(shared.availability("工资", "历史"), "partial");
+for (const [name, mode] of [["临工档案", "archive"], ["临工浏览", "browse"], ["临工", "wage"], ["临工明细", "details"]]) {
+	assert.equal(shared.availability("工资", name), "partial");
+	const modern = dispatch(Modern, find("工资", name))[0].spec;
+	assert.equal(modern.temporaryWorkers, mode);
+	assert.equal(modern.availability, "partial");
+}
 assert.equal(dispatch(Modern, find("工资", "历史"))[0].spec.salaryHistory, true);
 assert.equal(shared.availability("工资", "历史分析"), "preview", "old departmental/group/operation charts cannot be the wage report");
 for (const [module, name, flag] of [["物料", "采购履行核对", "procurementFulfillment"], ["材料", "采购履行核对", "procurementFulfillment"], ["销售", "销售履行核对", "salesFulfillment"], ["财务", "供应商应付核对", "supplierPayables"], ["物料", "跟踪", "inventoryTracking"], ["材料", "跟踪", "inventoryTracking"]]) {

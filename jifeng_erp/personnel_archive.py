@@ -207,7 +207,9 @@ def _pack(employee, supplement, unscoped_init=False):
 
 
 @frappe.whitelist()
-def init_archive(company=None):
+def init_archive(company=None, term_type="长期"):
+    if term_type not in ("长期", "临时"):
+        frappe.throw("请选择有效的人员类型")
     employee, supplement = frappe.new_doc(EMPLOYEE), frappe.new_doc(SUPPLEMENT)
     employee.status, employee.user_id, employee.create_user_automatically = "Active", None, 0
     employee.company = None
@@ -217,8 +219,13 @@ def init_archive(company=None):
         employee.company = supplement.company = company
     _permission(employee, "create", role_only=not company)
     _permission(supplement, "create", role_only=not company)
-    supplement.term_type, supplement.wage_method = "长期", None
-    return _pack(employee, supplement, unscoped_init=not company)
+    supplement.term_type, supplement.wage_method = term_type, None
+    archive = _pack(employee, supplement, unscoped_init=not company)
+    if term_type == "临时":
+        field = archive["field_meta"]["supplement"].get("term_type")
+        if not archive["can_write"] or not field or field["read_only"]:
+            frappe.throw("没有新增临工档案人员类型的权限", frappe.PermissionError)
+    return archive
 
 
 @frappe.whitelist()

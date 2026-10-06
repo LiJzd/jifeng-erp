@@ -59,6 +59,30 @@ function fixture() {
 }
 
 async function main() {
+	const cache = new window.JifengPersonnelArchive({ frames: new Map() });
+	const loaded = [];
+	cache.load = async (name, options) => { loaded.push({ name, ...options }); return { name, ...options }; };
+	const longDraft = { title: "existing long-term draft" };
+	cache.active.set("new", { dialog: longDraft });
+	assert.equal(await cache.open(), longDraft);
+	await cache.open(undefined, { term_type: "临时", company: "C-1" });
+	await cache.open(undefined, { term_type: "临时", company: "C-2" });
+	assert.equal(loaded.length, 2, "temporary/company drafts do not replace the existing default draft");
+	assert.equal(loaded[0].term_type, "临时");
+	assert.notEqual(cache.archiveKey(null, loaded[0]), cache.archiveKey(null, loaded[1]));
+	assert.equal(cache.archiveKey("EMP-1", { term_type: "临时" }), "EMP-1",
+		"opening an existing archive uses its identity, never a requested classification");
+	const delayedEditor = new window.JifengPersonnelArchive({ frames: new Map() });
+	const originalCall = frappe.call;
+	let finishRead, current = true, readArgs;
+	frappe.call = (options) => { readArgs = options.args; return new Promise(resolve => { finishRead = resolve; }); };
+	const delayedOpen = delayedEditor.open("EMP-1", { stillCurrent: () => current });
+	current = false;
+	finishRead({ message: { name: "EMP-1" } });
+	assert.equal(await delayedOpen, undefined, "closed or changed selector cannot open a late archive response");
+	assert.equal(delayedEditor.active.size, 0);
+	assert.deepEqual(Object.keys(readArgs), ["name"], "current callback never enters the archive RPC");
+	frappe.call = originalCall;
 	const state = fixture();
 	let payload = editor.payload(state);
 	assert.equal(payload.supplement.legacy_base_salary, 0, "zero is a value");

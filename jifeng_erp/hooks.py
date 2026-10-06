@@ -41,6 +41,7 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_tool_costs.js",
                   "/assets/jifeng_erp/js/jifeng_tool_archive.js",
                   "/assets/jifeng_erp/js/jifeng_wage_rates.js",
+                  "/assets/jifeng_erp/js/jifeng_temporary_workers.js",
                   "/assets/jifeng_erp/js/jifeng_salary_history.js",
                   "/assets/jifeng_erp/js/jifeng_procurement_fulfillment.js",
                   "/assets/jifeng_erp/js/jifeng_sales_fulfillment.js",
