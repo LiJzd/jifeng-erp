@@ -126,6 +126,19 @@ async function main() {
         "changing selector during asynchronous company refill restores the original clean selection");
 
     for (const mode of ["piece", "temporary"]) {
+        const blank = workbench(); let employee = "";
+        // Native Control returns input "" when writable, but undefined for an empty read-only value.
+        blank.controls.employee.get_value = () => blank.controls.employee.df.read_only ? employee || undefined : employee;
+        blank.controls.employee.set_value = next => { employee = next; };
+        frappe.call = async options => ({ message: { ...options.args, eligible: true } });
+        const selected = mode === "piece" ? await blank.choosePieceWorker("C-2", "E-2") :
+            await blank.chooseTemporaryWorker("C-2", temporaryRow);
+        check(selected && blank.value("employee") === (mode === "piece" ? "E-2" : "TEMP-1") &&
+            blank.value("company") === "C-2" && !blank.selectionBusy,
+            `${mode} accepts an unchanged empty employee across the native read-only transition`);
+    }
+
+    for (const mode of ["piece", "temporary"]) {
         const initializing = workbench(); let finishCompany, reads = 0;
         initializing.companyReady = new Promise(resolve => { finishCompany = resolve; });
         frappe.call = async options => { reads++; return { message: { ...options.args, eligible: true } }; };

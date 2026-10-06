@@ -93,7 +93,7 @@ class JifengWageWorkbench {
         this.restorePending();
     }
 
-    value(field) { return this.controls[field].get_value(); }
+    value(field) { return this.controls[field].get_value() ?? ""; }
     requestID() {
         if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
         const bytes = crypto.getRandomValues(new Uint8Array(16));
