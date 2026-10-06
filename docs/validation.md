@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-10-07 产品普通导出账号资格已实际查询
+
+资格R2在读取旧资料时因站点字段位于`sales`子对象而发生KeyError；没有建立SQL连接、账号事实为空，未重放。修正后的R3由根全文审12行差异、15冻结文件及8继承函数AST后唯一执行PASS，绑定实际633源安装、1a711 owner和b217进程观察收据。两个新的物理只读事务查询后均回滚并关闭，资格前后原字节相等，四私有记录root600。结果只证明旧salary资料的准确非Administrator候选在当前站点不存在，不能推断全站没有合格账号；没有读密码、改账号或角色，也没有调用产品导出、HTTP或GUI。
+
+helper`0c115a8c6073a1261620bcbf8f4b6fabca351672ae89a9d5e4b8f8d4dd1bf6fe`、freeze`961794634fedc6f8dac13a2fa591935a391a6263518bf8bb36970154f75bd712`、actual receipt`656574902b51b93f339ae34ced5d3decfc8d80bdb2349bfe359a846dd54887d3`、相等资格观察`2a2154bdbbde43b5d3e9f1f5e4bb9d75a86d5737359910780c234b86770a2905`。实际普通岗位、105已保存产品完整Excel及GUI下载仍待；公网f07和367入口分类保持。
+
 ## 2026-10-07 外网普通账号13请求与产品验收前置继续
 
 `frontend-archive-habits-public-functional-https-20261007-r1`根全文审161行diff、12冻结文件、5继承函数和全部finally AST保持，另查实际f07库存／客户backend的page_size1及total_pages契约后唯一执行PASS。现存非Administrator账号只正常登录一次、正常CSRF退出一次，没有改密码、用户、角色或业务。13次实际可信TLS同HTTPS socket DIRECT请求依次覆盖登录／身份、A/B两个页面的39版本URL出现、三变动CSS／JS完整正文SHA与字节、准确actor公司四类档案GET查询、退出及fresh Guest403；12次200、1次403。原连接前／中／后及每64KiB检查保留，系统／env／WinHTTP／Mihomo TUN观察前后记录；不清代理环境、不回退、不重登或重放。根独立重读13条DIRECT／trusted_tls、4契约门、3资源及正常退出Guest证据。
