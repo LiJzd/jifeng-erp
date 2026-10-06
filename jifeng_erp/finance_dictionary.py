@@ -129,6 +129,16 @@ def _can_create():
                 and (IDENTITY | EDIT_FIELDS).issubset(_columns(DOCTYPE, "create")) and _editable(EDIT_FIELDS))
 
 
+def _can_map_account(document):
+    # Account is intentionally read-only in the ordinary editor. Its independent
+    # mapping endpoint checks write access, without treating read_only as a grant.
+    return bool(document.has_permission("write") and "account" in _columns(DOCTYPE, "write")
+                and frappe.has_permission("Account", "read", throw=False)
+                and frappe.has_permission("Account", "select", throw=False)
+                and ACCOUNT_FIELDS.issubset(_columns("Account"))
+                and "default_currency" in _columns("Company"))
+
+
 def _scope(document, dictionary_type, company):
     if document.company != company.name or document.dictionary_type != dictionary_type:
         frappe.throw("财务词典不属于当前公司和类型")
@@ -143,6 +153,7 @@ def _dto(document):
     result["can_write"] = bool(document.has_permission("write") and EDIT_FIELDS.issubset(_columns(DOCTYPE, "write"))
                                and _editable(EDIT_FIELDS))
     result["can_create"] = _can_create()
+    result["can_map_account"] = _can_map_account(document)
     return result
 
 
@@ -232,13 +243,31 @@ def init_dictionary(dictionary_type, company):
     dictionary_type, company = _context(dictionary_type, company)
     return {"name": None, "modified": None, "company": company.name, "dictionary_type": dictionary_type,
             "legacy_number": "", "value": "", "remarks": "", "inactive": 0, "account": None,
-            "can_write": False, "can_create": _can_create()}
+            "can_write": False, "can_create": _can_create(), "can_map_account": False}
 
 
 @frappe.whitelist(methods=["GET"])
 def read_dictionary(name, dictionary_type, company):
     dictionary_type, company = _context(dictionary_type, company)
     return _dto(_read(name, dictionary_type, company))
+
+
+@frappe.whitelist(methods=["GET"])
+def read_dictionary_account(name, dictionary_type, company):
+    """Read the explicit mapping editor's current source and native Link filters."""
+    dictionary_type, company = _context(dictionary_type, company)
+    entry = _dto(_read(name, dictionary_type, company))
+    if not entry["can_map_account"]:
+        _deny()
+    _fields("Company", {"default_currency"})
+    if not company.default_currency:
+        frappe.throw("请先设置当前公司的本币")
+    filters = {"company": company.name, "account_currency": company.default_currency,
+               "is_group": 0, "disabled": 0,
+               "root_type": "Expense" if dictionary_type == "费用科目" else "Asset"}
+    if dictionary_type != "费用科目":
+        filters["account_type"] = "Bank"
+    return {"entry": entry, "account_filters": filters}
 
 
 @frappe.whitelist(methods=["GET"])

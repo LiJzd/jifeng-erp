@@ -54,7 +54,8 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 	}
 	valid(row, company = this.companyName()) {
 		return !!(row && typeof row.name === "string" && row.name && typeof row.modified === "string" && row.modified && row.company === company && row.dictionary_type === this.type &&
-			typeof row.value === "string" && [0, 1].includes(Number(row.inactive)) && typeof row.can_write === "boolean");
+			typeof row.value === "string" && [0, 1].includes(Number(row.inactive)) && typeof row.can_write === "boolean" &&
+			typeof row.can_map_account === "boolean" && (row.account == null || typeof row.account === "string"));
 	}
 	async query(start = 0) {
 		if (this.disposed) return;
@@ -84,7 +85,7 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 
 	async open(name = null) {
 		if (this.disposed || this.opening) return; this.opening = true;
-		const active = name && [...this.editors].find(s => s.entry.name === name && !s.closed);
+		const active = name && [...this.editors].find(s => s.entry.name === name && s.mode !== "account" && !s.closed);
 		if (active) { active.dialog.show(); this.opening = false; return; }
 		const company = this.companyName(), args = { company, dictionary_type: this.type }; if (name) args.name = name;
 		try {
@@ -107,46 +108,111 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 			this.editors.add(state); state.original = JSON.stringify(this.rowValues(entry));
 			if (writable) dialog.set_primary_action(__("保存"), () => this.save(state));
 			if (entry.can_create) dialog.add_custom_action(__("新增"), () => this.newEntry(state));
+			this.accountAction(state);
 			dialog.add_custom_action(__("核对保存结果"), () => this.resolve(state));
 			dialog.add_custom_action(__("关闭"), () => dialog.hide()); this.guard(state); dialog.show();
 		} catch { if (!this.disposed) frappe.msgprint(__("读取财务资料失败，请重新打开。")); }
 		finally { this.opening = false; }
 	}
+	accountAction(state) {
+		if (state.mode === "account" || state.accountActionAdded || !state.entry.name || !state.entry.can_map_account) return;
+		state.dialog.add_custom_action(__("记账科目关联"), () => this.openAccount(state)); state.accountActionAdded = true;
+	}
+	accountContext(result, company, name) {
+		const filters = result?.account_filters, entry = result?.entry;
+		if (!this.valid(entry, company) || entry.name !== name || !entry.can_map_account || !filters ||
+			filters.company !== company || typeof filters.account_currency !== "string" || !filters.account_currency ||
+			filters.is_group !== 0 || filters.disabled !== 0 || filters.root_type !== (this.type === "费用科目" ? "Expense" : "Asset")) return false;
+		return this.type === "费用科目" ? Object.keys(filters).sort().join(",") === "account_currency,company,disabled,is_group,root_type" :
+			filters.account_type === "Bank" && Object.keys(filters).sort().join(",") === "account_currency,account_type,company,disabled,is_group,root_type";
+	}
+	async openAccount(state) {
+		if (this.disposed || state.closed || state.saving || state.unresolved || state.accountOpening || !state.entry.name || !state.entry.can_map_account) return;
+		if (state.company !== this.companyName()) { frappe.msgprint(__("公司已改变，请从当前公司的查询结果重新打开。")); return; }
+		if (JSON.stringify(this.values(state)) !== state.original) { frappe.msgprint(__("请先保存或放弃资料修改，再设置记账科目关联。")); return; }
+		const active = [...this.editors].find(s => s.mode === "account" && s.entry.name === state.entry.name && !s.closed);
+		if (active) { active.dialog.show(); return; }
+		const company = state.company, name = state.entry.name, scope = this.companyName(), sequence = this.sequence;
+		state.accountOpening = true; this.freeze(state);
+		try {
+			const result = await this.api("read_dictionary_account", { company, dictionary_type: this.type, name });
+			if (this.disposed || state.closed || scope !== this.companyName() || sequence !== this.sequence) return;
+			if (!this.accountContext(result, company, name)) throw Error("Invalid finance mapping context");
+			const entry = result.entry;
+			const dialog = new frappe.ui.Dialog({ title: __("记账科目关联"), no_submit_on_enter: true, fields: [
+				{ fieldname: "company", fieldtype: "Data", label: __("公司"), read_only: 1 },
+				{ fieldname: "dictionary_type", fieldtype: "Data", label: __("类型"), read_only: 1 },
+				{ fieldname: "legacy_number", fieldtype: "Data", label: __("编号"), read_only: 1 },
+				{ fieldname: "value", fieldtype: "Data", label: __("名称"), read_only: 1 },
+				{ fieldname: "account", fieldtype: "Link", options: "Account", label: __("记账科目"),
+					description: __("只设置该词条的记账科目；清空可解除关联，不生成会计凭证。"),
+					get_query: () => ({ filters: { ...result.account_filters } }) }
+			] });
+			await dialog.set_values({ company, dictionary_type: this.type, legacy_number: entry.legacy_number,
+				value: entry.value, ...this.rowValues(entry, "account") });
+			if (this.disposed || state.closed || scope !== this.companyName() || sequence !== this.sequence) return;
+			dialog.$wrapper.addClass("jfe-finance-editor");
+			const mapping = { dialog, entry, company, mode: "account", writable: entry.can_map_account,
+				saving: false, unresolved: false, closed: false, original: JSON.stringify(this.rowValues(entry, "account")) };
+			dialog.set_primary_action(__("保存关联"), () => this.save(mapping));
+			dialog.add_custom_action(__("核对保存结果"), () => this.resolve(mapping));
+			dialog.add_custom_action(__("关闭"), () => dialog.hide()); this.guard(mapping);
+			state.accountOpening = false; this.freeze(state); state.dialog.hide(); this.editors.add(mapping); dialog.show();
+		} catch { if (!this.disposed && !state.closed) frappe.msgprint(__("读取记账科目关联失败，请重新打开。")); }
+		finally { state.accountOpening = false; if (!state.closed) this.freeze(state); }
+	}
 	newEntry(state) {
-		if (state.saving || state.unresolved) { frappe.msgprint(__("保存结果尚未确认，请先核对保存结果。")); return; }
+		if (state.saving || state.unresolved || state.accountOpening) { frappe.msgprint(__("保存结果尚未确认，请先核对保存结果。")); return; }
 		const replace = () => { state.original = JSON.stringify(this.values(state)); state.dialog.hide(); this.open(); };
 		if (JSON.stringify(this.values(state)) !== state.original) frappe.confirm(__("放弃当前未保存修改，新增一条资料？"), replace); else replace();
 	}
 	values(state) {
+		if (state.mode === "account") return { account: state.dialog.get_value("account") || "" };
 		return { legacy_number: state.dialog.get_value("legacy_number") || "", value: state.dialog.get_value("value") || "",
 			remarks: state.dialog.get_value("remarks") || "", inactive: Number(!!state.dialog.get_value("inactive")) };
 	}
-	rowValues(row) {
+	rowValues(row, mode) {
+		if (mode === "account") return { account: row.account || "" };
 		return { legacy_number: row.legacy_number || "", value: row.value || "", remarks: row.remarks || "", inactive: Number(!!Number(row.inactive)) };
 	}
 	payload(state, values = this.values(state)) {
 		return { company: state.company, dictionary_type: this.type, ...values,
 			...(state.entry.name ? { name: state.entry.name, modified: state.entry.modified } : { request_id: state.request_id }) };
 	}
+	version(value) {
+		if (typeof value !== "string") return null;
+		const match = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?$/.exec(value);
+		if (!match) return null;
+		const instant = new Date(match[1] + "T" + match[2] + "Z");
+		if (!Number.isFinite(instant.getTime()) || instant.toISOString().slice(0, 19) !== match[1] + "T" + match[2]) return null;
+		return match[1] + " " + match[2] + "." + (match[3] || "").padEnd(6, "0");
+	}
 	matches(state, row) {
+		if (state.mode === "account") {
+			const previous = this.version(state.entry.modified), current = this.version(row?.modified);
+			return this.valid(row, state.company) && row.name === state.entry.name && previous && current && current > previous && state.attempt &&
+				(row.account || "") === state.attempt.account && JSON.stringify(this.rowValues(row)) === JSON.stringify(this.rowValues(state.entry));
+		}
 		const values = state.attempt; return this.valid(row, state.company) && row.name === (state.entry.name || "JF-FIN-" + state.request_id) &&
 			values && (!state.entry.name || (row.legacy_number || "") === values.legacy_number) && typeof row.legacy_number === "string" && row.legacy_number &&
 			["value", "remarks"].every(field => (row[field] || "") === values[field]) && Number(row.inactive) === values.inactive;
 	}
 	freeze(state) {
-		for (const field of ["value", "remarks", "inactive"]) state.dialog.set_df_property(field, "read_only", !state.writable || state.saving || state.unresolved);
-		state.dialog.get_primary_btn().prop("disabled", !state.writable || state.saving || state.unresolved);
+		const frozen = !state.writable || state.saving || state.unresolved || !!state.accountOpening;
+		for (const field of state.mode === "account" ? ["account"] : ["value", "remarks", "inactive"]) state.dialog.set_df_property(field, "read_only", frozen);
+		state.dialog.get_primary_btn().prop("disabled", frozen);
 	}
 	async accepted(state, row) {
-		state.entry = row; state.writable = !!row.can_write; state.unresolved = false;
-		const values = this.rowValues(row); await state.dialog.set_values(values); state.original = JSON.stringify(values);
+		state.entry = row; state.writable = state.mode === "account" ? row.can_map_account : !!row.can_write; state.unresolved = false;
+		const values = this.rowValues(row, state.mode); await state.dialog.set_values(state.mode === "account" ? { value: row.value, ...values } : values); state.original = JSON.stringify(values);
+		this.accountAction(state);
 		this.query(this.start);
 	}
 	guard(state) {
 		const hide = state.dialog.hide.bind(state.dialog);
 		state.dialog.hide = () => {
 			if (state.closed) return;
-			if (state.saving || state.unresolved) { frappe.msgprint(__("保存结果尚未确认，请先核对保存结果。")); return; }
+			if (state.saving || state.unresolved || state.accountOpening) { frappe.msgprint(__("保存结果尚未确认，请先核对保存结果。")); return; }
 			const close = () => { state.closed = true; this.editors.delete(state); hide(); };
 			if (JSON.stringify(this.values(state)) !== state.original) frappe.confirm(__("尚有未保存的修改，关闭并放弃修改？"), close); else close();
 		};
@@ -155,12 +221,14 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 		state.dialog.$wrapper.on("keydown.finance", e => { if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); state.dialog.hide(); } });
 	}
 	async save(state) {
-		if (!state.writable || state.saving || state.unresolved || state.closed || !state.dialog.get_values()) return;
-		state.attempt = this.values(state); const payload = this.payload(state, state.attempt); state.saving = true;
+		if (!state.writable || state.saving || state.unresolved || state.accountOpening || state.closed || !state.dialog.get_values()) return;
+		state.attempt = this.values(state); const payload = state.mode === "account" ? null : this.payload(state, state.attempt); state.saving = true;
 		try {
 			// Read-only refresh uses each control's cached value, so commit the input values first.
 			await state.dialog.set_values(state.attempt); this.freeze(state);
-			const row = await this.api("save_dictionary", { payload }, "POST");
+			const row = state.mode === "account" ? await this.api("set_dictionary_account", { name: state.entry.name,
+				company: state.company, dictionary_type: this.type, modified: state.entry.modified, account: state.attempt.account || null }, "POST") :
+				await this.api("save_dictionary", { payload }, "POST");
 			if (!this.matches(state, row)) throw Error("Unconfirmed finance save");
 			await this.accepted(state, row); frappe.show_alert({ message: __("已保存"), indicator: "green" });
 		} catch (error) {
@@ -190,7 +258,7 @@ window.JifengFinanceDictionary = class JifengFinanceDictionary {
 			await this.accepted(state, row); frappe.show_alert({ message: __("保存结果已确认"), indicator: "green" });
 		} finally { state.saving = false; this.freeze(state); }
 	}
-	isDirty() { return [...this.editors].some(s => s.saving || s.unresolved || JSON.stringify(this.values(s)) !== s.original); }
+	isDirty() { return [...this.editors].some(s => s.saving || s.unresolved || s.accountOpening || JSON.stringify(this.values(s)) !== s.original); }
 	getCloseBlock() { return this.isDirty() ? "请先保存、核对结果或关闭财务资料编辑窗口。" : ""; }
 	destroy() { this.disposed = true; this.sequence++; window.removeEventListener("beforeunload", this.beforeUnload); for (const state of this.editors) state.dialog.hide(); this.host.replaceChildren(); }
 };

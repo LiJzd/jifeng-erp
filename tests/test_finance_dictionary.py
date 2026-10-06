@@ -158,8 +158,9 @@ class TestFinanceDictionary(unittest.TestCase):
 
     def test_init_and_missing_creation_are_readonly_and_dto_is_complete(self):
         dto = self.module.init_dictionary("费用科目", "JF")
-        self.assertEqual(set(dto), set(self.module.FIELDS) | {"can_write", "can_create"})
+        self.assertEqual(set(dto), set(self.module.FIELDS) | {"can_write", "can_create", "can_map_account"})
         self.assertEqual((dto["legacy_number"], dto["inactive"], dto["account"], dto["can_create"]), ("", 0, None, True))
+        self.assertFalse(dto["can_map_account"], "an unsaved label has no mapping action")
         self.assertIsNone(self.module.read_creation(REQUEST, "费用科目", "JF"))
         self.naming.getseries.assert_not_called()
         self.assertEqual(self.native_calls, [])
@@ -290,6 +291,59 @@ class TestFinanceDictionary(unittest.TestCase):
         self.assertIsNone(cleared["account"])
         with self.assertRaises(ValueError):
             self.module.require_dictionary_account(cleared["name"], "费用科目", "JF")
+
+    def test_mapping_access_is_independent_from_ordinary_edit_fields(self):
+        dto = self.create()
+        self.assertTrue(dto["can_map_account"])
+        self.hidden = {(DOCTYPE, "write"): {"remarks"}}
+        read = self.module.read_dictionary(dto["name"], "费用科目", "JF")
+        self.assertFalse(read["can_write"])
+        self.assertTrue(read["can_map_account"])
+        self.hidden = {(DOCTYPE, "write"): {"account"}}
+        read = self.module.read_dictionary(dto["name"], "费用科目", "JF")
+        self.assertTrue(read["can_write"])
+        self.assertFalse(read["can_map_account"])
+        with self.assertRaises(PermissionError):
+            self.module.read_dictionary_account(dto["name"], "费用科目", "JF")
+        with self.assertRaises(PermissionError):
+            self.module.set_dictionary_account(dto["name"], "费用科目", "JF", dto["modified"], "EXP")
+        self.hidden.clear()
+        self.row_denied.add((DOCTYPE, dto["name"], "write"))
+        self.assertFalse(self.module.read_dictionary(dto["name"], "费用科目", "JF")["can_map_account"])
+
+    def test_mapping_context_contains_exact_native_account_filters_without_writes(self):
+        expense = self.create()
+        bank = self.create(dictionary_type="收款银行", request_id="17764cc5-7aac-48a0-8f0c-a599f180fc4c")
+        calls = deepcopy(self.native_calls)
+        self.frappe.get_list.reset_mock()
+        expense_context = self.module.read_dictionary_account(expense["name"], "费用科目", "JF")
+        self.assertEqual(expense_context, {"entry": expense, "account_filters": {
+            "company": "JF", "account_currency": "CNY", "is_group": 0, "disabled": 0, "root_type": "Expense"}})
+        bank_context = self.module.read_dictionary_account(bank["name"], "收款银行", "JF")
+        self.assertEqual(bank_context["account_filters"], {"company": "JF", "account_currency": "CNY",
+                         "is_group": 0, "disabled": 0, "root_type": "Asset", "account_type": "Bank"})
+        self.frappe.get_list.assert_not_called()
+        self.assertEqual(self.native_calls, calls)
+        for company, kind in (("OTHER", "费用科目"), ("JF", "付款银行")):
+            with self.subTest(company=company, kind=kind), self.assertRaises(ValueError):
+                self.module.read_dictionary_account(expense["name"], kind, company)
+
+    def test_mapping_context_permissions_do_not_block_ordinary_four_field_read(self):
+        dto = self.create()
+        for denied, hidden, masked in (({("Account", "read")}, {}, set()),
+                                     ({("Account", "select")}, {}, set()),
+                                     (set(), {("Account", "read"): {"company"}}, set()),
+                                     (set(), {}, {("Account", "company")}),
+                                     (set(), {("Company", "read"): {"default_currency"}}, set())):
+            with self.subTest(denied=denied, hidden=hidden, masked=masked):
+                self.denied, self.hidden, self.masked = denied, hidden, masked
+                self.assertFalse(self.module.read_dictionary(dto["name"], "费用科目", "JF")["can_map_account"])
+                with self.assertRaises(PermissionError):
+                    self.module.read_dictionary_account(dto["name"], "费用科目", "JF")
+        self.denied, self.hidden, self.masked = set(), {}, set()
+        self.documents["Company", "JF"]["default_currency"] = None
+        with self.assertRaisesRegex(ValueError, "本币"):
+            self.module.read_dictionary_account(dto["name"], "费用科目", "JF")
 
     def test_mapping_wrong_type_company_currency_group_disabled_and_permissions(self):
         dto = self.create()
