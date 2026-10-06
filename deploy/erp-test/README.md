@@ -1,5 +1,16 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-07 当前部署：f07 界面更新及外网复核通过
+
+- [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
+- [B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)
+
+用户授权自行选择可用服务器部署，两套继续使用杭州116.62.241.148及原共享测试库。当前源码为`f07d7be2150913f6509302c4700e5fd5e0599714`，611包文件／603来源／39资源；相对0e610仅客户JS、库存列表JS、库存CSS和两份已有模型改变，598来源及36资源版本保持。不含本机产品导出、销售性能、工资、采购或财务后端增量。
+
+单次直连上传、stage／prepare／quiesce／before／cache（独立fresh verify）／start均实际通过。四部分标准备份仅保留服务器私有目录，完整SQL／结构／索引／原业务及附件图在停服before、cache及verify之间保持；没有schema、角色、用户或业务修改，开放后不承诺数据库冻结。前四层Compose保持，第五层为`/opt/jifeng-erp-test/installs/frontend-archive-habits-public-20261007-r1/compose.frontend-archive-habits.r1.yaml`，仅替换五应用只读来源挂载，已有固定镜像无pull／build，三数据服务身份保持。历史停止容器没有新fresh覆盖，不据此声称验证。
+
+独立发布后新只读复核实际PASS：八核心服务正常，611文件完整字节／模式／属主匹配；五Compose及四配置SHA／元数据前后保持。三次同SSH socket DIRECT与四次可信TLS同HTTPS socket DIRECT通过，ping200/pong、login200、A/B Guest正确跳转登录，连接关闭。回执`98046e06953ac3d977cb07ddcd01c76bb6367839df319ccc93b5b7d4c704a536`。本项没有普通账号登录、39资源HTTP或公网GUI证明；后续普通账号功能检查独立执行。账号见本机受限`output/ERP外网测试账号.private.txt`，当前为测试版，全模块正式验收尚未完成。下文保留各批次当时状态。
+
 ## 2026-10-06 外网测试交接复核
 
 用户明确授权自行选可用服务器部署。既有只读盘点选用杭州 `116.62.241.148` 的独立 ERP 目录和容器项目，原先80／443空闲，其他定时业务保留。当前测试部署仍为下节 `0e6105d`，两入口共用 `jifeng_erp_test` 测试库。

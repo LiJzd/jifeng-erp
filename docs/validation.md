@@ -1,5 +1,19 @@
 # 验证记录
 
+## 2026-10-07 f07界面候选实际外网发布与独立复核
+
+`frontend-archive-habits-public-deploy-20261007-r1`根全文审四helper差异、27文件＋2payload冻结、准确来源／资产集合，独立核6 driver／11 host／9 native继承函数AST保持。仅3生产前端＋2已有模型，相对0e610另598来源／36版本URL保持，39路径及顺序保持。基线绑定实际fresh 6f2和actual upload 422收据；八核心服务和九配置按旧成熟shape准确投影，running来自fresh原guard，历史容器明确notcovered，没有伪造旧状态。
+
+上传唯一PASS，611成员／603来源／8最小Git元数据／39资产，由固定已有镜像内只读UID1000、networknone验证准确Git来源；47次同实际SSH socket DIRECT覆盖两payload前／中／后，没有代理回退或自动重放。回执`4228166aa684c783b71ed488f1349356288c1bd5f6f4a542b1c1177a238f0a09`。根独立核47个真实DIRECT记录、每记录准确一条matched SSH、两payload分块及最终检查。
+
+stage、prepare、quiesce、before、cache（独立fresh verify）、start依次单次actual PASS，DIRECT各37／5／25／17／26／8。stage冻结七控制输入；prepare核服务器真实unpack收据及611完整来源；quiesce仅停止五应用，三数据服务保持；before通过原生标准生成database／configuration／public-files／private-files四部分root600备份，只留服务器。before／cache／fresh verify完整SQL行、schema／索引、附件及配置图相等；cache仅本站app_hooks单键失效，没有DDL、metadata、角色、用户、密码或业务写入。start使用已有固定镜像与前四层Compose，新第五层仅换五应用只读source挂载，新版八服务正常；没有pull／build，也没有下载备份或大图。开放后不把此前停服图相等扩展为数据库一直冻结。
+
+六本机阶段结果SHA依次`b67fd9b656cdab70e9a9342dfd1a8343da8d4da3bba34cf70f3423ec78a8360c`、`f2dfe049c612fb1274f879fbe83ff99e249f85eac74cc15208658c7c34fbff5f`、`9e27b3802e3813603ead1873d363dfabe336a02645f13a527ba80b185d7eb700`、`e096a311ca97e5adce114e6978320111c0fcee0ef99a5335c1cdb1ca862656ad`、`c1c88dcc720050f78ad1e12e5ac56f751ee96b55b33e32bd5b97caa31f32439a`、`ff16aa9884f6d31298ca51fcef0fe673596b06d2abecbfccbb4274962cc76232`；root独立重读各actual PASS／remote exit0摘要，服务器before／cache／start结果分别3e581e／f574bd／16435a。
+
+发布后独立新只读`frontend-archive-habits-public-post-deploy-readonly-20261007-r1`根审56行diff、8冻结文件及6客户端／4远端函数AST保持后唯一执行PASS：f07真实commit/tree与611文件完整字节／模式／所有权、五应用固定镜像／只读新挂载、八核心服务和九配置身份保持。三次同SSH socket DIRECT；四次可信TLS同HTTPS socket DIRECT GET为ping200/pong、login200、A/B Guest301正确跳转登录，全部连接关闭。39资产为manifest核对数，不是39实际HTTP资源请求数；无认证、SQL、业务POST、上传或服务操作。helper`5e2776181832fe81553788031ea132894fbfa21b6ac6e32b21439385ac2a562c`、freeze`da8cd2d4e0c7bdb152c6c02214aa1413d180b222ed0c1a1937b1d915a80952f1`、结果`98046e06953ac3d977cb07ddcd01c76bb6367839df319ccc93b5b7d4c704a536`。本批普通账号、资源正文和公网GUI仍分开验证；产品及本机后端未发布，全部旧模块正式交付目标和367入口分类保持。
+
+本机客户只读GUI由指定Luna执行，A版准确QA公司默认在用／空关键词查询一次返回0行，init三次／read0／save0，普通New初始化能开闭弹层。迟到试验route.fetch后离开／返回同公司，release发生`Route is already handled!`，原body回送不确定，不判迟到保护PASS且未重放；没有现存行读取或B版验证。正常logout确认Guest并关闭上下文。根全文读报告并核2611字节SHA`1041eb34c7479edc887de9cfa4c06a234fa89813554feb9d9ff3b7ea00927431`，`output/customer-archive-visibility-gui-20261007-r1/report.md`。本机ordinary qualification R1在owner前置AssertionError拒绝，namespace未消费、SQL资格查询0、账号事实null，未推断账号不存在，也未重放。新stdlib-only诊断根审6冻结文件并单次执行：仅Web worker roster改变，943 owner pins／633源码／628完整元数据／45资产、master／unit／数据服务／socket全部保持；旧worker不存在，新worker启动更晚且完整合法身份，原因未证明。私有诊断`536a7209d65584a828117be07156d7af67b22a2983804996d26c4fe8edaee930`；没有收编worker、刷新owner或native／SQL／HTTP／服务操作，后续资格与产品导出实际验收继续。下文为当时状态。
+
 ## 2026-10-07 产品本机安装、四范围库存GUI与公网新只读复核
 
 `product-archive-export-local-install-20261007-r1`在库存浏览器正常登出并关闭后唯一执行PASS。根审最终64冻结文件、五份a11722d准确Git blob、13继承函数AST及完整来源／资产集合。630→633，修改产品JS及旧产品CJS两份，新增backend及两份导出测试，另外628来源完整字节和元数据保持；45资产仅产品JS版本URL改变。Web正常停启各1，app_hooks准确单键原生失效1；十个新产品函数、GET注册及已有工资、报告、字段保护和财务绑定通过。限定产品／子表、关联Item／UOM／File、公司及认证权限图fresh before／after原字节相同，无业务、角色、DDL、迁移或元数据安装；不宣称全库相等。实际回环产品JS正文SHA准确。根独立核633完整来源、628完整元数据、旧非受管owner pins、root600回执和保护图通过。
