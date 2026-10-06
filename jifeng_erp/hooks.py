@@ -159,6 +159,7 @@ doc_events = {
     },
     "Jifeng Sample Order": {"before_validate": "jifeng_erp.sample_source_permissions.before_validate_source_binding"},
     "Additional Salary": {"validate": "jifeng_erp.payroll.validate_wage_additional_salary"},
+    "Salary Slip": {"validate": "jifeng_erp.payroll.validate_salary_slip_wage_sources"},
     "Journal Entry": {
         "before_validate": "jifeng_erp.accounting.lock_expense_settlement_references",
         "validate": "jifeng_erp.accounting.validate_expense_journal_entry",

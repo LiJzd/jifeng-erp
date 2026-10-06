@@ -139,6 +139,13 @@ class TestWageJobCardLink(unittest.TestCase):
         self.assertEqual(self.wage.flow_order, "FLOW-1")
         self.assertEqual(self.wage.total_amount, Decimal("10"))
 
+    def test_existing_manual_single_worker_piece_pay_without_job_card_is_preserved(self):
+        self.wage.job_card, self.wage.stock_uom = None, "Nos"
+        self.wage.validate()
+        self.wage.before_submit()
+        self.assertEqual(self.wage.total_amount, Decimal("10"))
+        self.assertIsNone(self.wage.job_card)
+
     def test_unsubmitted_or_unrelated_job_card_cannot_support_pay(self):
         self.wage.validate()
         self.card.docstatus = 0

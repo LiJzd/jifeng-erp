@@ -120,6 +120,9 @@ def install():
     for doctype, additions in sample_custom_fields().items():
         fields.setdefault(doctype, []).extend(additions)
     create_custom_fields(fields, update=True)
+    from jifeng_erp.payroll import install_salary_source_index
+
+    install_salary_source_index()
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
     make_property_setter("Production Plan", None, "track_changes", 1, "Check", for_doctype=True)
