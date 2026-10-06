@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 库存档案三视图及本机同步通过
+
+工程提交`43656338e80b12db651d75775361d3c5736008e4`仅库存档案JS、共享CSS内archive专属选择器及已有CJS模型。双种类三模式复用已核DTO，切换不RPC／改变revision或筛选页码；独立模式滚动、查询中切换、迟到响应、准确ID编辑回航和原草稿／导入／导出owner保持均覆盖。图片只复用imageCell，无其他字段回退；导出仍是全部当前筛选。archive list、catalog workbench、catalog bridge、archive lifecycle、archive import workbench、archive export六组CJS模型，JS／CJS语法和diff检查PASS，根及独立子智能体静态审未见阻断。真实浏览器布局／DOM自然clamp及旧卡面布局未验；367派发分类不变，不能据模型宣称全入口正式验收。
+
+`inventory-archive-view-modes-local-install-20261007-r1`根独立核37冻结文件及两准确Git blob后唯一安装PASS，session65007正常exit0。630→630仅替换该JS和CSS，另628全部字节／元数据保持；45资产路径及顺序保持，2版本URL改变／43保持。Web正常停启各1、准确app_hooks单键失效1；Guest ping及两份实际回环资源正文SHA通过，JS13,315字节、CSS5,781字节。客户dab源码、原资产证明及全部旧非本次替换owner pin保持；原工资、采购报告／缓存、财务／权限来源函数绑定保持。限定业务／角色／UP／索引保护图原字节相等，数据服务／队列身份保持；无业务DML、DDL、元数据安装、迁移、GUI或WAN，未声明全库相等。
+
+helper SHA256 `358003bcd357367700ee42a3769e407b218baba29d03914f91fb4c381242e9d1`，manifest `eabc81b85bc6490d6373214f313abd32db0d744b547df66a2f169d9f4057cf0e`，support `1e00e8276ea42d2afb387bacec81256d61eb8c13c6869a796ed60f6abb8cea61`，freeze `1a670c81b752d9bf30f4c90785411b3c956702195406810951b1957362f160ed`；14公共函数AST与客户PASS基线完全相同，仅inputs／main／source_guard按两源适配。冻结前将清单“unchanged_asset_urls”继承值45修正43，输入门明确2／43，旧draft未执行。安装结果`8518301eacbf4735eff57d1ab056464b18f449fbd20593ba7c57c58c434a7fa4`，当前owner `11726687256f90543982c1e3aa19ebb4d4636da9252e41d913d80624f32f91b4`，源码清单`d47459f9388b018b068599014570caa72c508fa40def70bc5a3ad562641a446c`，资源证明`0e7bbca37018439745879e2f96a073944924d53e6f98acb5a556670ced3716b1`；保护before／after均`d70d93993158ddc15eb38e085e7084b70924e9bd8f037b56c0cc6768ffb5c832`。根独立核630全源、628元数据、927 owner pins、23root600私密记录及以上资源／保护图PASS，无失败记录或重放。公网仍0e610，本增量未发布；下节owner按当时记录理解。
+
 ## 2026-10-07 客户档案离页保护已本机安装
 
 `customer-archive-visibility-local-install-20261006-r1`根审36冻结文件及718534a准确Git blob后唯一安装PASS：630→630仅替换客户档案JS，其余629完整字节／元数据保持；45个app_include资产路径和顺序保持，仅该JS版本URL改为`dab201405cd832b5`。正常Web停启各1次，准确app_hooks单键失效1次；Guest ping及一次实际回环资源读取通过，45,148字节正文SHA与冻结JS相同。现有工资、采购报告／缓存、财务控制器与权限来源函数绑定保持；没有业务DML、DDL、元数据／角色安装或迁移，数据服务及队列身份保持。限定销售业务／角色／UP／原工资索引图before／after原字节相等，不声明全数据库相等。
