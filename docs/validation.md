@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 客户档案离页保护已本机安装
+
+`customer-archive-visibility-local-install-20261006-r1`根审36冻结文件及718534a准确Git blob后唯一安装PASS：630→630仅替换客户档案JS，其余629完整字节／元数据保持；45个app_include资产路径和顺序保持，仅该JS版本URL改为`dab201405cd832b5`。正常Web停启各1次，准确app_hooks单键失效1次；Guest ping及一次实际回环资源读取通过，45,148字节正文SHA与冻结JS相同。现有工资、采购报告／缓存、财务控制器与权限来源函数绑定保持；没有业务DML、DDL、元数据／角色安装或迁移，数据服务及队列身份保持。限定销售业务／角色／UP／原工资索引图before／after原字节相等，不声明全数据库相等。
+
+helper SHA256 `5df942e01b2ff21a67932513f6d9aadbe7fbf871b81efa6982430880bd28dd0e`，manifest `8966ed0f066cef2b8f0cbcffb050b58c304d9bff3ed6ce5a6f5fb30c2fb15943`，freeze `69b08bfad3fb5dcc9c0e2e32c4f9c584ce372bbfed7a79f49e8610129f377ab1`；安装结果`e7d97b26eea448c5e087538f48565fef2427bcf953d035165b263a9d785a1966`。当前owner为`54a90325b0b382dcca0db98668295aa54fbc0d189ee1ce6c93509200d4fb22d4`，源码清单`cc86ef55a629365b63d5caa0f9c7e824e0413a62977f1c7367a4038c2846230a`，保护图before／after均`d70d93993158ddc15eb38e085e7084b70924e9bd8f037b56c0cc6768ffb5c832`，回环资源记录`346e0f83e6e6f8c582b66eab51e3145ecd0f355c7851d2bc18c038390fcd55cf`。根独立核全部630源、另629元数据、920 owner来源pin、45资源及21份root600私密记录通过；首次独立脚本将资源的css／js分组字典当作列表，断言拒绝后只修正只读核对脚本，未重复安装。
+
+本轮没有登录、GUI或WAN请求，公网仍为0e610。客户迟到RPC的实际A/B GUI验收及旧卡面布局仍待；367入口分类仍为233 formal／86 preview／30 partial／13 navigation／5 tool，formal仅派发状态。后续补库存档案三视图，不据安装或模型结果减少未完成范围。以下各节的“当前”按记录当时理解。
+
 ## 2026-10-06 临工工资真实保存、回执恢复与资格拒绝通过
 
 `temporary-wage-save-native-rollback-20261006-r2`根审完整最小差异，独立核51冻结文件、7份定义来源及10个原业务／回调函数AST保持后唯一执行PASS。沿用现存普通HR User、QA员工与档案，Company仅select、Supplement不可read；原生新建／字段／来源权限保持，没有新增用户、员工、工序、工资项目、角色或分享。九门实际通过：准确GET与两份资格版本；2.5无Job Card临工计时工资保存；原请求准确reused且零新增；Administrator完整加载原QA Supplement后用真实Select枚举正常save改为长期，生成一条原生term_type Version；同一旧请求仍准确reused、batch_status恢复原回执；新UUID携带旧资格由生产require_temporary_selection／_changed／save_drafts准确栈和消息拒绝，零新工资；普通六字段手工计时工资仍可正常保存；User／Has Role／UP／Share／Employee完整行保持。
