@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-07 工资分类R10原生安装及独立新连接核验通过
+
+根及独立审阅后R10最小封存：helper `7f9ccaf36266e9366df874939db5cff14499424efc8f2c8c2c2dbcec701f95ad`、manifest `81ec472adbb51bde145d4665a4cbe1cf325d75bbd7cbbfb9e8807558c51906ac`、freeze `9f52f40f93accbef9fb4f59e6cc721b2d9c90943b648b16b3eac80451cdfe716`。141冻结／99输入／48原生来源／57私有证明逐SHA保持，所有函数／nested AST与已审未封存包相同；临时编号仅准确五个native append对象的原token获准，不扩大权限或定义检查。
+
+根唯一派发实际PASS，收据`e339bcebf6191e3a0336c2c1af469f046b16f80f6b750451336bbcd7eea326d1`，实际新owner `d44824c964da64760c4f7c48a626f7f244109b881b3657bed5d4250f27e211dc`。准确append/save保原定义身份，新增5 DocField／5 nullable列，全部旧工资新列NULL，旧业务／Auth／自定义权限／角色／原列及索引保持。只有原生modified/by、原后三字段idx＋5、准确Check default NULL→0、父naming_rule及frozen migration hash规范化；单条Version含5 added／准确Check row_changed及父changed原生当前语言投影。三次物理commit、一次DDL、flags恢复及一次受控Webstart均有root600记录；本轮0源替换、0app_hooks失效，继承R7的9源替换及一次失效，搜索队列新增0且SQL fallback=false。636来源／627完整文件元数据／45资产保持；普通岗位和GUI验收false，公网未操作。
+
+根另独立fresh primary RO核验PASS，收据`1eb67213ef8d8b8aaff93f55db8b4d31469d457fb0616dba81ce7383f05ccdfc`：56张完整raw／schema等于本次实际after及final，摘要均`34fb6da4c9400e6576b9b67d5b7aed8a38dca0b4636fbf590ef64c2a3a1e40fb`；旧业务／Auth／权限持有，五新增nullable列、原生audit两项规范化、1 Version／3commit记录核对通过。准确active新owner、来源／全文件元数据／资产、数据及非Web运行状态、原Product／Item／File／公司／授权图保持。首r1核验误调用只接受停Web的已消耗recovery_inputs，在SQL前停止；r2按准确已启动新owner独立只读核验，未重放安装或原生save。最初FS审计布尔比较误用未编码普通值，按原private_value编码核实实际audit相等，没有业务修补。
+
+普通人事账号和回滚验收包正在按实际R10成功收据／新owner及原R7 hooks/source-before准备，尚未创建账号或执行；不能用失败R8／R9或旧633 owner充作当前绑定。全模块正式交付仍未完成，公网f07与A/B共享测试数据保持。以下各节保留失败及准备时点。
+
 ## 2026-10-07 工资分类R9停止与原生子字段临时编号诊断
 
 原生Select formatter准确源码确认审计显示值依当前语言及字段parent context；R9 expected Version因此采用同一原生投影，数据库raw命名规则仍准确英文固定值，不修改语言／formatter／validator。根及独立审阅后最小封存，helper `48fa1772b7ba5351f451f8a0070352ae64ab6829585420496234f62f37a12320`、manifest `c82b1bdd6fc5c27e6e3ba5264a55e76b19d99a85af2204dd92732aa0903ed6e7`、freeze `fb8a9650953152feb33f64de67ecee1648bbf09cd56fdbb30819b346f1fb0340`；132冻结／98输入／48原生来源逐SHA相等，封存所有函数／nested AST与最终未封存包相同。
