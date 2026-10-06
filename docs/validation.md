@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-07 产品本机安装、四范围库存GUI与公网新只读复核
+
+`product-archive-export-local-install-20261007-r1`在库存浏览器正常登出并关闭后唯一执行PASS。根审最终64冻结文件、五份a11722d准确Git blob、13继承函数AST及完整来源／资产集合。630→633，修改产品JS及旧产品CJS两份，新增backend及两份导出测试，另外628来源完整字节和元数据保持；45资产仅产品JS版本URL改变。Web正常停启各1，app_hooks准确单键原生失效1；十个新产品函数、GET注册及已有工资、报告、字段保护和财务绑定通过。限定产品／子表、关联Item／UOM／File、公司及认证权限图fresh before／after原字节相同，无业务、角色、DDL、迁移或元数据安装；不宣称全库相等。实际回环产品JS正文SHA准确。根独立核633完整来源、628完整元数据、旧非受管owner pins、root600回执和保护图通过。
+
+helper `21957a3a572aeef9bf1f83c33f1fffee7387015e1b218d431a321aae12668fde`，manifest `21607741ffd60a6ee2cfbf623cc85a3fb246c04feff1bed3d96a2b02496fb043`，freeze `aab00c0eec159a5d5202452c56bdb8341886a690d6a404fc5c16266669a596fe`。安装回执`1f599c2cd9de30b05fa419b970750e3d20118344c1ed9b4aef1e5a0bcb171109`，新owner `891231652a1a7b0e50538170009025beb1a0e0aa39a82b1cc48f19df6bba37a5`。安装／绑定不计实际普通岗位、Excel内容或GUI下载通过，本批不在公网f07包内。
+
+安装前曾发现Web master保持而worker已替换。只读诊断确认unit／master完整身份、630来源／45资产和927旧pins保持；有限stderr尾部的timeout栈停在HTTP header读取，未进入ERP方法，具体客户端原因未证明。owner refresh R1在双成员门拒绝且namespace未写入，未重放；R2唯一只改owner的Web roster并两次核完整成员PASS，后来再发现worker变化，没有沿用失效owner。关闭浏览器后R3唯一refresh PASS，原owner117266及927pins永久保持；R3两次完整成员观察相同，五私有记录root600。R3 owner `6a39636fdf440603f30cd6ceaf65f8d827f3025f872bf6d0fd00e28f0c946cd3`、receipt `fc0f6ce5e432aaa8c76a4d6e7921a67b2bcfa65f2a57475fd79f1e32c7e23a06`实际绑定产品安装；历史R2源元数据记录明确保留其原hash，不伪作R3新观察。refresh没有运行native／SQL／HTTP、改来源或启停服务。
+
+指定gpt-6-luna使用现存普通库存身份观察A物料／A材料／B物料，第四B材料另一次补验。每个确认QA范围均1条记录，A/B同类ID集合SHA相同；三模式切换不增加查询或保存，筛选和页码保持，三种真实横向滚动往返恢复。每范围修改／双击／Enter均打开现有编辑层、关闭，0保存；B材料为1查询／0额外列表读取／3编辑读取／0保存，随后正常`/logout`至`/login`并确认Guest、关闭上下文。前三范围是当场工具观察的交接整理，不是独立重采；B材料没有捕获RPC body／原始ID，编辑焦点之后滚动187／197，不据此声称精确像素恢复。未测试保存、私有非空图片、大数据、晚查询切换或旧卡面布局。根全文读两脱敏报告并独立核SHA：`output/ab-inventory-prior-scopes-20261007-r1/report.md`为`6d3e097733febb7bed6a7d803cf8a83bdc8436c79533c4c5359a1ae5486a776e`；`output/ab-inventory-b-material-20261007-r1/report.md`为`d9b606e3e1331dc8fd309d0b70aaa55139e84e6fe7920473697d9df54685a90d`。
+
+`frontend-archive-habits-public-fresh-readonly-20261007-r1`根审60行diff、12冻结文件及继承AST后唯一实际公网只读PASS：现网0e610八核心服务、固定镜像、611包文件完整字节／模式／所有权及39清单资产保持；五Compose和四配置的SHA／元数据前后保持，没有读取输出配置内容。三次同SSH socket DIRECT守门；四次实际可信TLS同HTTPS socket DIRECT GET为ping200/pong、login200和A/B Guest重定向login。连接全部关闭，无上传／SQL／业务POST／服务操作。本项39为清单核对数，不是39实际资源URL请求数。helper `5d784f0f7ba439aa4de48db4c31c692aab1321dd810ca6bf7e2bccf65d50ad94`，freeze `dd84bb93601cd3b532850131b412cd889f6a67ca3fea4007cae1a3f0f7ac1755`，结果`6f2b8280949b05a466cb1ede5312e9cf7c8a0e9766b8a41dbb289f8445a0f8fd`。f07候选正在另作独立发布，当前未切换；全旧模块目标及367入口分类保持。下文保留当时状态。
+
 ## 2026-10-07 界面增量发布候选及产品导出源码
 
 基于当前公网准确提交`0e6105d55d5e5821afb20779de5d05d46320c5fc`准备独立界面候选`f07d7be2150913f6509302c4700e5fd5e0599714`，父提交准确相同，仅客户档案JS、库存档案列表JS、库存档案CSS及两份已有CJS模型改变。603源码中另598字节保持，39资产路径和顺序保持，3版本变化／36保持；14 CSS、25 JS，后端、hooks、导航、schema及角色沿用公网原版本。本机采购、工资、财务和新产品导出均未附带。
