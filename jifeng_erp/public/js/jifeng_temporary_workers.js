@@ -4,7 +4,7 @@ window.JifengTemporaryWorkers = class JifengTemporaryWorkers {
 		if (!["archive", "browse", "wage", "details"].includes(mode)) throw new Error("Unknown temporary worker mode");
 		this.host = host; this.bridge = bridge; this.mode = mode;
 		this.disposed = false; this.revision = 0; this.loading = false; this.action = null;
-		this.rows = []; this.resultContext = null; this.rowButtons = [];
+		this.rows = []; this.resultContext = null; this.queryContext = null; this.rowButtons = [];
 		this.build(); this.ready = this.initialize();
 	}
 	element(tag, text, className) {
@@ -23,7 +23,7 @@ window.JifengTemporaryWorkers = class JifengTemporaryWorkers {
 		const companyHost = this.element("div"); companyHost.style.minWidth = "240px";
 		this.companyControl = frappe.ui.form.make_control({ parent: companyHost, render_input: true,
 			df: { fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), reqd: 1,
-				onchange: () => this.invalidate() } });
+				onchange: () => this.companyValidated() } });
 		this.companyControl.$input?.on?.("input.jifeng-temporary-workers change.jifeng-temporary-workers", () => this.invalidate());
 		this.search = this.element("input"); this.search.type = "search"; this.search.maxLength = 140;
 		this.search.className = "form-control"; this.search.placeholder = __("姓名或员工编号"); this.search.setAttribute("aria-label", __("查询关键字"));
@@ -64,9 +64,15 @@ window.JifengTemporaryWorkers = class JifengTemporaryWorkers {
 			result.employee === row.name && result.eligible === true && result.employee_version === row.employee_version &&
 			result.supplement_version === row.supplement_version && result.classification_basis === "current_legacy_term_type" && result.historical_qualification_known === false;
 	}
+	companyValidated() {
+		// Native Link validation can finish after a query using the same input.
+		// Actual input/change events still invalidate immediately, including ABA.
+		if (this.sameContext(this.context(), this.queryContext || this.resultContext)) return;
+		this.invalidate();
+	}
 	invalidate() {
 		if (this.disposed) return;
-		this.revision++; this.loading = false; this.action = null; this.rows = []; this.resultContext = null;
+		this.revision++; this.loading = false; this.action = null; this.rows = []; this.resultContext = null; this.queryContext = null;
 		this.renderRows(); this.refreshActions(); this.status.textContent = __("筛选已变化，请重新查询当前在职临工。");
 	}
 	refreshActions() {
@@ -91,9 +97,9 @@ window.JifengTemporaryWorkers = class JifengTemporaryWorkers {
 	}
 	async query() {
 		if (this.disposed || this.loading) return false;
-		const context = this.context(); this.revision++; this.action = null; this.rows = []; this.resultContext = null; this.renderRows();
+		const context = this.context(); this.revision++; this.action = null; this.rows = []; this.resultContext = null; this.queryContext = null; this.renderRows();
 		if (!context) { this.status.textContent = __("请核对公司和查询关键字。 "); return false; }
-		const revision = this.revision; this.loading = true; this.refreshActions(); this.status.textContent = __("正在查询当前在职临工…");
+		const revision = this.revision; this.queryContext = context; this.loading = true; this.refreshActions(); this.status.textContent = __("正在查询当前在职临工…");
 		try {
 			const response = await frappe.call({ method: "jifeng_erp.temporary_workers.list_temporary_workers", type: "GET", args: context });
 			if (!this.current(revision, context)) return false;
@@ -108,7 +114,7 @@ window.JifengTemporaryWorkers = class JifengTemporaryWorkers {
 				this.rows = []; this.resultContext = null; this.renderRows(); this.status.textContent = __("查询失败：来源或权限无法核实，请重新查询。 ");
 			}
 			return false;
-		} finally { if (this.current(revision, context)) { this.loading = false; this.refreshActions(); } }
+		} finally { if (this.current(revision, context)) { this.queryContext = null; this.loading = false; this.refreshActions(); } }
 	}
 	async select(row) {
 		const context = this.context();
@@ -163,7 +169,7 @@ window.JifengTemporaryWorkers = class JifengTemporaryWorkers {
 	isDirty() { return false; }
 	getCloseBlock() { return ""; }
 	destroy() {
-		this.disposed = true; this.revision++; this.action = null; this.loading = false; this.rows = []; this.resultContext = null;
+		this.disposed = true; this.revision++; this.action = null; this.loading = false; this.rows = []; this.resultContext = null; this.queryContext = null;
 		this.companyControl.$input?.off?.(".jifeng-temporary-workers"); this.refreshActions();
 	}
 };

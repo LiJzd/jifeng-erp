@@ -143,6 +143,24 @@ test("typed company, keywords, reordered reads and disposal invalidate delayed r
     destroyed.view.destroy(); lastRead.resolve(reply()); await last; assert.equal(destroyed.view.rows.length, 0);
 });
 
+test("late native company validation preserves a current query and its loaded rows", async () => {
+    const model = await make("wage"), pending = model.view.query(), read = model.calls.at(-1);
+    await model.view.companyControl.df.onchange();
+    read.resolve(reply()); assert.equal(await pending, true);
+    await model.view.companyControl.df.onchange();
+    assert.equal(model.view.rows.length, 1, "same-input Link completion must not erase a valid roster");
+    assert.equal(await model.view.select(model.view.rows[0]), true);
+    assert.equal(model.wageChoices.length, 1);
+    const changed = await make(), oldPending = changed.view.query(), oldRead = changed.calls.at(-1);
+    await changed.view.companyControl.set_value("C-2");
+    oldRead.resolve(reply()); assert.equal(await oldPending, false);
+    assert.equal(changed.view.rows.length, 0, "a native change to another company still invalidates");
+    const reverted = await make(), previous = reverted.view.query(), previousRead = reverted.calls.at(-1);
+    typeCompany(reverted.view, "C-2"); typeCompany(reverted.view, "C-1");
+    await reverted.view.companyControl.df.onchange(); previousRead.resolve(reply()); await previous;
+    assert.equal(reverted.view.rows.length, 0, "typing away and back cannot revive the old receipt");
+});
+
 test("four modes reuse exact native sources and only archive opens a new temporary draft", async () => {
     for (const mode of ["archive", "browse", "details", "wage"]) {
         const model = await make(mode); await populate(model);
