@@ -1,5 +1,19 @@
 # 验证记录
 
+## 2026-10-06 销售摘要与临工同值校验修复已本机运行
+
+新的sales-temporary-local-install-r1唯一实际PASS，根已审完整差异后执行：仅安装f1b5f42的销售服务／共享JS及5d83b4e的临工JS；625来源中其余622文件字节／元数据保持，45资源路径／顺序保持、43版本URL保持。停妥已有Web后取得fresh限定销售／公司／相关用户角色UP／原生权限／Salary Detail准确索引图，安装后新只读连接图相等；不是完整数据库冻结。两支新JS完整HTTP字节各准确，Guest ping通过。
+
+原生准确app_hooks失效一次，工资validate处理器保持；已有Web仅停启各一次、同配置恢复PID1952，三数据服务／队列身份保持。本次没有DDL、索引、业务、角色、登录或公网操作，原工资来源索引没有重建。helper SHA256 `c8b39898d6c8819dbf103c38b67f9a644523e50004352406c4cc12246613c068`，manifest `1cbf008cbfd85835839f4a53a766b5a62b1469dd835bdb2151c6a1334ebd4ae8`，实际install `4915adf317182381ceaf1a6832506c178f5244f3b41f455dadda67eabefd79a5`，新owner `54c655144cb1c85fd663f5349b3097008f8ddedf2b204092913a0bad342c8deb`。旧两文件同步稿未执行，旧GUI失败保留；修复后A/B临工、正常HTTP销售摘要／详情正在实际验证，不能据安装称GUI通过。公网仍0e610及原共用测试库，全部旧模块正式目标未完成。
+
+## 2026-10-06 临工查询同公司校验竞态修复候选
+
+普通临工测试账号实际登录／A工作台和原生Page读取成功；一次A临工浏览已显示准确临时员工，后续临工查询出现GET200且契约全部正确、页面却显示“筛选已变化”的实际观察。根核原生Link代码确认get_value读取当前输入，异步验证完成后仍调用df.onchange；原组件无条件清空名单。新本地提交5d83b4e只在晚到的原生df.onchange仍对应正在查询或已加载的同公司／关键词时保留结果，实际input／change继续立即清空；不同公司、输入离开后回到原值、重查和销毁的迟到响应仍拒绝。13组DOM／协议模型通过，新增相同公司验证的查询前后、不同公司及输入ABA覆盖；尚未同步运行，不宣称修复后GUI通过。
+
+原助手的入口／全局status选择器失败、300毫秒读DOM、同值Link失效及最后等待inside_change_event严格false超时分开保留。最后一轮未发临工查询，正常logout200、browser.close完成且准确profile无Chrome残留；追加日志SHA256 `961b2396d1199de40f1b639e595401dcc7e84e7903b88a3b6c086bf3e7af9adc`。工资选择、原生工资Page及B版完整主链仍待，不以tbody的一条占位行认定有员工。
+
+旧站DIRECT诊断r6只完成本地准备及唯一实际尝试：初始化controller_read_failed，0 CONNECT／目标socket／目标字节，targetIp未取得，末次审计not_started；浏览器context从未创建，未登录或读取旧业务页面，guard listener实际close且相关进程已退出。controller内部是否已发configs GET从当前固定错误码未知；未重试或推断成功。driver SHA256 `9923b8375bd56254d7ba8f231d0e355f791460237672e7cee531538242c3553b`，guard `9e0a3327b083eeb2541f4f7b2406f764081caeed07509c479d89955591bc4f34`，r1～r5失败保持。全旧模块正式交付仍未完成，公网仍0e610。
+
 ## 2026-10-06 销售订单列表按需读取候选（未同步运行）
 
 慢查询已实际定位为完整履行闭包及原生样品来源权限的重复读取。新增GET `list_orders` 返回明确 `sales_order_list.v1` 摘要、准确查询scope及 `details_loaded=false`；共享A/B列表先读取订单头，点击后仍用原 `read_order` 完整来源与字段校验。旧 `query_orders` 完整合同保持，每单仍执行原生SO get_doc／has_permission、来源／历史／分享拒绝，finish复核成员、字段mask、源值、版本和授权指纹，无新增权限缓存或原始订单人口发现。
