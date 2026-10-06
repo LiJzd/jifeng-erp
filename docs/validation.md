@@ -2,6 +2,10 @@
 
 ## 2026-10-07 人事岗位与现存测试资料只读核实
 
+工资分类安装器经根和独立审阅后实际尝试R2／R3／R4／R5，各只执行一次，没有重放。R2／R3在创建安装命名空间前分别因Git blob返回值契约和metadata anchor键名失败；R4只读保护扫描误拒原保护表`__Auth`；R5在原生只读preflight错校验数据库LocalProxy类型。四次均未进入Web停启、源替换、原生元数据save或DDL。R4失败收据`1ba88263d45d49cdb847927c69f5d9bced92af7246461b3acbab8a15083cf529`，R5失败收据`b798ae57392956d61efecedbdb7e00f81fdecf6438494b733ad435829c9d4e3e`；前者四、后者五私有记录root600。根另fresh primary RO复查R5原before的56张选定表，完整schema、原业务、Auth／权限及元数据投影全相等，回滚关闭，收据`dac569419e6448ffde057e921bb56d251963a2bbd32e5011015490931bacf642`。
+
+R6已修为实际`frappe.local.db`及准确MySQLdb类型，唯一执行后在只读元数据投影门退出，收据`f97969f842f1f589d1119df24730a2870e6e2aa71003a52b928a1fc781efc684`，仍只有intent，没有Web／代码／save／DDL动作。根另独立只读诊断，收据`e21750892138777b1998955bf6fdf01f2690bfc62b903578c36f53640d93e536`：原投影全部匹配，正常native validator只把旧工资DocField `piece_worker_qualified.default`从NULL补为字符串0；原业务列已是tinyint NOT NULL DEFAULT 0，五新增列仍未装。native连接已回滚关闭，fresh查询56张保护表结构、业务和授权前后相等。R7正在按准确这一项框架规范化更新维护投影与Version预期，不允许其他旧定义扩张；旧943源保持，不把工具失败或只读诊断算作安装或业务验收。
+
 根审阅并唯一执行 `wage-classification-ordinary-account-fixture-discovery-20261007-r1`，actual receipt `ac02eaec05dd4dc305ffad2258b869e291b6fa47f1d21c5d62cc60b51bc88b30`。18 个冻结文件及7个继承 utility AST保持；两次 fresh primary Unix READ ONLY查询均回滚关闭，前后记录原字节相等，四记录root600。633来源、45资产、1a owner及实际商品原生验收收据保持，没有密码查询、业务／账号／角色／schema／服务修改。
 
 限定 enabled非Administrator、HR User或HR Manager、排除System Manager的账号集合中，HR User 1、存储规则候选1，HR Manager 0；这是限定集合发现，不是全站账号不存在或普通原生权限通过。准确先前QA seed收据及其两个员工、唯一补充档案、无附件／经历子行的计件资料和无Job Card手工工资草稿均核实；没有读取其它人事业务。授权摘要 `65852384d88f6cdc6081531c1822c925c76f3355af2a11dd61d31bb88205eacd`，QA投影摘要 `a15a69d917c72f77609d1563c11a4d5cf15352b460b5428ea2fa2909f676e0fd`。当前新增五个DocField及物理列均0，分类安装及普通岗位验收待执行；公网f07保持。
