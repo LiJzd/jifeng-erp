@@ -1,5 +1,23 @@
 # 验证记录
 
+## 2026-10-06 财务报告字段保护已本机安装
+
+提交 `30da1e8` 的五个生产模块已唯一实际安装通过：四旧文件替换、新增一个来源字段 guard，626→627 运行来源；其他 622 文件的字节及完整元数据、全部 45 资产 URL 和顺序保持。已有 Web 停启各一次并恢复 PID4655，Guest ping 通过。准确 app_hooks 失效一次后，实际原生字段函数、五个报告 execute 及跨模块 helper 对象、来源权限 hook、五父单 MRO 和四 ContextVar 绑定核对通过。选定业务／公司／角色／UP／原生权限／工资来源索引图前后相同；三数据服务和队列身份保持。没有表结构、业务、角色或外网修改，不宣称全库冻结。
+
+安装 helper SHA256 `063444fcdadb2b8f900a7d3f878c602ece5b9d35952d94897ef164180cff80f9`，plan `2249931223c665cb95ae9d49faf4a233384219783fe2fbe3092a229601c9144f`，实际安装结果 `1b3855dbe9581d607195a1d6c4dae2b96506bbb7b55ba8aa351f5a48c0a40f93`，新 owner `f0d985c1abe59798cc901aae4f9ec5389acb87556b3fcf8e81a2dc0f5bac7232`。根独立核冻结来源与实际 Git blob、13 准备文件及 11 个继承保护函数 AST；实际原始收据和新 owner SHA 再核相符。安装后的销售 A/B 与原生报告前置角色入口已按下列范围通过，尚无本批公网发布。
+
+安装后销售 `r10-rev2` 唯一实际 GUI 为 `native_form_supplement_passed`，报告 SHA256 `98260b6b35bdf90a414bfd0f982c8016221a2dc5423ce1d4b3f44eeb296cbe5f`；helper `09a0259d3dcdc3f9a00f2154b80ec349ab093da290d648a8e7e54ba33129dbfd`，manifest `b8e6cc24e1ee320feed19f1ffbf938b2e1d522c7aaf496d3ac92186e503688d5`。普通岗位单次登录／退出200，两版同一订单摘要、3子行／3流程详情、原生Form身份及加载完成、六类必要原生读取均通过；每侧9响应均200且shape被接受，返回共享入口但未重新查询。阻断／业务HTTP错误／pageerror均0；30个console事件及16个既有环境404如实保留。context关闭，根独立核准确profile Chrome为0、报告和399项profile仅当前用户／SYSTEM／Admin权限。运行后Chrome新增的profile ACL已只在本次新profile收窄，未删除内容。未保存业务、提交或访问外网。
+
+原生前置入口 `native-ledger-report-entry-20261006-r2` 根唯一实际执行PASS，结果SHA256 `8995c89e7041fe716f76d657089271e9f3b110bd77cd6256e636153cebfcab21`，probe `3e17c8b4833026e57accc140aafbd1b436a00c8e7541ac4170a9075f171ffb73`／launcher `6f784d282e8f2e9a128c87ead2c265b4287767db729f53ec35b1e703b71dcd32`。两个独立新进程各一真实mysqlclient Unix物理连接、SESSION RO先于BEGIN、最终两连接均关闭；现有采购六角色账号五次原生get_report_doc通过，现有仅HR User账号五次在Report角色门产生原生PermissionError。两次观察的完整保护角色／UP／Report／权限状态相同，627来源／45资产及owner保持，真实CoreReport和生产Mixin／hook／ContextVar绑定通过；不声称同快照或并发权限新鲜。实际五个Report均prepared_report=0、disable_prepared_report_automation=0；若执行未知报告的native fallback会进入Timer条件。该探针未调用完整run、脚本、Prepared或Timer，不能计结果行／field mask／缓存路径或报表GUI验收。
+
+原生 Report 主源码显示，`ignore_prepared_report=True` 只跳过已有预生成结果；当 Report 未启用 prepared_report 且未禁用自动预生成时，执行 Script Report 仍会启动 15 秒 Timer。其 finally 仅 cancel、不 join，callback 可另建连接并修改 Report；因此主连接只读不能单独证明完整入口无写入。后续探针先核真实 Report 标记与角色门，不能凭源码 JSON 缺字段猜运行值，也不能为验收改 Report 设置。旧四财务账仍为预览。
+
+现有 `sample_source_report_output.run` 只对 `sample_source_reports.KNOWN_REPORTS` 的十个来源报表启用带生成 frame 的封装，并在实际脚本执行时临时关闭 Timer；五个 Jifeng 采购／委外台账不在该集合，走 ordinary native 分支。新字段 guard 在来源函数执行时保护子字段；已缓存 Prepared Report 的消费路径不会因此重新调用它，原生 ref_doctype 字段处理也不能代替子字段检查。缓存生成／读取及字段撤权后的行为仍需独立修复和验收；本次源码绑定、模型及五源函数对比不计这条路径完成，也未观察到实际用户泄露事件。
+
+旧站独立 DIRECT r9 唯一实际尝试在 `local_route_or_proxy_preflight_failed` 前置门停止。已通过同 handle 的 controller configs 读取及 TUN enable 检查，未到目标 DNS 解析、listener、Chrome 或登录；连接数及目标字节均为零，关闭事件完备，根独立核准确 profile 的 Chrome 为零。原 guard SHA256 `186eb921f875d34a76323e584a13a6815001d547ed444c797eaacc05a5e62416`、driver `89b10cdd99298d2a64650ac3a971ecbdab7fa08bf08383917256eb97c431527f` 保持，受限 ACL 已核；context_closed=false 表示从未创建 context，不能改记为关闭成功。随后只做一次独立本机 preflight：WinHTTP direct=false、WinINET 代理启用及配置非空、PAC／自动检测／浏览器代理策略均 false、TUN 有 Up 接口。该结果 SHA256 `57da6e147f0c7dac5408807dce3c4a160c5e4500447e714d5949f8486d9ba8ce`，没有目标路由或实际 socket 的 DIRECT 证明。
+
+R9 的固定子进程 JSON 错误传递已解决先前泛化错误的信息缺失，但不能据此还原 r7／r8 的失败根因。`Get-FileHash` 在 Node-spawn 与 PowerShell-spawn 的同参数探针中显示不同可用性，原因未查明；新的 .NET 哈希仅降低依赖。后续独立准备稿检查“全系统代理关闭”是否为专属 Chrome→本机 CONNECT guard→唯一 raw socket 路径增加了额外假设；所有系统代理观察继续保存，实际连接仍须在发送目标 TLS／HTTP 首字节前得到准确四元组 `DIRECT` 准入。准备稿不计旧页读取或直连成功。
+
 ## 2026-10-06 财务报告字段保护接入本地源码
 
 已接入r2的五个生产模块及对应测试。相对r1，仅在两份readable_documents及叶仓候选循环中，把guard来源登记后移至原生完整Document.read通过后；普通不完整范围仍整张排除不可读父单，complete来源集合仍有缺失即拒绝，显式所选范围仍按原权限拒绝。数量／金额逻辑保持；Company select、父Table、子parenttype、所需字段及mask、条件单位输入和完成复核保留。根在独立候选和接入仓库后各运行118项模型通过：76旧业务断言、30字段保护、4默认共享scope、8排除／完整来源边界。测试夹具补原生API与父子身份，实际guard／finish执行；不是原生模型证明。
