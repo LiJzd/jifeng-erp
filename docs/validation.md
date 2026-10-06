@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-10-06 临工浏览、选人工资及明细 A/B 实际通过
+
+本机 `temporary-worker-ab-gui-20261006-r10` 的两版完整只读主链实际 PASS，根复核原始日志：同一普通 HR User 查询准确临工一条、排除长期人员；资格 GET200 后，当前可见工资 iframe 的公司和员工 getter／输入匹配、无忙碌或未保存草稿，原生 Page 源码 prefix 与 sourceURL 后缀匹配。两版明细 POST reportview 均带准确 Company／Employee 过滤，200 响应只有目标7.5草稿一行；可见 List iframe 的 cur_list 与目标 DOM 行准确匹配工资、员工、公司、金额及状态。List 已消费 route_options，不用消费后的空 route_options 代替真实请求范围。正常退出200、context关闭，根只读进程复核该profile Chrome为0。
+
+证据 `D:/codex-temp/temporary-worker-ab-gui-20261006-r10/evidence.jsonl` SHA256 `09f565225b6cc35fea57c0f9c8cf587bbdcfa3d84e9d8d4272d269b5956d5950`，run `tw-gui-0684f7f1`。r4～r9助手的父窗口／iframe定位、Page校验时机、必要只读配置白名单、skeleton初态及事件字段误报保留；r9已有A正向实际行证据，r10修正等待后整条A/B通过。额外无准确员工公司范围的 get_list 被guard拒绝，未影响本次目标行显示；不能据此证明所有后台请求。没有档案保存、工资保存／提交、工资单生成、导出或公网操作。临工档案编辑、非在职／历史分类、旧明细格式与分析打印仍待，全旧模块目标不变；公网仍0e610。
+
 ## 2026-10-06 工资选人的原生空值修复已本机安装
 
 临工 A 版名单实际已能读取准确临时员工并排除长期人员；选人 GET 返回准确资格与版本。提交 `efaf2ca` 等待默认公司初始化后，r3 实际仍被“公司或姓名已变化”拦住，未填入 Employee、未保存或继续B。根查本机原生 `base_control.js`：可编辑输入的空姓名为 `""`，切换只读后为空的 `value || undefined`，导致前值比较误判。提交 `087393d` 仅把工资页 getter 的空值统一为 `""`，保留非空姓名／公司变化、资格版本、迟到响应和工资草稿保护；两类人员选择的原生空值切换回归纳入49项工资检查并通过。修复后的实际 A/B 结果仍待，不能据模型计为通过。r3 证据SHA256 `f4333425f1dbeb6579be698e3c6bf08e7ad920d42ca7e74eb30ac9c4457a0ad0`，正常退出200、context关闭、对应Chrome进程0，原profile及失败证据保持。
