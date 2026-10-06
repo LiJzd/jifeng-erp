@@ -266,6 +266,43 @@ test("duplicate query clicks cannot issue another request", async () => {
 	const pending = model.view.query(); await model.view.query(); model.view.queryButton.click();
 	assert.equal(model.calls.length, 1); model.calls[0].resolve(response()); await pending;
 });
+test("late native confirmation of the same scope keeps the pending query and visible amounts", async () => {
+	for (const field of ["companyControl", "supplierControl", "dateControl", "accountControl"]) {
+		const model = await make(); await select(model, "应付账款 - JF");
+		model.view.supplierControl.title_value_map["供应商名称"] = "SUP-0001";
+		model.view.supplierControl.typed = "供应商名称";
+		model.view.dateControl.dateMap = { "30/09/2026": "2026-09-30" };
+		model.view.dateControl.typed = "30/09/2026";
+		const pending = model.view.query(), request = model.calls.at(-1), revision = model.view.revision;
+		model.view[field].df.onchange(); model.view[field].input(model.view[field].typed);
+		assert.equal(request.aborted, false); assert.equal(model.view.loading, true);
+		assert.equal(model.view.queryButton.disabled, true); assert.equal(model.view.revision, revision);
+		assert.equal(model.view.accountControl.get_value(), "应付账款 - JF");
+		request.resolve(response([source()], { payable_account: "应付账款 - JF", accounts: ["应付账款 - JF"] })); await pending;
+		model.view[field].df.onchange();
+		assert.equal(model.view.rows.length, 1); assert.equal(model.calls.length, 1);
+		assert.equal(model.view.queryContext, null);
+	}
+});
+test("native confirmation of a changed scope still cancels the old response", async () => {
+	for (const field of ["companyControl", "supplierControl", "dateControl", "accountControl"]) {
+		const model = await make(); await select(model);
+		const pending = model.view.query(), request = model.calls.at(-1);
+		await model.view[field].set_value(field === "dateControl" ? "2026-09-29" : "OTHER");
+		assert.equal(request.aborted, true); assert.equal(model.view.queryContext, null);
+		request.resolve(response()); await pending; assert.equal(model.view.rows.length, 0);
+	}
+});
+test("returning to the old scope after an edit cannot revive its cancelled query", async () => {
+	const model = await make(); await select(model);
+	const pending = model.view.query(), request = model.calls.at(-1);
+	model.view.supplierControl.input("未确认的其他供应商");
+	assert.equal(request.aborted, true);
+	await model.view.supplierControl.set_value("SUP-0001");
+	request.resolve(response()); await pending;
+	assert.equal(model.view.rows.length, 0); assert.equal(model.calls.length, 1);
+	assert.equal(model.view.queryContext, null);
+});
 test("destroy clears money, detaches filter handlers and rejects late query/source actions", async () => {
 	const model = await make(); await select(model); await populate(model);
 	const button = model.view.tbody.descendants("button")[0], pending = model.view.query(), request = model.calls.at(-1);

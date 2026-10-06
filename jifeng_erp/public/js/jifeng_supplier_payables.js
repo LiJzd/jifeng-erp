@@ -3,7 +3,7 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 	constructor(host, bridge) {
 		this.host = host; this.bridge = bridge; this.disposed = false; this.visible = true;
 		this.revision = 0; this.loading = false; this.rows = []; this.resultContext = null;
-		this.request = null; this.build(); this.ready = this.initialize();
+		this.request = null; this.queryContext = null; this.build(); this.ready = this.initialize();
 	}
 	element(tag, text, className) {
 		const node = document.createElement(tag);
@@ -14,12 +14,12 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 		const node = this.element("button", __(label), className); node.type = "button";
 		node.addEventListener("click", action); return node;
 	}
-	control(parent, fieldname, fieldtype, label, options, action) {
+	control(parent, fieldname, fieldtype, label, options, action, clearAction = () => this.invalidate()) {
 		const control = frappe.ui.form.make_control({ parent, render_input: true,
 			df: { fieldname, fieldtype, label: __(label), ...(options ? { options } : {}),
 				reqd: fieldname !== "payable_account", onchange: action } });
 		control.$input?.on?.("input.jifeng-supplier-payables change.jifeng-supplier-payables", action);
-		control.$link_clear?.on?.("click.jifeng-supplier-payables", action);
+		control.$link_clear?.on?.("click.jifeng-supplier-payables", clearAction);
 		return control;
 	}
 	build() {
@@ -27,10 +27,10 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 		const toolbar = this.element("div", undefined, "jfe-supplier-payables-toolbar");
 		const holders = ["company", "supplier", "date", "account"].map(kind =>
 			this.element("div", undefined, "jfe-supplier-payables-filter jfe-supplier-payables-" + kind));
-		this.companyControl = this.control(holders[0], "company", "Link", "公司", "Company", () => this.companyChanged());
-		this.supplierControl = this.control(holders[1], "supplier", "Link", "供应商", "Supplier", () => this.invalidate());
-		this.dateControl = this.control(holders[2], "report_date", "Date", "截止日期", null, () => this.invalidate());
-		this.accountControl = this.control(holders[3], "payable_account", "Link", "应付科目（可选）", "Account", () => this.invalidate());
+		this.companyControl = this.control(holders[0], "company", "Link", "公司", "Company", () => this.companyChanged(), () => this.companyChanged(true));
+		this.supplierControl = this.control(holders[1], "supplier", "Link", "供应商", "Supplier", () => this.filterChanged());
+		this.dateControl = this.control(holders[2], "report_date", "Date", "截止日期", null, () => this.filterChanged());
+		this.accountControl = this.control(holders[3], "payable_account", "Link", "应付科目（可选）", "Account", () => this.filterChanged());
 		this.accountControl.get_query = () => ({ filters: {
 			company: this.linkValue(this.companyControl) || "", account_type: "Payable", is_group: 0,
 		} });
@@ -88,9 +88,18 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 	sameContext(left, right) {
 		return !!left && !!right && ["company", "supplier", "report_date", "payable_account"].every(key => left[key] === right[key]);
 	}
-	companyChanged() {
+	filterChanged() {
+		if (this.disposed) return false;
+		// Native Link/Date validation can finish after the query click. An
+		// unchanged confirmed scope must not abort that same pending read.
+		const context = this.context();
+		if (this.sameContext(this.loading ? this.queryContext : this.resultContext, context)) return false;
+		this.invalidate(); return true;
+	}
+	companyChanged(force = false) {
 		if (this.disposed) return;
-		this.invalidate();
+		if (force) this.invalidate();
+		else if (!this.filterChanged()) return;
 		if (this.accountControl?.get_value()) {
 			Promise.resolve(this.accountControl.set_value("")).catch(() => {
 				if (!this.disposed) this.invalidate();
@@ -103,7 +112,7 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 	}
 	invalidate(message = "筛选已变化，请重新查询。") {
 		if (this.disposed) return;
-		this.revision++; this.loading = false; this.clearResult();
+		this.revision++; this.loading = false; this.queryContext = null; this.clearResult();
 		const request = this.request; this.request = null;
 		request?.abort?.(); this.queryButton.disabled = false;
 		this.status.textContent = __(message);
@@ -146,7 +155,7 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 		const context = this.context();
 		this.clearResult();
 		if (!context) { this.status.textContent = __("请选择单一公司、供应商和有效的截止日期，并核对应付科目。"); return; }
-		const revision = ++this.revision; this.loading = true; this.queryButton.disabled = true;
+		const revision = ++this.revision; this.loading = true; this.queryContext = { ...context }; this.queryButton.disabled = true;
 		this.status.textContent = __("正在核对供应商应付来源…");
 		const args = { company: context.company, supplier: context.supplier, report_date: context.report_date };
 		if (context.payable_account) args.payable_account = context.payable_account;
@@ -170,7 +179,7 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 				if (!this.sameContext(context, this.context())) {
 					this.clearResult(); this.status.textContent = __("筛选已变化，请重新查询。");
 				}
-				this.loading = false; this.request = null; this.queryButton.disabled = false;
+				this.loading = false; this.request = null; this.queryContext = null; this.queryButton.disabled = false;
 			}
 		}
 	}
@@ -220,7 +229,7 @@ window.JifengSupplierPayables = class JifengSupplierPayables {
 	getCloseBlock() { return ""; }
 	destroy() {
 		if (this.disposed) return;
-		this.disposed = true; this.revision++; this.loading = false;
+		this.disposed = true; this.revision++; this.loading = false; this.queryContext = null;
 		const request = this.request; this.request = null; request?.abort?.(); this.clearResult();
 		for (const control of [this.companyControl, this.supplierControl, this.dateControl, this.accountControl]) {
 			control.$input?.off?.(".jifeng-supplier-payables"); control.$link_clear?.off?.(".jifeng-supplier-payables");
