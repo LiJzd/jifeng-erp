@@ -6,6 +6,8 @@ and changes observed while producing the report; it is not a transaction lock.
 """
 
 from copy import deepcopy
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import frappe
 from frappe.model import get_permitted_fields
@@ -14,6 +16,34 @@ from frappe.query_builder.utils import mask_fields
 
 IDENTITY = {"name", "modified", "docstatus"}
 CHILD_IDENTITY = {"name", "parent", "parenttype", "parentfield", "idx"}
+_OUTPUT_GUARD = ContextVar("jifeng_ledger_output_guard", default=None)
+
+
+def ledger_guard(kind):
+    """Use the one owned output guard, or retain direct source-call behavior."""
+    binding = _OUTPUT_GUARD.get()
+    if binding is None:
+        return LedgerSourceGuard(kind)
+    if binding["guard"].kind != kind or binding["guard"].user != frappe.session.user:
+        _deny()
+    binding["uses"] += 1
+    if binding["uses"] != 1:
+        _deny()
+    return binding["guard"]
+
+
+@contextmanager
+def output_guard(guard):
+    """Internal execution binding; no flags or caller identity grant a read."""
+    if (_OUTPUT_GUARD.get() is not None or not isinstance(guard, LedgerSourceGuard)
+            or guard.user != frappe.session.user):
+        _deny()
+    binding = {"guard": guard, "uses": 0}
+    token = _OUTPUT_GUARD.set(binding)
+    try:
+        yield binding
+    finally:
+        _OUTPUT_GUARD.reset(token)
 
 
 def spec(fields, tables=None, optional=()):
@@ -106,6 +136,7 @@ class LedgerSourceGuard:
         self.kind = kind
         self.user = frappe.session.user
         self.documents, self.queries = {}, []
+        self.output_observers = []
         self.doctypes = set(self.specs)
         for value in self.specs.values():
             self.doctypes.update(child[0] for child in value["tables"].values())
@@ -118,10 +149,30 @@ class LedgerSourceGuard:
             self.doctypes.add("UOM Conversion Detail")
         self.authorization_before = self._authorization()
 
-    def _authorization(self):
+    def include_doctypes(self, doctypes):
+        """Observe extra-column schemas before their first native field read."""
+        if frappe.session.user != self.user or self._authorization() != self.authorization_before:
+            _deny()
+        if any(not isinstance(name, str) or not name for name in doctypes):
+            _deny()
+        previous = set(self.doctypes)
+        enlarged = previous | set(doctypes)
+        extended = self._authorization(enlarged)
+        if self._authorization(previous) != self.authorization_before:
+            _deny()
+        self.doctypes = enlarged
+        self.authorization_before = extended
+        if self._authorization() != extended:
+            _deny()
+
+    def add_output_observer(self, observer):
+        self.output_observers.append(observer)
+
+    def _authorization(self, doctypes=None):
         # Internal raw observations never grant access or return hidden rows.
         # Snapshot rows, not native request caches, to detect late cached allows.
         rows = []
+        doctypes = self.doctypes if doctypes is None else doctypes
         for doctype, filters in (
             ("User", {"name": self.user}),
             ("Has Role", {"parenttype": "User", "parent": self.user}),
@@ -129,13 +180,13 @@ class LedgerSourceGuard:
             ("Report", {"name": self.report_name}),
             ("Has Role", {"parenttype": "Report", "parent": self.report_name}),
             ("Custom Role", {"report": self.report_name}),
-            ("DocPerm", {"parent": ["in", sorted(self.doctypes)]}),
-            ("Custom DocPerm", {"parent": ["in", sorted(self.doctypes)]}),
-            ("DocShare", {"share_doctype": ["in", sorted(self.doctypes)]}),
-            ("DocType", {"name": ["in", sorted(self.doctypes)]}),
-            ("DocField", {"parent": ["in", sorted(self.doctypes)]}),
-            ("Custom Field", {"dt": ["in", sorted(self.doctypes)]}),
-            ("Property Setter", {"doc_type": ["in", sorted(self.doctypes)]}),
+            ("DocPerm", {"parent": ["in", sorted(doctypes)]}),
+            ("Custom DocPerm", {"parent": ["in", sorted(doctypes)]}),
+            ("DocShare", {"share_doctype": ["in", sorted(doctypes)]}),
+            ("DocType", {"name": ["in", sorted(doctypes)]}),
+            ("DocField", {"parent": ["in", sorted(doctypes)]}),
+            ("Custom Field", {"dt": ["in", sorted(doctypes)]}),
+            ("Property Setter", {"doc_type": ["in", sorted(doctypes)]}),
         ):
             result = frappe.get_all(doctype, filters=filters, fields=["*"], limit_page_length=0)
             rows.append((doctype, tuple(sorted((_freeze(row) for row in result), key=repr))))
@@ -246,6 +297,8 @@ class LedgerSourceGuard:
                     _deny()
                 if method == "get_list" and _query_state(frappe.get_list(doctype, **deepcopy(kwargs))) != visible:
                     _deny()
+            for observer in self.output_observers:
+                observer.check()
             for (doctype, name), (held, before, value, permission) in self.documents.items():
                 fresh = frappe.get_doc(doctype, name)
                 if _freeze(held) != before or _freeze(fresh) != before or not fresh.has_permission(permission):
@@ -261,5 +314,7 @@ class LedgerSourceGuard:
         for _method, doctype, kwargs, raw, _visible in self.queries:
             if _query_state(frappe.get_all(doctype, **deepcopy(kwargs))) != raw:
                 _deny()
+        for observer in self.output_observers:
+            observer.state()
         if frappe.session.user != self.user or self._authorization() != self.authorization_before:
             _deny()

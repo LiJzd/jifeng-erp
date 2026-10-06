@@ -6,7 +6,7 @@ import frappe
 from frappe.utils import cint, date_diff, getdate, today
 
 from jifeng_erp.sample_source_queries import check_protected_reference
-from jifeng_erp.ledger_source_guard import LedgerSourceGuard
+from jifeng_erp.ledger_source_guard import ledger_guard
 
 
 STATUS_LABELS = {"Draft": "草稿", "Open": "待收回", "Partially Received": "部分收回",
@@ -250,7 +250,7 @@ def _movement(doc, row, order_item, accepted, rejected, loss, source=None):
 
 
 def subcontracting_progress(filters=None):
-    guard = LedgerSourceGuard("subcontracting_progress")
+    guard = ledger_guard("subcontracting_progress")
     filters, start, end = _scope(filters, ("Subcontracting Order", "Subcontracting Receipt"), guard=guard)
     orders = _orders(filters, start, end, guard=guard)
     items = _order_items(orders, filters)
@@ -300,7 +300,7 @@ def subcontracting_progress(filters=None):
 
 
 def subcontracting_receipt_ledger(filters=None):
-    guard = LedgerSourceGuard("subcontracting_receipt")
+    guard = ledger_guard("subcontracting_receipt")
     filters, start, end = _scope(filters, ("Subcontracting Order", "Subcontracting Receipt"), guard=guard)
     query = {"company": filters.company, "docstatus": 1,
              "posting_date": ["between", [str(start), str(end)]]}

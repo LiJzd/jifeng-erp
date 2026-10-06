@@ -99,6 +99,10 @@ class PreparedModels(unittest.TestCase):
             raise error(message)
         fr.throw = throw
         def get_doc(dt, name=None, *, for_update=False):
+            if dt == "Report":
+                return Doc(doctype="Report", name=name,
+                           report_type="Custom Report" if name == "Custom Work Orders" else "Query Report",
+                           reference_report="Open Work Orders" if name == "Custom Work Orders" else None)
             if isinstance(dt, dict):
                 return Doc(dt)
             self.events.append(("get", dt, name, for_update))
@@ -238,6 +242,8 @@ class PreparedModels(unittest.TestCase):
         samples = types.ModuleType("jifeng_erp.sample_orders")
         samples._freeze = freeze
         app = types.ModuleType("jifeng_erp")
+        app.__path__ = [str(ROOT / "jifeng_erp")]
+        from ledger_classifier_fixture import classifier
         app.sample_source_report_artifacts = artifacts
         ppkg = types.ModuleType("frappe.core.doctype.prepared_report")
         ppkg.prepared_report = native
@@ -245,6 +251,7 @@ class PreparedModels(unittest.TestCase):
         resource.RUSAGE_SELF = 0
         resource.getrusage = lambda kind: Row(ru_maxrss=1024)
         self.modules = {"frappe": fr, "jifeng_erp": app,
+                        "jifeng_erp.ledger_report_output": classifier(fr),
                         "jifeng_erp.sample_orders": samples,
                         "jifeng_erp.sample_source_report_artifacts": artifacts,
                         "jifeng_erp.sample_source_report_output": output,
@@ -255,9 +262,12 @@ class PreparedModels(unittest.TestCase):
         self.patch = patch.dict(sys.modules, self.modules)
         self.patch.start()
         self.addCleanup(self.patch.stop)
-        spec = importlib.util.spec_from_file_location("prepared_under_test",
+        spec = importlib.util.spec_from_file_location("jifeng_erp.sample_source_prepared_reports",
                       ROOT / "jifeng_erp/sample_source_prepared_reports.py")
         self.subject = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.subject
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        self.addCleanup(sys.modules.pop, "jifeng_erp.ledger_report_cache", None)
         spec.loader.exec_module(self.subject)
         self.pr = self.doc("PR")
 

@@ -162,7 +162,11 @@ class ReportModels(unittest.TestCase):
         self.assertIs(report.execute_query_report(filters), report.result)
         self.fr.db.sql.assert_not_called()
         self.source._check.assert_not_called()
-        self.assertIs(report.execute_script_report(filters), report.result)
+        from ledger_classifier_fixture import classifier
+        # Native ordinary dispatch now first classifies Report metadata. The
+        # actual classifier AST reads this test's existing Report fixture.
+        with patch.dict(sys.modules, {**self.modules, "jifeng_erp.ledger_report_output": classifier(self.fr)}):
+            self.assertIs(report.execute_script_report(filters), report.result)
 
     def test_missing_exact_registration_is_native_not_blanket_report_denial(self):
         report = self.report('Work Order Summary')

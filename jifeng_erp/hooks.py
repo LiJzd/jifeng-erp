@@ -157,6 +157,13 @@ doc_events = {
     "Prepared Report": {
         "before_validate": "jifeng_erp.sample_source_prepared_reports.before_validate_prepared_report",
         "validate_share": "jifeng_erp.sample_source_prepared_reports.validate_prepared_report_share",
+        "on_trash": "jifeng_erp.ledger_report_cache.prevent_prepared_delete",
+        "before_rename": "jifeng_erp.ledger_report_cache.prevent_prepared_delete",
+    },
+    "Report": {
+        "before_validate": "jifeng_erp.ledger_report_cache.before_validate_report",
+        "on_trash": "jifeng_erp.ledger_report_cache.prevent_report_delete_or_rename",
+        "before_rename": "jifeng_erp.ledger_report_cache.prevent_report_delete_or_rename",
     },
     "Jifeng Sample Order": {"before_validate": "jifeng_erp.sample_source_permissions.before_validate_source_binding"},
     "Additional Salary": {"validate": "jifeng_erp.payroll.validate_wage_additional_salary"},

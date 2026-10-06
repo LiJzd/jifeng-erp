@@ -187,6 +187,10 @@ def run(report_name, filters=None, user=None, ignore_prepared_report=False, cust
     api = _artifacts()
     context = api.resolve_report(report_name)
     if context is None:
+        from jifeng_erp import ledger_report_output as ledgers
+        if ledgers.resolve_target(report_name) is not None:
+            return ledgers.run(report_name, filters, user, ignore_prepared_report, custom_columns,
+                               is_tree, parent_field, are_default_filters, js_filters)
         return _ordinary_native().run(report_name, filters, user, ignore_prepared_report,
                                      custom_columns, is_tree, parent_field, are_default_filters, js_filters)
     native = _native()
@@ -234,6 +238,8 @@ def enqueue_json_to_csv_conversion(prepared_report_name):
     from frappe.core.doctype.prepared_report import prepared_report as native
 
     doc = frappe.get_doc("Prepared Report", prepared_report_name)
+    from .ledger_report_cache import deny_prepared
+    deny_prepared(doc)
     if _artifacts().resolve_report(doc.report_name) is None:
         return native.enqueue_json_to_csv_conversion(prepared_report_name)
     doc.check_permission("read")
@@ -264,6 +270,8 @@ def _convert_json_to_csv(prepared_report_name):
     try:
         api = _artifacts()
         doc = frappe.get_doc("Prepared Report", prepared_report_name)
+        from .ledger_report_cache import deny_prepared
+        deny_prepared(doc)
         context = api.resolve_report(doc.report_name)
     except Exception:
         return _rollback_error()
@@ -380,6 +388,9 @@ def _format_export(parameters, csv_params, payload):
 
 
 def _export_generation(parameters, csv_params, *, save_file=False):
+    from .ledger_report_cache import is_ledger_report, _deny
+    if is_ledger_report(parameters.report_name):
+        _deny()  # Five-ledger output must use the fresh synchronous transform.
     api = _artifacts()
     context = api.resolve_report(parameters.report_name)
     _require(context is not None)
@@ -430,6 +441,9 @@ def export_query():
     from frappe.desk.utils import pop_csv_params, provide_binary_file
 
     original = frappe._dict(frappe.local.form_dict)
+    from . import ledger_report_cache
+    if ledger_report_cache.is_ledger_report(original.report_name):
+        return ledger_report_cache.export_query()
     if _artifacts().resolve_report(original.report_name) is None:
         return _ordinary_native().export_query()
     native = _native()
@@ -469,6 +483,9 @@ def _run_export_query_job(user_email, form_params, csv_params):
     """Fixed recipient and final source check, followed by a private file link."""
     try:
         parameters = _export_parameters(form_params)
+        from .ledger_report_cache import is_ledger_report, _deny
+        if is_ledger_report(parameters.report_name):
+            _deny()
         context = _artifacts().resolve_report(parameters.report_name)
     except Exception:
         return _rollback_error()
@@ -503,6 +520,8 @@ def _run_export_query_job(user_email, form_params, csv_params):
 def before_job(method=None, kwargs=None, transaction_type=None):
     """Old native jobs cannot sign artifacts without the fixed worker frame."""
     kwargs = kwargs or {}
+    from .ledger_report_cache import before_job as ledger_before_job
+    ledger_before_job(method, kwargs)
     names = {
         "frappe.core.doctype.prepared_report.prepared_report.generate_report": "prepared_report",
         "frappe.core.doctype.prepared_report.prepared_report.convert_json_to_csv": "prepared_report_name",

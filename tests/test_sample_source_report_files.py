@@ -214,7 +214,9 @@ class TestSampleSourceReportFiles(unittest.TestCase):
         self.app.sample_source_report_artifacts = self.artifacts
         file_package = types.ModuleType("frappe.core.doctype.file")
         file_package.file = self.native
+        from ledger_classifier_fixture import classifier
         modules = {"frappe": self.frappe, "jifeng_erp": self.app,
+                   "jifeng_erp.ledger_report_output": classifier(self.frappe),
                    "jifeng_erp.sample_source_report_artifacts": self.artifacts,
                    "frappe.core.doctype.file": file_package,
                    "frappe.core.doctype.file.file": self.native,
@@ -222,6 +224,7 @@ class TestSampleSourceReportFiles(unittest.TestCase):
         self.module_patch = patch.dict(sys.modules, modules)
         self.module_patch.start()
         self.addCleanup(self.module_patch.stop)
+        self.addCleanup(sys.modules.pop, "jifeng_erp.ledger_report_cache", None)
         name = "jifeng_erp.sample_source_report_files"
         spec = importlib.util.spec_from_file_location(name, ROOT / "jifeng_erp/sample_source_report_files.py")
         self.subject = importlib.util.module_from_spec(spec)
@@ -231,6 +234,17 @@ class TestSampleSourceReportFiles(unittest.TestCase):
         self.File = type("File", (self.subject.SampleSourceReportFileMixin, NativeFile), {})
 
     def get_doc(self, *args, **kwargs):
+        if args and args[0] == "Report":
+            name = args[1]
+            return Row(doctype="Report", name=name,
+                       report_type="Custom Report" if name == "CUSTOM" else "Query Report",
+                       reference_report="Open Work Orders" if name == "CUSTOM" else None)
+        if args and args[0] == "Prepared Report":
+            return Row(doctype="Prepared Report", name=args[1], report_name=self.prepared[args[1]])
+        if args and args[0] == "Jifeng Report Artifact":
+            # Existing receipt fixtures explicitly represent Open Work Orders.
+            self.roots[args[1]]  # Preserve missing receipt failure.
+            return Row(doctype="Jifeng Report Artifact", name=args[1], report="Open Work Orders")
         if args:
             return self.File(**copy.deepcopy(self.rows[args[1]]))
         kwargs.pop("doctype", None)

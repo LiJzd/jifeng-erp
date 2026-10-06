@@ -171,6 +171,8 @@ def _capture(doc):
     aliases = []
     for path in sorted(paths):
         aliases.extend(_alias_documents(path))
+    from .ledger_report_cache import check_file_subjects
+    check_file_subjects([*subjects, *aliases])
     roots = set()
     for subject in [*subjects, *aliases]:
         roots.update(service.bound_roots(subject))
@@ -326,6 +328,12 @@ def _dedup_candidate(doc, content=None, *, assignment=False):
 
 
 class SampleSourceReportFileMixin:
+    def on_trash(self):
+        # The native method unlinks bytes before doc_events execute.
+        from .ledger_report_cache import prevent_file_delete
+        prevent_file_delete(self)
+        return super().on_trash()
+
     def has_permission(self, permtype="read", *, debug=False, user=None):
         if user and user != frappe.session.user:
             # Source permissions must be evaluated under the native effective

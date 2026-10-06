@@ -342,13 +342,38 @@ def _execute(report, filters, kind, native):
 
 
 class SampleSourceReportMixin:
+    def on_trash(self):
+        from .ledger_report_cache import prevent_report_delete_or_rename
+        prevent_report_delete_or_rename(self)
+        return super().on_trash()
+
     """Narrow Report controller hooks, preserving original arguments/result."""
 
     def execute_query_report(self, filters):
         return _execute(self, filters, "Query Report", super().execute_query_report)
 
     def execute_script_report(self, filters):
+        if self.name not in KNOWN_REPORTS:
+            from jifeng_erp import ledger_report_output as ledgers
+            if ledgers.resolve_target(self.name) is not None:
+                return ledgers.execute_script_report(self, filters)
         return _execute(self, filters, "Script Report", super().execute_script_report)
+
+    def run_query_report(self, filters=None, user=None, ignore_prepared_report=False, are_default_filters=True):
+        from jifeng_erp import ledger_report_output as ledgers
+        if ledgers.resolve_target(self.name) is not None:
+            return ledgers.run_query_report(self, filters, user, ignore_prepared_report, are_default_filters)
+        return super().run_query_report(filters, user, ignore_prepared_report, are_default_filters)
+
+    def get_data(self, filters=None, limit=None, user=None, as_dict=False,
+                 ignore_prepared_report=False, are_default_filters=True):
+        from jifeng_erp import ledger_report_output as ledgers
+        if ledgers.resolve_target(self.name) is None:
+            return super().get_data(filters, limit, user, as_dict, ignore_prepared_report, are_default_filters)
+        columns, result = ledgers.run_query_report(self, filters, user, ignore_prepared_report, are_default_filters)
+        if as_dict:
+            result = self.build_data_dict(result, columns)
+        return columns, result
 
 
 def _spec(name):

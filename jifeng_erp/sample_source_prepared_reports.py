@@ -61,6 +61,8 @@ def _roots(doc):
 
 
 def _scoped(doc):
+    from .ledger_report_cache import deny_prepared
+    deny_prepared(doc)
     # An edited report name cannot make an already bound artifact ordinary.
     return bool(_roots(doc) or _artifacts().resolve_report(doc.get("report_name")))
 
@@ -248,6 +250,11 @@ def _read(doc, *, with_file_name=False, allow_owner=False):
 
 def prepared_report_has_permission(doc, ptype="read", user=None, debug=False):
     """Controller deny-only hook; native hooks/roles still make the grant."""
+    try:
+        from .ledger_report_cache import deny_prepared
+        deny_prepared(doc)
+    except Exception:
+        return False
     user = user or frappe.session.user
     if (doc.get("name"), ptype, user) in _NATIVE_GUARDS.get():
         return True
@@ -305,6 +312,8 @@ def before_validate_prepared_report(doc, method=None):
     """Serialize changing a binding with native independent sharing."""
     if doc.doctype != PREPARED:
         return
+    from .ledger_report_cache import deny_prepared
+    deny_prepared(doc)
     if _status_write(doc, "write", frappe.session.user):
         # Reacquire the same serialization lock used by DocShare validation.
         _unshared(_persisted(doc, lock=True))
@@ -322,6 +331,8 @@ def before_validate_prepared_report(doc, method=None):
 
 
 def validate_prepared_report_share(doc, method=None, share=None):
+    from .ledger_report_cache import deny_prepared
+    deny_prepared(doc)
     current = doc if doc.is_new() else _persisted(doc, lock=True)
     if _scoped(current):
         _deny(SHARE_DENIED)
@@ -347,9 +358,16 @@ def assert_prepared_share_invariant():
 
 
 class SampleSourcePreparedReportMixin:
+    def on_trash(self):
+        from .ledger_report_cache import deny_prepared
+        deny_prepared(self)
+        return super().on_trash()
+
     def has_permission(self, permtype="read", *, debug=False, user=None):
         user = user or frappe.session.user
         try:
+            from .ledger_report_cache import deny_prepared
+            deny_prepared(self)
             if _status_write(self, permtype, user):
                 return bool(super().has_permission(permtype, debug=debug, user=user))
             stored = self if self.is_new() else _persisted(self)
@@ -367,6 +385,8 @@ class SampleSourcePreparedReportMixin:
         return bool(allowed and prepared_report_has_permission(self, permtype, user, debug))
 
     def get_prepared_data(self, with_file_name=False):
+        from .ledger_report_cache import deny_prepared
+        deny_prepared(self)
         if not _scoped(_persisted(self)):
             return super().get_prepared_data(with_file_name=with_file_name)
         return _read(self, with_file_name=with_file_name)
@@ -446,6 +466,8 @@ def _generate_report_body(prepared_report):
     binding = None
     try:
         instance = _worker_record(prepared_report)
+        from .ledger_report_cache import deny_prepared
+        deny_prepared(instance)
         actor = frappe.session.user
         if (isinstance(actor, str) and actor and actor != "Guest" and instance.owner == actor
                 and instance.get("status") in ("Queued", "Started")):
@@ -516,6 +538,11 @@ def generate_report(prepared_report):
 def get_prepared_report_result(report, filters, dn="", user=None):
     """Native DTO shape, scoped read errors escape without doc.log_error."""
     name = report.get("custom_report") or report.get("report_name") or report.name
+    from .ledger_report_cache import is_ledger_report, deny_prepared_name, _deny
+    if is_ledger_report(name):
+        _deny()
+    if dn:
+        deny_prepared_name(dn)
     requested = _artifacts().resolve_report(name)
     if requested is None:
         from frappe.desk.query_report import get_prepared_report_result as native_result
@@ -639,6 +666,9 @@ def get_regeneration_target(report_name: str, prepared_report_name: str | None =
 
 @frappe.whitelist()
 def get_reports_in_queued_state(report_name: str, filters):
+    from .ledger_report_cache import is_ledger_report, _deny
+    if is_ledger_report(report_name):
+        _deny()
     if _artifacts().resolve_report(report_name) is None:
         return _native().get_reports_in_queued_state(report_name, filters)
     _current_user()

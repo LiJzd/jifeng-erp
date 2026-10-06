@@ -52,13 +52,22 @@ class TestSampleSourceReportOutput(unittest.TestCase):
         self.scripts._native_module = Mock()
         self.app = types.ModuleType("jifeng_erp")
         self.app.__path__ = [str(ROOT / "jifeng_erp")]
+        from ledger_classifier_fixture import classifier
+        # Existing ten/ordinary fixtures have Report metadata independent of
+        # their Prepared Report/File mock documents and native authority mocks.
+        report_metadata = types.SimpleNamespace(
+            throw=self.frappe.throw, PermissionError=self.frappe.PermissionError,
+            get_doc=lambda doctype, name: Row(doctype=doctype, name=name, report_type="Query Report"),
+        )
         self.modules = patch.dict(sys.modules, {
+            "jifeng_erp.ledger_report_output": classifier(report_metadata),
             "frappe": self.frappe, "jifeng_erp": self.app,
             "jifeng_erp.sample_orders": self.orders,
             "jifeng_erp.sample_source_report_scripts": self.scripts,
         })
         self.modules.start()
         self.addCleanup(self.modules.stop)
+        self.addCleanup(sys.modules.pop, "jifeng_erp.ledger_report_cache", None)
         name = "jifeng_erp.sample_source_report_output"
         spec = importlib.util.spec_from_file_location(name, ROOT / "jifeng_erp/sample_source_report_output.py")
         self.subject = importlib.util.module_from_spec(spec)
@@ -194,7 +203,10 @@ class TestSampleSourceReportOutput(unittest.TestCase):
     def test_ordinary_run_does_not_require_receipt_or_pinned_module(self):
         self.api.resolve_report.return_value = None
         self.subject._native = Mock(side_effect=AssertionError("ordinary must not pin"))
-        result = self.subject.run("ordinary", {"x": 1}, user="backward-compatible")
+        from ledger_classifier_fixture import classifier
+        self.frappe.get_doc = Mock(return_value=Row(doctype="Report", name="ordinary", report_type="Query Report"))
+        with patch.dict(sys.modules, {"jifeng_erp.ledger_report_output": classifier(self.frappe)}):
+            result = self.subject.run("ordinary", {"x": 1}, user="backward-compatible")
         self.assertEqual(result, {"native": True})
         self.api.generation.assert_not_called()
 

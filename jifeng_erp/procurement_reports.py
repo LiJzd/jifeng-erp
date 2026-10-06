@@ -5,7 +5,7 @@ from decimal import Decimal
 import frappe
 from frappe.utils import cint
 
-from jifeng_erp.ledger_source_guard import LedgerSourceGuard, table
+from jifeng_erp.ledger_source_guard import ledger_guard, table
 from jifeng_erp.inventory_scope import (
     column, decimal_number, readable_documents, report_scope, selected_warehouses,
 )
@@ -222,7 +222,7 @@ def _request_coverage(request, cache):
 
 
 def purchase_request_ledger(filters=None):
-    guard = LedgerSourceGuard("purchase_request")
+    guard = ledger_guard("purchase_request")
     filters, start, end = report_scope(filters, ("Material Request",), guard=guard)
     warehouses = set(selected_warehouses(filters, guard=guard)) if filters.warehouse else None
     documents = readable_documents("Material Request", {"company": filters.company, "docstatus": 1,
@@ -317,7 +317,7 @@ def _receipt_quantities(doc, row, cache):
 
 
 def purchase_receipt_ledger(filters=None):
-    guard = LedgerSourceGuard("purchase_receipt")
+    guard = ledger_guard("purchase_receipt")
     filters, start, end = report_scope(filters, ("Purchase Receipt",), guard=guard)
     warehouses = set(selected_warehouses(filters, guard=guard)) if filters.warehouse else None
     query = {"company": filters.company, "docstatus": 1,

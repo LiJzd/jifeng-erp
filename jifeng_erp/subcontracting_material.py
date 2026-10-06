@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 import frappe
 
 from jifeng_erp.subcontracting import _column, _order_items, _orders, _readable_documents, _scope
-from jifeng_erp.ledger_source_guard import LedgerSourceGuard
+from jifeng_erp.ledger_source_guard import ledger_guard
 from jifeng_erp.sample_source_queries import check_protected_reference
 
 
@@ -83,7 +83,7 @@ def material_movements(orders, selected_items, entries, rm_item_code=None, suppl
 
 
 def subcontracting_material_ledger(filters=None):
-    guard = LedgerSourceGuard("subcontracting_material")
+    guard = ledger_guard("subcontracting_material")
     filters, start, end = _scope(filters, ("Stock Entry", "Subcontracting Order"), guard=guard)
     if filters.rm_item_code:
         if not guard.query("get_list", "Item", filters={"name": filters.rm_item_code},
