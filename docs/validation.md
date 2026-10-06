@@ -1,12 +1,22 @@
 # 验证记录
 
+## 2026-10-06 销售原生表单补充验收 A/B 通过
+
+`sales-native-form-ab-gui-20261006-r9` 唯一实际运行 PASS，根复核原报告及准确profile进程：普通用户登录200，两版均从共享销售页读取同一订单摘要／3子行／3流程详情，原生Sales Order准确route、doctype／docname／doc、`is_onload=false`和桥接is-ready同时成立。本侧本阶段六类必要读取均200，Sales Order和Cost Center元数据分别观察；销售共享JS完整HTTP字节准确。A关闭原生标签、B销售面包屑后重开共享入口均通过，本轮回航后未重新查询。正常logout POST200、context关闭，根独立CIM核Chrome为0；无业务保存、提交、mapper或公网变更。业务阻断／capture failure／pageerror／业务HTTP错误均0，既有socket.io及undefined环境404单独保留，不称全页面无错误。
+
+实际报告SHA256 `f1d859aad9ab306784f45eb8307c0c6da55961203af8be2384a0558f118587c0`，helper `b186489246ef0837ce53417cbdac84b4d35cf1ab0fe3746e2e665c5ff371050b`，manifest `bc7ed44010b3f6b9d8668bfab5e226e1fe168389436c49dc919dc4ce55e7867f`。此前r7因fixture字符串idx与原生数字严格比较及Cost Center读取缺失失败；r8补该项时误删原Sales Order metadata allowance而失败。两次均实际正常logout200／context关闭／根核Chrome0，原件保持：r7报告 `3150fd44b60fd92edaf68390f6d5284a990819dc860576c1a23ef59f0c31a98c`，r8 `48d8bf107cce6fecb8360d91202cb2782e88bd06ead919c2349478832789fcea`。三份报告均限定ACL；r9恢复两个精确GET schema，Cost Center完成门不借Sales Order响应，66静态模型通过后唯一执行。元数据初始化可能填充UI用户设置缓存，不计业务修改。
+
 ## 2026-10-06 财务分账缺口与原生报告字段保护候选
 
 物料／材料／委外／电镀四财务入口仍为预览；不能将通用供应商应付或当前档案分类当作历史四账完成。前三类旧账的字段及金额公式证据不足；旧电镀欠款仅有 `CW_DDQK.欠款` 与PP明细绑定观察，尚无完整金额口径或准确关联键。独立证据审计 `D:/codex-temp/finance-four-ledger-scope-20261006-r1/report.md` SHA256 `6a8e0f002f84786736605f0f8e3c0c303ec71646e643b0153484fb330582ce9d`，保留原需求，继续获取旧页证据。
 
-原采购／委外五报告的父文档可读并不保证子字段或派生数量输入可读，已审候选 `native-ledger-field-mask-20261006-r1`：显式传递本次报告guard，准确检查父Table／子parenttype／实际字段read和mask、条件单位依赖、来源值与成员及原权限图完成复核；不改旧计算、其他未传guard的调用方或财务菜单。Company仍以select确定范围，采购金额报告另要求本币字段可读及未遮罩，不借完整Company文档授权。根复核核心及调用差异，30模型通过；真实原生／性能尚待，未应用仓库或运行环境，不能计四账正式可用。
+原采购／委外五报告的父文档可读并不保证子字段或派生数量输入可读，已审候选 `native-ledger-field-mask-20261006-r1`：显式传递本次报告guard，准确检查父Table／子parenttype／实际字段read和mask、条件单位依赖、来源值与成员及原权限图完成复核。Company仍以select确定范围，采购金额报告另要求本币字段可读及未遮罩，不借完整Company文档授权。根复核核心及调用差异，30模型通过。后续真实原生只读对比见下段；既有业务回归又发现非complete分支先登记被完整文档权限拒绝的父单，再finish导致整报告拒绝，改变原“整张排除”行为。正在独立r2后移该登记并检查叶仓分支；r1未应用仓库或运行环境，不能计四账正式可用。
 
-最终完整差异SHA256 `50d5a00ebeb847791b017c0f6a71d61fc536a7771785701eb631c2ef37217464`，manifest `3ac86815ead811a09debafc64f52bad5c712a8fb945fad11e94e520587df14e9`，核心guard `5da3212317618045fc6c832d4da1d4c8d56d70124d4db84d9664f346f889976e`。复核是可观察状态比较，没有锁或并发瞬时保证；原生请求开始前的陈旧缓存及原Flow图外既有时序不由本候选修复；新增查询成本需实测。独立原生只读探针准备中，不造单据求正向或据空报告宣称完整业务通过。
+r1完整差异SHA256 `50d5a00ebeb847791b017c0f6a71d61fc536a7771785701eb631c2ef37217464`，manifest `3ac86815ead811a09debafc64f52bad5c712a8fb945fad11e94e520587df14e9`，核心guard `5da3212317618045fc6c832d4da1d4c8d56d70124d4db84d9664f346f889976e`。复核是可观察状态比较，没有锁或并发瞬时保证；原生请求开始前的陈旧缓存及原Flow图外既有时序不由本候选修复。
+
+根唯一执行 `native-ledger-field-mask-native-20261006-r1` 实际PASS：两个独立新进程各用一个真实mysqlclient Unix物理连接，SESSION READ ONLY先于BEGIN，rollback／destroy／close通过；生产来源hook／五父单Mixin及四ContextVar、report execute与跨调用方alias保持。准确已提交PO／PR的原生get_list／Doc read、真实父Table／子parenttype及字段read／mask正向通过。五源函数完整typed columns／rows与源文档精确相同：采购收货1行，其余四报告为空，零原权限异常；空报告不计完整业务阳性。不是query_report角色入口、mask撤权负例、同快照、并发权限或全库冻结证明；原生缓存保持，不补造单据。
+
+实际result SHA256 `3c850efe3a503271ccdbf81883ee8a084d8f71308f56158510ebf08e2a8e12a5`，probe `5129d8513b6591e2da55a055989fe7c07c113cdd44cccb98440d6a5af621e4ca`，launcher `2ab3652c65c23dd8e5fb08d596933d32d542f8eb094ffcc357ea98f8e3c738cf`，manifest `f7788d99bf858863ac9d508cb98f7a36db5375fca08ae298b27f97c985654431`。基准五函数98次SQL／SQL约0.042秒，候选627次／约0.282秒；采购收货函数约0.029→0.692秒，其它候选约0.51～1.00秒。仅本夹具单次观察，新增成本已记录，不作为GUI或生产容量结论。626来源／45资产URL／owner1bfa前后保持，无schema、业务、角色或公网变更；r2仍需验证。
 
 ## 2026-10-06 销售详情优化已本机安装
 

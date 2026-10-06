@@ -1,6 +1,12 @@
 # 集沣 ERPNext 业务扩展
 
-## 2026-10-06 当前外网部署：705 增量与 HTTPS 核验通过
+## 2026-10-06 当前外网测试入口
+
+[A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)和[B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)已部署在杭州服务器，共用业务服务、权限和测试数据库。当前公开源码为 `0e6105d`；八核心服务、完整部署来源和可信 HTTPS 已独立核验。账号见本机受限 `output/ERP外网测试账号.private.txt`。
+
+本机销售详情优化、临工选人工资及采购／应付增量尚未发布。当前提供外网测试版，旧系统全部模块正式可用的目标仍未完成；最新范围以[验证记录](docs/validation.md)和[外网说明](deploy/erp-test/README.md)为准。以下各节保留当时状态。
+
+## 2026-10-06 历史部署：705 增量与 HTTPS 核验通过
 
 [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)和[B · 旧界面版](https://116.62.241.148/desk/jifeng-legacy)现共用 `7054811` 业务源码和原测试数据库。独立安装 r2 的 stage／prepare／quiesce／native／start 五阶段实际 PASS；标准四份服务器备份、4 新 DocType／26 Custom Field 原生安装及旧五表／相关元数据保护通过。仅替换第五层 Compose 的五应用只读源码挂载，三数据服务及五历史容器保持。
 
