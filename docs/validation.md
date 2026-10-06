@@ -1,5 +1,19 @@
 # 验证记录
 
+## 2026-10-06 销售详情固定查询优化及原生对比通过
+
+已审阅的三份生产候选接入本地源码：完整详情的私有查询实例在来源权限 hook 的原生调用位置取得当前准确父单范围；普通原生 hook 保持原人口行为，其他 hook／Server Script、全局独立分享拒绝、字段 mask、来源和 finish 复核保留。没有跨请求权限缓存或全局查询替换。74项销售模型、65项来源权限模型、17项新增范围与嵌套回调模型通过；图模型仅在查询执行边界使用替身，原生引擎另有下述实际证明。
+
+根唯一执行 `sales-detail-native-profile-20261006-r1` 实际 PASS：基准146205次SQL／SQL26.115秒／墙钟56.349秒，候选83547次SQL／SQL13.263秒／墙钟28.688秒；完整DTO准确相同，为同一订单、3子行、3流程。两个独立新进程分别使用真实 mysqlclient Unix 连接，SESSION READ ONLY先于BEGIN，回滚及物理关闭通过；候选注册早于控制器加载，五父单Mixin／原生hook和四ContextVar身份前后相符。准确外层范围与同doctype原生嵌套调用不继承范围的观察通过，327次真实原生 execute_query 字段mask调用保持，包装器恢复。
+
+helper SHA256 `40a5c6842d06d88e420447eb8e4fdf45d92536543b7692c4dc9d77518b83cad4`，launcher `e65e92676aa6907bbadff063f3ccd907a437775aeb38c37ba86dfd9d3d92126a`，manifest `fd86729d92800fc28d05731730a445e835d18db218301edc5ca815246ca1f206`，实际结果 `2f109f214f59b9e1e23c729b5a077ebe36a6079a0775b6283ed58e36c8985ca7`。当前625运行源码／owner保持；本次是两个不同只读事务快照，角色／UP两次观察一致，不是数据库或并发权限冻结；共享原生缓存顺序偏差未控制，不作HTTP／GUI延迟或稳定倍速结论。详情仍约29秒，优化未完成。尚未安装本批，公网仍0e610。
+
+## 2026-10-06 销售摘要与原生订单回航 A/B 实际观察
+
+`sales-summary-ab-gui-20261006-r6` 两版均实际通过准确输入、列表一行、完整3子行／3流程详情、原生Sales Order route及单据身份ready、关闭回航和重新查询；共享JS HTTP SHA准确。原件 `D:/codex-temp/sales-summary-ab-gui-20261006-r6/actual-4d7b1322-09b0-43fc-9095-d3901722ba1a.report.json` SHA256 `026a841ce9b5e861618ee79461fcf0b5d1eee1c4985fa556cc1b5b1d3e53a294`。
+
+整体仍 failed-closed：14条原生表单只读配置请求被助手白名单拒绝并产生4条pageerror，正常退出没有观察到请求、结果未知，不能把可见单据身份等同完整原生表单初始化通过。context已关闭，根独立CIM复核准确UUID profile的Chrome为0，原profile／失败证据及受限ACL保留；未保存、提交、映射、导出或更改公网。正在依原生源码补精确只读schema及退出逻辑，之后核验未完成阶段，不盲目重放业务动作。
+
 ## 2026-10-06 临工浏览、选人工资及明细 A/B 实际通过
 
 本机 `temporary-worker-ab-gui-20261006-r10` 的两版完整只读主链实际 PASS，根复核原始日志：同一普通 HR User 查询准确临工一条、排除长期人员；资格 GET200 后，当前可见工资 iframe 的公司和员工 getter／输入匹配、无忙碌或未保存草稿，原生 Page 源码 prefix 与 sourceURL 后缀匹配。两版明细 POST reportview 均带准确 Company／Employee 过滤，200 响应只有目标7.5草稿一行；可见 List iframe 的 cur_list 与目标 DOM 行准确匹配工资、员工、公司、金额及状态。List 已消费 route_options，不用消费后的空 route_options 代替真实请求范围。正常退出200、context关闭，根只读进程复核该profile Chrome为0。

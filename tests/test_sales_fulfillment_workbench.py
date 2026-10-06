@@ -80,8 +80,17 @@ class TestSalesFulfillment(unittest.TestCase):
                               ("Delivery Note", "delivery_note", "dn_detail")),
         }
         fulfillment.RETURN_CHILD = {"Delivery Note": "dn_detail", "Sales Invoice": "sales_invoice_item"}
+        # Graph tests isolate native query execution at its private boundary.
+        # The adapter has separate engine models and a real Frappe read-only probe.
+        adapter = types.ModuleType("jifeng_erp.sales_fulfillment_scoped_query")
+        def record_list(doctype, *, filters, fields, parenttype=None, limit, scoped=False):
+            options = {"parent_doctype": parenttype} if parenttype else {}
+            return self.frappe.get_list(doctype, filters=filters, fields=fields,
+                                       limit_page_length=limit, order_by="name asc", **options)
+        adapter.record_list = record_list
         patches = patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model, "frappe.utils": utils,
-                                          "jifeng_erp.fulfillment": fulfillment})
+                                          "jifeng_erp.fulfillment": fulfillment,
+                                          "jifeng_erp.sales_fulfillment_scoped_query": adapter})
         patches.start()
         self.addCleanup(patches.stop)
         spec = importlib.util.spec_from_file_location("sales_fulfillment_under_test", ROOT / "jifeng_erp/sales_fulfillment_workbench.py")

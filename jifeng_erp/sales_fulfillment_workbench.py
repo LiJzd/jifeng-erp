@@ -185,6 +185,13 @@ def _reposting(keys):
     return tuple(states)
 
 
+def _record_list(doctype, *, filters, fields, parenttype=None, scoped=False):
+    from jifeng_erp.sales_fulfillment_scoped_query import record_list
+
+    return record_list(doctype, filters=filters, fields=fields, parenttype=parenttype,
+                       limit=SOURCE_LIMIT + 1, scoped=scoped)
+
+
 class _Graph:
     def __init__(self, company, order_headers_only=False):
         self.company = company
@@ -208,10 +215,9 @@ class _Graph:
             if filters["parenttype"] != parenttype or filters["parentfield"] != fieldname:
                 _invalid()
         fields = _fields(doctype, required, optional, parenttype)
-        options = {"parent_doctype": parenttype} if parenttype else {}
         try:
-            rows = frappe.get_list(doctype, filters=filters, fields=fields, order_by="name asc",
-                                   limit_page_length=SOURCE_LIMIT + 1, **options)
+            rows = _record_list(doctype, filters=filters, fields=fields, parenttype=parenttype,
+                                scoped=complete and not self.order_headers_only)
         except frappe.PermissionError:
             _deny()
         if len(rows) > SOURCE_LIMIT:
@@ -311,9 +317,8 @@ class _Graph:
         for doctype, filters, raw_filters, required, fields, parenttype, state, raw_state in self.queries:
             if not set(fields).issubset(_fields(doctype, required, fields, parenttype)):
                 _deny()
-            options = {"parent_doctype": parenttype} if parenttype else {}
-            current = frappe.get_list(doctype, filters=filters, fields=list(fields), order_by="name asc",
-                                      limit_page_length=SOURCE_LIMIT + 1, **options)
+            current = _record_list(doctype, filters=filters, fields=list(fields), parenttype=parenttype,
+                                   scoped=raw_state != _freeze(None) and not self.order_headers_only)
             raw = frappe.get_all(doctype, filters=raw_filters, fields=["*"], order_by="name asc",
                                  limit_page_length=SOURCE_LIMIT + 1) if raw_state != _freeze(None) else None
             if _freeze(current) != state or _freeze(raw) != raw_state:

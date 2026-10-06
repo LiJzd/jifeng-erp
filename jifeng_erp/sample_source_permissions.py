@@ -568,6 +568,23 @@ def _sql_names(table, field, names):
 
 def sample_source_query_conditions(user=None, doctype=None):
     """Parent conditions also govern native child/count queries and link joins."""
+    return _query_conditions(user=user, doctype=doctype)
+
+
+def _query_conditions(user=None, doctype=None, *, candidate_names=None):
+    """Private fixed-query population, never a cached permission decision.
+
+    The ordinary native hook passes no population and retains its full behavior.
+    The fixed query adapter alone supplies fresh raw matching parent identities.
+    All protected parents still receive the global no-independent-share check.
+    """
+    if candidate_names is not None:
+        if (not isinstance(candidate_names, tuple)
+                or any(not isinstance(name, str) or not name for name in candidate_names)):
+            _deny()
+        candidates = frozenset(candidate_names)
+    else:
+        candidates = None
     user = user or frappe.session.user
     if doctype not in PARENTS:
         return sample_child_query_conditions(user=user, doctype=doctype)
@@ -576,7 +593,8 @@ def sample_source_query_conditions(user=None, doctype=None):
     active = sorted({key[1] for key in _AUTHORIZING.get()
                      if key[0] == doctype and key[2] == user and key[3] == 0 and key[1]})
     if active:
-        return _sql_names(doctype, "name", active)
+        return _sql_names(doctype, "name", active if candidates is None else
+                          [name for name in active if name in candidates])
     names = []
     for row in _rows(doctype, {}, ["name"]):
         doc = frappe.get_doc(doctype, row.name)
@@ -585,7 +603,11 @@ def sample_source_query_conditions(user=None, doctype=None):
             # With role-based access, an invariant violation must abort the
             # query rather than return a condition later OR'ed with shares.
             _unshared(doc)
-        else:
+        # Do not authorize irrelevant parents. This is a population filter,
+        # after the existing global share invariant, not an allow receipt.
+        if candidates is not None and row.name not in candidates:
+            continue
+        if not protected:
             # The surrounding query still applies its ordinary owner/UP/share
             # conditions. Do not put native-unreadable ordinary names into the
             # additional IN clause (which may appear in debug SQL/trace).
