@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-06 五台账完整原生结果通过，财务设置已安装
+
+`native-ledger-fresh-entry-proof-20261006-r2`由根唯一实际执行通过，结果SHA256 `d0f3958e2f994c9022188cd9a34af76c2685491338c70b26b5c3fb76a6173179`，probe `fac4bc3bab1537600d542ebf925129cd34f0040fc8fa096bf467640bcb84ce81`，launcher `6b78eb7187f88cf41a0f0c8039b8b916d7b0b8f21b23d545053ed45d4ffdc919`。采购现存普通岗位通过五次实际生产override，完整DTO除顶层execution_time外，与直接生产来源及原生列规范化／最终行过滤／合计／翻译逐类型相等；收货有准确原测试单明细，其余四报告明确为空。仅HR User现存岗位五次实际PermissionError，安全调用栈归类为原生Report或引用单据权限门，不把本次归类扩大成每次均Report角色门。两个独立进程各一真实mysqlclient Unix连接，SESSION READ ONLY先于BEGIN，finally回滚／destroy／物理关闭。五报告没有调用Core run、Script Timer、RQ或Prepared；实际生产公开文件／独立分享发布不变量通过。原生对象／来源权限和ContextVar前后保持，629完整字节及owner保持；两个事务不是同一快照，不宣称并发权限新鲜、字段负例、同步导出、真实缓存消费或GUI已验。R1仅准备，R2保留外层whitelist对象比较并对生产globals／路径使用unwrap，没有执行旧候选。
+
+财务独立科目设置随后唯一安装 `finance-dictionary-settings-local-install-20261006-r1`：629→629，两个生产文件替换、627其余文件完整元数据保持；两个文件原root:root0600权限保持。45URL只变化财务JS版本，其余44顺序保持，11采购报告来源保持。原生两个GET／POST外层whitelist与生产unwrap对象、已有controller三个别名及空mapping ContextVar通过；没有调用财务业务函数。Web普通停启各一次，恢复PID6688、Guest ping通过，限定业务／角色／UP／索引图相等，数据服务及队列身份保持。根独立stdlib再核完整629字节、627元数据、root600回执和选定保护图相等；没有业务、角色、DDL或外网修改。helper SHA256 `126343096bb5f038be14e78fb063b66eb22f8c9d30e9d2d4497d4e18f10c06ab`，plan `181b6c887708a80db5746b80f6379e7fe8d3bd0ce7f905f986a0fe3175038e11`，安装结果 `bcb1706e95c49a474ce71874c42b768d33d0d2c0920864a23755fe97d94e6af1`，当前owner `cf15dec97a38c89ade17430bf2243c7e5e8706dddb890b0e2e300e6bf2091d35`，原生绑定回执 `8e712bb9940fe9df28c62ce717b4e2639040668e5eec2007d9870a77d2336381`。科目映射／清除、版本冲突和A/B窗口仍待实际验收，不能借绑定或17模型称功能通过。
+
+外网继续`0e6105d`共享测试版，本批未公开。三词典仍partial，旧四财务账仍预览，全部旧模块正式可用目标保持。下面各节是当时状态。
+
 ## 2026-10-06 五台账保护本机安装，财务科目设置接入源码
 
 五台账新查询及缓存保护的11生产文件已唯一实际安装：629来源／45资产，9替换、2新增，其他618文件的字节与完整元数据保持；hooks原0600权限保持。Web普通停启各一次后PID6415运行，Guest ping通过。原生Report／Prepared／File MRO、方法、外层override／event／worker／download对象、五execute工厂、字段mask和来源ContextVar绑定通过；Core recorder／monitor钩子保留准确合并顺序和primary函数对象，未调用其回调。限定业务／公司／角色／UP／工资索引图前后相等，三数据服务和队列身份保持；没有业务、角色、表结构或外网修改，不宣称全库冻结。
