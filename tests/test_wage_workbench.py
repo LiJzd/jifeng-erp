@@ -471,9 +471,17 @@ class TestWageWorkbench(unittest.TestCase):
         self.module.save_drafts(self.payload)
         source = self.persisted[0]
         source.docstatus = 2
+        approved_classification = {
+            "personnel_type_at_approval": "临时", "personnel_type_snapshot_status": "已核实",
+            "personnel_type_snapshot_time": "2026-10-07 10:00:00.000001",
+            "personnel_type_snapshot_source": "a" * 64, "personnel_type_snapshot_version": "b" * 64,
+        }
+        for field, value in approved_classification.items():
+            setattr(source, field, value)
         new = Doc(doctype=source.doctype, amended_from=source.name, flags=Doc(),
                   workbench_request_key=source.workbench_request_key,
-                  workbench_request_fingerprint=source.workbench_request_fingerprint)
+                  workbench_request_fingerprint=source.workbench_request_fingerprint,
+                  **approved_classification)
         original_key = source.workbench_request_key
         new.workbench_request_key = "forged"
         with self.assertRaisesRegex(ValueError, "来自原已取消单据"):
@@ -485,6 +493,9 @@ class TestWageWorkbench(unittest.TestCase):
         self.assertIsNone(new.workbench_request_key)
         self.assertIsNone(new.workbench_request_fingerprint)
         self.assertEqual(source.workbench_request_key, original_key)
+        for field, value in approved_classification.items():
+            self.assertIsNone(getattr(new, field))
+            self.assertEqual(getattr(source, field), value)
 
     def test_native_restore_token_preserves_an_amended_document_request(self):
         self.module.save_drafts(self.payload)
@@ -502,6 +513,36 @@ class TestWageWorkbench(unittest.TestCase):
         self.module.prepare_wage_amendment(restored)
         self.module.guard_request_identity(restored)
         self.assertEqual(restored.workbench_request_key, snapshot["workbench_request_key"])
+
+    def test_exact_personnel_restore_of_an_ordinary_amended_wage_preserves_original_snapshot(self):
+        restored = Doc(doctype="Jifeng Wage Entry", name="RESTORED-ORDINARY-AMENDMENT", amended_from="OLD",
+                       flags=Doc(personnel_classification_restore_token=self.module.PERSONNEL_RESTORE_TOKEN),
+                       personnel_type_at_approval="临时", personnel_type_snapshot_status="已核实",
+                       personnel_type_snapshot_time="2026-10-07 10:00:00.000001",
+                       personnel_type_snapshot_source="a" * 64, personnel_type_snapshot_version="b" * 64)
+        original = {field: getattr(restored, field) for field in self.module.PERSONNEL_SNAPSHOT_FIELDS}
+        self.frappe.get_doc.reset_mock()
+        self.module.prepare_wage_amendment(restored)
+        self.assertEqual({field: getattr(restored, field) for field in self.module.PERSONNEL_SNAPSHOT_FIELDS}, original)
+        self.frappe.get_doc.assert_not_called()
+
+    def test_native_workbench_restore_compares_snapshot_datetime_without_false_format_conflict(self):
+        self.module.save_drafts(self.payload)
+        saved = self.persisted[0]
+        saved.personnel_type_snapshot_time = datetime.datetime(2026, 10, 7, 10, 0, 0, 1)
+        fields = ("name", *self.module.EDIT_FIELDS, "job_card", "work_order", "flow_order",
+                  *self.module.PERSONNEL_SNAPSHOT_FIELDS, "workbench_request_key", "workbench_request_fingerprint")
+        snapshot = {field: getattr(saved, field, None) for field in fields}
+        snapshot["personnel_type_snapshot_time"] = "2026-10-07 10:00:00.000001"
+        snapshot["doctype"] = "Jifeng Wage Entry"
+        self.deleted = [Doc(data=json.dumps(snapshot))]
+        saved.flags = Doc(from_restore=True)
+        self.module.authorize_native_restore(saved)
+        self.module.guard_request_identity(saved)
+        saved.flags = Doc(from_restore=True)
+        saved.personnel_type_snapshot_time += datetime.timedelta(microseconds=1)
+        with self.assertRaisesRegex(ValueError, "原删除单据"):
+            self.module.authorize_native_restore(saved)
 
     def test_native_allocation_amendment_clears_new_refs_and_preserves_old_history(self):
         source = Doc(doctype="Jifeng Wage Allocation", name="OLD", docstatus=2,
@@ -566,6 +607,10 @@ class TestWageWorkbench(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "原删除单据"):
             self.module.authorize_native_restore(saved)
         saved.name = snapshot["name"]
+        saved.personnel_type_at_approval = "临时"
+        with self.assertRaisesRegex(ValueError, "原删除单据"):
+            self.module.authorize_native_restore(saved)
+        saved.personnel_type_at_approval = None
         self.frappe.session.user = "HR-ACTOR"
         self.frappe.get_roles = Mock(return_value=["HR Manager"])
         with self.assertRaisesRegex(ValueError, "恢复权限"):

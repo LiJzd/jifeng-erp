@@ -99,6 +99,7 @@ class TestWageJobCardLink(unittest.TestCase):
         document.Document = type("Document", (), {})
         utils = types.ModuleType("frappe.utils")
         utils.getdate = lambda value: datetime.date.fromisoformat(str(value))
+        utils.now_datetime = lambda: datetime.datetime(2026, 10, 7, 10, 0)
         payroll = types.ModuleType("jifeng_erp.payroll")
         payroll.active_additional_salary = Mock(return_value=None)
         payroll.wage_amounts = lambda *args: (Decimal("10"), Decimal("0"), Decimal("10"))
@@ -115,6 +116,14 @@ class TestWageJobCardLink(unittest.TestCase):
             piece_scope = patch.dict(sys.modules, {"jifeng_erp.piece_workers": pieces})
             piece_scope.start()
             self.addCleanup(piece_scope.stop)
+            classification_path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "wage_personnel_classification.py"
+            classification_spec = importlib.util.spec_from_file_location("payroll_personnel_classification", classification_path)
+            classification = importlib.util.module_from_spec(classification_spec)
+            classification_spec.loader.exec_module(classification)
+            classification_scope = patch.dict(sys.modules, {"jifeng_erp.wage_personnel_classification": classification,
+                                                            "frappe.utils": utils})
+            classification_scope.start()
+            self.addCleanup(classification_scope.stop)
             allocation_path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "wage_allocation.py"
             allocation_spec = importlib.util.spec_from_file_location("allocation_under_test", allocation_path)
             allocation = importlib.util.module_from_spec(allocation_spec)
@@ -124,6 +133,8 @@ class TestWageJobCardLink(unittest.TestCase):
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
         self.wage = module.JifengWageEntry()
+        self.wage.flags, self.wage.docstatus = types.SimpleNamespace(), 0
+        self.wage.check_permission = Mock()
         self.module = module
         self.wage.employee, self.wage.company = "E-1", "C-1"
         self.wage.operation, self.wage.flow_order, self.wage.work_order = "抛光", None, None
@@ -168,6 +179,15 @@ class TestWageJobCardLink(unittest.TestCase):
             self.wage.docstatus = status
             with self.subTest(docstatus=status), patch.object(self.module, "validate_wage_source"), self.assertRaisesRegex(ValueError, "工资方式必须为计件"):
                 self.wage.validate()
+
+    def test_native_update_after_submit_cannot_replace_company_without_running_validate(self):
+        original = types.SimpleNamespace(company="C-1", employee="E-1", docstatus=1)
+        self.wage.docstatus = 1
+        self.wage.get_doc_before_save = lambda: original
+        self.wage.before_update_after_submit()
+        self.wage.company = "C-2"
+        with self.assertRaisesRegex(ValueError, "不能修改"):
+            self.wage.before_update_after_submit()
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@
   "employee", "employee_name", "company", "operation", "work_date", "payroll_date",
   "flow_order", "work_order", "job_card", "wage_allocation", "wage_allocation_employee", "salary_component", "calculation_section",
   "quantity", "stock_uom", "piece_rate", "piece_rate_reference", "piece_rate_reference_version", "piece_amount", "hours", "hourly_rate",
-  "time_amount", "extra_amount", "total_amount", "notes", "piece_worker_qualified", "piece_worker_qualification_status", "piece_worker_qualification_source", "piece_worker_qualification_version", "amended_from", "workbench_request_key", "workbench_request_fingerprint"
+  "time_amount", "extra_amount", "total_amount", "notes", "piece_worker_qualified", "piece_worker_qualification_status", "piece_worker_qualification_source", "piece_worker_qualification_version", "personnel_type_snapshot_status", "personnel_type_at_approval", "personnel_type_snapshot_time", "personnel_type_snapshot_source", "personnel_type_snapshot_version", "amended_from", "workbench_request_key", "workbench_request_fingerprint"
  ],
  "fields": [
   {"fieldname": "employee", "fieldtype": "Link", "label": "员工", "options": "Employee", "reqd": 1, "in_list_view": 1},
@@ -44,6 +44,11 @@
   {"fieldname": "piece_worker_qualification_status", "fieldtype": "Select", "label": "计件资格核实状态", "options": "\n已核实\n历史未记录\n不适用", "description": "审核前按当前人员档案核实；早期已审核记录没有资格快照时保留为历史未记录，不推定当时工资方式。", "read_only": 1, "no_copy": 1},
   {"fieldname": "piece_worker_qualification_source", "fieldtype": "Data", "label": "计件资格来源摘要", "read_only": 1, "hidden": 1, "no_copy": 1, "permlevel": 1},
   {"fieldname": "piece_worker_qualification_version", "fieldtype": "Data", "label": "计件资格版本摘要", "read_only": 1, "hidden": 1, "no_copy": 1, "permlevel": 1},
+  {"fieldname": "personnel_type_snapshot_status", "fieldtype": "Select", "label": "人员类型核实状态", "options": "\n已核实\n档案未记录\n无权核实\n历史未记录", "description": "草稿仅为当前观察；首次原生审核固定快照。早期已审核记录本字段空白表示历史未记录，不按当前档案补推工作日类型。", "read_only": 1, "no_copy": 1},
+  {"fieldname": "personnel_type_at_approval", "fieldtype": "Data", "label": "人员类型（审核时快照）", "description": "草稿仅为当前观察；批准后保留批准时的旧系统人员类型。业务投影仍须有准确原人员补充档案的读取及字段权限。", "read_only": 1, "no_copy": 1, "permlevel": 1, "print_hide": 1},
+  {"fieldname": "personnel_type_snapshot_time", "fieldtype": "Datetime", "label": "人员类型核实时间", "read_only": 1, "no_copy": 1, "permlevel": 1, "print_hide": 1},
+  {"fieldname": "personnel_type_snapshot_source", "fieldtype": "Data", "label": "人员类型来源摘要", "read_only": 1, "hidden": 1, "no_copy": 1, "permlevel": 1},
+  {"fieldname": "personnel_type_snapshot_version", "fieldtype": "Data", "label": "人员类型版本摘要", "read_only": 1, "hidden": 1, "no_copy": 1, "permlevel": 1},
   {"fieldname": "amended_from", "fieldtype": "Link", "label": "修改自", "options": "Jifeng Wage Entry", "read_only": 1, "no_copy": 1, "print_hide": 1},
   {"fieldname": "workbench_request_key", "fieldtype": "Data", "label": "工资录入请求", "read_only": 1, "hidden": 1, "unique": 1, "no_copy": 1},
   {"fieldname": "workbench_request_fingerprint", "fieldtype": "Data", "label": "工资录入请求内容", "read_only": 1, "hidden": 1, "no_copy": 1}

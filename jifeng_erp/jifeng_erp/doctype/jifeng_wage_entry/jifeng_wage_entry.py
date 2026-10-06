@@ -7,15 +7,20 @@ from jifeng_erp.piece_workers import bind_piece_worker
 from jifeng_erp.wage_allocation import validate_wage_source
 from jifeng_erp.wage_rate_references import guard_cancelled_wage_snapshot, validate_wage_reference
 from jifeng_erp.wage_workbench import authorize_native_restore, guard_request_identity, prepare_wage_amendment
+from jifeng_erp.wage_personnel_classification import (
+    authorize_classification_restore, bind_classification, guard_approved_classification,
+)
 
 
 class JifengWageEntry(Document):
     def before_insert(self):
         authorize_native_restore(self)
+        authorize_classification_restore(self)
         prepare_wage_amendment(self)
 
     def validate(self):
         guard_request_identity(self)
+        guard_approved_classification(self)
         employee = frappe.get_doc("Employee", self.employee)
         employee.check_permission("read")
         if employee.company != self.company or employee.status != "Active":
@@ -73,6 +78,7 @@ class JifengWageEntry(Document):
                                 and before.company == self.company and before.employee == self.employee
                                 and before.quantity == self.quantity and before.piece_rate == self.piece_rate) else None
         bind_piece_worker(self, historical=historical)
+        bind_classification(self)
 
     def before_submit(self):
         if not self.job_card:
@@ -85,7 +91,11 @@ class JifengWageEntry(Document):
             frappe.throw("报工单中没有这位员工的报工时间记录")
 
     def before_cancel(self):
+        guard_approved_classification(self)
         guard_cancelled_wage_snapshot(self)
+
+    def before_update_after_submit(self):
+        guard_approved_classification(self)
 
     def on_cancel(self):
         if active_additional_salary(self.name, for_update=True):

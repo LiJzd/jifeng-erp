@@ -6,10 +6,15 @@ import uuid
 
 import frappe
 from frappe.utils import getdate
+from jifeng_erp.archive_versions import same_version
 from jifeng_erp.payroll import nonnegative
 from jifeng_erp.piece_workers import require_piece_worker
 from jifeng_erp.temporary_workers import require_temporary_selection
 from jifeng_erp.wage_rate_references import REFERENCE_FIELDS
+from jifeng_erp.wage_personnel_classification import (
+    RESTORE_TOKEN as PERSONNEL_RESTORE_TOKEN,
+    SNAPSHOT_FIELDS as PERSONNEL_SNAPSHOT_FIELDS,
+)
 
 
 WAGE = "Jifeng Wage Entry"
@@ -298,8 +303,14 @@ def authorize_native_restore(doc):
     doc.check_permission("read")
     identity = ("name", *EDIT_FIELDS, "job_card", "work_order", "flow_order",
                 *REFERENCE_FIELDS,
+                *PERSONNEL_SNAPSHOT_FIELDS,
                 "workbench_request_key", "workbench_request_fingerprint")
-    if not any(all((getattr(doc, field, None) or "") == (snapshot.get(field) or "") for field in identity)
+    def matches(snapshot, field):
+        actual, original = getattr(doc, field, None), snapshot.get(field)
+        if field == "personnel_type_snapshot_time" and actual and original:
+            return same_version(actual, original)
+        return (actual or "") == (original or "")
+    if not any(all(matches(snapshot, field) for field in identity)
                for snapshot in _deleted_requests(key.split(":", 1)[0])):
         frappe.throw("工资恢复必须与原删除单据的编号、请求和内容一致")
     doc.flags.workbench_restore_token = RESTORE_TOKEN
@@ -321,8 +332,11 @@ def authorize_native_amendment(doc):
 
 
 def prepare_wage_amendment(doc):
+    if (getattr(doc.flags, "workbench_restore_token", None) is RESTORE_TOKEN
+            or getattr(doc.flags, "personnel_classification_restore_token", None) is PERSONNEL_RESTORE_TOKEN):
+        return  # An exact native restoration is not a fresh amendment.
     source = authorize_native_amendment(doc)
-    if not source or getattr(doc.flags, "workbench_restore_token", None) is RESTORE_TOKEN:
+    if not source:
         return
     _fields(source, ("workbench_request_key", "workbench_request_fingerprint"))
     key, fingerprint = (getattr(doc, field, None) or "" for field in
@@ -339,6 +353,8 @@ def prepare_wage_amendment(doc):
     doc.workbench_request_key = None
     doc.workbench_request_fingerprint = None
     for field in REFERENCE_FIELDS:
+        setattr(doc, field, None)
+    for field in PERSONNEL_SNAPSHOT_FIELDS:
         setattr(doc, field, None)
 
 
