@@ -2,7 +2,7 @@
 window.JifengProductArchive = class JifengProductArchive {
 	constructor(host, bridge = null) {
 		this.host = host; this.disposed = false; this.revision = 0; this.opening = false; this.editor = null; this.rows = [];
-		this.bridge = bridge;
+		this.bridge = bridge; this.visible = true; this.exportRequest = null;
 		this.companyScope = null; this.changingCompany = false;
 		this.page = 1; this.pageSize = 100; this.total = null; this.totalPages = 0; this.pendingQuery = null;
 		this.fields = [["legacy_number", "编号"], ["legacy_code", "代码"], ["major_category", "大类"], ["minor_category", "小类"],
@@ -42,7 +42,10 @@ window.JifengProductArchive = class JifengProductArchive {
 		this.includeInactive = this.element("input"); this.includeInactive.type = "checkbox";
 		this.includeInactive.addEventListener("change", () => { this.resetList("停用条件已改变，请查询。"); return this.query(1); });
 		const inactive = this.element("label", undefined, "jfe-product-archive-inactive"); inactive.append(this.includeInactive, this.element("span", __("包含停用")));
-		toolbar.append(this.button("新增", () => this.openEditor()), this.button("导出", null, "导出暂不可用"), this.button("导入", null, "导入暂不可用"),
+		this.exportButton = this.button("导出", () => this.exportArchives());
+		this.exportButton.title = __("导出当前公司、关键词及包含停用条件的全部已保存可见产品档案；需要完整字段读取及导出权限。采用本系统当前28字段模板，两图仅导状态文字；旧导出模板尚未核实。");
+		this.cancelExportButton = this.button("取消导出", () => this.cancelExport("导出已取消。"));
+		toolbar.append(this.button("新增", () => this.openEditor()), this.exportButton, this.cancelExportButton, this.button("导入", null, "导入暂不可用"),
 			companyHost, this.search, this.button("查询", () => this.query()), inactive, this.button("打印", null, "打印暂不可用"),
 			this.button("批量传图", null, "批量传图暂不可用；保存后可逐张上传"));
 		this.status = this.element("p", __("请选择公司后查询，或新增产品档案。"), "jfe-product-archive-status"); this.status.setAttribute("role", "status");
@@ -71,11 +74,13 @@ window.JifengProductArchive = class JifengProductArchive {
 		this.host.append(toolbar, this.status, this.scroller, pager); this.renderPager();
 	}
 	resetList(message) {
+		this.cancelExport();
 		this.revision++; this.pendingQuery = null; this.page = 1; this.total = null; this.totalPages = 0; this.rows = [];
 		this.tbody.replaceChildren(); this.goto.value = "1"; this.renderPager(); this.status.textContent = __(message);
 	}
 	renderPager() {
 		if (!this.previous) return;
+		this.freezeExport();
 		this.previous.disabled = this.pendingQuery !== null || this.total === null || this.page <= 1;
 		this.next.disabled = this.pendingQuery !== null || this.total === null || this.page >= this.totalPages;
 		this.pageLabel.textContent = this.total === null ? "—" : this.page + " / " + Math.max(1, this.totalPages);
@@ -85,13 +90,60 @@ window.JifengProductArchive = class JifengProductArchive {
 		if (typeof value === "string") { if (!/^[1-9][0-9]{0,9}$/.test(value)) return null; value = Number(value); }
 		return Number.isInteger(value) && value >= 1 && value <= 2147483647 ? value : null;
 	}
+	setVisible(visible) {
+		this.visible = !!visible; if (!this.visible) this.cancelExport(); this.freezeExport();
+	}
+	freezeExport() {
+		if (this.exportButton) this.exportButton.disabled = !!(this.disposed || !this.visible || !this.companyScope ||
+			this.changingCompany || this.opening || this.editor && !this.editor.closed || this.exportRequest);
+		if (this.cancelExportButton) this.cancelExportButton.hidden = !this.exportRequest;
+	}
+	cancelExport(message = null) {
+		const request = this.exportRequest; this.exportRequest = null; request?.controller.abort(); this.freezeExport();
+		if (message && request && !this.disposed && this.visible) this.status.textContent = __(message);
+	}
+	currentExport(request) {
+		const args = request.args;
+		return this.exportRequest === request && !request.controller.signal.aborted && !this.disposed && this.visible &&
+			!this.changingCompany && !this.opening && !(this.editor && !this.editor.closed) && !this.getCloseBlock() &&
+			this.revision === request.revision && args.company === this.companyScope && args.company === (this.companyControl.get_value() || null) &&
+			args.search === this.search.value && args.include_inactive === Number(this.includeInactive.checked);
+	}
+	async exportArchives() {
+		if (this.disposed || !this.visible || this.exportRequest || this.changingCompany) return;
+		const block = this.getCloseBlock();
+		if (block || this.editor && !this.editor.closed) { frappe.msgprint(__(block || "请先关闭产品档案录入窗口后导出。")); return; }
+		if ((this.companyControl.get_value() || null) !== this.companyScope && !await this.changeScope()) return;
+		if (this.disposed || !this.visible || this.exportRequest || this.changingCompany || this.opening || this.editor && !this.editor.closed) return;
+		if (!this.companyScope) { frappe.msgprint(__("请选择公司后导出。")); return; }
+		const args = { company: this.companyScope, search: this.search.value, include_inactive: Number(this.includeInactive.checked) };
+		const request = { args, revision: this.revision, controller: new AbortController() }; this.exportRequest = request; this.freezeExport();
+		this.status.textContent = __("正在导出当前筛选的全部已保存产品档案…");
+		let url;
+		try {
+			const response = await fetch("/api/method/jifeng_erp.product_archive_export.export_archives?" + new URLSearchParams(args),
+				{ method: "GET", credentials: "same-origin", headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, signal: request.controller.signal });
+			if (!this.currentExport(request)) return;
+			if (!response.ok || response.headers.get("Content-Type")?.split(";")[0].trim() !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") throw new Error("Product export failed");
+			const file = await response.blob();
+			if (!this.currentExport(request)) return;
+			if (!file.size) throw new Error("Empty product export");
+			url = URL.createObjectURL(file); const link = this.element("a");
+			link.href = url; link.download = "产品档案.xlsx"; document.body.append(link); link.click(); link.remove();
+			this.status.textContent = __("已导出当前筛选的全部已保存产品档案；采用本系统当前字段模板，两图为状态文字。");
+		} catch { if (this.currentExport(request)) this.status.textContent = __("导出未完成，请核对筛选及完整字段读取、导出权限后重试。"); }
+		finally {
+			if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+			if (this.exportRequest === request) { this.exportRequest = null; this.freezeExport(); }
+		}
+	}
 	async changeScope() {
 		if (this.changingCompany || this.disposed) return false;
 		const next = this.companyControl.get_value() || null;
 		if (next === this.companyScope) return true;
 		const blocked = this.getCloseBlock();
 		if (!blocked) this.resetList("公司已改变，请查询。");
-		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; return true; }
+		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; this.freezeExport(); return true; }
 		this.changingCompany = true;
 		try { await this.companyControl.set_value(this.companyScope); } finally { this.changingCompany = false; }
 		if (blocked) { frappe.msgprint(__(blocked)); return false; }
@@ -105,6 +157,7 @@ window.JifengProductArchive = class JifengProductArchive {
 		if (this.disposed || this.changingCompany) return;
 		if ((this.companyControl.get_value() || null) !== this.companyScope && !await this.changeScope()) return;
 		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
+		this.cancelExport();
 		const company = this.companyScope, search = this.search.value || "", inactive = !!this.includeInactive.checked, sequence = ++this.revision;
 		const requestedPage = this.pageNumber(page), args = { company, search, include_inactive: Number(inactive), page: requestedPage, page_size: this.pageSize };
 		if (!company || requestedPage === null) { this.pendingQuery = null; this.renderPager(); this.status.textContent = __(!company ? "请选择公司后查询。" : "请输入合法页码后查询。"); return; }
@@ -161,10 +214,11 @@ window.JifengProductArchive = class JifengProductArchive {
 	}
 	async openEditor(name = null) {
 		if (this.disposed || this.opening || this.changingCompany) return;
+		this.cancelExport();
 		if ((this.companyControl.get_value() || null) !== this.companyScope && (!await this.changeScope() || name)) return;
 		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
 		if (this.editor && !this.editor.closed) { this.editor.dialog.show(); return this.editor.dialog; }
-		this.opening = true; const sequence = this.revision;
+		this.opening = true; this.freezeExport(); const sequence = this.revision;
 		try {
 			const company = this.companyScope;
 			const response = await this.call(name ? "read_archive" : "init_archive", name ? { name } : { company });
@@ -190,7 +244,7 @@ window.JifengProductArchive = class JifengProductArchive {
 			if (failed && !failed.nativeHide) { failed.closed = true; failed.dialog.hide(); this.editor = null; }
 			if (!this.disposed) this.status.textContent = __("产品档案未能打开，请重试。");
 		}
-		finally { this.opening = false; }
+		finally { this.opening = false; this.freezeExport(); }
 	}
 	buildEditor(state) {
 		const host = state.dialog.fields_dict.archive_layout.$wrapper.get(0); host.replaceChildren();
@@ -288,7 +342,7 @@ window.JifengProductArchive = class JifengProductArchive {
 		state.business.hidden = !!archive.name; state.scope.textContent = __("公司：") + (state.company || __("请选择")) +
 			(archive.name ? __("；业务商品：") + archive.item_code : "");
 		state.message.textContent = (String(archive.profile.legacy_remarks || "").includes("\n") ? __("原备注含换行，单行显示；未改动时保留原文。 ") : "") +
-			__("编号、旧号可自行填写；代码不自动生成。参考价格和重量留空时保存为0。复制、导入、导出及打印暂不可用。图片请先保存档案后上传，上传后保存图片变更。");
+			__("编号、旧号可自行填写；代码不自动生成。参考价格和重量留空时保存为0。复制、导入及打印暂不可用。图片请先保存档案后上传，上传后保存图片变更。关闭录入窗口后可导出已保存档案。");
 		state.review.replaceChildren(); this.renderImages(state); this.freeze(state);
 	}
 	profileValues(state) {
@@ -325,6 +379,7 @@ window.JifengProductArchive = class JifengProductArchive {
 		return state?.confirming ? "正在确认产品草稿，请稍候。" : "";
 	}
 	freeze(state) {
+		this.freezeExport();
 		if (!state || state.closed) return;
 		const locked = !!(state.busy || state.unresolved || state.upload?.open || state.uploadUnresolved || state.confirming);
 		for (const [field, input] of Object.entries(state.controls)) input.disabled = field === "copy" || locked || !state.archive.can_write ||
@@ -375,7 +430,7 @@ window.JifengProductArchive = class JifengProductArchive {
 		state.dialog.$wrapper.on("keydown.product-archive", (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); state.dialog.hide(); } });
 		state.dialog.on_hide = () => { state.closed = true; this.closePicker(state); if (this.editor === state) this.editor = null; };
 	}
-	closeEditor() { const state = this.editor; if (!state || state.closed) return; state.closed = true; this.closePicker(state); state.upload?.uploader?.dialog.hide(); state.nativeHide(); this.editor = null; }
+	closeEditor() { const state = this.editor; if (!state || state.closed) return; state.closed = true; this.closePicker(state); state.upload?.uploader?.dialog.hide(); state.nativeHide(); this.editor = null; this.freezeExport(); }
 	requestID() {
 		if (crypto.randomUUID) return crypto.randomUUID(); const bytes = crypto.getRandomValues(new Uint8Array(16)); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
 		const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
@@ -707,6 +762,7 @@ window.JifengProductArchive = class JifengProductArchive {
 	}
 	destroy() {
 		this.disposed = true; this.revision++; window.removeEventListener("beforeunload", this.beforeUnload);
+		this.cancelExport();
 		if (this.editor && !this.editor.closed) this.closeEditor();
 	}
 };
