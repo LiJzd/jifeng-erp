@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-06 工资防重及临工代码本机安装、原生流程通过
+
+本机安装 r1 保留原失败记录：十个生产文件已安装、已有 Web 已停止；检查误用了 Frappe LocalProxy 的类型，尚无索引／原生提交／缓存失效／启动动作。新 r2 逐项绑定 r1 前图和冻结文件，修正为实际 `frappe.local.db`，未重放复制、备份或停服；首次原生创建工资来源索引，首次失效准确 app_hooks，已有 Web 启动一次。623→625 来源、44→45 应用资源；其余615来源、41资源、三数据服务身份和队列保持。四个资源完整HTTP字节、Guest ping及51张选定业务／权限／元数据表保护通过；不是完整数据库或认证GUI证明。实际安装结果SHA256 `fa5eea4469511c2304bd9f93696406f9c09589e0f59b1aed4c321dfcdcfc2fcc`，新owner `5a2fdea3298c70e9ea8eb9dd93c90c91074a59e8e034d43aa07ad1dc79cd6f4e`。
+
+独立 `payroll-native-lifecycle-smoke-20261006-r1` 一次实际 PASS，使用原生 Employee／档案／计薪／Additional Salary／Salary Slip，无报工单手工计件3×2.5=7.5。六门覆盖：月薪期间和准确来源金额；同月不同结束日期的重复草稿拒绝；原生提交后取消释放来源；原生草稿删除后重建可用；手工无Job Card计件正常提交；仅已有HR User角色及一条Company User Permission的回滚普通身份，Company可select而不可read、Supplement不可read，仍可准确查询／选择临工并取得两份来源版本。全部夹具事务回滚，两个新物理只读连接对930张基础表全部行核对保持，连接关闭；本次无schema、外网或现有岗位变更，不替代并发、认证HTTP或GUI验收。helper SHA256 `c6e955a0fffa2918614b1c52554583f46543de24ed731fd84f8c6f3386c1873b`，实际结果 `20607c73d4c43b2f9c7dc94e469366c48b4524381671689723c224590971d7e2`。
+
+安装续接前C盘空间不足；仅本任务四个已关闭、无活动进程的浏览器缓存profile移动到D盘任务目录，逐文件哈希／字节校验通过，共357,770,468字节。代码、数据库、凭据和历史验证文件未移动，旧失败证据保留。本机A/B临工GUI、原生工资Page/getpage及公开发布仍待；公网保持0e610和原共用测试数据库，全旧模块正式可用目标未完成。
+
 ## 2026-10-06 临工资格与共用四入口（本地源码）
 
 `temporary_workers` 仅GET查询／选择，原生Company.select、Employee.read及所需字段可读、准确新Jifeng Wage Entry.create／User Permissions依次约束当前在职员工；内部只读当前临时类型及来源标识／版本，不开放Supplement表权限，不返回其名称、证件、银行等字段。列表每人单次资格观察；选人只重新核对准确一人和两版本，普通SELECT不是锁或整份名单同瞬时快照，不认证历史身份或以后保存资格。
