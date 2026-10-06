@@ -1,5 +1,19 @@
 # 验证记录
 
+## 2026-10-06 临工工资保存资格复核接入源码
+
+本地工程提交49e278a只含temporary_workers.py、wage_workbench.py、工资Page JS和三份针对测试，未修改他人文档。可选temporary_selection绑定公司／员工及Employee／Supplement两份准确版本；首行快照冻结，人工公司／员工输入及ABA切换递增代次，GET响应和每次控件await后复核代次／连接／明细，恢复选人同样逐await检查。旧六字段请求不补默认context，原fingerprint保持；context移除或替换不能复用已保存请求。所有精确已有回执在当前新建资格前恢复，仍保留原生读取门和删除回执规则；新批次才检查公司／在职、当前临时类型及来源版本，Supplement锁在原Job Card／Work Order锁之后，原生整批insert／回滚保持。普通原生编辑、审核、人工无报工单工资及多人份额路径未增加临工context要求。
+
+定向Python118项分组通过：临工22、工作台39、计件资格17、工资controller／payroll10、多人分配30；CJS工作台65与临工13共78通过，JS语法及A/B367派发模型通过。根逐段审查新资格门、旧回执优先、固定批次context及恢复控件的逐await失效检查。尚未native／SQL／GUI、同步当前630运行源码或公开发布，不能计旧临工正式交付。未保存明细仍禁止重新选人，资格拒绝后明细和来源保留，未知保存仍仅读batch_status，不自动换选／重发；后续如补同身份资格刷新，应明确操作并保持待核实请求冻结。外网继续0e610，两版共用原测试库。
+
+## 2026-10-06 收货单父字段与明细字段原生负例通过
+
+`native-ledger-field-permission-rollback-20261006-r2`唯一执行PASS。准确630来源owner和前次收货导出权限收据守门后，现存采购普通岗位先核完整收货DTO基线；Administrator仅通过原生Property Setter.insert在独立事务临时设置Purchase Receipt.supplier_name、Purchase Receipt Item.item_code的mask=1和permlevel=2，共四项。各项原setter不存在，原字段mask／permlevel零，相关主动配置为空；没有ignore_permissions／validate，未改原生读取或mask API。每次父单及Report读权限仍允许；mask时实际非空原值被原生mask_fields改变，permlevel时当前get_permitted_fields排除该字段。生产查询4次、同步CSV／Excel8次全部真实PermissionError，安全栈均包含ledger_source_guard._fields，没有二进制或文件内容输出。
+
+每项完整原生rollback及针对父／子DocType的缓存清理后，全部观察的业务、角色、权限、科目树、词条、Series、Version及元数据恢复，完整typed收货DTO（仅排除execution_time）恢复；原生mask设置产生Permission Log0、两项permlevel各1条，均随事务回滚。最后独立原生Unix只读连接核原观察图与完整DTO恢复，protected-before／after私有记录原字节相等；没有业务commit。630份源码字节／元数据、45资产、owner、服务与队列保持。helper SHA256 `b0317458e8be269e632a5aef6788394854dc38e9adc43c260c712ab4f87db106`，结果`f0e61f61b002c29603ee302f6cd44e7f99c28826c94b091ea7ac677ba1da9ddc`；根独立核回执root:root／0600、四项数量、API保持及恢复证据。
+
+R1在原生query_report导入的logger路径初始化前失败，未连接Frappe／DB、未设置属性，保留失败收据`48e35e586e1d362ea096c3a3706a7d5f3d21b18d672604bd7b636e324090a1d6`。R2仅先正常chdir／init／connect再导入原生模块，未重放已消费R1。本项不证明其它四台账的非空字段、真实Prepared／File消费、并发权限或A/B界面；公网仍0e610，全部旧模块正式可用目标继续。下节保留前次安装及当时待验记录。
+
 ## 2026-10-06 本机主管导出、银行测试科目与财务关联原生验收通过
 
 固定提交736642d的两个生产文件通过独立批次`receipt-export-source-local-install-20261006-r1`安装，629→630来源，替换setup一份、增加权限策略一份，其余628份完整字节／文件元数据保持，45资产URL和顺序保持。仅正常停止／启动自有Web各一次、app_hooks单键原生失效一次；工资、库存、五Report、来源／字段、Prepared／File、四ContextVar和财务端点绑定保持，新安装函数保持非whitelist。fresh限定业务／角色／UP／既有索引图一致，没有迁移、DDL、业务或角色写入。helper SHA256 `4841069f8daf00785eebbdb4cf015a33f42438a8f208a0708ed614238f730111`，manifest `77b14a8336075967477ad0e0f51f981d06b1ca79ae67c9af057cf32790dd2ab3`；安装收据`6872dea2f83b9d6048b1d83dcd5910167500207b34ff192483e59fe7db06ee3d`，当前owner `8f1e3b0b30f7942599ab6f8b6348ee8baea2697f3424a35c8672af3a648f91a0`。
