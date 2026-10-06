@@ -1037,5 +1037,175 @@ class TestSalesFulfillment(unittest.TestCase):
         self.assertEqual(len(calls), 3)
 
 
+    def list_orders(self, search="SO"):
+        return self.module.list_orders("JF", "2026-10-01", "2026-10-01", search)
+
+    def test_header_list_is_a_distinct_summary_and_never_claims_unread_sources(self):
+        self.flow()
+        self.invoice()
+        result = self.list_orders()
+        self.assertEqual(result["dto_type"], "sales_order_list.v1")
+        self.assertFalse(result["details_loaded"])
+        self.assertEqual(result["scope"], {"company": "JF", "from_date": "2026-10-01", "to_date": "2026-10-01", "search": "SO"})
+        self.assertEqual(result["orders"][0]["name"], "SO")
+        self.assertEqual(set(result["orders"][0]), self.module.PARENTS["Sales Order"][0] | {"currency"})
+        self.assertEqual({call.args[0] for call in self.frappe.get_list.call_args_list}, {"Sales Order"})
+        self.assertEqual({call.args[0] for call in self.frappe.get_doc.call_args_list}, {"Company", "Sales Order"})
+        self.assertTrue({"items", "flows", "work_orders", "delivery_notes", "sales_invoices", "receivables"}.isdisjoint(result))
+        self.assertTrue(result["readonly"])
+        self.assertFalse(result["can_write"])
+        self.assertFalse(result["quantities_aggregated"])
+        for writer in (self.frappe.db.commit, self.frappe.db.set_value, self.frappe.db.sql, self.frappe.new_doc, self.frappe.delete_doc):
+            writer.assert_not_called()
+
+    def test_header_list_keeps_native_source_read_permission_hooks(self):
+        # Model the native SO hook denying a historical source even though
+        # native list discovery still sees the order. No summary may escape.
+        self.doc_hooks["Sales Order"] = lambda _name: self.denied.add(("Sales Order", "SO", "read"))
+        with self.assertRaises(PermissionError):
+            self.list_orders()
+        self.assertTrue(self.frappe.get_doc.called)
+
+    def test_header_list_does_not_read_fulfilment_closure_but_detail_still_denies_hidden_sources(self):
+        self.flow()
+        self.list_denied.add((self.module.FLOW, "FLOW"))
+        self.assertEqual(self.list_orders()["orders"][0]["name"], "SO")
+        with self.assertRaises(PermissionError):
+            self.read()
+
+    def test_header_list_native_role_and_user_permission_denials_are_not_expanded_by_share(self):
+        self.add("DocShare", "SHARE", share_doctype="Sales Order", share_name="SO", user="native-reader", read=1)
+        self.role_denials.add(("Sales Order", "read"))
+        with self.assertRaises(PermissionError):
+            self.list_orders()
+        self.role_denials.clear()
+        self.list_denied.add(("Sales Order", "SO"))
+        self.assertEqual(self.list_orders()["orders"], [])
+        self.assertFalse(any(call.args == ("Sales Order", "SO") for call in self.frappe.get_doc.call_args_list))
+
+    def test_header_list_required_field_and_mask_denials_optional_omission(self):
+        for denied_by in (self.hidden, self.omitted):
+            denied_by["Sales Order"] = {"customer"}
+            with self.assertRaises(PermissionError):
+                self.list_orders()
+            denied_by.clear()
+        self.metas["Sales Order"]["status"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.list_orders()
+        self.metas["Sales Order"]["status"].mask = 0
+        self.metas["Sales Order"]["currency"].mask = 1
+        self.assertNotIn("currency", self.list_orders()["orders"][0])
+        self.metas["Sales Order"]["currency"].mask = 0
+        self.omitted["Sales Order"] = {"currency"}
+        self.assertNotIn("currency", self.list_orders()["orders"][0])
+
+    def test_header_list_does_not_project_masked_children_and_detail_keeps_child_gate(self):
+        self.metas["Sales Order"]["items"].mask = 1
+        self.metas["Sales Order Item"]["qty"].mask = 1
+        self.assertNotIn("items", self.list_orders()["orders"][0])
+        with self.assertRaises(PermissionError):
+            self.read()
+
+    def test_header_list_scope_guest_replica_company_select_and_dates(self):
+        for from_date, to_date in (("2026-02-30", "2026-03-01"), ("2026-10-02", "2026-10-01"), ("2026-1-1", "2026-10-01")):
+            with self.subTest(from_date=from_date), self.assertRaises(ValueError):
+                self.module.list_orders("JF", from_date, to_date)
+        for search in (None, [], "x" * 141):
+            with self.subTest(search=search), self.assertRaises(ValueError):
+                self.list_orders(search)
+        self.denied.add(("Company", "JF", "read"))
+        self.assertEqual(len(self.list_orders()["orders"]), 1)
+        self.denied.add(("Company", "JF", "select"))
+        with self.assertRaises(PermissionError):
+            self.list_orders()
+        self.denied.clear()
+        self.frappe.conf.read_from_replica = True
+        with self.assertRaises(ValueError):
+            self.list_orders()
+        self.frappe.conf.clear()
+        self.frappe.session.user = "Guest"
+        with self.assertRaises(PermissionError):
+            self.list_orders()
+
+    def test_header_list_native_discovery_filters_and_no_raw_population_query(self):
+        self.add("Sales Order", "OTHER-COMPANY", company="OTHER", customer="CUST", docstatus=1,
+                 status="To Deliver", transaction_date=date(2026, 10, 1))
+        self.add("Sales Order", "SO-LATER", company="JF", customer="CUST", docstatus=1,
+                 status="To Deliver", transaction_date=date(2026, 10, 2))
+        self.assertEqual([row["name"] for row in self.list_orders()["orders"]], ["SO"])
+        self.assertEqual(self.frappe.get_list.call_args_list[0].kwargs["filters"], {
+            "company": "JF", "transaction_date": ["between", ["2026-10-01", "2026-10-01"]], "name": ["like", "%SO%"]})
+        self.assertTrue(all(call.kwargs["filters"] == {"name": "SO"}
+                            for call in self.frappe.get_all.call_args_list if call.args[0] == "Sales Order"))
+
+    def test_header_list_batch_limit_and_duplicate_identity_are_not_truncated(self):
+        for index in range(20):
+            self.add("Sales Order", "SO-" + str(index), company="JF", transaction_date=date(2026, 10, 1))
+        with self.assertRaises(ValueError):
+            self.list_orders()
+        original = self.get_list
+        def duplicate(doctype, **kwargs):
+            rows = original(doctype, **kwargs)
+            return [rows[0], rows[0]] if doctype == "Sales Order" and rows else rows
+        self.frappe.get_list.side_effect = duplicate
+        with self.assertRaises(ValueError):
+            self.list_orders()
+
+    def test_header_list_final_reloads_recheck_earlier_order_read_and_mask(self):
+        self.add("Sales Order", "SO-Z", company="JF", customer="CUST", docstatus=1,
+                 status="To Deliver", transaction_date=date(2026, 10, 1))
+        self.doc_hooks["Sales Order"] = lambda name: self.denied.add(("Sales Order", "SO", "read")) if name == "SO-Z" else None
+        with self.assertRaises(PermissionError):
+            self.list_orders()
+        self.denied.clear()
+        self.doc_hooks["Sales Order"] = lambda name: self.metas["Sales Order"]["currency"].update(mask=1) if name == "SO-Z" else None
+        with self.assertRaises(PermissionError):
+            self.list_orders()
+
+    def test_header_list_final_native_queries_recheck_identity_values_and_authorization(self):
+        for mutation in (lambda: self.order.update(status="Cancelled"),
+                         lambda: self.order.update(customer="OTHER"),
+                         lambda: self.order.update(transaction_date=date(2026, 10, 2)),
+                         lambda: self.metas["Sales Order"]["currency"].update(mask=1),
+                         lambda: self.add("User Permission", "LATE-UP", user="native-reader", allow="Company", for_value="OTHER"),
+                         lambda: self.add("DocShare", "LATE-SHARE", user="native-reader", share_doctype="Sales Order", share_name="SO")):
+            baseline_order = deepcopy(self.order)
+            calls = []
+            def change(filters):
+                if filters == {"name": "SO"}:
+                    calls.append(True)
+                    if len(calls) == 2:
+                        mutation()
+            self.list_hooks["Sales Order"] = change
+            with self.subTest(mutation=mutation), self.assertRaises(PermissionError):
+                self.list_orders()
+            self.assertEqual(len(calls), 2)
+            self.order.clear()
+            self.order.update(baseline_order)
+            self.metas["Sales Order"]["currency"].mask = 0
+            self.documents.pop(("User Permission", "LATE-UP"), None)
+            self.documents.pop(("DocShare", "LATE-SHARE"), None)
+
+    def test_header_list_empty_native_discovery_rechecks_late_membership(self):
+        self.documents.pop(("Sales Order", "SO"))
+        def add_order(_filters):
+            self.add("Sales Order", "SO-LATE", company="JF", customer="CUST", docstatus=1,
+                     status="To Deliver", transaction_date=date(2026, 10, 1))
+        self.list_hooks["Sales Order"] = add_order
+        with self.assertRaises(PermissionError):
+            self.list_orders()
+
+    def test_header_list_never_weakens_legacy_complete_contract(self):
+        self.flow()
+        self.invoice()
+        detail = self.read()
+        summary = self.list_orders()
+        self.assertFalse(summary["details_loaded"])
+        self.assertEqual(self.query(), [detail])
+        self.assertEqual(self.read(), detail)
+        self.assertEqual(detail["items"][0]["billed_amt"], "70")
+        self.assertEqual(detail["sales_invoices"][0]["document"]["outstanding_amount"], "37.25")
+
+
 if __name__ == "__main__":
     unittest.main()

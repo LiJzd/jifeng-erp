@@ -37,7 +37,7 @@ window.JifengSalesFulfillment = class JifengSalesFulfillment {
 		this.list = this.element("div", undefined, "jfe-procurement-list");
 		this.detailHost = this.element("section", undefined, "jfe-procurement-detail"); this.detailHost.setAttribute("aria-label", __("销售履行来源明细"));
 		this.host.append(this.element("h2", __("销售履行核对")), this.element("p",
-			__("只读核对。日期仅筛销售订单；关联制造、发货、发票及收款保留全部日期。生产完成不等于发货；交货单与更新库存的发票分别展示，不相加。当前发票余额不是截止日余额。"), "jfe-procurement-note"),
+			__("只读核对。先查询销售订单列表，选择订单后读取完整来源。日期仅筛销售订单；关联制造、发货、发票及收款保留全部日期。生产完成不等于发货；交货单与更新库存的发票分别展示，不相加。当前发票余额不是截止日余额。"), "jfe-procurement-note"),
 			toolbar, this.status, this.list, this.detailHost);
 		this.scope = this.values();
 	}
@@ -74,19 +74,17 @@ window.JifengSalesFulfillment = class JifengSalesFulfillment {
 		if (this.disposed || !this.visible) return;
 		this.syncScope(); const scope = this.values(), revision = ++this.revision; this.scope = scope; this.detailRevision++; this.clearResults();
 		if (!this.validScope(scope)) { this.status.textContent = __("请选择公司，并填写有效的订单日期起止范围。"); return; }
-		this.status.textContent = __("正在核对销售订单来源…");
+		this.status.textContent = __("正在查询销售订单列表…");
 		try {
-			const response = await this.call("query_orders", { ...scope }); this.syncScope();
+			const response = await this.call("list_orders", { ...scope }); this.syncScope();
 			if (!this.current(revision, scope)) return;
 			const data = response.message;
-			if (!Array.isArray(data) || data.length > 20 || new Set(data.map((row) => row?.sales_order?.name)).size !== data.length ||
-				!data.every((row) => this.validDTO(row, scope) && row.sales_order.transaction_date >= scope.from_date && row.sales_order.transaction_date <= scope.to_date))
-				throw new Error("Invalid complete sales scope");
-			this.rows = data.map((row) => ({ ...row.sales_order })); this.renderList(revision, scope);
-			this.status.textContent = __(this.rows.length ? "请选择销售订单查看完整来源；没有跨单汇总。" : "所选范围内没有可见销售订单。");
+			if (!this.validSummary(data, scope)) throw new Error("Invalid sales order list scope");
+			this.rows = data.orders.map((row) => ({ ...row })); this.renderList(revision, scope);
+			this.status.textContent = __(this.rows.length ? "已读取销售订单列表。请选择订单查看完整来源；没有跨单汇总。" : "所选范围内没有可见销售订单。");
 		} catch {
 			this.syncScope(); if (this.current(revision, scope)) { this.clearResults();
-				this.status.textContent = __("未取得完整销售履行来源，未显示部分结果。请核对权限；范围超过20单时请缩小日期或单号范围，再手动查询。"); }
+				this.status.textContent = __("未取得可用销售订单列表，未显示部分结果。请核对权限；范围超过20单时请缩小日期或单号范围，再手动查询。"); }
 		}
 	}
 	async readDetail(name) {
@@ -111,6 +109,21 @@ window.JifengSalesFulfillment = class JifengSalesFulfillment {
 		return this.projection(value) && this.validName(value.name) && typeof value.modified === "string" && !!value.modified &&
 			[0, 1, 2].includes(value.docstatus) && value.company === company;
 	}
+	validSummary(data, scope) {
+		const envelope = ["dto_type", "details_loaded", "scope", "orders", "readonly", "can_write", "quantities_aggregated"];
+		const fields = ["name", "modified", "docstatus", "company", "customer", "status", "transaction_date", "currency"];
+		if (!data || Array.isArray(data) || typeof data !== "object" || Object.keys(data).some((key) => !envelope.includes(key)) ||
+			data.dto_type !== "sales_order_list.v1" || data.details_loaded !== false || data.readonly !== true || data.can_write !== false || data.quantities_aggregated !== false ||
+			!this.projection(data.scope) || !this.sameScope(scope, data.scope) || !this.sameScope(data.scope, scope) ||
+			!Array.isArray(data.orders) || data.orders.length > 20) return false;
+		const names = new Set();
+		return data.orders.every((order) => {
+			if (!this.document(order, scope.company) || Object.keys(order).some((key) => !fields.includes(key)) ||
+				!this.validName(order.customer) || typeof order.status !== "string" || !order.status || !this.validDate(order.transaction_date) ||
+				order.transaction_date < scope.from_date || order.transaction_date > scope.to_date || names.has(order.name)) return false;
+			names.add(order.name); return true;
+		});
+	}
 	childRows(rows, doc, doctype) {
 		if (!Array.isArray(rows)) return false;
 		const names = new Set();
@@ -124,6 +137,7 @@ window.JifengSalesFulfillment = class JifengSalesFulfillment {
 	validDTO(data, scope, name = null) {
 		if (!data || data.readonly !== true || data.can_write !== false || data.quantities_aggregated !== false || data.company !== scope.company ||
 			!this.document(data.sales_order, scope.company) || !this.validName(data.sales_order.customer) || !this.validDate(data.sales_order.transaction_date) ||
+			data.sales_order.transaction_date < scope.from_date || data.sales_order.transaction_date > scope.to_date ||
 			(name !== null && data.sales_order.name !== name) || !this.childRows(data.items, data.sales_order, "Sales Order")) return false;
 		const order = data.sales_order, items = new Map(data.items.map((row) => [row.name, row])), flows = new Map(), flowItems = new Set();
 		if (!Array.isArray(data.flows)) return false;

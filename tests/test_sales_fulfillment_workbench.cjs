@@ -59,14 +59,19 @@ async function make() {
 	for (const [key, value] of Object.entries({ company: "JF", from_date: "2026-10-01", to_date: "2026-10-31" })) view.controls[key].set(value);
 	return view;
 }
-async function query(view, data = [fixture()]) { const pending = view.query(), call = calls.at(-1); call.resolve(data); await pending; return call; }
+function summary(data, scope) {
+	const fields = ["name", "modified", "docstatus", "company", "customer", "status", "transaction_date", "currency"];
+	return { dto_type: "sales_order_list.v1", details_loaded: false, scope: clone(scope), orders: data.map((data) =>
+		Object.fromEntries(Object.entries(data.sales_order).filter(([field]) => fields.includes(field)))), readonly: true, can_write: false, quantities_aggregated: false };
+}
+async function query(view, data = [fixture()]) { const pending = view.query(), call = calls.at(-1); call.resolve(summary(data, call.options.args)); await pending; return call; }
 async function detail(view, data = fixture()) { const pending = view.readDetail(view.rows[0].name), call = calls.at(-1); call.resolve(data); await pending; return call; }
 let checks = 0;
 async function check(_label, action) { await action(); checks++; }
 async function main() {
 	await check("query and detail use exact GET contracts and no hidden filters", async () => {
 		const view = await make(); view.search.value = "SO-"; const listCall = await query(view);
-		assert.deepEqual(clone(listCall.options), { method: "jifeng_erp.sales_fulfillment_workbench.query_orders", type: "GET", args: { company: "JF", from_date: "2026-10-01", to_date: "2026-10-31", search: "SO-" } });
+		assert.deepEqual(clone(listCall.options), { method: "jifeng_erp.sales_fulfillment_workbench.list_orders", type: "GET", args: { company: "JF", from_date: "2026-10-01", to_date: "2026-10-31", search: "SO-" } });
 		assert.equal(view.detail, null); const detailCall = await detail(view);
 		assert.deepEqual(clone(detailCall.options.args), { company: "JF", sales_order: "SO-A" }); assert.equal(detailCall.options.method, "jifeng_erp.sales_fulfillment_workbench.read_order");
 	});
@@ -139,20 +144,21 @@ async function main() {
 		const view = await make(); await query(view); await detail(view); const pending = view.readDetail("SO-A"); calls.at(-1).reject(new Error("private source ID")); await pending;
 		assert.equal(view.rows.length, 0); assert.equal(view.detail, null); assert.equal(view.detailHost.children.length, 0); assert.ok(!view.status.textContent.includes("private"));
 	});
-	await check("wrong precise scope in one order rejects the entire batch", async () => {
+	await check("wrong precise scope in selected detail clears the entire summary batch", async () => {
 		for (const mutate of [(d) => { d.company = "OTHER"; }, (d) => { d.items[0].parenttype = "Purchase Order"; }, (d) => { d.flows[0].sales_order_item = "wrong-child"; },
 			(d) => { d.flows[1].sales_order_item = d.flows[0].sales_order_item; }, (d) => { d.work_orders[0].document.sales_order = "OTHER"; },
 			(d) => { d.independent_manufacture_entries[0].document.purpose = "Repack"; }, (d) => { d.independent_manufacture_entries[0].finished_items[0].jf_flow_order = "OTHER"; },
 			(d) => { d.sales_invoices[0].document.customer = "OTHER"; }, (d) => { d.receivables.ledger_entries[0].party = "OTHER"; },
 			(d) => { d.receivables.voucher_sources[2].document.party_type = "Supplier"; }, (d) => { d.receivables.voucher_sources[3].doctype = "Purchase Invoice"; },
 			(d) => { d.quantities_aggregated = true; }, (d) => { d.sales_order.transaction_date = "2026-11-01"; }]) {
-			const view = await make(), invalid = fixture("SO-B"); mutate(invalid); await query(view, [fixture(), invalid]);
-			assert.equal(view.rows.length, 0); assert.equal(view.list.children.length, 0); assert.ok(view.status.textContent.includes("部分结果"));
+			const view = await make(), invalid = fixture("SO-B"); mutate(invalid); await query(view, [fixture(), fixture("SO-B")]);
+			const pending = view.readDetail("SO-B"); calls.at(-1).resolve(invalid); await pending;
+			assert.equal(view.rows.length, 0); assert.equal(view.list.children.length, 0); assert.ok(view.status.textContent.includes("清空全部结果"));
 		}
 	});
 	await check("duplicates and over-limit are rejected instead of truncated", async () => {
 		for (const data of [[fixture(), fixture()], Array.from({ length: 21 }, (_, index) => fixture("SO-" + index))]) { const view = await make(); await query(view, data); assert.equal(view.rows.length, 0); }
-		const view = await make(), data = fixture(); data.receivables.voucher_sources.push(clone(data.receivables.voucher_sources[0])); await query(view, [data]); assert.equal(view.rows.length, 0);
+		const view = await make(), data = fixture(); data.receivables.voucher_sources.push(clone(data.receivables.voucher_sources[0])); await query(view); await detail(view, data); assert.equal(view.rows.length, 0);
 	});
 	await check("source text is plain text and not interpreted as HTML", async () => {
 		const view = await make(), data = fixture(); data.items[0].item_name = "<img src=x onerror=alert(1)>"; await query(view, [data]); await detail(view, data);
@@ -180,7 +186,7 @@ async function main() {
 		delete view.controls.company.get_input_value; view.controls.company.type("unconfirmed", false); await view.query(); assert.equal(view.rows.length, 0);
 	});
 	await check("pending responses and held buttons reject silent Link text changes", async () => {
-		const view = await make(), pending = view.query(), old = calls.at(-1); view.controls.company.type("unconfirmed", false); old.resolve([fixture()]); await pending; assert.equal(view.rows.length, 0);
+		const view = await make(), pending = view.query(), old = calls.at(-1); view.controls.company.type("unconfirmed", false); old.resolve(summary([fixture()], old.options.args)); await pending; assert.equal(view.rows.length, 0);
 		view.controls.company.set("JF"); await query(view); await detail(view); const button = view.detailHost.all("button")[0], before = opened.length;
 		view.controls.company.type("unconfirmed", false); button.events.get("click")(); assert.equal(opened.length, before); assert.equal(view.detail, null);
 	});
@@ -190,7 +196,7 @@ async function main() {
 	});
 	await check("late query and detail responses cannot override latest selection", async () => {
 		const view = await make(), first = view.query(), older = calls.at(-1), second = view.query(), newer = calls.at(-1);
-		newer.resolve([fixture("SO-B")]); await second; older.resolve([fixture()]); await first; assert.equal(view.rows[0].name, "SO-B");
+		newer.resolve(summary([fixture("SO-B")], newer.options.args)); await second; older.resolve(summary([fixture()], older.options.args)); await first; assert.equal(view.rows[0].name, "SO-B");
 		await query(view, [fixture(), fixture("SO-B")]); const a = view.readDetail("SO-A"), old = calls.at(-1), b = view.readDetail("SO-B"), fresh = calls.at(-1);
 		fresh.resolve(fixture("SO-B")); await b; old.resolve(fixture()); await a; assert.equal(view.detail.sales_order.name, "SO-B");
 	});
@@ -206,7 +212,7 @@ async function main() {
 	});
 	await check("hidden or destroyed views never issue requests or restore results", async () => {
 		const view = await make(); view.setVisible(false); const before = calls.length; await view.query(); await view.readDetail("SO-A"); assert.equal(calls.length, before);
-		view.setVisible(true); const pending = view.query(), old = calls.at(-1); view.destroy(); old.resolve([fixture()]); await pending;
+		view.setVisible(true); const pending = view.query(), old = calls.at(-1); view.destroy(); old.resolve(summary([fixture()], old.options.args)); await pending;
 		assert.equal(view.rows.length, 0); assert.ok(Object.values(view.controls).every((control) => control.detached && control.clearHandler === null));
 	});
 	await check("both hosts mount the one sales component and honor shared lifecycle", async () => {
@@ -215,6 +221,47 @@ async function main() {
 		for (const [key, value] of Object.entries({ company: "JF", from_date: "2026-10-01", to_date: "2026-10-31" })) view.controls[key].set(value);
 		await query(view); await detail(view); view.setVisible(false); assert.equal(view.detail, null); assert.equal(view.rows.length, 0);
 		entry.stop(); assert.equal(view.disposed, true);
+	});
+	await check("list summary stays distinct from complete detail and never auto-reads sources", async () => {
+		const view = await make(), before = calls.length; await query(view);
+		assert.equal(calls.length, before + 1); assert.equal(view.detail, null); assert.equal(view.detailHost.children.length, 0);
+		assert.ok(view.status.textContent.includes("销售订单列表"));
+		assert.deepEqual(Object.keys(view.rows[0]).sort(), ["company", "currency", "customer", "docstatus", "modified", "name", "status", "transaction_date"]);
+		const listDTO = summary([fixture()], view.values());
+		assert.equal(view.validDTO(listDTO, view.values(), "SO-A"), false);
+		const pending = view.readDetail("SO-A"); calls.at(-1).resolve(listDTO); await pending;
+		assert.equal(view.rows.length, 0); assert.equal(view.detail, null);
+	});
+	await check("summary envelopes reject complete DTOs and fabricated empty source arrays", async () => {
+		for (const response of [[fixture()], fixture(), { ...summary([fixture()], { company: "JF", from_date: "2026-10-01", to_date: "2026-10-31", search: "" }),
+			items: [], flows: [], work_orders: [], delivery_notes: [], sales_invoices: [], receivables: { ledger_entries: [], voucher_sources: [] } }]) {
+			const view = await make(), pending = view.query(); calls.at(-1).resolve(response); await pending;
+			assert.equal(view.rows.length, 0); assert.equal(view.detail, null); assert.ok(view.status.textContent.includes("部分结果"));
+		}
+	});
+	await check("summary query scope and order header identities are validated before any rows appear", async () => {
+		for (const mutate of [(d) => { d.dto_type = "sales_order_detail.v1"; }, (d) => { d.details_loaded = true; },
+			(d) => { d.readonly = false; }, (d) => { d.can_write = true; }, (d) => { d.quantities_aggregated = true; },
+			(d) => { d.scope.company = "OTHER"; }, (d) => { d.scope.from_date = "2026-09-01"; }, (d) => { d.scope.to_date = "2026-11-01"; },
+			(d) => { d.scope.search = "DIFFERENT"; }, (d) => { d.scope.extra = "unrequested"; },
+			(d) => { d.orders[0].company = "OTHER"; }, (d) => { d.orders[0].transaction_date = "2026-02-30"; },
+			(d) => { d.orders[0].transaction_date = "2026-11-01"; }, (d) => { d.orders[0].transaction_date = "2026-09-30"; },
+			(d) => { d.orders[0].name = " SO-A"; }, (d) => { d.orders[0].modified = ""; }, (d) => { d.orders[0].docstatus = 3; },
+			(d) => { d.orders[0].customer = null; }, (d) => { delete d.orders[0].status; },
+			(d) => { d.orders[0].items = []; }, (d) => { d.orders[0].private_field = "unrequested"; }]) {
+			const view = await make(), pending = view.query(), request = calls.at(-1), data = summary([fixture()], request.options.args); mutate(data);
+			request.resolve(data); await pending; assert.equal(view.rows.length, 0); assert.equal(view.list.children.length, 0);
+		}
+	});
+	await check("an authorized empty summary is shown without claiming a source result", async () => {
+		const view = await make(); await query(view, []); assert.equal(view.rows.length, 0); assert.equal(view.detail, null);
+		assert.ok(view.status.textContent.includes("没有可见销售订单")); assert.equal(view.detailHost.children.length, 0);
+	});
+	await check("a late response cannot restore results after a silent search or date edit", async () => {
+		for (const edit of [(view) => { view.search.value = "SO-B"; }, (view) => { view.controls.from_date.set("2026-10-02", false); }]) {
+			const view = await make(), pending = view.query(), request = calls.at(-1); edit(view);
+			request.resolve(summary([fixture()], request.options.args)); await pending; assert.equal(view.rows.length, 0); assert.equal(view.detail, null);
+		}
 	});
 	assert.ok(calls.every((call) => call.options.type === "GET"));
 	console.log(`sales fulfillment: ${checks} meaningful contract/DOM models passed; no GUI/native/network proof`);

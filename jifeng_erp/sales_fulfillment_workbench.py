@@ -186,8 +186,9 @@ def _reposting(keys):
 
 
 class _Graph:
-    def __init__(self, company):
+    def __init__(self, company, order_headers_only=False):
         self.company = company
+        self.order_headers_only = order_headers_only
         self.queries = []
         self.documents = {}
         self.children = {}
@@ -196,6 +197,8 @@ class _Graph:
         self.reposts = []
 
     def records(self, doctype, filters, required, optional=(), parenttype=None, complete=True, raw_filters=None):
+        if self.order_headers_only and (doctype != SO or parenttype):
+            _invalid()
         if parenttype:
             if parenttype not in TABLES or TABLES[parenttype][1] != doctype:
                 _invalid()
@@ -233,6 +236,10 @@ class _Graph:
         if not name or doctype not in PARENTS:
             _invalid()
         required, optional = PARENTS[doctype]
+        if self.order_headers_only:
+            # Only the list's native order header is projected. The native SO
+            # document read still runs its complete source-permission hooks.
+            optional = {"currency"}
         rows = self.records(doctype, {"name": name}, required, optional)
         if len(rows) != 1:
             _deny()
@@ -250,7 +257,7 @@ class _Graph:
         if "customer" in row and self.customer is not None and row["customer"] != self.customer:
             _invalid()
         self.documents[key] = (document, row)
-        if doctype in TABLES:
+        if doctype in TABLES and not (self.order_headers_only and doctype == SO):
             fieldname, childtype, child_required, child_optional = TABLES[doctype]
             _table(doctype, fieldname)
             children = self.records(childtype, {"parent": name, "parenttype": doctype, "parentfield": fieldname},
@@ -288,7 +295,7 @@ class _Graph:
             if (not document.has_permission("read") or not set(row).issubset(_columns(doctype))
                     or any(document.get(field) != value for field, value in row.items())):
                 _deny()
-            if doctype in TABLES:
+            if doctype in TABLES and not (self.order_headers_only and doctype == SO):
                 fieldname, childtype, _required, _optional = TABLES[doctype]
                 _table(doctype, fieldname)
                 actual = {item.name: item for item in document.get(fieldname) or []}
@@ -317,7 +324,7 @@ class _Graph:
         for key, (_old, row) in self.documents.items():
             if not loaded[key].has_permission("read") or not set(row).issubset(_columns(key[0])):
                 _deny()
-            if key[0] in TABLES:
+            if key[0] in TABLES and not (self.order_headers_only and key[0] == SO):
                 fieldname, childtype, _required, _optional = TABLES[key[0]]
                 _table(key[0], fieldname)
                 if any(not set(child).issubset(_columns(childtype, key[0])) for child in self.children[key]):
@@ -742,3 +749,42 @@ def query_orders(company, from_date, to_date, search=""):
         results.append(_read(graph, row["name"]))
     graph.finish()
     return _output(results)
+
+
+@frappe.whitelist(methods=["GET"])
+def list_orders(company, from_date, to_date, search=""):
+    """List authorised native SO headers; fulfilment sources remain unread.
+
+    This summary contract makes no claim about child rows, manufacturing,
+    delivery, billing or receivables. read_order remains the complete source
+    reader, and query_orders keeps its original complete DTO contract.
+    """
+    _scope(company)
+    try:
+        start, end = getdate(from_date), getdate(to_date)
+        if str(start) != from_date or str(end) != to_date or start > end:
+            raise ValueError
+    except (TypeError, ValueError):
+        frappe.throw("请选择有效的 YYYY-MM-DD 订单起止日期")
+    if not isinstance(search, str) or len(search) > 140:
+        frappe.throw("请输入有效的销售订单号关键词")
+    graph = _Graph(company, order_headers_only=True)
+    filters = {"company": company, "transaction_date": ["between", [from_date, to_date]]}
+    if search:
+        filters["name"] = ["like", "%" + search + "%"]
+    # Native permission-filtered discovery deliberately does not compare with
+    # a raw population: unreadable orders must stay absent from the list.
+    rows = graph.records(SO, filters, {"name", "modified", "company", "transaction_date"}, complete=False)
+    if len(rows) > LIMIT:
+        frappe.throw("销售订单较多，请缩小日期范围或输入订单号关键词")
+    orders = []
+    for row in rows:
+        order = graph.source(SO, row["name"])
+        if (order["company"] != company or not start <= getdate(order["transaction_date"]) <= end
+                or any(order[field] != value for field, value in row.items())):
+            _invalid()
+        orders.append(order)
+    graph.finish()
+    return _output({"dto_type": "sales_order_list.v1", "details_loaded": False,
+                    "scope": {"company": company, "from_date": from_date, "to_date": to_date, "search": search},
+                    "orders": orders, "readonly": True, "can_write": False, "quantities_aggregated": False})
