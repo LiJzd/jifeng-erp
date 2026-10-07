@@ -260,8 +260,8 @@ def _source_permissions(source, write_state=False):
         frappe.throw(DENIED, frappe.PermissionError)
 
 
-def _boarding(source, completed=True, user=None, write=False):
-    if not source.project or not source.activities:
+def _boarding(source, completed=True, user=None, write=False, allow_empty=False):
+    if not source.project or (not source.activities and (completed or not allow_empty)):
         frappe.throw(TASK_ERROR)
     identities = [row.name for row in source.activities]
     tasks = [row.task for row in source.activities]
@@ -594,6 +594,13 @@ class EmployeeSeparationMixin:
         if method:
             method()
 
+    def before_submit(self):
+        if not self.activities:
+            frappe.throw("请先填写离职交接活动或选择离职模板，提交后由系统生成交接任务")
+        method = getattr(super(), "before_submit", None)
+        if method:
+            method()
+
     def on_submit(self):
         self._guard_employee_company()
         previous = getattr(frappe.local, "jf_exit_project_context", None)
@@ -631,7 +638,8 @@ class EmployeeSeparationMixin:
                     or _payroll_hash(employee.name) != snapshot["payroll_hash"]):
                 frappe.throw(CONFLICT)
         if self.project:
-            graph = _boarding(self, completed=False, write=True)
+            graph = _boarding(self, completed=False, write=True,
+                              allow_empty=not snapshot and self.get(STATUS) == PENDING)
             if snapshot and graph != (snapshot["project"], snapshot["tasks"]):
                 frappe.throw(CONFLICT)
         elif any(row.task for row in self.activities or []):
@@ -648,7 +656,8 @@ class EmployeeSeparationMixin:
         if not (pending and pending[0] is _SERVER):
             frappe.throw("离职来源取消缺少服务器锁定的精确交接核对")
         if self.project:
-            if _boarding(self, completed=False, write=True) != pending[1]:
+            allow_empty = not self.get(SNAPSHOT) and self.get(STATUS) == PENDING
+            if _boarding(self, completed=False, write=True, allow_empty=allow_empty) != pending[1]:
                 frappe.throw(CONFLICT)
             # Native Task saves keep dependency/tree/assignment callbacks. No
             # force deletion, financial reversal, or set_project_status bulk RPC.
@@ -659,7 +668,7 @@ class EmployeeSeparationMixin:
             project = frappe.get_doc("Project", self.project, for_update=True)
             project.status = "Cancelled"
             project.save()
-            graph = _boarding(self, completed=False, write=True)
+            graph = _boarding(self, completed=False, write=True, allow_empty=allow_empty)
             if graph[0]["status"] != "Cancelled" or any(row["status"] != "Cancelled" for row in graph[1]):
                 frappe.throw("原生保存没有取消精确交接项目和任务，请回滚后核对")
         elif pending[1] is not None or any(row.task for row in self.activities or []):

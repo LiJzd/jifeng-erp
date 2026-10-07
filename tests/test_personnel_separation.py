@@ -754,6 +754,36 @@ class TestPersonnelSeparation(unittest.TestCase):
         self.assertEqual(self.store[("Task", "UNASSIGNED")].status, "Open")
         self.frappe.db.delete.assert_not_called()
 
+    def test_empty_activity_submission_is_rejected_before_creating_a_project(self):
+        source = self.source()
+        source.activities = []
+        before = deepcopy(self.store)
+        with self.assertRaisesRegex(ValueError, "先填写离职交接活动"):
+            source.before_submit()
+        self.assertEqual(self.store, before)
+
+    def test_pending_empty_owned_project_can_cancel_without_touching_unrelated_tasks(self):
+        self.store[("Employee Separation", "SOURCE")].activities = []
+        self.store.pop(("Employee Boarding Activity", "ACTIVITY"))
+        self.store.pop(("Task", "TASK"))
+        self.store[("Task", "UNASSIGNED")] = Doc(doctype="Task", name="UNASSIGNED", project=None, status="Open")
+        source = self.source()
+        source.before_cancel()
+        source.on_cancel()
+        self.assertEqual(self.store[("Project", "PROJECT")].status, "Cancelled")
+        self.assertEqual(self.store[("Task", "UNASSIGNED")].status, "Open")
+        self.frappe.db.delete.assert_not_called()
+
+    def test_empty_project_cancel_rejects_any_actual_task_and_cannot_finalize(self):
+        self.store[("Employee Separation", "SOURCE")].activities = []
+        self.store.pop(("Employee Boarding Activity", "ACTIVITY"))
+        before = deepcopy(self.store)
+        with self.assertRaises(ValueError):
+            self.source().before_cancel()
+        self.assertEqual(self.store, before)
+        with self.assertRaises(ValueError):
+            self.finalize()
+
     def test_submitted_pending_activity_cannot_clear_replace_or_remove_persisted_task(self):
         for mutation in (lambda source: setattr(source.activities[0], "task", ""),
                          lambda source: setattr(source.activities[0], "task", "OTHER"),
