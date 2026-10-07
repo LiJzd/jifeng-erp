@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 镀色生命周期源码及本机原生安装前置通过
+
+源码提交`7c9fd3669cbe0619f2371b7e7789dc3192efb556`，45项Python模型及镀色/产品词典/订单词典/客户类型四CJS通过；根读取生产差分并核共享read/resolve后端支持GET。根实际只读Frappe HTTP序列化路径确认native datetime走str，删除回执原iso T与持有的space时间不一致；源码现用same_version保微秒核对后原样回显请求，Python与CJS覆盖space/T及一微秒冲突。提交`85bea199e4e8391697f5f21c855356d2a9afb6f2`仅移除旧原生验收套件失效Admin拒删断言、保Guest拒绝；该旧套件的隐藏来源回执和分阶段快照仍需对新Receipt重新核对，未执行。
+
+九个生产文件从`85bea19`准确Git blob冻结于`D:/codex-temp/plating-color-local-install-20261007-r1/source/`，115303字节；plan SHA`fdbe60d1df258a19a7ecb3eec6d025e9ad6d91687ab49cfde73e3c956b922ed9`。六旧来源改变、三新Receipt来源，安装后预期639来源/45资源及两个JS版本变化；新Receipt11字段、两个nullable唯一UUID，旧镀色12字段不改、仅两Manager默认DocPerm增加delete，旧业务不回填、无新账号/角色或公网变化。此处是计划，未执行源交换或DDL。
+
+根唯一真实RO前置收据`e0e4dab8e10548fa90e226491f8585f059bcd689faf054a6c7d071dc5989ac08`：当前owner`f70fc7845a2197eb0da05ca28797aaca11a6bb2ef3e33792c02924e74be7e077`核实，现存SysMgr44角色非Administrator实际Color read/create/write真、delete假；当前12字段、0Color行、0目标Custom DocPerm，新Receipt元数据/表不存在。13表完整数据/结构及源DocType/子项私有图SHA`2b81ab39b8148d3b301ef4353fe53c6f3ff6c32039704edcce80b7873845ceca`；一物理RO连接回滚关闭，零DML/DDL/COMMIT，完整636来源元数据、owner、三数据服务及RQ保持。该证据不能计新Receipt安装、镀色数据库生命周期、GUI或公网通过。
+
 ## 2026-10-07 订单词典四作用域原生回滚和单JS安装通过
 
 原生QA准备于`D:/codex-temp/order-requirement-native-qa-20261007-r1/`，只用普通init/save/resolve/read接口和既有44角色非Administrator账号。R1在首轮序列读取因默认creation排序报1054，尚未保存词条，正常回滚关闭；错误收据`c7c747bb917cbc169c6d8481fcdd7e3bb94741fc35054f2fe4b47bcb55a4b286`保留。R2只为五处Series读取指定name排序，独立新只读连接先核R1的20表/结构恢复一致，再执行四组公司×类型用例；未重放R1入口。R2 runner SHA`63280d6be40d21ba9e4d49a110a0ea011831fc20df1461ba594bd16e8c90204b`，cases SHA`ac6e20466151a27d9c118948057a4fccf1385b84bed7b10b5528e31895ba6492`。
