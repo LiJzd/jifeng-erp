@@ -236,7 +236,8 @@ def _component_account(read, name, company, currency, earning):
 
 def _accrual(read, entry, payroll, currency):
     if (entry.company != payroll.company or entry.voucher_type != "Journal Entry" or entry.multi_currency
-            or payroll.currency != currency or _number(payroll.exchange_rate) != 1):
+            or payroll.currency != currency or _number(payroll.exchange_rate) != 1
+            or not payroll.start_date or not payroll.end_date):
         _invalid()
     expected = defaultdict(lambda: [Decimal(0), Decimal(0)])
     slips = read.records(SLIP, {"journal_entry": entry.name, "docstatus": 1}, FIELDS[SLIP])
@@ -246,6 +247,7 @@ def _accrual(read, entry, payroll, currency):
         slip = read.source(SLIP, row["name"])
         if (slip.payroll_entry != payroll.name or slip.company != payroll.company or slip.currency != currency
                 or _number(slip.exchange_rate) != 1 or slip.salary_slip_based_on_timesheet != payroll.salary_slip_based_on_timesheet
+                or not slip.start_date or not slip.end_date
                 or not getdate(payroll.start_date) <= getdate(slip.start_date) <= getdate(slip.end_date) <= getdate(payroll.end_date)):
             _invalid()
         for field in ("earnings", "deductions"):
@@ -348,6 +350,7 @@ def posted_flow_wage_costs(flow_order):
                 or detail["salary_component"] != wage.salary_component or detail["is_recurring_additional_salary"]
                 or (detail["do_not_include_in_total"] != 0 and detail["do_not_include_in_accounts"] != 0)
                 or not _same(_number(detail["amount"]), _number(addition.amount), native_detail, "amount")
+                or not wage.payroll_date or not slip.start_date or not slip.end_date
                 or not getdate(slip.start_date) <= getdate(wage.payroll_date) <= getdate(slip.end_date)
                 or slip.company != wage.company or slip.employee != wage.employee):
             _invalid()

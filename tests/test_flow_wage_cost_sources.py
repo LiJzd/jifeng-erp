@@ -307,6 +307,16 @@ class TestFlowWageCostSources(unittest.TestCase):
         self.earning("SS-2", "DUP-DETAIL", "Piece", 8, additional_salary="AS-1")
         with self.assertRaises(ValueError): self.result()
 
+    def test_missing_saved_payroll_dates_do_not_default_to_today(self):
+        original = deepcopy(self.data)
+        for kind, name, field in ((self.module.SLIP, "SS-1", "start_date"), (self.module.SLIP, "SS-1", "end_date"),
+                (self.module.PAYROLL, "PAY", "start_date"), (self.module.PAYROLL, "PAY", "end_date"),
+                (self.module.WAGE, "W-1", "payroll_date")):
+            self.data = deepcopy(original)
+            self.data[kind, name][field] = None
+            if kind == self.module.WAGE: self.data[self.module.AS, "AS-1"].payroll_date = None
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "有效计提"): self.result()
+
     def test_missing_document_field_mask_table_or_filtered_source_fails_without_partial_total(self):
         for kind, name, field in ((self.module.WAGE, "W-1", "total_amount"), (self.module.AS, "AS-1", "amount"),
                 (self.module.SLIP, "SS-1", "journal_entry"), (self.module.PAYROLL, "PAY", "currency"),
