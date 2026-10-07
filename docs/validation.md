@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 公网只读发布检查的实际停止点
+
+隔离工具没有切换线上代码。preflight R1在正常DB连接前因日志目录不符停止，物理连接0；依据实际私有错误定位后，新R2仅修正cwd到bench/sites，正常只读连接创建/关闭均1，执行189条只读SQL，在完整快照的原始子表闭包遇到不存在的实体表停止。R2结果SHA `1cdd5b685a43ece2d01466e2611cc5ede9c5b585850014af34520f146f81a92e`，错误SHA `578fe9751899187c2c5f566608140ae0a70dd0e105434868f7c0b77aeb5c9845`；尚未形成完整before快照或通过报表发布门。两次均0 DML/DDL/COMMIT，共享Redis命令0，进程私有缓存2条且正常恢复。
+
+为区分正常虚拟子表与真实缺表，冻结原生有效元数据诊断（含Property Setter、自定义字段、computed表字段），根一次执行独立工具。该次在驱动实例属性检查停止，实际异常为AttributeError，最终帧为恢复commit实例属性；尚未执行元数据诊断SQL。结果SHA `1211167ee681233fb06fec155d6832b56d7da27ae1fe1043e836ffcf3ac5c24b`，错误SHA `0516fe5a237674794fbb990e8b5c684b0300313ecb5d175ed1bf3ddaeb036f98`。实际只读连接创建/关闭均1，0 DML/DDL/COMMIT，缓存恢复且拒绝命令0；没有冒称实例方法资格或虚拟子表分类已经通过。
+
+每次停止后先只读检查实际结果，再准备新的唯一命名空间；没有重放失败main。所有当前SSH连接分别核实同socket DIRECT及系统/env/WinHTTP/TUN。完整线上611文件、候选628文件、8服务及9配置保持；线上仍为f07。后续诊断移除与元数据读取无关的驱动实例临时属性检查，真实类方法资格留给独立只读探针。
+
 ## 2026-10-07 公网独立候选与正常DB ABI实际通过
 
 根一次执行stage driver `014d13c84caa198971f263a92135a10904ac0ab0b9c8c8408e03332a3c2018ba`，原ABI异常误报分支经独立审修正为passed=False，ABI SHA`a69d6ff372e0a8916d16ba320821a2cea619e8d1b07dc9e7869bf973812b8d4a`，pins`8c995a131677473f4b5463854bbf7fa4e4f00f4f2a2514777deff58f4637705b`。6载荷510864字节上传完成，但host在source_candidate_copy阶段因Python3.6.8缺Path.is_relative_to停止；失败driver收据`bba8beb23617d31cef267aa623c2701e4e12842a2860bb1637897e6f403faf68`，私有错误`a6fb27c076e6b5e0733443f6a24d98d8ae7eef1cba7d061352991b86aa30da53`。独立只读检查确认整个NEW/app为准确611基线，34M未写、17A未建、candidate manifest/ABI intent均无；没有重复旧main。
