@@ -166,7 +166,14 @@ window.JifengToolCosts = class JifengToolCosts {
 		this.total.textContent = __("分摊合计：") + (amounts.some((amount) => !amount) ? __("请核对金额") : JifengToolCosts.amount(amounts.reduce((sum, amount) => sum + amount.units, 0n))) + (this.source ? " / " + this.source.historical_amount + " " + this.source.currency : "");
 		for (const row of this.items) { if (row.input) row.input.disabled = locked; if (row.remove) row.remove.disabled = locked; }
 		this.refreshButton.disabled = locked; this.sourceButton.disabled = locked; this.lookupButton.disabled = locked || this.selecting; this.selfButton.disabled = locked || this.selecting; this.kind.disabled = locked; this.search.disabled = locked; this.reason.disabled = locked;
-		this.expenseControl.df.read_only = !!locked; this.expenseControl.refresh?.(); this.createButton.disabled = locked || this.selecting || this.summary?.can_create !== true || !this.payload(); this.createButton.hidden = this.summary?.can_create === false;
+		if (!!this.expenseControl.df.read_only !== !!locked) {
+			// A standalone native Link refresh restores its last model value.
+			// Preserve current input when locking; typing itself must not refresh.
+			this.expenseControl.set_input(this.expenseControl.get_value());
+			this.expenseControl.df.read_only = !!locked;
+			this.expenseControl.refresh?.();
+		}
+		this.createButton.disabled = locked || this.selecting || this.summary?.can_create !== true || !this.payload(); this.createButton.hidden = this.summary?.can_create === false;
 		this.resolveButton.hidden = !this.pending; this.resolveButton.disabled = this.busy || this.confirming || !this.current(); this.cancelPanel.hidden = !this.detail || this.detail.docstatus !== 1 || this.detail.can_cancel !== true;
 		this.cancelButton.disabled = locked; this.cancelReason.disabled = locked;
 	}

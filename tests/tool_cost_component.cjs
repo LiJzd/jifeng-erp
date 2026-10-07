@@ -31,7 +31,7 @@ class Dialog {
 }
 const window = { addEventListener() {}, removeEventListener() {} }, document = { createElement: (tag) => new Element(tag) };
 const frappe = { ui: { Dialog, form: { make_control({ df }) { return { df: { ...df }, $input: new Wrapper(), value: null,
-	get_value() { return this.value; }, async set_value(value) { this.value = value; await df.onchange?.(); }, refresh() {} }; } } },
+	get_value() { return this.value; }, set_input(value) { this.value = value; }, async set_value(value) { this.value = value; await df.onchange?.(); }, refresh() {} }; } } },
 	call(options) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); const call = { options, resolve: (message) => resolve({ message }), reject }; calls.push(call); for (const watcher of [...watchers]) if (options.method.endsWith(watcher.suffix)) { watchers.splice(watchers.indexOf(watcher), 1); watcher.resolve(call); } return promise; },
 	msgprint(message) { messages.push(message); }, confirm(message, yes, no) { confirmation = { message, yes, no }; } };
 const context = vm.createContext({ window, document, frappe, __: (value) => value, BigInt, crypto: nodeCrypto.webcrypto, Uint8Array, TextEncoder });
@@ -48,6 +48,26 @@ async function choose(costs, kind = "mold", value = tool(kind)) { const pending 
 async function prepare(costs) { await readSource(costs); await choose(costs); await choose(costs, "plate"); assert.deepEqual(Array.from(costs.items, (row) => row.amount), ["", ""], "reference amounts never populate allocations"); for (const [index, amount] of ["70", "50"].entries()) { costs.items[index].input.value = amount; costs.items[index].input.events.get("input")(); } costs.reason.value = "依据费用单分摊"; costs.reason.events.get("input")(); }
 async function readDetail(costs, value = allocation()) { const pending = costs.readAllocation(value.name, value.version); assert.equal(calls.at(-1).options.type, "GET"); calls.at(-1).resolve(value); await pending; }
 async function main() {
+	const typing = await make();
+	const control = typing.expenseControl;
+	let text = "", refreshes = 0;
+	control.value = "";
+	control.get_value = () => control.df.read_only ? control.value : text;
+	control.set_input = (value) => { control.value = value; text = value; };
+	control.refresh = () => { refreshes++; control.set_input(control.value); };
+	for (const value of ["E", "EXP-1"]) {
+		text = value;
+		control.$input.events.get("input")();
+		assert.equal(text, value, "native standalone Link typing keeps input before blur");
+	}
+	assert.equal(refreshes, 0, "typing must not restore the previous model value");
+	typing.busy = true; typing.freeze();
+	assert.equal(control.get_value(), "EXP-1", "locking preserves the entered source");
+	typing.busy = false; typing.freeze();
+	assert.equal(control.get_value(), "EXP-1", "unlocking preserves the entered source");
+	await readSource(typing);
+	assert.equal(typing.source.expense_voucher, "EXP-1");
+	typing.destroy();
 	assert.equal(Costs.money("1e2"), null); assert.equal(Costs.money("-1"), null); assert.equal(Costs.money("1.0000000001"), null); assert.equal(Costs.money("0", true), null); assert.equal(Costs.money("1000000000000000000000"), null);
 	const twoHundredOne = Array.from({ length: 201 }, () => Costs.money("0.01").units).reduce((sum, value) => sum + value, 0n); assert.equal(Costs.amount(twoHundredOne), "2.01"); assert.equal(Costs.money("0001.010000000").text, "1.01");
 	let costs = await make(); assert.match(costs.summaryHost.textContent, /已发生：70 CNY/); assert.match(costs.summaryHost.textContent, /已付：未核实/); assert.doesNotMatch(costs.summaryHost.textContent, /23\.33|46\.66/);
