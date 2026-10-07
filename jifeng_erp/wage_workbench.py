@@ -237,10 +237,15 @@ def save_drafts(payload):
                 frappe.throw("工序和计件单位必须与所选报工单一致")
             values.update(job_card=card.name, work_order=card.work_order or None,
                           flow_order=work.jf_flow_order if work else None)
-        elif nonnegative(row["quantity"], "计件数量") or nonnegative(row["piece_rate"], "计件工价"):
-            frappe.throw("计件录入必须明确选择已提交的工序报工单")
         elif row["source_modified"] or row["work_order_modified"]:
-            frappe.throw("没有报工单的计时录入不能携带来源核对信息")
+            frappe.throw("没有报工单的手工录入不能携带来源核对信息")
+        elif nonnegative(row["quantity"], "计件数量") or nonnegative(row["piece_rate"], "计件工价"):
+            # Ordinary native Wage Entry already supports manual piece pay.
+            # It has no production completion/source claim; retain explicit
+            # quantity, rate and native UOM selection with the same controller.
+            if not row["stock_uom"]:
+                frappe.throw("手工计件请明确填写计件单位")
+            frappe.get_doc("UOM", row["stock_uom"]).check_permission("select")
         if nonnegative(row["quantity"], "计件数量") or nonnegative(row["piece_rate"], "计件工价"):
             require_piece_worker(payload["company"], payload["employee"])
         doc = frappe.get_doc({"doctype": WAGE, **values,

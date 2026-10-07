@@ -107,13 +107,111 @@ async function main() {
             dialogs++; this.options = options; this.values = {};
             this.fields_dict = Object.fromEntries(options.fields.filter(field => field.fieldname).map(field => {
                 this.values[field.fieldname] = field.default;
-                return [field.fieldname, { df: field, get_value: () => this.values[field.fieldname] }];
+                const wrapper = { text: "", empty() { this.text = ""; }, html(value) { this.text = value; } };
+                return [field.fieldname, { df: field, get_value: () => this.values[field.fieldname], $wrapper: wrapper }];
             }));
         }
         get_value(field) { return this.values[field]; }
+        async set_value(field, value) { this.values[field] = value; await this.fields_dict[field].df.onchange?.(); }
+        set_df_property(field, property, value) { this.fields_dict[field].df[property] = value; }
         show() { this.is_visible = true; }
         hide() { this.is_visible = false; this.on_hide?.(); }
     } };
+    const pieceValues = { work_date: "2026-10-01", operation: "OP-1", job_card: "", manual_piece: 1,
+        quantity: 2.5, stock_uom: "Nos", piece_rate: 4, hours: 0, hourly_rate: 0, extra_amount: 0, notes: "手工计件" };
+    const openPiece = async () => {
+        const page = workbench();
+        page.historyClears = 0;
+        // History picker has its own real protocol tests below. Here retain
+        // its clearing contract while testing the actual entry dialog actions.
+        page.bindHistoryRate = () => ({ clear: () => page.historyClears++, reference: () => ({}) });
+        await page.entryDialog(false);
+        return page;
+    };
+    const manual = await openPiece(), manualDialog = manual.activeDialog;
+    check(manualDialog.fields_dict.job_card.df.reqd === 1 && manualDialog.fields_dict.stock_uom.df.read_only === 1,
+        "normal piece entry begins with a required Job Card and its read-only unit");
+    await manualDialog.set_value("manual_piece", 1);
+    check(!manualDialog.fields_dict.job_card.df.reqd && manualDialog.fields_dict.job_card.df.hidden &&
+        !manualDialog.fields_dict.stock_uom.df.read_only && manualDialog.fields_dict.history_rate.df.hidden,
+        "explicit manual mode enables the unit and removes only the production source requirement");
+    await manualDialog.options.primary_action({ ...pieceValues, stock_uom: "" });
+    await manualDialog.options.primary_action({ ...pieceValues, quantity: 0 });
+    await manualDialog.options.primary_action({ ...pieceValues, job_card: "UNVERIFIED" });
+    check(!manual.rows.length && manualDialog.is_visible, "manual entry rejects absent unit, zero quantity and source contamination");
+    await manualDialog.options.primary_action(pieceValues);
+    const manualRow = manual.payload().rows[0];
+    check(manual.rows.length === 1 && manualRow.quantity === 2.5 && manualRow.piece_rate === 4 && manualRow.stock_uom === "Nos",
+        "same old entry action accepts explicitly entered manual quantity, unit and rate");
+    check(manualRow.job_card === "" && manualRow.source_modified === "" && manualRow.work_order_modified === "" &&
+        !Object.hasOwn(manualRow, "manual_piece") && !Object.hasOwn(manualRow, "flow_order"),
+        "manual mode carries no production completion, source versions or unsupported mode fields");
+    let manualPosts = 0;
+    frappe.call = async options => { if (options.method.endsWith("save_drafts")) manualPosts++; throw new Error("response lost"); };
+    await manual.save(); await manual.save();
+    check(manualPosts === 1 && manual.frozen && manual.rows.length === 1 && manual.sentPayload.rows[0].quantity === 2.5,
+        "unknown manual save retains its exact UUID and details and cannot POST again");
+    frappe.call = async options => {
+        check(options.method.endsWith("batch_status") && options.type === "GET", "manual recovery calls only the existing read status endpoint with GET");
+        return { message: { wages: [{ name: "SYNTHETIC-MANUAL", docstatus: 0 }] } };
+    };
+    await manual.checkResult();
+    check(!manual.rows.length && !manual.frozen && manualPosts === 1, "confirmed manual recovery clears rows without a second creation");
+
+    const cardProof = { job_card: "JC-1", operation: "OP-1", stock_uom: "Nos", source_date: "2026-10-01",
+        source_modified: "2026-10-01 09:00:00.000001", work_order_modified: "2026-10-01 09:00:00.000002", flow_order: "FLOW-1" };
+    const sourcePage = await openPiece(), sourceDialog = sourcePage.activeDialog;
+    frappe.call = async () => ({ message: cardProof });
+    await sourceDialog.set_value("job_card", "JC-1");
+    check(sourceDialog.get_value("stock_uom") === "Nos" && sourceDialog.fields_dict.stock_uom.df.read_only === 1,
+        "normal Job Card lookup still supplies its exact unit and keeps it read-only");
+    await sourceDialog.options.primary_action({ ...pieceValues, manual_piece: 0, job_card: "JC-1" });
+    check(sourcePage.payload().rows[0].source_modified === cardProof.source_modified &&
+        sourcePage.payload().rows[0].work_order_modified === cardProof.work_order_modified,
+        "source-backed piece entry keeps both actual source version tokens");
+
+    const delayedSource = await openPiece(), delayedDialog = delayedSource.activeDialog;
+    let finishSource;
+    frappe.call = () => new Promise(resolve => { finishSource = resolve; });
+    const loadingSource = delayedDialog.set_value("job_card", "JC-1");
+    for (let spin = 0; spin < 8 && !finishSource; spin++) await Promise.resolve();
+    assert.equal(typeof finishSource, "function");
+    await delayedDialog.set_value("manual_piece", 1);
+    await delayedDialog.set_value("stock_uom", "Kg");
+    finishSource({ message: cardProof }); await loadingSource;
+    check(delayedDialog.get_value("stock_uom") === "Kg" && !delayedDialog.get_value("job_card") &&
+        delayedDialog.fields_dict.source.$wrapper.text === "",
+        "late Job Card response cannot overwrite manual unit or reattach production source");
+    await delayedDialog.set_value("manual_piece", 0);
+    check(delayedDialog.fields_dict.job_card.df.reqd === 1 && delayedDialog.fields_dict.stock_uom.df.read_only === 1 &&
+        !delayedDialog.get_value("stock_uom") && !delayedDialog.fields_dict.history_rate.df.hidden,
+        "switching back requires a fresh Job Card and clears manual unit and history context");
+    frappe.call = async () => ({ message: { ...cardProof, job_card: "WRONG-CARD" } });
+    await delayedDialog.set_value("job_card", "JC-1");
+    await delayedDialog.options.primary_action({ ...pieceValues, manual_piece: 0, job_card: "JC-1" });
+    check(!delayedSource.rows.length, "mismatched source reply cannot be admitted as a sourced wage");
+
+    const replacing = await openPiece(), replacingDialog = replacing.activeDialog;
+    const originalSetter = replacingDialog.set_value.bind(replacingDialog);
+    let finishOldSetter, delayFirst = true;
+    replacingDialog.set_value = async (field, value) => {
+        await originalSetter(field, value);
+        if (field === "operation" && delayFirst) {
+            delayFirst = false;
+            await new Promise(resolve => { finishOldSetter = resolve; });
+        }
+    };
+    const secondProof = { ...cardProof, job_card: "JC-2", operation: "OP-2", source_modified: "CURRENT-CARD-VERSION" };
+    frappe.call = async options => ({ message: options.args.job_card === "JC-1" ? cardProof : secondProof });
+    const oldSourceSetter = replacingDialog.set_value("job_card", "JC-1");
+    for (let spin = 0; spin < 12 && !finishOldSetter; spin++) await Promise.resolve();
+    assert.equal(typeof finishOldSetter, "function");
+    await replacingDialog.set_value("job_card", "JC-2");
+    finishOldSetter(); await oldSourceSetter;
+    await replacingDialog.options.primary_action({ ...pieceValues, manual_piece: 0, job_card: "JC-2", operation: "OP-2" });
+    check(replacing.rows.length === 1 && replacing.payload().rows[0].source_modified === secondProof.source_modified,
+        "old asynchronous source setter cannot erase the newer verified Job Card source");
+
     const timingValues = { work_date: "2026-10-01", operation: "OP-1", job_card: "", quantity: 0,
         piece_rate: 0, hours: 1, hourly_rate: 10, extra_amount: 0, notes: "合成协议检查" };
     await temporary.entryDialog(true);

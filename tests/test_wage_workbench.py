@@ -52,6 +52,7 @@ class TestWageWorkbench(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("workbench_payroll", ROOT / "payroll.py")
         payroll = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(payroll)
+        self.payroll = payroll
         payroll_scope = patch.dict(sys.modules, {"jifeng_erp.payroll": payroll})
         payroll_scope.start()
         self.addCleanup(payroll_scope.stop)
@@ -77,6 +78,7 @@ class TestWageWorkbench(unittest.TestCase):
                 modified="2026-10-01 07:00:00", meta=Doc()),
             ("Salary Component", "PAY"): Doc(type="Earning", disabled=0),
             ("Operation", "OP-1"): Doc(),
+            ("UOM", "Nos"): Doc(),
             ("Job Card", "JC-1"): Doc(name="JC-1", company="C-1", docstatus=1, work_order="WO-1",
                 operation="OP-1", operation_id="ROW-1", stock_uom="Nos", modified="2026-10-01 09:00:00.000001",
                 posting_date="2026-10-01", is_corrective_job_card=0, time_logs=[Doc(employee="E-1")]),
@@ -238,6 +240,8 @@ class TestWageWorkbench(unittest.TestCase):
     def get_doc(self, doctype, name=None, **kwargs):
         if isinstance(doctype, dict):
             doc = Doc(**doctype, flags=types.SimpleNamespace(), docstatus=0)
+            if hasattr(self, "wage_meta"):
+                doc.meta = self.wage_meta
             doc.get_doc_before_save = lambda: None
             doc.insert = lambda: self.insert(doc)
             return doc
@@ -339,14 +343,91 @@ class TestWageWorkbench(unittest.TestCase):
             doc.modified = before
         self.assertEqual(self.native_inserts, 0)
 
-    def test_manual_timing_accepts_explicit_rates_but_no_manual_piece_source(self):
+    def test_manual_timing_accepts_explicit_rates_without_job_card(self):
         self.payload["rows"] = [self.row(job_card="")]
         self.module.save_drafts(self.payload)
         self.assertEqual(self.persisted[0].hours, 1)
-        self.payload["request_id"] = str(uuid.uuid4())
-        self.payload["rows"][0]["quantity"] = 1
-        with self.assertRaisesRegex(ValueError, "计件录入必须"):
+        self.assertFalse(getattr(self.persisted[0], "job_card", None))
+
+    def manual_piece_payload(self):
+        payload = copy.deepcopy(self.payload)
+        row = self.row(job_card="")
+        row.update(quantity=2.5, piece_rate=4, stock_uom="Nos", hours=0, hourly_rate=0)
+        payload["rows"] = [row]
+        return payload
+
+    def test_ordinary_manager_can_save_manual_piece_with_explicit_unit_and_no_production_source(self):
+        self.frappe.session.user = "HR-MANAGER"
+        permitted = (*self.module.EDIT_FIELDS, "job_card", "work_order", "flow_order",
+                     "type", "disabled", "status", "employee_name",
+                     "workbench_request_key", "workbench_request_fingerprint")
+        self.wage_meta = Doc(get_permitted_fieldnames=Mock(return_value=permitted))
+        for doc in self.docs.values():
+            doc.meta = self.wage_meta
+        unit = self.docs[("UOM", "Nos")]
+        unit.check_permission = Mock()
+        payload = self.manual_piece_payload()
+        first = self.module.save_drafts(payload)
+        wage = self.persisted[0]
+        self.assertFalse(first["reused"])
+        self.assertEqual((wage.quantity, wage.piece_rate, wage.stock_uom), (2.5, 4, "Nos"))
+        self.assertEqual(self.payroll.wage_amounts(wage.quantity, wage.piece_rate, wage.hours,
+                         wage.hourly_rate, wage.extra_amount)[2], 10)
+        self.assertTrue(all(not getattr(wage, field, None) for field in ("job_card", "work_order", "flow_order")))
+        self.assertFalse(any(call.args[0] in ("Job Card", "Work Order", "Jifeng Flow Order")
+                             for call in self.frappe.get_doc.call_args_list if isinstance(call.args[0], str)))
+        unit.check_permission.assert_called_once_with("select")
+        self.frappe.db.get_value.assert_any_call(self.piece_workers.SUPPLEMENT,
+            {"company": "C-1", "employee": "E-1"}, ["name", "wage_method", "modified"],
+            as_dict=True, for_update=True)
+        recovered = self.module.batch_status(payload["request_id"], "C-1", "E-1")
+        repeated = self.module.save_drafts(copy.deepcopy(payload))
+        self.assertEqual(recovered["wages"], first["wages"])
+        self.assertTrue(repeated["reused"])
+        self.assertEqual(self.native_inserts, 1)
+        self.frappe.db.commit.assert_not_called()
+
+    def test_manual_piece_requires_unit_selection_permission_and_piece_worker(self):
+        payload = self.manual_piece_payload()
+        payload["rows"][0]["stock_uom"] = ""
+        with self.assertRaisesRegex(ValueError, "手工计件.*单位"):
+            self.module.save_drafts(payload)
+        payload["rows"][0]["stock_uom"] = "Nos"
+        self.docs[("UOM", "Nos")].denied = ("select",)
+        with self.assertRaises(PermissionError):
+            self.module.save_drafts(payload)
+        self.docs[("UOM", "Nos")].denied = ()
+        self.supplement["wage_method"] = "计时"
+        with self.assertRaisesRegex(ValueError, "工资方式必须为计件"):
+            self.module.save_drafts(payload)
+        self.assertEqual(self.native_inserts, 0)
+
+    def test_manual_piece_cannot_claim_source_versions_or_bypass_native_create_fields(self):
+        payload = self.manual_piece_payload()
+        for field in ("source_modified", "work_order_modified"):
+            payload["rows"][0][field] = "2026-10-01 09:00:00"
+            with self.assertRaisesRegex(ValueError, "不能携带来源核对信息"):
+                self.module.save_drafts(payload)
+            payload["rows"][0][field] = ""
+        self.frappe.has_permission.return_value = False
+        with self.assertRaisesRegex(ValueError, "没有新增"):
+            self.module.save_drafts(payload)
+        self.frappe.has_permission.return_value = True
+        self.frappe.session.user = "HR-MANAGER"
+        self.wage_meta = Doc(get_permitted_fieldnames=Mock(return_value=["company", "status", "employee_name", "type", "disabled"]))
+        for doc in self.docs.values():
+            doc.meta = self.wage_meta
+        with self.assertRaisesRegex(ValueError, "所需字段"):
+            self.module.save_drafts(payload)
+        self.assertEqual(self.native_inserts, 0)
+
+    def test_mixed_manual_and_job_card_batch_still_rolls_back_on_last_controller_failure(self):
+        self.payload["rows"].extend(self.manual_piece_payload()["rows"])
+        self.fail_at = 2
+        with self.assertRaisesRegex(ValueError, "last row"):
             self.module.save_drafts(self.payload)
+        self.assertEqual(self.persisted, [])
+        self.frappe.db.rollback.assert_called_once_with(save_point="jifeng_wage_workbench")
 
     def test_duplicate_source_and_foreign_operation_or_unit_are_rejected(self):
         self.payload["rows"].append(self.row())

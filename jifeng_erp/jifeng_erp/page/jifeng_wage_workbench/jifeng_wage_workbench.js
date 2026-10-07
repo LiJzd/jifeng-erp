@@ -35,7 +35,7 @@ class JifengWageWorkbench {
                 <label><input type="checkbox" data-wage-multi> 多人操作</label>
                 <label><input type="checkbox" data-wage-multi-operation> 多工序</label>
             </div>
-            <p class="jf-wage-hint">双击姓名进入计时；勾选多人操作后双击姓名，填写同一道工序的员工份额；勾选多工序后双击工序，为同一员工逐道录入。计件须核实人员档案工资方式为计件；纯计时继续按现有规则录入。</p>
+            <p class="jf-wage-hint">双击姓名进入计时；勾选多人操作后双击姓名，填写同一道工序的员工份额；勾选多工序后双击工序，为同一员工逐道录入。计件须核实人员档案工资方式为计件；没有报工单时可勾选手工计件，明确填写数量、单位和工价。</p>
             <div class="jf-wage-actions">
                 <button class="btn btn-default btn-sm" data-wage-add>新增计件</button>
                 <button class="btn btn-primary btn-sm" data-wage-save>保存草稿</button>
@@ -353,12 +353,16 @@ class JifengWageWorkbench {
         const fields = [
             { fieldname: "work_date", fieldtype: "Date", label: "日期", default: this.value("work_date"), reqd: 1 },
             { fieldname: "operation", fieldtype: "Link", label: "工序", options: "Operation", default: this.value("operation"), reqd: 1 },
+            { fieldname: "manual_piece", fieldtype: "Check", label: "手工计件（无报工单）", default: 0, hidden: timed ? 1 : 0,
+              description: "数量只用于本次手工计薪，不作为生产报工完成量。" },
             { fieldname: "job_card", fieldtype: "Link", label: "工序报工单", options: "Job Card", reqd: timed ? 0 : 1,
               get_query: () => ({ filters: { company: this.value("company"), docstatus: 1,
                   ...(dialog.get_value("operation") ? { operation: dialog.get_value("operation") } : {}) } }),
               description: timed ? "有报工来源时请明确选择；保存时核对该员工在来源报工单内。" : "明确选择这道工序的已提交报工单。" },
             { fieldname: "source", fieldtype: "HTML" },
             { fieldname: "quantity", fieldtype: "Float", label: "计件数量", default: 0, hidden: timed ? 1 : 0 },
+            { fieldname: "stock_uom", fieldtype: "Link", label: "计件单位", options: "UOM", default: "",
+              hidden: timed ? 1 : 0, read_only: 1, reqd: timed ? 0 : 1 },
             { fieldname: "piece_rate", fieldtype: "Currency", label: "计件工价", default: 0, hidden: timed ? 1 : 0 },
             { fieldname: "history_rate", fieldtype: "HTML", hidden: timed ? 1 : 0 },
             { fieldname: "hours", fieldtype: "Float", label: "计时小时", default: 0, reqd: timed ? 1 : 0 },
@@ -374,7 +378,11 @@ class JifengWageWorkbench {
                 if (dialog.working) return;
                 dialog.working = true;
                 try {
+                    const manual = !timed && !!Number(values.manual_piece);
                     if (selectedRevision !== (this.personRevision || 0) || selectedPerson.employee !== this.value("employee") || selectedPerson.company !== this.value("company")) throw new Error("公司或员工选择已变化，请重新录入。");
+                    if (!timed && !manual && !values.job_card) throw new Error("请选择工序报工单，或明确勾选手工计件。");
+                    if (manual && (values.job_card || source)) throw new Error("手工计件不能携带报工来源，请重新核对录入方式。");
+                    if (manual && (!(Number(values.quantity) > 0) || !values.stock_uom)) throw new Error("手工计件请明确填写正数数量、单位和工价。");
                     if (values.job_card && (!source || source.job_card !== values.job_card)) throw new Error("请等待来源读取完成，再核对工序。");
                     if (values.job_card && (source.operation !== values.operation)) throw new Error("工序必须与所选报工单一致。");
                     if (this.rows.some(row => row.job_card && row.job_card === values.job_card)) throw new Error("这道报工单已加入明细，请先核对原行。");
@@ -388,7 +396,7 @@ class JifengWageWorkbench {
                         ...(temporarySelection ? { temporary_selection: temporarySelection } : {}) };
                     this.rows.push({ work_date: values.work_date, operation: values.operation, job_card: values.job_card || "",
                         source_modified: source?.source_modified || "", work_order_modified: source?.work_order_modified || "",
-                        stock_uom: source?.stock_uom || "", quantity: timed ? 0 : Number(values.quantity || 0),
+                        stock_uom: source?.stock_uom || (manual ? values.stock_uom : ""), quantity: timed ? 0 : Number(values.quantity || 0),
                         piece_rate: timed ? 0 : Number(values.piece_rate || 0), hours: Number(values.hours || 0),
                         hourly_rate: Number(values.hourly_rate || 0), extra_amount: Number(values.extra_amount || 0),
                         notes: values.notes || "", flow_order: source?.flow_order || "",
@@ -400,20 +408,45 @@ class JifengWageWorkbench {
                 } catch (error) { frappe.msgprint(error.message); }
                 finally { dialog.working = false; }
             }});
+        dialog.fields_dict.manual_piece.df.onchange = async () => {
+            if (timed) return;
+            const manual = !!Number(dialog.get_value("manual_piece"));
+            ++sourceRequest;
+            source = null;
+            history?.clear();
+            dialog.fields_dict.source.$wrapper.empty();
+            dialog.set_df_property("job_card", "reqd", manual ? 0 : 1);
+            dialog.set_df_property("job_card", "hidden", manual ? 1 : 0);
+            dialog.set_df_property("stock_uom", "read_only", manual ? 0 : 1);
+            dialog.set_df_property("history_rate", "hidden", manual ? 1 : 0);
+            await dialog.set_value("job_card", "");
+            await dialog.set_value("stock_uom", "");
+        };
         dialog.fields_dict.job_card.df.onchange = async () => {
             const selected = dialog.get_value("job_card");
             const request = ++sourceRequest;
             source = null;
             history?.clear();
             dialog.fields_dict.source.$wrapper.empty();
+            await dialog.set_value("stock_uom", "");
             if (!selected) return;
+            const current = () => request === sourceRequest && dialog.is_visible &&
+                !Number(dialog.get_value("manual_piece")) && dialog.get_value("job_card") === selected &&
+                selectedRevision === (this.personRevision || 0) && selectedPerson.company === this.value("company") &&
+                selectedPerson.employee === this.value("employee");
+            if (!current()) return;
             try {
                 const response = await frappe.call({ method: "jifeng_erp.wage_workbench.get_entry_source", args: {
-                    job_card: selected, company: this.value("company"), employee: this.value("employee") } });
-                if (request !== sourceRequest || dialog.get_value("job_card") !== selected) return;
-                source = response.message;
-                await dialog.set_value("operation", source.operation);
-                dialog.fields_dict.source.$wrapper.html(`<p>来源日期：${this.esc(source.source_date)}　单位：${this.esc(source.stock_uom)}　流程单：${this.esc(source.flow_order || "")}</p>`);
+                    job_card: selected, company: selectedPerson.company, employee: selectedPerson.employee } });
+                if (!current()) return;
+                if (!response.message || response.message.job_card !== selected) throw new Error("报工来源回复与当前选择不一致。");
+                const selectedSource = response.message;
+                source = selectedSource;
+                await dialog.set_value("operation", selectedSource.operation);
+                if (!current()) { if (request === sourceRequest) source = null; return; }
+                await dialog.set_value("stock_uom", selectedSource.stock_uom || "");
+                if (!current()) { if (request === sourceRequest) source = null; return; }
+                dialog.fields_dict.source.$wrapper.html(`<p>来源日期：${this.esc(selectedSource.source_date)}　单位：${this.esc(selectedSource.stock_uom)}　流程单：${this.esc(selectedSource.flow_order || "")}</p>`);
             } catch (error) { if (request === sourceRequest) source = null; }
         };
         if (!timed) history = this.bindHistoryRate(dialog, selectedPerson, () => source);
@@ -523,7 +556,7 @@ class JifengWageWorkbench {
         if (!this.frozen || !this.pending || this.checking) return;
         this.checking = true;
         try {
-            const response = await frappe.call({ method: "jifeng_erp.wage_workbench.batch_status", args: {
+            const response = await frappe.call({ method: "jifeng_erp.wage_workbench.batch_status", type: "GET", args: {
                 request_id: this.pending.request_id, company: this.pending.company, employee: this.pending.employee } });
             const wages = response.message.wages;
             if (wages.length && (!this.sentPayload || wages.length === this.sentPayload.rows.length)) this.saved(wages);
