@@ -165,6 +165,47 @@ def procurement_stage(document, row, *, read=native_reader, historical=False):
     return None
 
 
+class PurchaseOrderStageMixin:
+    def validate_for_subcontracting(self):
+        """Keep exact Job Card BOMs through native new-flow BOM clearing."""
+        if (self.get("doctype") != "Purchase Order" or not self.get("is_subcontracted")
+                or self.get("is_old_subcontracting_flow")):
+            return super().validate_for_subcontracting()
+
+        rows = tuple(self.get("items") or [])
+        identity_fields = ("name", "parent", "parenttype", "parentfield", "idx", "item_code",
+                           "fg_item", "job_card", "jf_flow_order", "qty", "fg_item_qty", "rate",
+                           "uom", "stock_uom", "conversion_factor", "warehouse")
+        header_fields = ("doctype", "name", "company", "docstatus", "is_subcontracted",
+                         "is_old_subcontracting_flow", "supplier", "supplier_warehouse", "currency",
+                         "conversion_rate")
+        header = tuple(self.get(field) for field in header_fields)
+        preserved = []
+        for row in rows:
+            if row.get("job_card"):
+                stage = procurement_stage(self, row, historical=self.docstatus == 2)
+                preserved.append((row, stage["bom"].get("name"),
+                                  tuple(row.get(field) for field in identity_fields)))
+
+        result = super().validate_for_subcontracting()
+        if not preserved:
+            return result
+        if (header != tuple(self.get(field) for field in header_fields)
+                or len(rows) != len(self.get("items") or [])
+                or any(original is not current for original, current in zip(rows, self.get("items") or []))):
+            _invalid()
+        for row, bom, identity in preserved:
+            if (identity != tuple(row.get(field) for field in identity_fields)
+                    or row.get("bom") not in (None, "", bom)):
+                _invalid()
+            # BuyingController clears this value for the new service-item flow.
+            # Restore only the caller's already verified native stage BOM, then
+            # check the current readable source again; never use Item.default_bom.
+            row.bom = bom
+            procurement_stage(self, row, historical=self.docstatus == 2)
+        return result
+
+
 def stock_stage(document, *, read=native_reader):
     if not document.get("job_card"):
         return None

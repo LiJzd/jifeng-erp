@@ -114,6 +114,7 @@ extend_doctype_class = {
     "Stock Entry": ["jifeng_erp.material_issue_locking.MaterialIssueLockingMixin"],
     "Production Plan": ["jifeng_erp.production_instruction.ProductionInstructionMixin"],
     "Purchase Receipt": ["jifeng_erp.purchase_returns.PurchaseReceiptMixin"],
+    "Purchase Order": ["jifeng_erp.subcontract_stage.PurchaseOrderStageMixin"],
     "Employee Promotion": ["jifeng_erp.personnel_changes.EmployeePromotionMixin"],
     "Employee Transfer": ["jifeng_erp.personnel_changes.EmployeeTransferMixin"],
     "Employee Separation": ["jifeng_erp.personnel_separation.EmployeeSeparationMixin"],

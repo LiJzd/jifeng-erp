@@ -294,6 +294,93 @@ class TestFlowStockEntry(unittest.TestCase):
         self.assertEqual((self.po_row.jf_flow_order, self.sco_row.jf_flow_order), ("FLOW-1", "FLOW-1"))
         self.assertEqual(self.flow.item_code, "RING")
 
+    def native_clearing_po(self, after_clear=None):
+        stage = self.stage()
+        calls = []
+
+        class NativePurchaseOrder(Record):
+            def validate_for_subcontracting(doc):
+                calls.append(True)
+                for row in doc.get("items") or []:
+                    row.bom = None
+                if after_clear:
+                    after_clear(doc)
+                return "native validation retained"
+
+        class StagePurchaseOrder(stage.PurchaseOrderStageMixin, NativePurchaseOrder):
+            pass
+
+        return StagePurchaseOrder(**self.po_stage), calls
+
+    def test_native_new_flow_bom_clearing_preserves_only_exact_job_card_stage(self):
+        doc, calls = self.native_clearing_po()
+        ordinary = Record(item_code="ORDINARY", bom="DEFAULT-BOM", job_card=None)
+        doc["items"].append(ordinary)
+        self.assertEqual(doc.validate_for_subcontracting(), "native validation retained")
+        self.assertEqual(calls, [True])
+        self.assertEqual(self.po_row.bom, "STAGE-BOM")
+        self.assertIsNone(ordinary.bom)
+        self.setup.validate_flow_links(doc)
+        self.assertEqual(self.po_row.jf_flow_order, "FLOW-1")
+
+    def test_native_bom_restore_cannot_repair_wrong_incoming_source(self):
+        for field, value in (("bom", None), ("bom", "OTHER"), ("fg_item", "OTHER"),
+                             ("job_card", "OTHER"), ("jf_flow_order", "OTHER")):
+            doc, calls = self.native_clearing_po()
+            self.po_row[field] = value
+            with self.subTest(field=field), self.assertRaises((ValueError, KeyError)):
+                doc.validate_for_subcontracting()
+            self.assertEqual(calls, [], "wrong caller source must be rejected before native BOM clearing")
+
+    def test_native_bom_restore_rejects_replaced_deleted_or_changed_stage_row(self):
+        changes = [lambda doc: doc["items"].clear(),
+                   lambda doc: doc["items"].__setitem__(0, Record(**doc["items"][0])),
+                   lambda doc: doc["items"][0].update(fg_item="OTHER"),
+                   lambda doc: doc["items"][0].update(qty=999),
+                   lambda doc: doc.update(company="OTHER"),
+                   lambda doc: doc["items"][0].update(bom="OTHER")]
+        for change in changes:
+            doc, calls = self.native_clearing_po(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                doc.validate_for_subcontracting()
+            self.assertEqual(calls, [True])
+
+    def test_native_bom_restore_propagates_native_failures_and_rechecks_source_access(self):
+        def fail(doc):
+            raise ValueError("native supplier validation")
+        doc, _ = self.native_clearing_po(fail)
+        with self.assertRaisesRegex(ValueError, "native supplier validation"):
+            doc.validate_for_subcontracting()
+
+        def deny(doc):
+            self.card.denied = {"read"}
+        doc, _ = self.native_clearing_po(deny)
+        with self.assertRaises(PermissionError):
+            doc.validate_for_subcontracting()
+
+    def test_native_bom_restore_retains_existing_cancelled_stage_history_rule(self):
+        doc, calls = self.native_clearing_po()
+        doc.docstatus = 2
+        self.card.docstatus = self.work_order.docstatus = 2
+        doc.validate_for_subcontracting()
+        self.assertEqual((self.po_row.bom, calls), ("STAGE-BOM", [True]))
+        doc.docstatus = 0
+        with self.assertRaises(ValueError):
+            doc.validate_for_subcontracting()
+
+    def test_native_bom_restore_leaves_non_job_card_and_old_flow_methods_unchanged(self):
+        doc, calls = self.native_clearing_po()
+        self.po_row.job_card = None
+        doc.validate_for_subcontracting()
+        self.assertEqual(calls, [True])
+        self.assertIsNone(self.po_row.bom)
+
+        doc, calls = self.native_clearing_po()
+        doc.is_old_subcontracting_flow = 1
+        doc.validate_for_subcontracting()
+        self.assertEqual(calls, [True])
+        self.assertIsNone(self.po_row.bom, "old-flow behavior is delegated to native code without repair")
+
     def test_stage_must_match_actual_operation_bom_company_and_job_card(self):
         self.stage()
         for record, field, value in ((self.card, "operation_id", "OTHER"), (self.card, "finished_good", "SILVER"),
