@@ -210,6 +210,16 @@ class IntakeSourceTests(unittest.TestCase):
         environment = self
 
         class Document(Row):
+            @property
+            def docstatus(document):
+                # Native BaseDocument lazily wraps this integer on attribute
+                # access. A reader must not change a held source observation.
+                class DocStatus(int):
+                    pass
+
+                document['docstatus'] = DocStatus(document.get('docstatus', 0))
+                return document['docstatus']
+
             def has_permission(document, permission="read"):
                 return (doctype, name) not in environment.denied
 
@@ -294,6 +304,11 @@ class IntakeSourceTests(unittest.TestCase):
 
     def test_ordinary_finished_flag_cannot_turn_an_unverified_semi_finished_item_into_source(self):
         self.docs["Stock Entry Detail", "SE-ROW-1"].item_code = "RM"
+        with self.assertRaises(ValueError):
+            self.read()
+
+    def test_retagging_a_linked_child_cannot_silently_remove_a_posted_source(self):
+        self.docs["Stock Entry Detail", "SE-ROW-1"].parentfield = "other_items"
         with self.assertRaises(ValueError):
             self.read()
 

@@ -114,13 +114,14 @@ class _Read(LedgerSourceGuard):
 
     def parents(self, doctype, flow_order):
         childtype = self.specs[doctype]["tables"]["items"][0]
-        self._fields(childtype, {"name", "parent", "jf_flow_order"}, parenttype=doctype)
+        self._fields(childtype, {"name", "parent", "parenttype", "parentfield", "jf_flow_order"}, parenttype=doctype)
         rows = self.query("get_all", childtype,
-                          filters={"jf_flow_order": flow_order, "parenttype": doctype, "parentfield": "items"},
-                          fields=["name", "parent"], order_by="name asc", limit_page_length=LIMIT + 1)
+                          filters={"jf_flow_order": flow_order},
+                          fields=["name", "parent", "parenttype", "parentfield"],
+                          order_by="name asc", limit_page_length=LIMIT + 1)
         if len(rows) > LIMIT:
             frappe.throw("相关成品来源超过一千条，请先核对原生凭证范围")
-        if any(not row.get("parent") for row in rows):
+        if any(not row.get("parent") or row.get("parenttype") != doctype or row.get("parentfield") != "items" for row in rows):
             _invalid()
         return {row["parent"] for row in rows}
 
@@ -180,7 +181,7 @@ def _stock_movement(read, document, row, flow, *, quantity, warehouse, rejected=
         entry = read.read(SLE, name)
         if (entry.company != document.company or entry.item_code != row.item_code or entry.stock_uom != row.stock_uom
                 or entry.voucher_type != document.doctype or entry.voucher_no != document.name
-                or entry.voucher_detail_no != row.name or entry.docstatus != 1 or entry.is_cancelled
+                or entry.voucher_detail_no != row.name or entry.get("docstatus") != 1 or entry.is_cancelled
                 or str(entry.posting_date) != str(document.posting_date)):
             _invalid()
         movement = decimal_number(entry.actual_qty)
