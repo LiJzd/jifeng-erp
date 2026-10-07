@@ -46,6 +46,11 @@ HISTORIES = {
     "promotion_history": ("Jifeng Legacy Promotion History", (
         "project", "work_content", "from_date", "to_date", "title")),
 }
+FORMAL_RECORDS = {
+    "Employee Promotion": "promotion_date",
+    "Employee Transfer": "transfer_date",
+    "Employee Separation": "jf_last_working_day",
+}
 LIFECYCLE = {
     "user_id", "status", "relieving_date", "reason_for_leaving", "create_user_permission",
     "create_user_automatically", "leave_approver", "expense_approver", "shift_request_approver",
@@ -164,6 +169,51 @@ def _field_meta(document, names, writable, existing):
     return fields, values
 
 
+def _formal_records(employee):
+    """Readable native sources, separate from editable legacy archive rows.
+
+    Native lists apply source User Permissions/query hooks; each loaded source
+    must still be readable and belong to this Employee. Do not refill a field
+    omitted by the list's field permissions from the full document.
+    """
+    records = []
+    for doctype, date_field in FORMAL_RECORDS.items():
+        if not frappe.has_permission(doctype, "read"):
+            continue
+        readable = _columns(doctype, "read")
+        if not {"name", "employee", "docstatus"}.issubset(readable):
+            continue
+        fields = ["name", "employee", "docstatus"]
+        optional = [date_field] + (["jf_exit_status"] if doctype == "Employee Separation" else [])
+        meta = frappe.get_meta(doctype)
+        fields += [field for field in optional if field in readable and meta.get_field(field)]
+        try:
+            listed = frappe.get_list(doctype, filters={"employee": employee.name}, fields=fields,
+                                     order_by="name asc", limit_page_length=0)
+        except frappe.PermissionError:
+            continue
+        for row in listed:
+            if (not isinstance(row.get("name"), str) or not row.name
+                    or row.get("employee") != employee.name or row.get("docstatus") not in (0, 1, 2)):
+                continue
+            try:
+                source = frappe.get_doc(doctype, row.name)
+                if (source.employee != employee.name or not source.has_permission("read")
+                        or any(_value(source.get(field)) != _value(row.get(field))
+                               for field in fields if field in row)):
+                    continue
+            except (frappe.PermissionError, frappe.DoesNotExistError):
+                continue
+            record = {"doctype": doctype, "name": row.name, "docstatus": row.docstatus}
+            if date_field in row:
+                record["effective_date"] = _value(row.get(date_field))
+            if "jf_exit_status" in row:
+                record["exit_status"] = row.get("jf_exit_status")
+            records.append(record)
+    return sorted(records, key=lambda row: (row.get("effective_date") or "", row["doctype"], row["name"]),
+                  reverse=True)
+
+
 def _pack(employee, supplement, unscoped_init=False):
     def permitted(document, permission):
         # An empty new form has no Company yet. Its editable state comes from
@@ -200,6 +250,7 @@ def _pack(employee, supplement, unscoped_init=False):
         "employee_modified": _value(employee.get("modified")) if existing else None,
         "supplement_modified": _value(supplement.get("modified")) if not supplement.is_new() else None,
         "employee": employee_values, "supplement": supplement_values, "histories": history_values,
+        "formal_records": _formal_records(employee) if existing else [],
         "field_meta": {"employee": employee_meta, "supplement": supplement_meta, "histories": history_meta},
         "can_write": bool(permitted(employee, employee_permission)
                           and permitted(supplement, supplement_permission)),

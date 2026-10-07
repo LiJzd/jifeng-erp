@@ -93,7 +93,8 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 		add("employee", "image", "相片", this.uploadOptions(archive, "employee", "image"));
 		add("supplement", "identity_image", "身份证图片", this.uploadOptions(archive, "supplement", "identity_image"));
 		fields.push({ fieldname: "records_section", fieldtype: "Section Break" },
-			{ fieldname: "record_tabs", fieldtype: "HTML" });
+			{ fieldname: "record_tabs", fieldtype: "HTML" },
+			{ fieldname: "formal_records", fieldtype: "HTML", hidden: 1 });
 		const tables = {
             work_history: { label: "工作经历", columns: [["project", "项目"], ["work_content", "工作内容"],
 				["reason_for_leaving", "离职原因"], ["from_date", "开始"], ["to_date", "结束"],
@@ -128,6 +129,7 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 		const state = { archive, dialog, bindings, tables, saving: false, confirming: false, closed: false };
 		this.active.set(key, state);
 		this.renderTabs(state);
+		this.renderFormalRecords(state);
 		this.guardClose(state);
 		if (archive.can_write) dialog.set_primary_action(archive.name ? "保存" : "新增", () => this.save(state));
 		dialog.add_custom_action(__("关闭"), () => dialog.hide());
@@ -216,7 +218,7 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 
 	renderTabs(state) {
 		const entries = [["work_history", "工作经历"], ["education_history", "教育经历"],
-			["salary_history", "调薪记录"], ["promotion_history", "升职记录"]];
+			["salary_history", "调薪记录"], ["promotion_history", "升职记录"], ["formal_records", "正式人事记录"]];
 		const wrapper = state.dialog.fields_dict.record_tabs.$wrapper;
 		wrapper.html('<div class="jfe-employee-tabs">' + entries.map(([key, label], index) =>
 			'<button type="button" class="btn btn-sm ' + (index ? "btn-default" : "btn-primary") +
@@ -229,6 +231,41 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 			wrapper.find("button").removeClass("btn-primary").addClass("btn-default");
 			$(event.currentTarget).addClass("btn-primary").removeClass("btn-default");
 		});
+	}
+
+	renderFormalRecords(state) {
+		const control = state.dialog.fields_dict.formal_records;
+		if (!control) return;
+		const escape = (value) => frappe.utils.escape_html(String(value ?? ""));
+		const labels = { "Employee Promotion": "晋升", "Employee Transfer": "调岗", "Employee Separation": "离职" };
+		const rows = state.archive.formal_records || [];
+		const status = (row) => row.docstatus === 0 ? "草稿" : row.docstatus === 2 ? "已取消" :
+			(row.doctype === "Employee Separation" && ["待办理", "已办理", "已撤销"].includes(row.exit_status)
+				? row.exit_status : "已提交");
+		control.$wrapper.html('<p class="text-muted">' + __("当前部门、岗位和在职状态以员工档案为准。正式提交及撤销请打开原单办理；其他历史标签保留旧档案记录。") + '</p>' +
+			(rows.length ? '<table class="table table-bordered"><thead><tr>' +
+				["业务", "正式单据", "生效/最后工作日", "状态", "操作"].map((label) => '<th>' + __(label) + '</th>').join("") +
+				'</tr></thead><tbody>' + rows.map((row, index) => '<tr><td>' + escape(__(labels[row.doctype] || "")) +
+				'</td><td>' + escape(row.name) + '</td><td>' + escape(row.effective_date || "—") + '</td><td>' +
+				escape(__(status(row))) + '</td><td><button type="button" class="btn btn-xs btn-default" data-formal-record="' +
+				index + '">' + __("打开原单") + '</button></td></tr>').join("") + '</tbody></table>' :
+				'<p>' + __("暂无可读取的正式人事记录。") + '</p>'));
+		control.$wrapper.off("click.formal_records").on("click.formal_records", "[data-formal-record]", (event) =>
+			this.openFormalRecord(state, Number(event.currentTarget.dataset.formalRecord)));
+	}
+
+	openFormalRecord(state, index) {
+		if (state.closed || state.saving || state.confirming || !Number.isInteger(index) || index < 0) return;
+		const row = state.archive.formal_records?.[index];
+		const labels = { "Employee Promotion": "晋升", "Employee Transfer": "调岗", "Employee Separation": "离职" };
+		if (!row || !Object.hasOwn(labels, row.doctype) || typeof row.name !== "string" || !row.name) return;
+		if (JSON.stringify(this.payload(state)) !== state.original) {
+			frappe.msgprint(__("请先保存或关闭未保存的档案修改，再打开正式单据。"));
+			return;
+		}
+		state.dialog.hide();
+		this.bridge.open({ title: labels[row.doctype] + "：" + row.name, module: "人事", kind: "form",
+			doctype: row.doctype, route: ["Form", row.doctype, row.name] });
 	}
 
 	payload(state) {
@@ -290,6 +327,7 @@ window.JifengPersonnelArchive = class JifengPersonnelArchive {
 				args: { payload: this.payload(state) }, freeze: true, freeze_message: __("正在保存人员档案…") });
 			if (!response.message?.name) return;
 			state.archive = response.message;
+			this.renderFormalRecords(state);
 			await state.dialog.set_values(this.initialValues(state));
 			for (const { group, fieldname, controlName, locked } of state.bindings) {
 				if (["image", "identity_image"].includes(fieldname)) continue;

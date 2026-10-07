@@ -5,10 +5,14 @@ const path = require("node:path");
 const vm = require("node:vm");
 const window = {};
 const calls = [];
+const messages = [];
 let reply;
 const frappe = {
 	call: async (options) => { calls.push(options); if (reply instanceof Error) throw reply; return { message: reply }; },
 	show_alert() {},
+	msgprint(text) { messages.push(text); },
+	utils: { escape_html: (value) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+		.replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;") },
 };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_personnel_archive.js"), "utf8"),
 	{ window, frappe, structuredClone, __: (text) => text, queueMicrotask });
@@ -124,6 +128,50 @@ async function main() {
 	assert.equal(state.button.disabled, false);
 	assert.equal(state.saving, false);
 	assert.equal(calls.length, 2, "each save makes one atomic API request");
+	const formalState = fixture();
+	formalState.archive.formal_records = [
+		{ doctype: "Employee Transfer", name: "TRANSFER-1", effective_date: "2026-09-01", docstatus: 1 },
+		{ doctype: "Employee Promotion", name: "<PROMOTION>", docstatus: 2 },
+		{ doctype: "Employee Separation", name: "EXIT-1", docstatus: 1, exit_status: "已办理" },
+		{ doctype: "Employee Separation", name: "EXIT-DRAFT", docstatus: 0, exit_status: "待办理" },
+	];
+	let html, handler, hides = 0;
+	const wrapper = { html(value) { html = value; return this; }, off() { return this; },
+		on(_event, _selector, callback) { handler = callback; return this; } };
+	formalState.dialog.fields_dict.formal_records = { $wrapper: wrapper };
+	formalState.dialog.hide = () => { hides++; };
+	formalState.original = JSON.stringify(editor.payload(formalState));
+	const opened = [];
+	editor.bridge.open = (spec) => opened.push(spec);
+	editor.renderFormalRecords(formalState);
+	assert.ok(html.includes("已提交") && html.includes("已取消") && html.includes("已办理") && html.includes("草稿"),
+		"formal state is distinguished from exit processing phase and legacy archive labels");
+	assert.ok(html.includes("&lt;PROMOTION&gt;") && !html.includes("<PROMOTION>"), "native identities are escaped in HTML");
+	assert.ok(!Object.hasOwn(editor.payload(formalState), "formal_records"), "formal history never enters archive save payload");
+	handler({ currentTarget: { dataset: { formalRecord: "1" } } });
+	assert.equal(JSON.stringify(opened[0].route), JSON.stringify(["Form", "Employee Promotion", "<PROMOTION>"]),
+		"opening uses the exact native doctype/name, not a legacy row or employee identifier");
+	assert.equal(hides, 1);
+	assert.equal(calls.length, 2, "opening a source never autosaves or submits it");
+	formalState.dialog.fields_dict.supplement_legacy_account.value = "unsaved archive input";
+	editor.openFormalRecord(formalState, 0);
+	assert.equal(opened.length, 1, "dirty archive must remain open instead of losing draft values");
+	assert.equal(hides, 1);
+	assert.equal(formalState.dialog.fields_dict.supplement_legacy_account.value, "unsaved archive input");
+	assert.ok(messages.at(-1).includes("先保存"));
+	formalState.dialog.fields_dict.supplement_legacy_account.value = "00123";
+	formalState.saving = true;
+	editor.openFormalRecord(formalState, 0);
+	formalState.saving = false;
+	for (const index of [-1, 0.5, 99]) editor.openFormalRecord(formalState, index);
+	assert.equal(opened.length, 1, "pending save and invalid references cannot navigate");
+	formalState.archive.can_write = false;
+	editor.openFormalRecord(formalState, 2);
+	assert.equal(JSON.stringify(opened[1].route), JSON.stringify(["Form", "Employee Separation", "EXIT-1"]),
+		"a read-only archive can open a readable source without write permission");
+	formalState.archive.formal_records = [];
+	editor.renderFormalRecords(formalState);
+	assert.ok(html.includes("暂无可读取"), "an empty permission-filtered timeline does not claim no underlying records exist");
 	const bridge = Object.create(window.JifengClassicBridge.prototype);
 	let dirty = true, block = "保存结果尚未核实";
 	const frame = { contentWindow: { cur_frm: { is_dirty: () => false },

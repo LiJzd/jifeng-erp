@@ -53,6 +53,7 @@ class NativeDocument(Record):
 
     def has_permission(self, permission):
         return ((self.doctype, permission) not in self.environment.denials
+                and (self.doctype, self.name, permission) not in self.environment.document_denials
                 and not (permission == "create" and (self.company in self.environment.denied_companies
                          or self.department in self.environment.denied_departments)))
 
@@ -119,6 +120,7 @@ class TestPersonnelArchive(unittest.TestCase):
     def setUp(self):
         self.documents, self.users, self.user_permissions, self.auth = {}, {}, [], []
         self.denials, self.hidden, self.levels = set(), {}, {}
+        self.document_denials, self.list_hidden = set(), set()
         self.denied_companies, self.default_company = set(), None
         self.denied_departments, self.default_department = set(), None
         self.fail_supplement = self.approver_side_effect = False
@@ -126,6 +128,7 @@ class TestPersonnelArchive(unittest.TestCase):
         self.metas = {}
         self.frappe = types.ModuleType("frappe")
         self.frappe.PermissionError, self.frappe.TimestampMismatchError = PermissionError, RuntimeError
+        self.frappe.DoesNotExistError = KeyError
         self.frappe.session = Record(user="hr-manager@example.invalid")
         self.frappe.flags, self.frappe.local = Record(), types.SimpleNamespace()
         self.frappe.throw = lambda text, error=ValueError: (_ for _ in ()).throw(error(text))
@@ -135,6 +138,7 @@ class TestPersonnelArchive(unittest.TestCase):
         self.frappe.has_permission = lambda doctype, permission: (doctype, permission) not in self.denials
         self.frappe.get_doc, self.frappe.new_doc = Mock(side_effect=self.get_doc), Mock(side_effect=self.new_doc)
         self.frappe.get_all = Mock(side_effect=lambda doctype, **kwargs: deepcopy(self.user_permissions))
+        self.frappe.get_list = Mock(side_effect=self.list_records)
         self.snapshots = {}
         self.db = types.SimpleNamespace(get_value=Mock(side_effect=self.get_value),
             sql=Mock(side_effect=lambda *a, **k: deepcopy(self.auth)),
@@ -161,6 +165,11 @@ class TestPersonnelArchive(unittest.TestCase):
         self.Employee = type("Employee", (self.module.ClassicPersonnelEmployeeMixin, NativeDocument), {})
         NativeDocument.environment = self
         self.employee_fields()
+        for doctype, date_field in self.module.FORMAL_RECORDS.items():
+            names = ["name", "employee", "docstatus", date_field]
+            if doctype == "Employee Separation":
+                names.append("jf_exit_status")
+            self.metas[doctype] = Meta([Record(fieldname=name, fieldtype="Data") for name in names], self, doctype)
         for folder in ("jifeng_employee_supplement", "jifeng_legacy_work_history",
                        "jifeng_legacy_salary_history", "jifeng_legacy_promotion_history", "jifeng_legacy_education_history"):
             path = ROOT / "jifeng_erp/jifeng_erp/doctype" / folder / (folder + ".json")
@@ -224,6 +233,13 @@ class TestPersonnelArchive(unittest.TestCase):
         return next((name for (kind, name), doc in self.documents.items()
                      if kind == doctype and all(doc.get(key) == value for key, value in filters.items())), None)
 
+    def list_records(self, doctype, filters, fields, **kwargs):
+        readable = self.columns(doctype, "read")
+        return [Record({field: deepcopy(doc.get(field)) for field in fields if field in readable})
+                for (kind, name), doc in self.documents.items() if kind == doctype
+                and (doctype, name) not in self.list_hidden
+                and all(doc.get(key) == value for key, value in filters.items())]
+
     def columns(self, doctype, permission_type, **kwargs):
         return {field.fieldname for field in self.metas[doctype].fields if field.fieldtype != "Table"} - self.hidden.get((doctype, permission_type), set())
 
@@ -240,6 +256,89 @@ class TestPersonnelArchive(unittest.TestCase):
         payload = {"name": "EMP-1", "employee_modified": self.documents[("Employee", "EMP-1")]["modified"],
             "supplement_modified": self.documents[(self.module.SUPPLEMENT, "SUPP-OLD-NAME")]["modified"], **overrides}
         return self.module.save_archive(payload)
+
+    def formal_record(self, doctype="Employee Transfer", name="TRANSFER-1", **values):
+        return self.add(doctype, name, employee="EMP-1", docstatus=1, **values)
+
+    def test_formal_records_keep_exact_native_references_and_cancelled_history_separate(self):
+        self.formal_record(transfer_date="2026-09-01")
+        self.formal_record("Employee Promotion", "PROMOTION-1", promotion_date="2026-08-01")
+        cancelled = self.formal_record("Employee Promotion", "PROMOTION-CANCEL", promotion_date="2026-07-01")
+        cancelled["docstatus"] = 2
+        draft = self.formal_record(name="TRANSFER-DRAFT", transfer_date="2026-10-01")
+        draft["docstatus"] = 0
+        before = self.state()
+        result = self.module.read_archive("EMP-1")
+        self.assertEqual([row["name"] for row in result["formal_records"]],
+                         ["TRANSFER-DRAFT", "TRANSFER-1", "PROMOTION-1", "PROMOTION-CANCEL"])
+        self.assertEqual([row["docstatus"] for row in result["formal_records"]], [0, 1, 1, 2])
+        self.assertEqual(result["histories"]["work_history"][0]["name"], "ROW-1")
+        self.assertEqual(result["employee"]["status"], "Active")
+        self.assertEqual(self.state(), before, "history reading does not save Employee or legacy rows")
+        for call in self.frappe.get_list.call_args_list:
+            self.assertEqual(call.kwargs["filters"], {"employee": "EMP-1"})
+            self.assertEqual(call.kwargs["limit_page_length"], 0)
+
+    def test_formal_separation_phase_and_native_docstatus_are_both_kept(self):
+        source = self.formal_record("Employee Separation", "EXIT-1", jf_last_working_day="2026-09-30",
+                                    jf_exit_status="已办理")
+        self.employee["status"] = "Left"
+        result = self.module.read_archive("EMP-1")
+        self.assertEqual(result["formal_records"][0]["exit_status"], "已办理")
+        self.assertEqual(result["employee"]["status"], "Left")
+        source["jf_exit_status"], source["docstatus"], self.employee["status"] = "已撤销", 2, "Active"
+        result = self.module.read_archive("EMP-1")
+        self.assertEqual(result["formal_records"][0]["docstatus"], 2)
+        self.assertEqual(result["formal_records"][0]["exit_status"], "已撤销")
+        self.assertEqual(result["employee"]["status"], "Active")
+
+    def test_formal_history_applies_source_list_scope_and_current_document_read(self):
+        self.formal_record(name="VISIBLE", transfer_date="2026-09-01")
+        self.formal_record(name="LIST-HIDDEN", transfer_date="2026-09-01")
+        self.formal_record(name="DOC-HIDDEN", transfer_date="2026-09-01")
+        other = self.formal_record(name="OTHER-EMPLOYEE", transfer_date="2026-09-01")
+        other["employee"] = "EMP-OTHER"
+        self.list_hidden.add(("Employee Transfer", "LIST-HIDDEN"))
+        self.document_denials.add(("Employee Transfer", "DOC-HIDDEN", "read"))
+        result = self.module.read_archive("EMP-1")
+        self.assertEqual([row["name"] for row in result["formal_records"]], ["VISIBLE"])
+        self.assertNotIn(("Employee Transfer", "LIST-HIDDEN"), [call.args for call in self.frappe.get_doc.call_args_list])
+
+    def test_formal_history_type_denial_does_not_block_the_readable_archive(self):
+        self.formal_record(transfer_date="2026-09-01")
+        self.denials.add(("Employee Transfer", "read"))
+        result = self.module.read_archive("EMP-1")
+        self.assertEqual(result["formal_records"], [])
+        self.assertEqual(result["name"], "EMP-1")
+        self.assertNotIn("Employee Transfer", [call.args[0] for call in self.frappe.get_list.call_args_list])
+
+    def test_formal_history_field_projection_never_refills_unreadable_values(self):
+        self.formal_record("Employee Separation", "EXIT-1", jf_last_working_day="2026-09-30",
+                           jf_exit_status="已办理")
+        self.hidden[("Employee Separation", "read")] = {"jf_last_working_day", "jf_exit_status"}
+        result = self.module.read_archive("EMP-1")["formal_records"]
+        self.assertEqual(result, [{"doctype": "Employee Separation", "name": "EXIT-1", "docstatus": 1}])
+        self.hidden[("Employee Separation", "read")] = {"employee"}
+        self.assertEqual(self.module.read_archive("EMP-1")["formal_records"], [])
+
+    def test_formal_source_changes_between_list_and_load_do_not_show_stale_state_or_scope(self):
+        source = self.formal_record(transfer_date="2026-09-01")
+        native_list = self.list_records
+        for changed in ({"employee": "EMP-OTHER"}, {"docstatus": 2}):
+            source.update(employee="EMP-1", docstatus=1)
+            def changed_after_list(doctype, **kwargs):
+                rows = native_list(doctype, **kwargs)
+                if doctype == "Employee Transfer":
+                    source.update(changed)
+                return rows
+            self.frappe.get_list.side_effect = changed_after_list
+            self.assertEqual(self.module.read_archive("EMP-1")["formal_records"], [])
+
+    def test_formal_records_cannot_be_written_as_legacy_history_and_new_forms_do_not_query_sources(self):
+        self.assertEqual(self.module.init_archive(company="JF")["formal_records"], [])
+        self.frappe.get_list.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "不支持"):
+            self.save(formal_records=[{"name": "FORGED", "docstatus": 2}])
 
     def test_schema_keeps_numeric_and_three_exact_old_tables(self):
         meta = self.metas[self.module.SUPPLEMENT]
