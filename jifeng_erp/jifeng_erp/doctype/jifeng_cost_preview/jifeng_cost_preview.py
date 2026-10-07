@@ -107,6 +107,22 @@ class JifengCostPreview(Document):
             # after all its posted sources have been cancelled.
             self._apply_actual_costs(self._read_actual_costs())
 
+    @frappe.whitelist()
+    def recalculate_actual_costs(self, preserve_input=False):
+        """Reprice the saved scope even when the form has no pending edits."""
+        self.check_permission("write")
+        if self.is_new():
+            frappe.throw("请先保存试算单并选择实际费用口径")
+        self.flags.for_update = True
+        frappe.db.get_value(self.doctype, self.name, "name", for_update=True)
+        self._reload_for_cost_selection(preserve_input)
+        if self.cost_basis not in (RECEIPT_ACTUAL, POSTED_ACTUAL):
+            frappe.throw("请先明确选择委外回货实际费用或流程已过账实际费用")
+        # Normal save keeps the stored basis, validates the incoming modified
+        # version and batch classifications, and rereads the posted sources.
+        self.save()
+        return self._cost_refresh_result
+
     def _reload_for_cost_selection(self, preserve_input):
         # Explicit selection can save the normal form's pending edits in the
         # same native save. Its original modified value keeps latest checks.

@@ -20,7 +20,7 @@ frappe.ui.form.on("Jifeng Cost Preview", {
     },
     refresh(frm) {
         const basis = frm.doc.cost_basis || (frm.doc.receipt_cost_loaded_at ? "历史实际费用口径待确认" : "流程估算");
-        frm.set_intro(`费用口径：${basis}。实际口径每次保存重读当前已提交来源，撤销后净费用随之更新；估算口径保留人工费用。保存不产生库存或财务凭证。`, "blue");
+        frm.set_intro(`费用口径：${basis}。实际口径保存或重新核算时重读当前已提交来源，撤销后净费用随之更新；无待保存修改时，请使用“重新核算当前实际费用”。估算口径保留人工费用。试算不产生库存或财务凭证。`, "blue");
         if (!frm.is_new() && frm.doc.flow_order) {
             frm.add_custom_button("读取已提交委外回货批次", async () => {
                 const flowOrder = frm.doc.flow_order;
@@ -114,6 +114,11 @@ frappe.ui.form.on("Jifeng Cost Preview", {
             frm.add_custom_button("读取流程单预计费用", () => chooseCosts("load_flow_costs", "读取流程单预计费用"));
             frm.add_custom_button("带入委外回货实际费用", () => chooseCosts("load_receipt_costs", "仅带入委外回货实际费用", "receipt_costs"));
             frm.add_custom_button("带入已过账实际费用", () => chooseCosts("load_posted_costs", "带入流程物料出库、普通制造与委外回货的已过账实际费用", "posted_flow_costs"));
+            if (["委外回货实际", "流程已过账实际"].includes(frm.doc.cost_basis)) {
+                const reader = frm.doc.cost_basis === "委外回货实际" ? "receipt_costs" : "posted_flow_costs";
+                frm.add_custom_button("重新核算当前实际费用", () => chooseCosts(
+                    "recalculate_actual_costs", `按当前${frm.doc.cost_basis}口径重新核算`, reader));
+            }
         }
     }
 });

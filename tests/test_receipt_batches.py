@@ -370,6 +370,47 @@ class TestReceiptBatches(unittest.TestCase):
         self.assertFalse(hasattr(preview, "_cost_basis_selection"))
         self.assert_no_posting()
 
+    def test_recalculate_unchanged_form_keeps_scope_batches_and_clears_cancelled_costs(self):
+        preview = self.saving_preview()
+        preview.recalculate_actual_costs()
+        self.assertEqual((preview.total_cost, preview.cost_basis), ("12", "流程已过账实际"))
+        batches = preview.batches
+        issue, _row = self.native.issue(qty=2, factor=1)
+        preview.recalculate_actual_costs()
+        self.assertEqual((preview.total_cost, preview.receipt_cost_sources), ("20", "ISSUE\nSCR"))
+        self.assertIs(preview.batches, batches)
+        issue.docstatus = self.receipt.docstatus = 2
+        preview.recalculate_actual_costs()
+        self.assertEqual((preview.total_cost, preview.receipt_cost_sources, preview.cost_basis),
+                         ("0", None, "流程已过账实际"))
+        self.assertIs(preview.batches, batches)
+        self.assert_no_posting()
+
+    def test_clean_form_recalculation_calls_normal_method_without_dirtying_or_selecting_basis(self):
+        program = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+let handlers,confirmation;const calls=[];
+const frappe={ui:{form:{on:(_,h)=>handlers=h}},utils:{escape_html:v=>v},
+ call:async()=>({message:{issues:[{issue:'SECOND'}],receipts:[],manufactures:[],
+ totals:{material:16,processing:0,other:0},currency:'CNY'}}),msgprint:v=>{throw Error(v);},
+ confirm:(message,yes,no)=>confirmation={message,yes,no}};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_currency:v=>String(v)});
+(async()=>{
+ const buttons={},doc={name:'CP',flow_order:'FLOW',cost_basis:'流程已过账实际',receipt_cost_loaded_at:'OLD',batches:[{good_qty:10}]};
+ const before=JSON.stringify(doc),frm={doc,is_new:()=>false,is_dirty:()=>false,set_intro:()=>{},
+ add_custom_button:(n,f)=>buttons[n]=f,dirty:()=>{throw Error('no forced dirty');},
+ save:()=>{throw Error('no synthetic form save');},call:async(method,args)=>calls.push({method,args}),reload_doc:async()=>{}};
+ handlers.refresh(frm);const pending=buttons['重新核算当前实际费用']();await new Promise(r=>setImmediate(r));
+ assert.match(confirmation.message,/材料费 16/);assert.equal(JSON.stringify(doc),before);
+ confirmation.yes();await pending;assert.equal(calls.length,1);
+ assert.equal(calls[0].method,'recalculate_actual_costs');assert.equal(calls[0].args.preserve_input,false);
+ assert.equal(JSON.stringify(doc),before);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+        result = subprocess.run(["node", "-e", program, str(ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_cost_preview/jifeng_cost_preview.js")],
+                                capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_manufacturing_only_selection_and_later_normal_saves_refresh_money_and_sources(self):
         self.receipt.docstatus = 2
         preview = self.saving_preview("流程估算", None)
