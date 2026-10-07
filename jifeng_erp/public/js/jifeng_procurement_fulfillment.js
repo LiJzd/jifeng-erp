@@ -267,6 +267,29 @@ window.JifengProcurementFulfillment = class JifengProcurementFulfillment {
 			this.bridge.open({ title: this.doctypeLabel(doctype) + "：" + name, module: this.module, kind: "form", doctype, route: ["Form", doctype, name] });
 		});
 	}
+	hasOutstanding(value) {
+		if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+		// Preserve decimal precision: eligibility only, never a mapped amount.
+		return typeof value === "string" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value) &&
+			/[1-9]/.test(value.split(/[eE]/)[0]);
+	}
+	paymentEligible(doc) { return doc.docstatus === 1 && !doc.on_hold && this.hasOutstanding(doc.outstanding_amount); }
+	async openPayment(name, revision, scope, detailRevision) {
+		this.syncScope();
+		if (!this.current(revision, scope, detailRevision) || !this.detail || typeof this.bridge?.openSupplierPayment !== "function") return;
+		const sources = [...this.detail.purchase_invoices, ...this.detail.payables.voucher_sources.filter(source => source.doctype === "Purchase Invoice")];
+		if (!sources.some(source => source.document.name === name && source.document.company === scope.company &&
+			source.document.supplier === scope.supplier && this.paymentEligible(source.document))) return;
+		const identity = { company: scope.company, supplier: scope.supplier, name };
+		// Native PI reload/permissions/current balance own the mapping and amount.
+		this.invalidate("正在打开原生收付款入口；请在原生草稿中核对、保存和审核。返回后请重新查询余额与付款来源。");
+		const actionRevision = this.revision;
+		const unresolved = () => {
+			if (this.current(actionRevision, scope)) this.status.textContent = __("未确认原生收付款草稿是否打开，请先核对原生窗口、单据与权限。返回后重新查询，不会自动重试。");
+		};
+		try { if (await this.bridge.openSupplierPayment(identity) === false) unresolved(); }
+		catch { unresolved(); }
+	}
 	doctypeLabel(doctype) {
 		return { "Purchase Order": "采购单", "Purchase Receipt": "采购收货单", "Purchase Invoice": "采购发票", "Subcontracting Order": "委外采购单",
 			"Subcontracting Receipt": "委外收货单", "Payment Entry": "收付款凭证", "Journal Entry": "记账凭证", "Sales Order": "销售订单",
@@ -275,6 +298,8 @@ window.JifengProcurementFulfillment = class JifengProcurementFulfillment {
 	card(doctype, source, revision, scope, detailRevision, companion = false) {
 		const card = this.element("article", undefined, "jfe-procurement-card"), doc = source.document;
 		card.append(this.element("h4", this.doctypeLabel(doctype) + "：" + doc.name), this.nativeButton(doctype, doc.name, revision, scope, detailRevision));
+		if (!companion && doctype === "Purchase Invoice" && this.paymentEligible(doc) && typeof this.bridge?.openSupplierPayment === "function")
+			card.append(this.button("原生收付款草稿", () => this.openPayment(doc.name, revision, scope, detailRevision)));
 		if (companion) card.append(this.element("p", __("其他往来关联来源；不计本供应商余额，不展示其金额。"), "jfe-procurement-note"));
 		else card.append(this.element("p", __("整凭证范围；金额不分摊到当前采购行。" ) + (source.valuation_currency ? __(" 估价币种：") + source.valuation_currency : ""), "jfe-procurement-note"));
 		card.append(this.summary(doc));

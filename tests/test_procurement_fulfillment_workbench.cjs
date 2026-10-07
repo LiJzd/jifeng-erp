@@ -53,8 +53,8 @@ function fixture(name = "PO-A") {
 			other_reference_sources: [{ doctype: "Sales Invoice", document: doc("SI-OTHER", { customer: "CUSTOMER-OTHER", currency: "EUR" }), items: [row("Sales Invoice", "SI-OTHER", "SI-other-child", { item_code: "SAME", sales_order: "SO-OTHER", so_detail: "SO-OTHER-child" })], balance_included: false, amounts_allocated_to_items: false }] },
 		readonly: true, can_write: false, quantities_aggregated: false, amounts_allocated_to_items: false };
 }
-async function make() {
-	const bench = new window.JifengProcurementFulfillment(new Element(), { open: (spec) => opened.push(spec) }); await bench.ready;
+async function make(bridge = { open: (spec) => opened.push(spec) }) {
+	const bench = new window.JifengProcurementFulfillment(new Element(), bridge); await bench.ready;
 	for (const [key, value] of Object.entries({ company: "JF", supplier: "SUP", from_date: "2026-10-01", to_date: "2026-10-31" })) bench.controls[key].set(value);
 	return bench;
 }
@@ -164,6 +164,83 @@ async function main() {
 		}
 		assert.equal(new window.JifengProcurementFulfillment(new Element(), {}).module, "物料");
 		assert.equal(new window.JifengProcurementFulfillment(new Element(), {}, "采购履行").module, "物料");
+	});
+	await check("unsettled invoice maps only exact identity and invalidates duplicate buttons", async () => {
+		const actions = [], view = await make({ openSupplierPayment: async identity => { actions.push(clone(identity)); return true; } });
+		await query(view); await detail(view); const filters = JSON.stringify(view.values()), before = calls.length;
+		const buttons = view.detailHost.all("button").filter(button => button.textContent === "原生收付款草稿");
+		assert.equal(buttons.length, 2); await buttons[0].events.get("click")(); await buttons[1].events.get("click")();
+		assert.deepEqual(actions, [{ company: "JF", supplier: "SUP", name: "PI-A" }]);
+		assert.equal(calls.length, before); assert.equal(view.detail, null); assert.equal(view.rows.length, 0);
+		assert.equal(view.detailHost.children.length, 0); assert.equal(JSON.stringify(view.values()), filters);
+		assert.match(view.status.textContent, /保存和审核.*重新查询/);
+	});
+	await check("settled draft cancelled held and other-party cards have no payment action", async () => {
+		for (const patch of [{ outstanding_amount: "0.000000" }, { outstanding_amount: "-0E-10" }, { docstatus: 0 },
+			{ docstatus: 2 }, { on_hold: 1 }, { outstanding_amount: null }, { outstanding_amount: "invalid" }]) {
+			const view = await make({ openSupplierPayment: async () => { throw new Error("must not map"); } });
+			const data = fixture(); Object.assign(data.purchase_invoices[0].document, patch); Object.assign(data.payables.voucher_sources[1].document, patch);
+			await query(view, [data]); await detail(view, data);
+			assert.equal(view.detailHost.all("button").filter(button => button.textContent === "原生收付款草稿").length, 0);
+		}
+		const view = await make({ openSupplierPayment: async () => { throw new Error("companion must not map"); } });
+		const data = fixture(); data.payables.other_reference_sources.push({ doctype: "Purchase Invoice", document: doc("PI-OTHER", { supplier: "OTHER", outstanding_amount: "500" }),
+			items: [], balance_included: false, amounts_allocated_to_items: false }); await query(view, [data]); await detail(view, data);
+		const companion = view.detailHost.all("article").find(card => card.textContent.includes("采购发票：PI-OTHER"));
+		assert.ok(companion); assert.equal(companion.all("button").length, 1);
+	});
+	await check("exact tiny and negative invoice amounts stay native inputs rather than JS amounts", async () => {
+		for (const amount of ["0.000000000000000000000000000001", "1E-1000", "-17.25", -17.25]) {
+			const actions = [], view = await make({ openSupplierPayment: async identity => { actions.push(clone(identity)); return true; } });
+			const data = fixture(); data.purchase_invoices[0].document.outstanding_amount = amount; data.payables.voucher_sources[1].document.outstanding_amount = amount;
+			await query(view, [data]); await detail(view, data);
+			await view.detailHost.all("button").find(button => button.textContent === "原生收付款草稿").events.get("click")();
+			assert.deepEqual(actions, [{ company: "JF", supplier: "SUP", name: "PI-A" }]);
+		}
+	});
+	await check("changed hidden disposed pending and fabricated invoice actions cannot map", async () => {
+		for (const change of [view => view.controls.supplier.set("OTHER", false), view => view.setVisible(false), view => view.destroy(),
+			view => { view.pendingDetail = view.readDetail("PO-A"); }]) {
+			const actions = [], view = await make({ openSupplierPayment: async identity => actions.push(identity) }); await query(view); await detail(view);
+			const button = view.detailHost.all("button").find(button => button.textContent === "原生收付款草稿"); change(view); await button.events.get("click")();
+			assert.equal(actions.length, 0); if (view.pendingDetail) { calls.at(-1).resolve(fixture()); await view.pendingDetail; }
+		}
+		const actions = [], view = await make({ openSupplierPayment: async identity => actions.push(identity) }); await query(view); await detail(view);
+		await view.openPayment("PI-FABRICATED", view.revision, view.values(), view.detailRevision); assert.equal(actions.length, 0);
+		assert.ok(view.detail);
+	});
+	await check("unknown or failed mapping requires manual requery and never retries", async () => {
+		for (const response of [false, new Error("private invoice/actor details")]) {
+			let count = 0; const view = await make({ openSupplierPayment: async () => { count++; if (response instanceof Error) throw response; return response; } });
+			await query(view); await detail(view); const button = view.detailHost.all("button").find(button => button.textContent === "原生收付款草稿"), before = calls.length;
+			await button.events.get("click")(); await button.events.get("click")();
+			assert.equal(count, 1); assert.equal(calls.length, before); assert.equal(view.detail, null);
+			assert.match(view.status.textContent, /未确认.*先核对.*不会自动重试/); assert.equal(view.status.textContent.includes("private"), false);
+		}
+	});
+	await check("late mapper failure cannot replace a fresh read of native paid state", async () => {
+		let reject; const view = await make({ openSupplierPayment: () => new Promise((_, no) => { reject = no; }) }); await query(view); await detail(view);
+		const pending = view.detailHost.all("button").find(button => button.textContent === "原生收付款草稿").events.get("click")();
+		const paid = fixture(); paid.purchase_invoices[0].document.outstanding_amount = paid.payables.voucher_sources[1].document.outstanding_amount = "0.00";
+		await query(view, [paid]); await detail(view, paid); const status = view.status.textContent; reject(new Error("late unknown")); await pending;
+		assert.equal(view.status.textContent, status); assert.equal(view.detail.purchase_invoices[0].document.outstanding_amount, "0.00");
+		assert.equal(view.detailHost.all("button").filter(button => button.textContent === "原生收付款草稿").length, 0);
+	});
+	await check("returned split-payment and reverse-cancellation snapshots control invoice entry", async () => {
+		const actions = [], view = await make({ openSupplierPayment: async identity => { actions.push(clone(identity)); return true; } });
+		for (const [balance, states] of [["80.00", []], ["40.00", [1]], ["0.00", [1, 1]], ["40.00", [1, 2]], ["80.00", [2, 2]]]) {
+			const data = fixture(); data.purchase_invoices[0].document.outstanding_amount = data.payables.voucher_sources[1].document.outstanding_amount = balance;
+			data.payables.voucher_sources = data.payables.voucher_sources.filter(source => source.doctype !== "Payment Entry");
+			for (const [index, state] of states.entries()) data.payables.voucher_sources.push({ doctype: "Payment Entry",
+				document: doc("PE-SPLIT-" + index, { docstatus: state, party_type: "Supplier", party: "SUP", payment_type: "Pay", paid_amount: "40.00" }),
+				references: [row("Payment Entry", "PE-SPLIT-" + index, "PE-SPLIT-REF-" + index, { reference_doctype: "Purchase Invoice", reference_name: "PI-A", allocated_amount: "40.00" }, "references")] });
+			await query(view, [data]); await detail(view, data); assert.equal(view.detail.purchase_invoices[0].document.outstanding_amount, balance);
+			const paymentButtons = view.detailHost.all("button").filter(button => button.textContent === "原生收付款草稿");
+			assert.equal(paymentButtons.length, balance === "0.00" ? 0 : 2);
+			assert.deepEqual(clone(view.detail.payables.voucher_sources.filter(source => source.doctype === "Payment Entry").map(source => source.document.docstatus)), states);
+			if (actions.length < 2 && balance !== "0.00") await paymentButtons[0].events.get("click")();
+		}
+		assert.deepEqual(actions, [{ company: "JF", supplier: "SUP", name: "PI-A" }, { company: "JF", supplier: "SUP", name: "PI-A" }]);
 	});
 	await check("optional fields not filled from base or other currency", async () => { const data = fixture(); delete data.purchase_order.grand_total;
 		delete data.payables.voucher_sources[0].document.grand_total; await detail(bench, data);
