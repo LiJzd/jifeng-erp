@@ -754,6 +754,11 @@ class JifengLegacyWorkspace {
 				const display = isMoney ? format_currency(value, state.currency) : String(value);
 				return '<button class="jfe-dashboard-card" data-action="dashboard-list" data-doctype="' + doctype + '" data-metric="' + key + '"><span>' + label + '</span><strong>' + this.esc(display) + '</strong><small>' + hint + '</small></button>';
 			}).join("") + '</div><p class="jfe-dashboard-note">销售、采购和费用按所选日期统计；库存与未完工工单为当前状态。点击指标查看正式单据。</p>';
+			if (state.financial_reports?.length) {
+				body += '<h2>账簿报表</h2><div class="jfe-dashboard-grid">' + state.financial_reports.map(report =>
+					'<button class="jfe-dashboard-card" data-action="dashboard-report" data-report="' + this.esc(report.name) + '"><span>' + this.esc(report.label) + '</span><small>' + this.esc(report.hint) + '</small></button>'
+				).join("") + '</div><p class="jfe-dashboard-note">报表按已查询的公司和日期打开。利润、现金流量及期末余额使用原生账簿报表，可继续查看科目和原始凭证。</p>';
+			}
 		}
 		return '<section class="jfe-dashboard"><div class="jfe-module-title"><span class="jfe-module-icon">总</span><div><h1>经营总览</h1><p>来自正式单据，按当前账号权限显示</p></div></div>' + controls + body + '</section>';
 	}
@@ -771,6 +776,28 @@ class JifengLegacyWorkspace {
 		if (this.activeTab().module === "总经理") {
 			const node = this.host.querySelector(".jfe-dashboard");
 			if (node) node.outerHTML = this.renderDashboard();
+		}
+	}
+
+	async openDashboardReport(name) {
+		const state = this.dashboard, revision = this.dashboardRequest;
+		const report = state?.financial_reports?.find(item => item.name === name);
+		if (!report || state.error || !state.company) return;
+		try {
+			const response = await frappe.call({ method: "jifeng_erp.dashboard.financial_report", type: "GET",
+				args: { name, company: state.company, from_date: state.from_date, to_date: state.to_date } });
+			if (state !== this.dashboard || revision !== this.dashboardRequest) return;
+			const result = response.message;
+			if (!Array.isArray(result?.route) || result.route.length !== 2 || result.route[0] !== "query-report" ||
+				result.route[1] !== name || result.filters?.company !== state.company) throw new Error("Report scope changed");
+			if (this.formalBridge) {
+				this.formalBridge.open({ title: report.label, module: "总经理", kind: "report", route: result.route, filters: result.filters });
+			} else {
+				frappe.route_options = result.filters;
+				frappe.set_route(...result.route);
+			}
+		} catch {
+			if (state === this.dashboard && revision === this.dashboardRequest) frappe.msgprint(__("账簿报表未能打开，请核对当前公司、日期和报表权限。"));
 		}
 	}
 
@@ -1404,6 +1431,7 @@ class JifengLegacyWorkspace {
 				frappe.route_options = filters;
 				frappe.set_route("List", button.dataset.doctype);
 			}
+			else if (action === "dashboard-report") this.openDashboardReport(button.dataset.report);
 			else if (action === "tab") this.switchTab(button.dataset.key);
 			else if (action === "classic-home") this.switchTab("home");
 			else if (action === "classic-module") this.openModule(button.dataset.module);

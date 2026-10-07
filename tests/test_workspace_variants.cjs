@@ -282,3 +282,39 @@ for (const [model, currentRoute] of [[b, "jifeng-legacy"], [a, "jifeng-modern"]]
 }
 assert.notEqual(aEntry, bEntry, "presentation instances keep independent mounted view state");
 console.log(`A/B ${entries.length} existing menu dispatches, exact filters, all 21 sidebar actions, search input/click, real constructors, route visibility and dirty/unknown close parity passed (DOM/protocol models only).`);
+
+async function dashboardReportScope() {
+	for (const Workspace of [Classic, Modern]) {
+		const workspace = Object.create(Workspace.prototype), opened = [], requests = [];
+		workspace.dashboardRequest = 1;
+		workspace.dashboard = { company: "VISIBLE", from_date: "2026-10-03", to_date: "2026-10-08",
+			financial_reports: [{ name: "General Ledger", label: "总账" }] };
+		workspace.formalBridge = { open: value => opened.push(plain(value)) };
+		const result = { route: ["query-report", "General Ledger"], filters: { company: "VISIBLE",
+			from_date: "2026-10-03", to_date: "2026-10-08", show_cancelled_entries: 0 } };
+		frappe.call = async args => { requests.push(plain(args)); return { message: result }; };
+		await workspace.openDashboardReport("General Ledger");
+		assert.deepEqual(requests[0], { method: "jifeng_erp.dashboard.financial_report", type: "GET",
+			args: { name: "General Ledger", company: "VISIBLE", from_date: "2026-10-03", to_date: "2026-10-08" } });
+		assert.deepEqual(opened[0], { title: "总账", module: "总经理", kind: "report", ...result });
+		await workspace.openDashboardReport("Hidden Report");
+		assert.equal(requests.length, 1, "a report absent from the permitted result cannot be opened");
+
+		let finish;
+		frappe.call = () => new Promise(resolve => { finish = resolve; });
+		const pending = workspace.openDashboardReport("General Ledger");
+		workspace.dashboardRequest++;
+		workspace.dashboard = { ...workspace.dashboard, company: "OTHER" };
+		finish({ message: result }); await pending;
+		assert.equal(opened.length, 1, "a late response cannot open the previous company's report");
+
+		workspace.dashboard.company = "VISIBLE";
+		const before = messages.length;
+		frappe.call = async () => { throw new Error("permission revoked"); };
+		await workspace.openDashboardReport("General Ledger");
+		assert.equal(opened.length, 1, "native permission failure must not open a cached report");
+		assert.equal(messages.length, before + 1);
+	}
+	console.log("A/B dashboard report company/date scope, stale response and permission refusal passed (protocol only).");
+}
+dashboardReportScope().catch(error => { console.error(error); process.exitCode = 1; });
