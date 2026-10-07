@@ -27,6 +27,16 @@ const frappe = { ui: { form: { on: (name, events) => { handlers[name] = events; 
         // A form can begin loading and copying its table before the route
         // promise resolves. All source fields must exist at this boundary.
         routed = JSON.parse(JSON.stringify(payment));
+        // Native client mandatory validation precedes the server save.
+        for (const field of ['source_exchange_rate', 'target_exchange_rate',
+            'base_paid_amount', 'base_received_amount']) {
+            assert.ok(routed[field] > 0, `${field} must exist before native client validation`);
+        }
+        assert.equal(routed.source_exchange_rate, 1);
+        assert.equal(routed.target_exchange_rate, 1);
+        assert.equal(routed.base_paid_amount, 30);
+        assert.equal(routed.base_received_amount, 30);
+        assert.equal(routed.paid_from_account_currency, routed.paid_to_account_currency);
         if (payment.__run_link_triggers) { payment.party = ''; payment.references = []; }
     },
     prompt: (_fields, action) => { promptAction = action; return { show() {} }; },

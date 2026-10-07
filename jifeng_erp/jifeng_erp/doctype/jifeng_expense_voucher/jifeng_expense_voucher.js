@@ -40,8 +40,14 @@ frappe.ui.form.on("Jifeng Expense Voucher", {
                 Object.assign(payment, {
                     company: source.company, payment_type: "Pay", party_type: source.party_type,
                     party: source.party, paid_to: source.paid_to, paid_from: values.paid_from,
+                    paid_from_account_currency: source.paid_to_account_currency,
                     paid_to_account_currency: source.paid_to_account_currency,
                     paid_amount: values.amount, received_amount: values.amount,
+                    // This source contract requires both accounts in the
+                    // company currency. Native client mandatory checks run
+                    // before server defaults can fill these computed fields.
+                    source_exchange_rate: 1, target_exchange_rate: 1,
+                    base_paid_amount: values.amount, base_received_amount: values.amount,
                 });
                 // Prepare the entire native source document before routing;
                 // new_doc's callback can run after the form has begun loading.
