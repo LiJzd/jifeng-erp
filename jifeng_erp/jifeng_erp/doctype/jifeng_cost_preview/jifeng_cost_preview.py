@@ -7,8 +7,15 @@ from frappe.utils import now
 from jifeng_erp.costing import CostingError, calculate
 
 
+FLOW_ESTIMATE = "流程估算"
+RECEIPT_ACTUAL = "委外回货实际"
+POSTED_ACTUAL = "流程已过账实际"
+_COST_BASIS_SELECTION = object()
+
+
 class JifengCostPreview(Document):
     def validate(self):
+        self._validate_cost_basis()
         # A new trial or a recalculation shares the Flow lock used when its
         # inventory-unit plan is confirmed. Never divide by a sales-unit qty.
         if self.flow_order:
@@ -19,6 +26,7 @@ class JifengCostPreview(Document):
             stock_plan_quantity(flow)
             if flow.company != self.company or flow.item_code != self.item_code:
                 frappe.throw("试算单与流程单的公司、商品必须一致")
+        self._refresh_actual_costs()
         try:
             result = calculate(
                 self.planned_qty,
@@ -51,6 +59,72 @@ class JifengCostPreview(Document):
                     frappe.throw("试算单销售订单与流程单来源不一致")
                 self.sales_order = flow.sales_order
 
+    def _validate_cost_basis(self):
+        basis = self.get("cost_basis") or ""
+        before = self.get_doc_before_save()
+        selected = getattr(self, "_cost_basis_selection", None) is _COST_BASIS_SELECTION
+        if not selected:
+            old_basis = (before.get("cost_basis") or "") if before else ""
+            # The old saved timestamp remains authoritative even if a client
+            # clears it or sends a new readonly field value with its document.
+            if ((before and before.get("receipt_cost_loaded_at") and not old_basis)
+                    or (not before and self.get("receipt_cost_loaded_at") and not basis)):
+                frappe.throw("历史实际费用的口径尚未确认，请重新选择带入委外回货实际费用或带入已过账实际费用")
+            if basis != old_basis and not (not old_basis and basis in ("", FLOW_ESTIMATE)):
+                frappe.throw("费用口径只能通过读取流程单预计费用或带入实际费用操作选择")
+        if basis not in ("", FLOW_ESTIMATE, RECEIPT_ACTUAL, POSTED_ACTUAL):
+            frappe.throw("费用口径无效，请重新选择费用来源")
+        self.cost_basis = basis or FLOW_ESTIMATE
+
+    def _read_actual_costs(self):
+        if not self.flow_order:
+            frappe.throw("实际费用口径必须关联流程单")
+        if self.cost_basis == RECEIPT_ACTUAL:
+            from jifeng_erp.workflow import receipt_costs
+
+            return receipt_costs(self.flow_order)
+        from jifeng_erp.workflow import posted_flow_costs
+
+        return posted_flow_costs(self.flow_order)
+
+    def _apply_actual_costs(self, result):
+        self.material_amount = result["totals"]["material"]
+        self.processing_amount = result["totals"]["processing"]
+        self.other_amount = result["totals"]["other"]
+        if self.cost_basis == RECEIPT_ACTUAL:
+            sources = {row["receipt"] for row in result["rows"]}
+        else:
+            sources = {row["issue"] for row in result["issues"]} | {
+                row["receipt"] for row in result["receipts"]
+            }
+        self.receipt_cost_sources = "\n".join(sorted(sources)) or None
+        self.receipt_cost_loaded_at = now()
+        self._cost_refresh_result = result
+
+    def _refresh_actual_costs(self):
+        if self.cost_basis in (RECEIPT_ACTUAL, POSTED_ACTUAL):
+            # Preserve the explicitly selected scope, including a zero result
+            # after all its posted sources have been cancelled.
+            self._apply_actual_costs(self._read_actual_costs())
+
+    def _reload_for_cost_selection(self, preserve_input):
+        # Explicit selection can save the normal form's pending edits in the
+        # same native save. Its original modified value keeps latest checks.
+        pending = self.as_dict() if preserve_input else None
+        self.reload()
+        self.check_permission("write")
+        if pending is not None:
+            self.update(pending)
+            self.check_permission("write")
+
+    def _save_selected_basis(self, basis):
+        self.cost_basis = basis
+        self._cost_basis_selection = _COST_BASIS_SELECTION
+        try:
+            self.save()
+        finally:
+            del self._cost_basis_selection
+
     def _validate_batch_sources(self):
         linked = [row for row in self.batches if row.source_receipt or row.source_receipt_item]
         if not linked:
@@ -80,14 +154,13 @@ class JifengCostPreview(Document):
                 frappe.throw("试算批次损耗不能少于来源凭证已确认的工艺损耗")
 
     @frappe.whitelist()
-    def load_flow_costs(self):
+    def load_flow_costs(self, preserve_input=False):
         self.check_permission("write")
         if self.is_new():
             frappe.throw("请先保存试算单，再明确读取流程预计费用")
         self.flags.for_update = True
         frappe.db.get_value(self.doctype, self.name, "name", for_update=True)
-        self.reload()
-        self.check_permission("write")
+        self._reload_for_cost_selection(preserve_input)
         flow = frappe.get_doc("Jifeng Flow Order", self.flow_order, for_update=True)
         flow.check_permission("read")
         from jifeng_erp.workflow import stock_plan_quantity
@@ -102,36 +175,33 @@ class JifengCostPreview(Document):
         self.other_amount = 0
         self.receipt_cost_sources = None
         self.receipt_cost_loaded_at = None
-        self.save()
+        self._save_selected_basis(FLOW_ESTIMATE)
 
     @frappe.whitelist()
-    def load_receipt_costs(self):
+    def load_receipt_costs(self, preserve_input=False):
         """Explicitly replace estimated base costs with posted receipt costs."""
         self.check_permission("write")
         frappe.db.get_value(self.doctype, self.name, "name", for_update=True)
-        self.reload()
+        self._reload_for_cost_selection(preserve_input)
         if not self.flow_order:
             frappe.throw("请先关联流程单")
 
         from jifeng_erp.workflow import receipt_costs
 
         result = receipt_costs(self.flow_order)
-        if not result["rows"]:
+        if not result["rows"] and not self.receipt_cost_loaded_at:
             frappe.throw("没有已提交且关联本流程单的委外收货明细，费用未更改")
-        self.material_amount = result["totals"]["material"]
-        self.processing_amount = result["totals"]["processing"]
-        self.other_amount = result["totals"]["other"]
-        self.receipt_cost_sources = "\n".join(sorted({row["receipt"] for row in result["rows"]}))
-        self.receipt_cost_loaded_at = now()
-        self.save()
-        return result
+        self.cost_basis = RECEIPT_ACTUAL
+        self._apply_actual_costs(result)
+        self._save_selected_basis(RECEIPT_ACTUAL)
+        return self._cost_refresh_result
 
     @frappe.whitelist()
-    def load_posted_costs(self):
+    def load_posted_costs(self, preserve_input=False):
         """Explicitly refresh trial costs from posted material issues and receipts."""
         self.check_permission("write")
         frappe.db.get_value(self.doctype, self.name, "name", for_update=True)
-        self.reload()
+        self._reload_for_cost_selection(preserve_input)
         if not self.flow_order:
             frappe.throw("请先关联流程单")
 
@@ -140,13 +210,7 @@ class JifengCostPreview(Document):
         result = posted_flow_costs(self.flow_order)
         if not result["issues"] and not result["receipts"] and not self.receipt_cost_loaded_at:
             frappe.throw("没有已提交且关联本流程单的物料出库或委外收货，费用未更改")
-        self.material_amount = result["totals"]["material"]
-        self.processing_amount = result["totals"]["processing"]
-        self.other_amount = result["totals"]["other"]
-        sources = {row["issue"] for row in result["issues"]} | {
-            row["receipt"] for row in result["receipts"]
-        }
-        self.receipt_cost_sources = "\n".join(sorted(sources)) or None
-        self.receipt_cost_loaded_at = now()
-        self.save()
-        return result
+        self.cost_basis = POSTED_ACTUAL
+        self._apply_actual_costs(result)
+        self._save_selected_basis(POSTED_ACTUAL)
+        return self._cost_refresh_result
