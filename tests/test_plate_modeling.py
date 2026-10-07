@@ -579,10 +579,10 @@ class TestPlateModeling(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.api.list_records("C-1")
 
-    def test_list_and_attachment_limits_are_explicit_not_silent_truncation(self):
+    def test_duplicate_list_sources_and_attachment_limits_are_explicit(self):
         row = self.saved()
         self.forced_rows = [Row(name=row["name"], company="C-1", modified=row["version"])] * 101
-        with self.assertRaisesRegex(ValueError, "关键词"):
+        with self.assertRaises(PermissionError):
             self.api.list_records("C-1")
         self.forced_rows = None
         self.frappe.get_all.side_effect = None

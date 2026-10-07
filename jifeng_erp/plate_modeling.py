@@ -326,8 +326,7 @@ def read_record(name):
     return _pack(_document(name))
 
 
-@frappe.whitelist()
-def list_records(company, search=""):
+def _list_records(company, search="", *, include_meta=False):
     _login()
     _company(company)
     _read_permission()
@@ -337,10 +336,12 @@ def list_records(company, search=""):
     readable = _columns("read")
     options = {"or_filters": [[field, "like", "%" + search + "%"] for field in RAW_FIELDS
                               if field in readable and field not in ("legacy_copy", "model_date", "reference_unit_price")]} if search else {}
+    if search and not options["or_filters"]:
+        frappe.throw("没有读取关键词查询字段的权限", frappe.PermissionError)
     rows = frappe.get_list(DOCTYPE, filters={"company": company}, fields=[field for field in
-        ("name", "modified", *FIELDS, *AUDIT_FIELDS) if field in readable], order_by="model_date desc, name asc", limit_page_length=101, **options)
-    if len(rows) > 100:
-        frappe.throw("建模记录较多，请输入更具体的关键词")
+        ("name", "modified", *FIELDS, *AUDIT_FIELDS) if field in readable], order_by="model_date desc, name asc", limit_page_length=0, **options)
+    if len({row.get("name") for row in rows}) != len(rows):
+        frappe.throw("记录来源或读取权限已变化，请重新查询", frappe.PermissionError)
     result = []
     for row in rows:
         if not REQUIRED_READ.issubset(row):
@@ -350,8 +351,16 @@ def list_records(company, search=""):
             continue
         if not same_version(document.modified, _public(row["modified"])):
             frappe.throw("记录来源已变化，请重新查询")
-        result.append(_pack(document, values=row, include_meta=False))
+        if any(_public(document.get(field)) != _public(value) for field, value in row.items() if field != "modified"):
+            frappe.throw("记录来源已变化，请重新查询")
+        result.append(_pack(document, values=row, include_meta=include_meta))
     return result
+
+
+@frappe.whitelist()
+def list_records(company, search=""):
+    """Preserve the array projection for existing callers without truncation."""
+    return _list_records(company, search)
 
 
 def _receipt(request_id, company):

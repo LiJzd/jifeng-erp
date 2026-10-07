@@ -363,10 +363,10 @@ def list_records(record_type, company, search="", include_inactive=False):
     search_fields = {"legacy_number", TITLE[kind], "product_code", "location", "plate_type"} & readable
     rows = frappe.get_list(DOCTYPES[kind], filters=filters,
         fields=sorted(({"company", *EDIT_FIELDS[kind], *REQUEST_FIELDS} | required) & readable),
-        order_by="modified desc, name asc", limit_page_length=101,
+        order_by="modified desc, name asc", limit_page_length=0,
         **({"or_filters": [[field, "like", "%" + search + "%"] for field in sorted(search_fields)]} if search else {}))
-    if len(rows) > 100:
-        frappe.throw("档案记录较多，请输入关键词缩小查询范围")
+    if len({row.get("name") for row in rows}) != len(rows):
+        frappe.throw("档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
     result = []
     for row in rows:
         if not required.issubset(row):
@@ -376,6 +376,20 @@ def list_records(record_type, company, search="", include_inactive=False):
             continue
         if not include_inactive and document.get(INACTIVE[kind]):
             continue
+        for field, original in row.items():
+            current = document.get(field)
+            df = document.meta.get_field(field)
+            if field == "modified":
+                unchanged = same_version(current, _value(original))
+            elif df and df.fieldtype in ("Float", "Currency") and current is not None and original is not None:
+                try:
+                    unchanged = Decimal(str(current)) == Decimal(str(original))
+                except (InvalidOperation, ValueError, TypeError):
+                    unchanged = False
+            else:
+                unchanged = _value(current) == _value(original)
+            if not unchanged:
+                frappe.throw("档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
         result.append(_pack(document, kind, row=row))
     return result
 

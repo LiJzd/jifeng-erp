@@ -209,7 +209,8 @@ class TestToolArchive(unittest.TestCase):
                 continue
             result.append(Record({field: row.get(field) for field in fields
                                   if field not in self.hidden.get((doctype, "read"), set())}))
-        return result[:kwargs.get("limit_page_length", 100)]
+        limit = kwargs.get("limit_page_length", 100)
+        return result[:limit] if limit else result
 
     def get_all(self, doctype, filters, **kwargs):
         self.assertEqual(doctype, "File", "Only exact bound File IDs may use an unscoped lookup")
@@ -516,13 +517,13 @@ class TestToolArchive(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.update(hidden, image=exact["file_url"])
 
-    def test_read_list_projection_cap_and_attachment_cap_do_not_fallback_to_hidden_doc(self):
+    def test_read_list_projection_duplicates_and_attachment_cap_do_not_fallback_to_hidden_doc(self):
         view = self.saved()
         self.forced_rows = [Record(name=view["name"], modified=view["version"], company="C-1", mold_no="M-1", scrapped=0)]
         with self.assertRaises(PermissionError):
             self.module.list_records("mold", "C-1")
         self.forced_rows = [Record()] * 101
-        with self.assertRaisesRegex(ValueError, "缩小"):
+        with self.assertRaises(PermissionError):
             self.module.list_records("mold", "C-1")
         self.forced_rows = None
         for index in range(101):
