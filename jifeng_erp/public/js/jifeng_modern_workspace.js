@@ -2,6 +2,14 @@
 window.JifengModernWorkspace = class JifengModernWorkspace extends window.JifengERPWorkspace.Workspace {
 	get pageName() { return "jifeng-modern"; }
 
+	switchTab(key) {
+		if (!this.tabs.some((tab) => tab.key === key)) return;
+		super.switchTab(key);
+		const scroller = this.host.closest?.(".main-section");
+		if (scroller && scroller.scrollTop !== 0) scroller.scrollTop = 0;
+		this.formalBridge?.align();
+	}
+
 	render() {
 		const active = this.activeTab();
 		this.host.innerHTML = '<div class="jfe-shell jfm-shell">' +

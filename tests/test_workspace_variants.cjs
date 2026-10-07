@@ -30,7 +30,7 @@ for (const file of ["jifeng_classic_bridge", "jifeng_workspace_core", "jifeng_mo
 }
 const shared = window.JifengERPWorkspace, Classic = shared.Workspace, Modern = window.JifengModernWorkspace;
 assert.equal(Object.getPrototypeOf(Modern.prototype), Classic.prototype);
-for (const name of ["openPage", "openModule", "addTab", "switchTab", "closeTab", "defaultViewState", "saveActiveTabState"]) {
+for (const name of ["openPage", "openModule", "addTab", "closeTab", "defaultViewState", "saveActiveTabState"]) {
 	assert.equal(Object.hasOwn(Modern.prototype, name), false, `A cannot replace shared ${name}`);
 	assert.equal(Modern.prototype[name], Classic.prototype[name]);
 }
@@ -211,6 +211,41 @@ for (const model of [b, a]) {
 	assert.equal(model.workspace.activeTab().spec.personnelArchive, true, "real delegated UI action uses original dispatch");
 }
 const key = "formal:人事:人事档案", bEntry = b.bridge.frames.get(key), aEntry = a.bridge.frames.get(key);
+// Returning from a scrolled module must reveal the cached formal toolbar.
+// Its rectangle follows the real outer scroller, while draft/query state stays mounted.
+route = "jifeng-modern";
+let mainTop = 223, scrollWrites = 0;
+const mainSection = {
+	get scrollTop() { return mainTop; },
+	set scrollTop(value) { mainTop = value; scrollWrites++; },
+};
+a.workspace.host.closest = selector => selector === ".main-section" ? mainSection : null;
+const formalAnchor = a.workspace.host.querySelector(".jfe-formal-anchor");
+formalAnchor.getBoundingClientRect = () => ({ top: 100 - mainTop, left: 30, width: 500, height: 450 });
+a.bridge.align();
+assert.ok(Number.parseFloat(a.bridge.layer.style.top) < 0, "the prior module scroll can put the formal toolbar above the viewport");
+a.state.page = 5; a.state.query = "同一查询";
+const cachedState = plain(a.state), mountedBefore = a.counts().mounted;
+a.workspace.switchTab("home"); mainTop = 223;
+a.click("tab", { key });
+assert.equal(mainTop, 0); assert.equal(a.bridge.layer.style.top, "100px", "toolbar is aligned after the outer scroll resets");
+assert.equal(a.bridge.frames.get(key), aEntry); assert.equal(a.counts().mounted, mountedBefore); assert.equal(a.counts().stopped, 0);
+assert.deepEqual(plain(a.state), cachedState, "reveal preserves dirty input, query/page and request identity");
+mainTop = 223; a.click("open-page", { module: "人事", page: "人事档案" });
+assert.equal(mainTop, 0, "opening the already active page also reveals its toolbar");
+assert.equal(a.bridge.frames.get(key), aEntry); assert.equal(a.counts().mounted, mountedBefore);
+const writesAtTop = scrollWrites; a.workspace.switchTab(key);
+assert.equal(scrollWrites, writesAtTop, "an already visible page does not write its scroll position");
+mainTop = 223; const positionBeforeInvalid = a.bridge.layer.style.top;
+a.workspace.switchTab("invalid:no-tab");
+assert.equal(mainTop, 223); assert.equal(a.workspace.activeKey, key); assert.equal(a.bridge.layer.style.top, positionBeforeInvalid);
+assert.equal(scrollWrites, writesAtTop, "invalid navigation cannot scroll the current page");
+a.workspace.host.closest = () => null;
+assert.doesNotThrow(() => a.workspace.switchTab(key), "a workspace without an outer scroller keeps normal navigation");
+assert.equal(mainTop, 223); assert.equal(a.bridge.frames.get(key), aEntry); assert.equal(a.counts().mounted, mountedBefore);
+route = "jifeng-legacy";
+b.workspace.host.closest = () => mainSection; b.workspace.switchTab(key);
+assert.equal(mainTop, 223, "B retains its existing scroll behavior");
 for (const [currentRoute, visible, hidden] of [["jifeng-legacy", b, a], ["jifeng-modern", a, b]]) {
 	route = currentRoute; b.bridge.align(); a.bridge.align();
 	assert.equal(visible.bridge.layer.hidden, false); assert.equal(visible.bridge.frames.get(key).container.hidden, false);
