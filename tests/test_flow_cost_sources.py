@@ -78,7 +78,8 @@ class TestFlowCostSources(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
         money = {"rate", "amount", "base_amount", "rm_supp_cost", "stock_value_difference",
-                 "rm_cost_per_qty", "service_cost_per_qty", "additional_cost_per_qty"}
+                 "rm_cost_per_qty", "service_cost_per_qty", "additional_cost_per_qty",
+                 "total_additional_costs", "additional_cost", "landed_cost_voucher_amount"}
         for doctype, fields in self.module.PARENTS.items():
             self.schema(doctype, fields, money)
         self.schema("Company", {"name", "modified", "default_currency"}, money)
@@ -87,6 +88,15 @@ class TestFlowCostSources(unittest.TestCase):
                 self.schema(childtype, fields, money)
                 self.metas[doctype][fieldname] = Record(fieldname=fieldname, fieldtype="Table", permlevel=0, options=childtype)
                 # Installed Frappe excludes Table from get_permitted_fields.
+        self.permitted[self.module.SE].update(self.module.MANUFACTURE_FIELDS)
+        self.metas[self.module.SE].update({field: Record(fieldname=field, fieldtype="Currency" if field in money else "Link", permlevel=0)
+                                          for field in self.module.MANUFACTURE_FIELDS})
+        childtype = "Stock Entry Detail"
+        self.permitted[childtype].update(self.module.MANUFACTURE_ITEM_FIELDS)
+        self.metas[childtype].update({field: Record(fieldname=field, fieldtype="Currency" if field in money else "Check", permlevel=0)
+                                    for field in self.module.MANUFACTURE_ITEM_FIELDS})
+        self.metas[self.module.SE]["additional_costs"] = Record(fieldname="additional_costs", fieldtype="Table", permlevel=0,
+                                                               options="Landed Cost Taxes and Charges")
         Document.environment = self
         self.add("Company", "JF", default_currency="CNY")
         self.add("Currency", "CNY")
@@ -116,7 +126,10 @@ class TestFlowCostSources(unittest.TestCase):
         return row
 
     def child(self, parenttype, parent, fieldname, name, **values):
-        _field, childtype, fields = next(table for table in self.module.TABLES[parenttype] if table[0] == fieldname)
+        tables = self.module.TABLES[parenttype]
+        if parenttype == self.module.SE:
+            tables = (*tables, self.module.MANUFACTURE_CHARGES)
+        _field, childtype, fields = next(table for table in tables if table[0] == fieldname)
         row = self.add(childtype, name, **({field: None for field in fields - self.module.CHILD} | {
             "parent": parent, "parenttype": parenttype, "parentfield": fieldname, "idx": 1} | values))
         return row
@@ -127,7 +140,10 @@ class TestFlowCostSources(unittest.TestCase):
         if (doctype, name) not in self.documents:
             raise self.frappe.DoesNotExistError("missing")
         doc = Document(deepcopy(self.documents[doctype, name]))
-        for fieldname, childtype, _fields in self.module.TABLES.get(doctype, ()):
+        tables = self.module.TABLES.get(doctype, ())
+        if doctype == self.module.SE:
+            tables = (*tables, self.module.MANUFACTURE_CHARGES)
+        for fieldname, childtype, _fields in tables:
             doc[fieldname] = [Document(deepcopy(row)) for (kind, _), row in self.documents.items()
                               if kind == childtype and row.parent == name and row.parenttype == doctype
                               and row.parentfield == fieldname]
@@ -210,6 +226,28 @@ class TestFlowCostSources(unittest.TestCase):
             transfer_qty=Decimal(str(qty)) * Decimal(str(factor)), s_warehouse="RM-WH", t_warehouse=None)
         self.ledger(name + "-SLE", self.module.SE, name, row.name, "RM", "RM-WH", -row.transfer_qty, -row.transfer_qty * 4)
         return doc, row
+
+    def manufacture(self, name="MAKE", material=40, other=0, qty=5, raw_qty=4, work="WO", flow="FLOW"):
+        if (self.module.WO, work) not in self.documents:
+            self.add(self.module.WO, work, company="JF", production_item="FG", jf_flow_order=flow, track_semi_finished_goods=0)
+        doc = self.add(self.module.SE, name, company="JF", purpose="Manufacture", stock_entry_type="Manufacture",
+            work_order=work, job_card=None, total_additional_costs=other,
+            posting_date=date(2026, 10, 3), posting_time=timedelta(hours=10))
+        for suffix, item, quantity, source, target, finished, additional in (
+            ("RM", "RM", raw_qty, "RM-WH", None, 0, 0),
+            ("FG", "FG", qty, None, "FG-WH", 1, other),
+        ):
+            row = self.child(self.module.SE, name, "items", name + "-" + suffix, item_code=item, jf_flow_order=flow,
+                qty=quantity, uom="Kg" if item == "RM" else "Nos", stock_uom="Kg" if item == "RM" else "Nos",
+                conversion_factor=1, transfer_qty=quantity, s_warehouse=source, t_warehouse=target,
+                is_finished_item=finished, secondary_item_type=None, valuation_type=None,
+                additional_cost=additional, landed_cost_voucher_amount=0)
+            self.ledger(name + "-" + suffix + "-SLE", self.module.SE, name, row.name, item, source or target,
+                        -quantity if source else quantity, -material if source else material + other)
+        if other:
+            self.child(self.module.SE, name, "additional_costs", name + "-COST", amount=other,
+                       account_currency="CNY", exchange_rate=1, base_amount=other)
+        return doc
 
     def test_loss_inclusive_fees_use_exact_consumption_not_accepted_times_rates(self):
         self.receipt()
@@ -505,6 +543,147 @@ class TestFlowCostSources(unittest.TestCase):
         result = self.module.posted_flow_costs("FLOW")
         self.assertEqual((result["issues"], result["receipts"], result["totals"]["material"]), ([], [], 0))
         self.assertEqual(self.module.receipt_batch_candidates("FLOW"), [])
+
+    def test_manufacturing_consumption_and_fees_are_counted_once_not_wip_or_fg_value(self):
+        self.manufacture(other=6)
+        transfer = self.issue("TRANSFER", qty=4, factor=1, purpose="Material Transfer for Manufacture",
+                              stock_entry_type="Material Transfer for Manufacture", work_order="WO")[0]
+        self.documents["Stock Entry Detail", "TRANSFER-RM"].t_warehouse = "FG-WH"
+        self.ledger("TRANSFER-IN", self.module.SE, transfer.name, "TRANSFER-RM", "RM", "FG-WH", 4, 40)
+        self.ledger("MAKE-ADJUST", self.module.SE, "MAKE", "MAKE-RM", "RM", "RM-WH", 0, -2, adjustment=1)
+        self.ledger("MAKE-FG-ADJUST", self.module.SE, "MAKE", "MAKE-FG", "FG", "FG-WH", 0, 2, adjustment=1)
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual(result["issues"], [])
+        self.assertEqual(result["manufactures"], [{"manufacture": "MAKE", "work_order": "WO", "qty": 5,
+                                                  "material": 42, "other": 6}])
+        self.assertEqual((result["totals"]["material"], result["totals"]["other"]), (42, 6))
+        for writer in (self.frappe.db.commit, self.frappe.db.set_value, self.frappe.db.sql,
+                       self.frappe.new_doc, self.frappe.delete_doc):
+            writer.assert_not_called()
+
+    def test_manufacturing_posting_and_cancel_recomputes_exact_source_set(self):
+        first = self.manufacture(other=6)
+        second = self.manufacture("MAKE2", material=20, other=2, qty=2, raw_qty=2)
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["other"]), (60, 8))
+        second.docstatus = 2
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["other"]), (40, 6))
+        self.assertEqual([row["manufacture"] for row in result["manufactures"]], ["MAKE"])
+        first.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["manufactures"], [])
+
+    def test_manufacturing_uses_persisted_company_currency_fee_not_current_conversion(self):
+        self.manufacture(other=6)
+        self.add("Currency", "USD")
+        charge = self.documents["Landed Cost Taxes and Charges", "MAKE-COST"]
+        charge.amount, charge.account_currency, charge.exchange_rate = 1, "USD", 6
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["other"], 6)
+        for field, value in (("exchange_rate", 0), ("exchange_rate", 7), ("amount", 2), ("base_amount", 5)):
+            original = charge[field]
+            charge[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                self.module.posted_flow_costs("FLOW")
+            charge[field] = original
+        charge.account_currency = "CNY"
+        with self.assertRaises(ValueError):
+            self.module.posted_flow_costs("FLOW")
+        charge.account_currency = "USD"
+        self.documents[self.module.SE, "MAKE"].total_additional_costs = 7
+        with self.assertRaises(ValueError):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_manufacturing_negative_consumption_or_unmatched_fg_valuation_refuses_simplification(self):
+        self.manufacture(other=6)
+        raw = self.documents[self.module.SLE, "MAKE-RM-SLE"]
+        fg = self.documents[self.module.SLE, "MAKE-FG-SLE"]
+        for doc, value, message in ((raw, 40, "净成本为负"), (fg, 45, "有效库存账")):
+            original = doc.stock_value_difference
+            doc.stock_value_difference = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, message):
+                self.module.posted_flow_costs("FLOW")
+            doc.stock_value_difference = original
+        self.ledger("RAW-ONLY-ADJUST", self.module.SE, "MAKE", "MAKE-RM", "RM", "RM-WH", 0, -2, adjustment=1)
+        with self.assertRaisesRegex(ValueError, "有效库存账"):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_manufacturing_stage_secondary_and_lcv_sources_are_explicitly_rejected(self):
+        self.manufacture()
+        wo = self.documents[self.module.WO, "WO"]
+        fg = self.documents["Stock Entry Detail", "MAKE-FG"]
+        for doc, field, value in ((wo, "track_semi_finished_goods", 1),
+                                  (fg, "secondary_item_type", "By-Product"),
+                                  (fg, "valuation_type", "Manual"),
+                                  (fg, "landed_cost_voucher_amount", 5)):
+            original = doc[field]
+            doc[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "半成品|副产品"):
+                self.module.posted_flow_costs("FLOW")
+            doc[field] = original
+
+    def test_manufacturing_source_permissions_mask_and_child_projection_are_required(self):
+        self.manufacture(other=6)
+        for doctype, name in ((self.module.WO, "WO"), (self.module.SE, "MAKE"), (self.module.SLE, "MAKE-RM-SLE")):
+            self.denied.add((doctype, name, "read"))
+            with self.subTest(doctype=doctype), self.assertRaises(PermissionError):
+                self.module.posted_flow_costs("FLOW")
+            self.denied.clear()
+        for doctype, field in ((self.module.WO, "jf_flow_order"), ("Stock Entry Detail", "is_finished_item"),
+                              ("Landed Cost Taxes and Charges", "base_amount")):
+            self.omitted[doctype] = {field}
+            with self.subTest(field=field), self.assertRaises(PermissionError):
+                self.module.posted_flow_costs("FLOW")
+            self.omitted.clear()
+        self.metas["Landed Cost Taxes and Charges"]["base_amount"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_no_manufacturing_does_not_add_work_order_or_money_permissions_to_old_rpcs(self):
+        self.receipt()
+        self.issue()
+        self.role_denials.add((self.module.WO, "read"))
+        self.hidden[self.module.SE] = {"total_additional_costs"}
+        self.hidden["Stock Entry Detail"] = {"additional_cost"}
+        self.assertEqual(self.module.material_issue_costs("FLOW")["totals"]["material"], 80)
+        self.assertEqual(self.module.receipt_costs("FLOW")["totals"]["material"], 100)
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 180)
+
+    def test_manufacturing_wrong_flow_company_unit_and_ledger_never_gives_partial_cost(self):
+        self.manufacture()
+        wo = self.documents[self.module.WO, "WO"]
+        raw = self.documents["Stock Entry Detail", "MAKE-RM"]
+        fg_sle = self.documents[self.module.SLE, "MAKE-FG-SLE"]
+        for doc, field, value in ((wo, "company", "OTHER"), (wo, "production_item", "RM"),
+                                  (wo, "jf_flow_order", "OTHER"), (raw, "stock_uom", "Nos"),
+                                  (raw, "jf_flow_order", "OTHER"), (raw, "transfer_qty", 3),
+                                  (fg_sle, "actual_qty", 4)):
+            original = doc[field]
+            doc[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.module.posted_flow_costs("FLOW")
+            doc[field] = original
+
+    def test_late_manufacturing_cancel_fee_change_or_repost_refuses_stale_result(self):
+        doc = self.manufacture(other=6)
+        for kind in ("cancel", "fee", "repost"):
+            count = 0
+            def change_at_final_read(filters):
+                nonlocal count
+                count += 1
+                if count == 2:
+                    if kind == "cancel":
+                        doc.docstatus = 2
+                    elif kind == "fee":
+                        self.documents["Landed Cost Taxes and Charges", "MAKE-COST"].base_amount = 7
+                    else:
+                        self.add(self.module.REPOST, "JOB", company="JF", based_on="Item and Warehouse", status="Queued",
+                                 item_code="RM", warehouse="RM-WH", posting_date=date(2026, 10, 1))
+            self.list_hooks["Company"] = change_at_final_read
+            with self.subTest(kind=kind), self.assertRaises((PermissionError, ValueError)):
+                self.module.posted_flow_costs("FLOW")
+            doc.docstatus = 1
+            self.documents["Landed Cost Taxes and Charges", "MAKE-COST"].base_amount = 6
+            self.documents.pop((self.module.REPOST, "JOB"), None)
 
 
 if __name__ == "__main__":

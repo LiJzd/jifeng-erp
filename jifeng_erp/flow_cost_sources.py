@@ -22,6 +22,7 @@ from jifeng_erp.costing import CostingError, receipt_batch_quantities
 FLOW = "Jifeng Flow Order"
 SCR = "Subcontracting Receipt"
 SE = "Stock Entry"
+WO = "Work Order"
 SLE = "Stock Ledger Entry"
 REPOST = "Repost Item Valuation"
 IDENTITY = {"name", "modified", "docstatus"}
@@ -37,7 +38,14 @@ PARENTS = {
     "Item": {"name", "modified", "stock_uom", "is_stock_item"},
     "Warehouse": {"name", "modified", "company", "is_group"},
     "Currency": {"name", "modified"},
+    WO: IDENTITY | {"company", "production_item", "jf_flow_order", "track_semi_finished_goods"},
 }
+
+# These fields are needed only when reading a manufacturing source. Existing
+# issue/receipt RPCs must not acquire new manufacturing money-field requirements.
+MANUFACTURE_FIELDS = {"work_order", "job_card", "total_additional_costs"}
+MANUFACTURE_ITEM_FIELDS = {"is_finished_item", "secondary_item_type", "valuation_type",
+                           "additional_cost", "landed_cost_voucher_amount"}
 TABLES = {
     FLOW: (("materials", "Jifeng Material Line", CHILD | {"item_code"}),),
     SCR: (
@@ -56,6 +64,7 @@ TABLES = {
         "item_code", "jf_flow_order", "qty", "uom", "stock_uom", "conversion_factor", "transfer_qty",
         "s_warehouse", "t_warehouse"}),),
 }
+MANUFACTURE_CHARGES = TABLES[SCR][2]
 
 
 def _deny():
@@ -185,6 +194,8 @@ class _Session:
             self.allowed_items.add(self.source("Item", row.get("item_code")).name)
         self.receipts = None
         self.issues = None
+        self.manufactures = None
+        self.manufacture_names = set()
         self.ledger = {}
         self.repost_state = None
         self.receipt_fees = {}
@@ -553,6 +564,128 @@ class _Session:
         self.issues = selected
         return self.issues
 
+    def _manufacture_source(self, name):
+        doc = self.source(SE, name)
+        fields = PARENTS[SE] | MANUFACTURE_FIELDS
+        rows = self.records(SE, {"name": name}, fields)
+        if len(rows) != 1 or any(doc.get(key) != value for key, value in rows[0].items()):
+            _invalid()
+        self.documents[SE, name] = (doc, _freeze(doc), "read", fields)
+        for fieldname, childtype, fields in (
+            ("items", "Stock Entry Detail", TABLES[SE][0][2] | MANUFACTURE_ITEM_FIELDS),
+            MANUFACTURE_CHARGES,
+        ):
+            _table(SE, fieldname, childtype)
+            children = self.records(childtype, {"parent": name}, fields, SE)
+            actual = {row.name: row for row in doc.get(fieldname) or []}
+            if set(actual) != {row["name"] for row in children} or len(actual) != len(doc.get(fieldname) or []):
+                _invalid()
+            for row in children:
+                if (row.get("parenttype") != SE or row.get("parentfield") != fieldname
+                        or any(actual[row["name"]].get(key) != value for key, value in row.items())):
+                    _invalid()
+            self.children[SE, name, fieldname] = children
+        self.manufacture_names.add(name)
+        return doc
+
+    def load_manufactures(self):
+        if self.manufactures is not None:
+            return self.manufactures
+        work_rows = self.raw(WO, {"jf_flow_order": self.flow.name})
+        work_names = [row["name"] for row in work_rows]
+        parents = {}
+        if work_names:
+            rows = self.raw(SE, {"docstatus": 1, "purpose": "Manufacture", "work_order": ["in", work_names]})
+            parents.update((row["name"], row) for row in rows)
+        # Also discover child-linked entries, so a missing/wrong Work Order
+        # cannot silently make an explicitly linked manufacturing cost vanish.
+        rows = self.raw(SE, [[SE, "docstatus", "=", 1], [SE, "purpose", "=", "Manufacture"],
+                            ["Stock Entry Detail", "jf_flow_order", "=", self.flow.name]], distinct=True)
+        parents.update((row["name"], row) for row in rows)
+        result = []
+        for name in sorted(parents):
+            doc = self._manufacture_source(name)
+            self._posted(SE, doc)
+            work = self.source(WO, doc.get("work_order"))
+            if (doc.get("purpose") != "Manufacture" or work.get("docstatus") != 1
+                    or work.get("jf_flow_order") != self.flow.name or work.get("production_item") != self.fg.name):
+                _invalid()
+            if work.get("track_semi_finished_goods") or doc.get("job_card"):
+                frappe.throw("当前成本仅支持普通工单制造；半成品或工序分阶段来源须单独核对，不能重复累计阶段价值")
+            expected, consumed, output_qty, allocated = {}, set(), Decimal(0), Decimal(0)
+            for row in self.table(SE, name, "items"):
+                item = self.source("Item", row.get("item_code"))
+                source, target = row.get("s_warehouse"), row.get("t_warehouse")
+                quantity, factor = _number(row.get("transfer_qty")), _number(row.get("conversion_factor"))
+                if (not item.get("is_stock_item") or row.get("stock_uom") != item.get("stock_uom")
+                        or not row.get("uom") or _number(row.get("qty")) <= 0 or quantity <= 0 or factor <= 0
+                        or (row.get("uom") == row.get("stock_uom") and factor != 1)
+                        or (not source and not target) or (source and target)
+                        or row.get("jf_flow_order") not in (None, "", self.flow.name)):
+                    _invalid()
+                native = next(child for child in doc.get("items") if child.name == row["name"])
+                if not _same_quantity(quantity, _number(row["qty"]) * factor, native, "transfer_qty"):
+                    _invalid()
+                if (row.get("secondary_item_type") or row.get("valuation_type")
+                        or _number(row.get("landed_cost_voucher_amount"))):
+                    frappe.throw("制造凭证包含副产品、估值分摊或到岸费用，尚不能准确拆分本流程材料与附加费用")
+                self._warehouse(source or target)
+                if source:
+                    if row.get("is_finished_item") or item.name not in self.allowed_items - {self.fg.name}:
+                        _invalid()
+                    consumed.add(row["name"])
+                else:
+                    if not row.get("is_finished_item") or item.name != self.fg.name:
+                        _invalid()
+                    output_qty += quantity
+                    allocated += _number(row.get("additional_cost"))
+                expected[row["name"], item.name, source or target] = -quantity if source else quantity
+            if not consumed or output_qty <= 0:
+                frappe.throw("制造凭证没有完整的直接耗料与成品入库来源，不能按零耗料补齐成本")
+            self._ledger(doc, SE, expected)
+            consumed_values = {detail: Decimal(0) for detail in consumed}
+            output_value = Decimal(0)
+            for row in self.ledger[SE, name]:
+                value = _number(row["stock_value_difference"])
+                if row["voucher_detail_no"] in consumed:
+                    consumed_values[row["voucher_detail_no"]] -= value
+                else:
+                    output_value += value
+            if any(value < 0 for value in consumed_values.values()):
+                frappe.throw("制造耗料的有效库存账净成本为负，请先核对原生估值调整")
+            material = sum(consumed_values.values(), Decimal(0))
+            charges = self.table(SE, name, "additional_costs")
+            other = Decimal(0)
+            for row in charges:
+                if row.get("base_amount") in (None, "") or row.get("amount") in (None, "") or not row.get("account_currency"):
+                    _invalid()
+                self.source("Currency", row["account_currency"]).check_permission("select")
+                amount, exchange = _number(row["amount"]), _number(row.get("exchange_rate"))
+                if exchange <= 0 or (row["account_currency"] == self.currency and exchange != 1):
+                    _invalid()
+                native = next(child for child in doc.get("additional_costs") if child.name == row["name"])
+                precision = native.precision("amount")
+                if isinstance(precision, bool) or not isinstance(precision, int) or not 0 <= precision <= 9:
+                    _invalid()
+                # Match init_landed_taxes_and_totals using the saved FX; never
+                # call its initializer, which can fetch a missing exchange rate.
+                expected_base = flt(amount, precision) * flt(exchange)
+                if not _same_quantity(row["base_amount"], expected_base, native, "base_amount"):
+                    _invalid()
+                # Native distribute_additional_costs sums persisted base_amount;
+                # do not convert again using today's FX or add FG stock value.
+                other += _number(row["base_amount"])
+            if (doc.get("total_additional_costs") in (None, "")
+                    or not _same_quantity(other, doc.total_additional_costs, doc, "total_additional_costs")
+                    or not _same_quantity(allocated, other, doc, "total_additional_costs")):
+                _invalid()
+            if not _same_quantity(output_value, material + other, doc, "total_additional_costs"):
+                frappe.throw("制造成品有效库存账与直接耗料、附加费用不一致；手工估值或独立耗用等来源须先单独核对")
+            result.append({"manufacture": name, "work_order": work.name, "qty": output_qty,
+                           "material": material, "other": other})
+        self.manufactures = result
+        return result
+
     def _reposting(self):
         # Native Transaction jobs clear item_code/warehouse. Resolve their
         # actual serialized seeds or voucher SLE; never rely on those blank
@@ -652,6 +785,11 @@ class _Session:
             for fieldname, childtype, child_fields in TABLES.get(doctype, ()):
                 _table(doctype, fieldname, childtype)
                 _fields(childtype, child_fields, doctype)
+            if doctype == SE and name in self.manufacture_names:
+                _fields("Stock Entry Detail", TABLES[SE][0][2] | MANUFACTURE_ITEM_FIELDS, SE)
+                fieldname, childtype, fields = MANUFACTURE_CHARGES
+                _table(SE, fieldname, childtype)
+                _fields(childtype, fields, SE)
 
 
 def _receipt_dto(session):
@@ -706,9 +844,13 @@ def posted_flow_costs(flow_order):
     session = _Session(flow_order)
     issues = _issue_dto(session)
     receipts = _receipt_dto(session)
+    manufactures = session.load_manufactures()
+    manufacture_material = sum((row["material"] for row in manufactures), Decimal(0))
+    manufacture_other = sum((row["other"] for row in manufactures), Decimal(0))
     session.finish()
-    return {"issues": issues["rows"], "receipts": receipts["rows"], "totals": {
+    return {"issues": issues["rows"], "receipts": receipts["rows"], "manufactures": manufactures, "totals": {
         "issue_material": issues["totals"]["material"], "receipt_material": receipts["totals"]["material"],
-        "material": issues["totals"]["material"] + receipts["totals"]["material"],
-        "processing": receipts["totals"]["processing"], "other": receipts["totals"]["other"]},
+        "manufacture_material": manufacture_material, "manufacture_other": manufacture_other,
+        "material": issues["totals"]["material"] + receipts["totals"]["material"] + manufacture_material,
+        "processing": receipts["totals"]["processing"], "other": receipts["totals"]["other"] + manufacture_other},
         "currency": session.currency}

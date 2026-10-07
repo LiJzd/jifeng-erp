@@ -370,6 +370,74 @@ class TestReceiptBatches(unittest.TestCase):
         self.assertFalse(hasattr(preview, "_cost_basis_selection"))
         self.assert_no_posting()
 
+    def test_manufacturing_only_selection_and_later_normal_saves_refresh_money_and_sources(self):
+        self.receipt.docstatus = 2
+        preview = self.saving_preview("流程估算", None)
+        preview.planned_qty = 5
+        preview.batches[0].received_qty = preview.batches[0].good_qty = 5
+        preview.batches[0].lost_qty = preview.batches[0].rework_qty = 0
+        first = self.native.manufacture(other=6)
+        preview.load_posted_costs(preserve_input=True)
+        self.assertEqual((preview.material_amount, preview.other_amount, preview.total_cost,
+                          preview.estimated_unit_cost, preview.receipt_cost_sources), (40, 6, "46", "9.2", "MAKE"))
+        self.assertEqual(preview.note, "pending input")
+        preview._before = Record(cost_basis="流程已过账实际", receipt_cost_loaded_at=preview.receipt_cost_loaded_at)
+        second = self.native.manufacture("MAKE2", material=20, other=2, qty=2, raw_qty=2)
+        preview.validate()
+        self.assertEqual((preview.material_amount, preview.other_amount, preview.total_cost,
+                          preview.estimated_unit_cost, preview.receipt_cost_sources), (60, 8, "68", "13.6", "MAKE\nMAKE2"))
+        second.docstatus = 2
+        preview.validate()
+        self.assertEqual((preview.total_cost, preview.estimated_unit_cost, preview.receipt_cost_sources), ("46", "9.2", "MAKE"))
+        first.docstatus = 2
+        preview.validate()
+        self.assertEqual((preview.material_amount, preview.other_amount, preview.total_cost,
+                          preview.estimated_unit_cost, preview.receipt_cost_sources), (0, 0, "0", "0", None))
+        self.assertEqual(preview.cost_basis, "流程已过账实际")
+        self.assert_no_posting()
+
+    def test_receipt_basis_does_not_silently_include_manufacturing(self):
+        preview = self.saving_preview("委外回货实际")
+        self.native.manufacture(material=40, other=6)
+        preview.validate()
+        self.assertEqual((preview.material_amount, preview.processing_amount, preview.other_amount), (4, 8, 0))
+        self.assertEqual(preview.receipt_cost_sources, "SCR")
+        self.assert_no_posting()
+
+    def test_manufacturing_read_permission_failure_never_saves_partial_estimate(self):
+        preview = self.saving_preview("流程估算", None)
+        self.native.manufacture()
+        self.native.denied.add((self.native.module.WO, "WO", "read"))
+        with self.assertRaises(PermissionError):
+            preview.load_posted_costs(preserve_input=True)
+        preview.save.assert_not_called()
+        self.assertEqual((preview.cost_basis, preview.material_amount, preview.note), ("流程估算", 100, "pending input"))
+        self.assert_no_posting()
+
+    def test_dirty_gui_manufacturing_only_cost_source_is_displayed_and_selected_normally(self):
+        program = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+let handlers,confirmation;const calls=[],messages=[];
+const frappe={ui:{form:{on:(_,h)=>handlers=h}},utils:{escape_html:v=>v.replace(/</g,'&lt;').replace(/>/g,'&gt;')},
+ call:async()=>({message:{issues:[],receipts:[],manufactures:[{manufacture:'MAKE<1>',work_order:'WO',material:40,other:6}],
+ totals:{material:40,processing:0,other:6},currency:'CNY'}}),msgprint:v=>messages.push(v),
+ confirm:(message,yes,no)=>confirmation={message,yes,no}};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_currency:v=>String(v)});
+(async()=>{
+ const buttons={},doc={name:'CP',flow_order:'FLOW',cost_basis:'流程估算',receipt_cost_loaded_at:null,note:'pending',batches:[{good_qty:5}]};
+ const frm={doc,is_new:()=>false,is_dirty:()=>true,set_intro:()=>{},add_custom_button:(n,f)=>buttons[n]=f,
+ save:()=>{throw Error('no automatic pre-save');},call:async(method,args)=>calls.push({method,args,note:doc.note,batches:doc.batches}),reload_doc:async()=>{}};
+ handlers.refresh(frm);const selected=buttons['带入已过账实际费用']();await new Promise(r=>setImmediate(r));
+ assert.equal(messages.length,0);assert.equal(calls.length,0);assert.match(confirmation.message,/普通制造 MAKE&lt;1&gt;（工单 WO）/);
+ assert.match(confirmation.message,/材料费 40.*其他费 6/);assert.match(confirmation.message,/WIP移库.*不重复/);
+ confirmation.yes();await selected;assert.equal(calls.length,1);assert.equal(calls[0].method,'load_posted_costs');
+ assert.equal(calls[0].args.preserve_input,true);assert.equal(calls[0].note,'pending');assert.strictEqual(calls[0].batches,doc.batches);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+        result = subprocess.run(["node", "-e", program, str(ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_cost_preview/jifeng_cost_preview.js")],
+                                capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_historical_dirty_gui_choice_is_confirmed_without_autosave_or_input_loss(self):
         program = r"""
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');

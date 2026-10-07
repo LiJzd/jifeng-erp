@@ -83,13 +83,21 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                     const response = await frappe.call({ method: `jifeng_erp.workflow.${reader}`, args: { flow_order: flowOrder } });
                     if (!current()) return;
                     const result = response.message;
-                    const rows = reader === "receipt_costs" ? result.rows : [...result.issues, ...result.receipts];
+                    const rows = reader === "receipt_costs" ? result.rows : [...result.issues, ...result.receipts, ...(result.manufactures || [])];
                     if (!rows.length && !frm.doc.receipt_cost_loaded_at) {
                         frappe.msgprint("没有已提交且关联本流程单的所选费用来源，费用未更改。"); return;
                     }
                     const amount = value => format_currency(value || 0, result.currency);
                     message += rows.length ? `本次材料费 ${amount(result.totals.material)}、加工费 ${amount(result.totals.processing)}、其他费 ${amount(result.totals.other)}。` :
                         "此前带入的所选费用已无有效来源，材料费、加工费和其他费将清零。";
+                    if (reader === "posted_flow_costs") {
+                        const sources = [
+                            ...result.issues.map(row => `物料出库 ${row.issue}`),
+                            ...result.receipts.map(row => `委外回货 ${row.receipt}`),
+                            ...(result.manufactures || []).map(row => `普通制造 ${row.manufacture}（工单 ${row.work_order}）`),
+                        ];
+                        message += `本次来源：${[...new Set(sources)].map(value => frappe.utils.escape_html(value)).join("、") || "无"}。普通制造只计凭证耗料与附加费，WIP移库和成品入库价值不重复相加。`;
+                    }
                     message += "不包含尚未过账费用；若批次追加加工费已计入委外收货，请先清零该笔追加费，避免重复计算。";
                 } else {
                     message = "读取流程单预计费用并选择流程估算口径；以后保存保留人工费用，不会自动带入已过账费用。";
@@ -105,7 +113,7 @@ frappe.ui.form.on("Jifeng Cost Preview", {
             };
             frm.add_custom_button("读取流程单预计费用", () => chooseCosts("load_flow_costs", "读取流程单预计费用"));
             frm.add_custom_button("带入委外回货实际费用", () => chooseCosts("load_receipt_costs", "仅带入委外回货实际费用", "receipt_costs"));
-            frm.add_custom_button("带入已过账实际费用", () => chooseCosts("load_posted_costs", "带入流程物料出库与委外回货的已过账实际费用", "posted_flow_costs"));
+            frm.add_custom_button("带入已过账实际费用", () => chooseCosts("load_posted_costs", "带入流程物料出库、普通制造与委外回货的已过账实际费用", "posted_flow_costs"));
         }
     }
 });
