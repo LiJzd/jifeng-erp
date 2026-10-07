@@ -47,7 +47,9 @@ const window = { addEventListener(name, action) { listeners.set(action, name); }
 const document = { createElement: (tag) => new Element(tag) };
 const frappe = { pages: { "jifeng-legacy": {} }, ui: { Dialog, FileUploader, form: { make_control({ df }) {
 	return { df: { ...df }, $input: new Wrapper(), value: null, get_value() { return this.value; }, async set_value(value) { await Promise.resolve(); this.value = value; await df.onchange?.(); }, refresh() {} };
-} } }, call(options) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ options, resolve: (message) => resolve({ message }), reject }); return promise; },
+} } }, call(options) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ options,
+	resolve: (message) => resolve({ message: options.method === "jifeng_erp.tool_archive_paging.query_archives" && Array.isArray(message) ? pageResult(options.args, message) : message }),
+	rawResolve: (message) => resolve({ message }), reject }); return promise; },
 	msgprint(message) { messages.push(message); }, show_alert() {}, confirm(_, yes, no) { confirmation = { yes, no }; } };
 const context = { window, document, frappe, structuredClone, __: (text) => text, Uint8Array, crypto: { getRandomValues: (bytes) => nodeCrypto.randomFillSync(bytes) } };
 for (const file of ["jifeng_tool_archive", "jifeng_classic_bridge"]) vm.runInNewContext(fs.readFileSync(path.join(__dirname, `../jifeng_erp/public/js/${file}.js`), "utf8"), context);
@@ -73,6 +75,12 @@ function flatModel(saved = false, changes = {}) {
 	return { name: saved ? "MODEL-1" : null, version: saved ? "2026-10-01T00:00:01" : null, ...Object.fromEntries(names.map((field) => [field, null])),
 		company: "Company A", model_date: "2026-10-01", legacy_copy: 0, field_meta: Object.fromEntries(names.map((field) => { const df = schema.fields.find((row) => row.fieldname === field); return [field, { fieldtype: df.fieldtype, options: df.options, reqd: !!df.reqd, read_only: field === "company" && saved || field === "design_image" && !saved }]; })),
 		can_write: true, image_state: { state: "未上传", url: "" }, item_code_state: "未关联", plate_state: "未关联", expense_voucher_state: "未关联", ...changes };
+}
+function pageResult(args, rows, changes = {}) {
+	const total = rows.length, totalPages = Math.ceil(total / args.page_size);
+	return { record_type: args.record_type, company: args.company, search: args.search, include_inactive: args.include_inactive,
+		requested_page: args.page, page: Math.min(args.page, Math.max(1, totalPages)), page_size: args.page_size,
+		total, total_pages: totalPages, rows, ...changes };
 }
 async function opening(bench, archive = blank(bench.recordType)) {
 	const pending = bench.openEditor(archive.name); const call = calls.at(-1); assert.equal(call.options.method, "jifeng_erp.tool_archive." + (archive.name ? "read_record" : "init_record"));
@@ -109,14 +117,66 @@ async function companyScopeEvents() {
 		assert.equal(bench.editor, state); assert.equal(bench.revision, revision); assert.equal(bench.companyScope, "Company A"); assert.equal(bench.companyControl.get_value(), "Company A"); state[flag] = false; }
 	state.controls.mold_no.value = "dirty"; const decline = input("Company B"); await tick(); confirmation.no(); await decline;
 	assert.equal(bench.editor, state); assert.equal(state.controls.mold_no.value, "dirty"); assert.equal(bench.companyScope, "Company A");
-	const accept = input("Company B"); await tick(); const duringConfirm = bench.query(); calls.at(-1).resolve([pack("mold")]); await duringConfirm;
-	assert.equal(bench.rows.length, 1); confirmation.yes(); await accept;
-	assert.equal(bench.editor, null); assert.equal(bench.companyScope, "Company B"); assert.equal(bench.rows.length, 0, "accepted discard clears rows rebuilt during confirmation");
-	assert.equal(calls.length, reads + 1, "scope acceptance adds no query beyond the explicit query during confirmation");
+	const accept = input("Company B"); await tick(); await bench.query();
+	assert.equal(calls.length, reads, "discard confirmation cannot start a list request"); confirmation.yes(); await accept;
+	assert.equal(bench.editor, null); assert.equal(bench.companyScope, "Company B"); assert.equal(bench.rows.length, 0, "accepted discard clears old rows");
 	bench.destroy();
+}
+async function archivePaging() {
+	for (const kind of ["mold", "plate", "modeling"]) {
+		const bench = new window.JifengToolArchive(new Element(), kind); bench.companyScope = bench.companyControl.value = "Company A";
+		const dto = (index) => kind === "modeling" ? flatModel(true, { name: "MODEL-" + index }) : pack(kind, { name: kind.toUpperCase() + "-" + index });
+		async function answer(pending, total = 130, changes = {}) {
+			await tick(); const call = calls.at(-1), args = call.options.args;
+			assert.equal(call.options.method, "jifeng_erp.tool_archive_paging.query_archives"); assert.equal(call.options.type, "GET");
+			assert.equal(args.record_type, kind); assert.equal(args.include_inactive, 0);
+			const totalPages = Math.ceil(total / args.page_size), page = Math.min(args.page, Math.max(1, totalPages)), start = (page - 1) * args.page_size;
+			const rows = Array.from({ length: Math.min(args.page_size, Math.max(0, total - start)) }, (_, index) => dto(start + index + 1));
+			call.rawResolve(pageResult(args, rows, { total, total_pages: totalPages, page, ...changes })); await pending; return call;
+		}
+		await answer(bench.query()); assert.equal(bench.rows.length, 100); assert.equal(bench.total, 130); assert.equal(bench.next.disabled, false); assert.equal(bench.previous.disabled, true);
+		await answer(bench.next.events.get("click")()); assert.equal(bench.page, 2); assert.equal(bench.rows.length, 30); assert.equal(bench.next.disabled, true); assert.equal(bench.previous.disabled, false);
+		await answer(bench.previous.events.get("click")()); assert.equal(bench.page, 1);
+		for (const size of [25, 50, 100]) {
+			bench.pageSizeControl.value = String(size); await answer(bench.pageSizeControl.events.get("change")());
+			assert.equal(bench.page, 1); assert.equal(bench.pageSize, size); assert.equal(bench.rows.length, size); assert.equal(bench.totalPages, Math.ceil(130 / size));
+		}
+		bench.pageSizeControl.value = "25"; await answer(bench.pageSizeControl.events.get("change")());
+		bench.goto.value = "6"; await answer(bench.gotoButton.events.get("click")()); assert.equal(bench.page, 6); assert.equal(bench.rows.length, 5); assert.equal(bench.count.textContent, "共 130 条");
+		const fallback = await answer(bench.query(bench.page, true), 125); assert.equal(fallback.options.args.page, 6);
+		assert.equal(bench.page, 5); assert.equal(bench.goto.value, "5"); assert.equal(bench.rows.length, 25); assert.match(bench.status.textContent, /最后一页/);
+		const callCount = calls.length;
+		for (const invalid of [0, -1, 1.5, "01", "1e2", "0", "2147483648", "", " 2"]) await bench.query(invalid);
+		assert.equal(calls.length, callCount, "invalid page numbers do not send RPC");
+		await answer(bench.query("2147483647"), 125); assert.equal(bench.page, 5, "maximum allowed page uses only the server's explicit last-page result");
+		const reject = [
+			{ record_type: kind === "mold" ? "plate" : "mold" }, { company: "Other" }, { search: "Other" }, { include_inactive: 1 }, { page_size: 50 },
+			{ requested_page: 2 }, { total: "130" }, { total_pages: 999 }, { page: 2 }, { rows: [dto(1)] },
+			{ rows: Array.from({ length: 25 }, () => dto(1)) },
+			{ rows: Array.from({ length: 25 }, (_, index) => kind === "modeling" ? flatModel(true, { name: "WRONG-" + index, company: "Other" }) : pack(kind, { name: "WRONG-" + index, values: { ...pack(kind).values, company: "Other" } })) },
+		];
+		if (kind === "modeling") reject.push({ rows: Array.from({ length: 25 }, (_, index) => flatModel(true, { name: "NO-META-" + index, field_meta: null })) });
+		for (const mutation of reject) { await answer(bench.query(), 130, mutation); assert.equal(bench.rows.length, 0); assert.equal(bench.total, null); assert.match(bench.status.textContent, /未显示部分结果/); }
+		const bare = bench.query(); await tick(); calls.at(-1).rawResolve([dto(1)]); await bare; assert.equal(bench.total, null, "old array protocol cannot be mistaken for an exhaustive page");
+		await answer(bench.query()); const late = bench.query(2); await tick(); const lateCall = calls.at(-1);
+		bench.search.value = "changed"; bench.search.events.get("input")(); assert.equal(bench.rows.length, 0); assert.equal(bench.total, null); assert.equal(bench.page, 1);
+		const newest = bench.query(); await answer(newest, 1); lateCall.rawResolve(pageResult(lateCall.options.args, [dto(101)], { total: 101, total_pages: 5, page: 2 })); await late;
+		assert.equal(bench.total, 1); assert.equal(bench.rows[0].name, dto(1).name, "late old-scope page cannot replace new results");
+		const read = bench.openEditor(dto(1).name); calls.at(-1).resolve(dto(1)); await read; const state = bench.editor;
+		const field = kind === "modeling" ? "remarks" : kind === "mold" ? "remark" : "notes"; state.controls[field].value = "unsaved";
+		assert.equal(bench.next.disabled, true); const beforeBlocked = calls.length; await bench.changePage(2);
+		assert.equal(bench.editor, state); assert.equal(state.controls[field].value, "unsaved"); assert.equal(calls.length, beforeBlocked);
+		bench.pageSizeControl.value = "50"; bench.pageSizeControl.events.get("change")(); assert.equal(bench.pageSize, 25); assert.equal(bench.pageSizeControl.value, "25");
+		for (const flag of ["unresolved", "busy", "confirming", "uploadUnresolved"]) { state[flag] = true; await bench.changePage(2); await bench.query(); assert.equal(calls.length, beforeBlocked); state[flag] = false; }
+		bench.search.value = "new-filter"; bench.search.events.get("input")(); assert.equal(bench.editor, state); assert.equal(state.controls[field].value, "unsaved", "filter clearing preserves the draft");
+		bench.closeEditor(); await answer(bench.query(), 0); assert.equal(bench.page, 1); assert.equal(bench.totalPages, 0); assert.equal(bench.previous.disabled, true); assert.equal(bench.next.disabled, true);
+		const destroyed = bench.query(); await tick(); const destroyedCall = calls.at(-1); bench.destroy(); destroyedCall.rawResolve(pageResult(destroyedCall.options.args, [], { total: 0 })); await destroyed;
+		assert.equal(bench.rows.length, 0); assert.equal(bench.disposed, true);
+	}
 }
 async function main() {
 	await companyScopeEvents();
+	await archivePaging();
 	const opened = [], bridge = { open: (spec) => opened.push(spec) }, mold = new window.JifengToolArchive(new Element(), "mold", bridge), plate = new window.JifengToolArchive(new Element(), "plate", bridge);
 	for (const bench of [mold, plate]) { bench.companyScope = "Company A"; await bench.companyControl.set_value("Company A"); }
 	let query = mold.query(); assert.equal(calls.at(-1).options.args.include_inactive, 0); calls.at(-1).resolve([]); await query;
@@ -135,10 +195,12 @@ async function main() {
 	state.controls.mold_no.value = " 业务1 "; state.controls.product_code.value = " 产品1 "; state.controls.amount.value = ""; state.controls.legacy_copy.checked = true;
 	await state.nativeControls.legacy_number.set_value(" 原编号 "); assert.equal(state.controls.legacy_number.value, " 原编号 ");
 	const createPayload = mold.payload(state); assert.match(createPayload.request_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+	mold.page = 3;
 	const saving = mold.save(state), saveCall = calls.at(-1); assert.equal(saveCall.options.type, "POST"); assert.equal(Object.keys(saveCall.options.args).join("/"), "payload", "save has no extra record_type keyword");
 	assert.equal(saveCall.options.args.payload.record_type, "mold");
 	const created = pack("mold", { request_id: createPayload.request_id, values: { ...blank("mold").values, ...createPayload.values, mold_no: "业务1", product_code: "产品1", quantity: 1, amount: 0, legacy_copy: 1 } });
-	saveCall.resolve(created); await saving; assert.equal(state.unresolved, false); assert.equal(mold.isDirty(), false); calls.at(-1).resolve([]); await tick();
+	saveCall.resolve(created); await saving; assert.equal(state.unresolved, false); assert.equal(mold.isDirty(), false);
+	assert.equal(calls.at(-1).options.method, "jifeng_erp.tool_archive_paging.query_archives"); assert.equal(calls.at(-1).options.args.page, 3, "save refreshes the current page while keeping its clean editor"); calls.at(-1).resolve([]); await tick();
 	assert.equal(state.controls.amount.value, "0"); assert.equal(state.controls.mold_no.value, "业务1"); assert.equal(state.image.uploadButton.disabled, false);
 	assert.equal(state.dialog.hidden, false, "successful save stays in the editor"); assert.equal("request_id" in mold.payload(state), false); assert.equal(Object.keys(mold.payload(state).values).length, 0);
 	const imageOpening = mold.uploadImage(state); calls.at(-1).resolve([attachment({ name: "OLDER" })]); await imageOpening; const uploader = uploads.at(-1);
@@ -216,8 +278,8 @@ async function main() {
 
 	// Modeling reuses the same guard, but its real flat API has no record_type or values envelope.
 	const modeling = new window.JifengToolArchive(new Element(), "modeling", bridge); modeling.companyScope = "Company A"; await modeling.companyControl.set_value("Company A");
-	const modelList = modeling.query(); assert.equal(calls.at(-1).options.method, "jifeng_erp.plate_modeling.list_records"); assert.equal("record_type" in calls.at(-1).options.args, false); assert.equal("include_inactive" in calls.at(-1).options.args, false);
-	const listOnly = flatModel(true); delete listOnly.field_meta; delete listOnly.can_write; calls.at(-1).resolve([listOnly]); await modelList; assert.equal(modeling.rows.length, 1); assert.equal(modeling.rows[0].can_write, false);
+	const modelList = modeling.query(); assert.equal(calls.at(-1).options.method, "jifeng_erp.tool_archive_paging.query_archives"); assert.equal(calls.at(-1).options.args.record_type, "modeling"); assert.equal(calls.at(-1).options.args.include_inactive, 0);
+	const listOnly = flatModel(true, { can_write: false }); calls.at(-1).resolve([listOnly]); await modelList; assert.equal(modeling.rows.length, 1); assert.equal(modeling.rows[0].can_write, false);
 	const modelOpen = modeling.openEditor(); assert.equal(calls.at(-1).options.method, "jifeng_erp.plate_modeling.init_record"); assert.equal("record_type" in calls.at(-1).options.args, false); calls.at(-1).resolve(flatModel()); dialog = await modelOpen; state = modeling.editor;
 	assert.equal(state.form.descendants("label").map((node) => node.textContent).join("/"), "编号/建模号/产品编号/单价/建模/日期/备注/复制");
 	assert.ok(state.controls.model_date.readOnly); assert.equal(state.controls.modeler_text.type, "text"); assert.equal(state.controls.remarks.tag, "input"); assert.equal("maker" in state.nativeControls, false);
@@ -245,7 +307,8 @@ async function main() {
 	const secondResolve = modeling.resolve(state); calls.at(-1).resolve({ status: "found", archive: secondSaved }); await secondResolve; assert.equal(state.unresolved, false); calls.at(-1).resolve([]); await tick(); await dialog.hide();
 	const bridgePrototype = window.JifengClassicBridge.prototype;
 	const frames = new Map([ ["mold", { workbench: mold }], ["plate", { workbench: plate }] ]);
-	assert.equal(bridgePrototype.canClose.call({ frames }, "plate"), true); assert.equal(bridgePrototype.closeBlock.call({ frames }, "plate"), "");
+	const closeBridge = Object.assign(Object.create(bridgePrototype), { frames });
+	assert.equal(closeBridge.canClose("plate"), true); assert.equal(closeBridge.closeBlock("plate"), "");
 	const mounted = bridgePrototype.mount.call(bridge, new Element(), { toolArchive: "mold" }); assert.equal(mounted.workbench.recordType, "mold"); mounted.stop();
 	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../jifeng_erp/public/js/jifeng_workspace_core.js"), "utf8"), context);
 	window.ToolWorkspace = window.JifengERPWorkspace.Workspace;
@@ -257,6 +320,6 @@ async function main() {
 	context.window.ToolWorkspace.prototype.openPage.call(workspace, "版种建模查询", "版种"); context.window.ToolWorkspace.prototype.openPage.call(workspace, "建模查询", "版种");
 	assert.equal(dispatched[4].route.join("/"), "query-report/Jifeng Plate Modeling Catalog"); assert.equal(dispatched[5].route.join("/"), "query-report/Jifeng Plate Modeling Catalog");
 	mold.destroy(); plate.destroy(); modeling.destroy(); assert.equal(listeners.size, 0);
-	console.log("Tool/modeling DOM/protocol PASS: actual menus+aliases, old11/10/8 fields, changed-only raw text, type+UUID/version and flat receipt adapter, unknown read-only adoption, native X upload lifecycle, original-image flags and one-upload guard, exact private attachment.");
+	console.log("Tool/modeling DOM/protocol PASS: 3-type 130-row paging, 25/50/100 sizes, exact scope+last-page fallback, late/invalid page rejection, draft/unknown guards, current-page save refresh; actual menus+aliases, old11/10/8 fields, raw text, UUID/version+flat receipt adapter, image/upload, costs and export preserved.");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

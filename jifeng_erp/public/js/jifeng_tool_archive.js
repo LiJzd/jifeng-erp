@@ -6,6 +6,7 @@ window.JifengToolArchive = class JifengToolArchive {
 		this.modeling = recordType === "modeling"; this.imageField = this.modeling ? "design_image" : "image"; this.imageLabel = this.modeling ? "设计原图" : "档案图片";
 		this.disposed = false; this.opening = false; this.editor = null; this.companyScope = null; this.changingCompany = false;
 		this.exporting = false; this.exportController = null;
+		this.page = 1; this.pageSize = 100; this.total = null; this.totalPages = 0; this.pendingQuery = null;
 		this.title = this.modeling ? "版种建模" : recordType === "mold" ? "模具录入" : "版种录入"; this.doctype = this.modeling ? "Jifeng Plate Modeling" : recordType === "mold" ? "Jifeng Mold" : "Jifeng Plate";
 		this.identity = this.modeling ? "model_number" : recordType === "mold" ? "mold_no" : "plate_no"; this.inactive = this.modeling ? null : recordType === "mold" ? "scrapped" : "retired";
 		this.fields = this.modeling ? [["legacy_number", "编号"], ["model_number", "建模号"], ["product_code", "产品编号"], ["reference_unit_price", "单价"],
@@ -46,9 +47,9 @@ window.JifengToolArchive = class JifengToolArchive {
 			df: { fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), onchange: () => this.changeScope() } });
 		this.companyControl.$input.on("input.jfe-tool-archive-company change.jfe-tool-archive-company", () => this.changeScope());
 		this.search = this.element("input"); this.search.type = "text"; this.search.maxLength = 140; this.search.placeholder = __("关键词"); this.search.setAttribute("aria-label", __("关键词"));
-		this.search.addEventListener("input", () => { this.revision++; this.cancelExport(); this.status.textContent = __("关键词已改变，请查询。"); });
+		this.search.addEventListener("input", () => this.resetList("关键词已改变，请查询。"));
 		this.search.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.query(); } });
-		this.includeInactive = this.element("input"); this.includeInactive.type = "checkbox"; this.includeInactive.addEventListener("change", () => this.query());
+		this.includeInactive = this.element("input"); this.includeInactive.type = "checkbox"; this.includeInactive.addEventListener("change", () => { this.resetList("报废筛选已改变，请查询。"); return this.query(); });
 		const inactive = this.element("label"); inactive.hidden = this.modeling; inactive.append(this.includeInactive, this.element("span", __("包含报废")));
 		this.exportButton = this.button("导出", () => this.exportArchives());
 		this.exportButton.title = __("按当前核实字段列导出当前筛选的全部可见已保存档案；需导出权限。");
@@ -58,9 +59,38 @@ window.JifengToolArchive = class JifengToolArchive {
 		this.scroller = this.element("div", undefined, "jfe-tool-scroll"); const table = this.element("table", undefined, "jfe-tool-table"), head = this.element("tr"), thead = this.element("thead");
 		for (const label of [...this.fields.map((row) => row[1]), this.imageLabel, "操作"]) head.append(this.element("th", __(label)));
 		thead.append(head); this.tbody = this.element("tbody"); table.append(thead, this.tbody); this.scroller.append(table);
-		this.host.append(toolbar, this.element("p", __("导出按当前核实字段列生成 XLSX，包含当前筛选的全部可见已保存档案。"), "jfe-tool-status"), this.status, this.scroller); this.freezeExport();
+		const pager = this.element("div", undefined, "jfe-tool-toolbar"); pager.setAttribute("aria-label", __("档案分页"));
+		this.previous = this.button("上页", () => this.changePage(this.page - 1)); this.next = this.button("下页", () => this.changePage(this.page + 1));
+		this.pageLabel = this.element("span", "—"); this.pageLabel.setAttribute("aria-label", __("当前页"));
+		this.goto = this.element("input"); this.goto.type = "text"; this.goto.inputMode = "numeric"; this.goto.maxLength = 10; this.goto.value = "1";
+		this.goto.setAttribute("aria-label", __("前往页码")); this.goto.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.changePage(this.goto.value); } });
+		this.pageSizeControl = this.element("select"); this.pageSizeControl.setAttribute("aria-label", __("每页条数"));
+		for (const size of [25, 50, 100]) { const option = this.element("option", String(size)); option.value = String(size); this.pageSizeControl.append(option); }
+		this.pageSizeControl.value = String(this.pageSize); this.pageSizeControl.addEventListener("change", () => {
+			const size = Number(this.pageSizeControl.value);
+			if (![25, 50, 100].includes(size) || this.pagingBlocked()) { this.pageSizeControl.value = String(this.pageSize); return; }
+			this.pageSize = size; this.resetList("每页条数已改变，请查询。"); return this.query();
+		});
+		this.gotoButton = this.button("前往", () => this.changePage(this.goto.value)); this.count = this.element("span", __("尚未查询"));
+		pager.append(this.previous, this.pageLabel, this.next, this.goto, this.gotoButton, this.element("span", __("每页")), this.pageSizeControl, this.element("span", __("条")), this.count);
+		this.host.append(toolbar, this.element("p", __("导出按当前核实字段列生成 XLSX，包含当前筛选的全部可见已保存档案。"), "jfe-tool-status"), this.status, this.scroller, pager); this.freezeExport();
 	}
-	freezeExport() { if (this.exportButton) this.exportButton.disabled = !!(!this.companyScope || this.disposed || this.changingCompany || this.opening || this.editor || this.exporting); }
+	freezeExport() { if (this.exportButton) this.exportButton.disabled = !!(!this.companyScope || this.disposed || this.changingCompany || this.opening || this.editor || this.exporting); this.renderPager(); }
+	resetList(message) {
+		this.cancelExport(); this.revision++; this.pendingQuery = null; this.page = 1; this.total = null; this.totalPages = 0; this.rows = [];
+		this.tbody.replaceChildren(); if (this.goto) this.goto.value = "1"; this.renderPager(); this.status.textContent = __(message);
+	}
+	pagingBlocked() { return !!(this.disposed || this.changingCompany || this.opening || this.editor && !this.editor.closed || this.costs && !this.costs.disposed); }
+	renderPager() {
+		if (!this.previous) return; const blocked = this.pagingBlocked() || this.pendingQuery !== null;
+		this.previous.disabled = blocked || this.total === null || this.page <= 1; this.next.disabled = blocked || this.total === null || this.page >= this.totalPages;
+		this.goto.disabled = this.gotoButton.disabled = this.pageSizeControl.disabled = blocked;
+		this.pageLabel.textContent = this.total === null ? "—" : this.page + " / " + Math.max(1, this.totalPages);
+		this.count.textContent = this.total === null ? __("尚未查询") : __("共") + " " + this.total + " " + __("条");
+	}
+	pageNumber(value) { if (typeof value === "string") { if (!/^[1-9][0-9]{0,9}$/.test(value)) return null; value = Number(value); }
+		return Number.isInteger(value) && value >= 1 && value <= 2147483647 ? value : null; }
+	changePage(page) { if (this.pagingBlocked()) { frappe.msgprint(__("请先完成并关闭档案或实际费用窗口，再翻页。")); return; } return this.query(page); }
 	cancelExport() { this.exportController?.abort(); this.exportController = null; this.exporting = false; this.freezeExport(); }
 	exportCurrent(sequence, args) { return !this.disposed && !this.editor && !this.opening && !this.changingCompany && sequence === this.revision &&
 		args.record_type === this.recordType && args.company === this.companyScope && args.company === (this.companyControl.get_value() || null) &&
@@ -94,29 +124,49 @@ window.JifengToolArchive = class JifengToolArchive {
 			this.changingCompany = true; try { await this.companyControl.set_value(next); } finally { this.changingCompany = false; }
 		}
 		const blocked = this.getCloseBlock();
-		if (!blocked) { this.cancelExport(); this.rows = []; this.tbody.replaceChildren(); this.revision++; this.status.textContent = __("公司已改变，请查询。"); }
+		if (!blocked) this.resetList("公司已改变，请查询。");
 		if (!blocked && (!this.editor || this.editor.closed)) { this.companyScope = next; this.freezeExport(); return true; }
 		this.changingCompany = true; try { await this.companyControl.set_value(this.companyScope); } finally { this.changingCompany = false; }
 		if (blocked) { frappe.msgprint(__(blocked)); return false; }
-		return this.discardFor(async () => { this.closeEditor(); this.companyScope = next; this.rows = []; this.tbody.replaceChildren(); this.revision++;
+		return this.discardFor(async () => { this.closeEditor(); this.companyScope = next; this.resetList("公司已改变，请查询。");
 			this.changingCompany = true; try { await this.companyControl.set_value(next); } finally { this.changingCompany = false; } });
 	}
-	async query() {
-		if (this.disposed || this.changingCompany) return;
+	async query(page = 1, savedRefresh = false) {
+		if (this.disposed || this.changingCompany || this.opening) return;
+		if (!savedRefresh && this.getCloseBlock()) { frappe.msgprint(__(this.getCloseBlock())); return; }
 		this.cancelExport();
 		if ((this.companyControl.get_value() || null) !== this.companyScope && !await this.changeScope()) return;
 		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
-		const company = this.companyScope, search = this.search.value, inactive = !!this.includeInactive.checked, sequence = ++this.revision;
-		if (!company) { this.status.textContent = __("请选择公司后查询。"); return; }
-		const scroll = [this.scroller.scrollTop, this.scroller.scrollLeft]; this.status.textContent = __("正在查询…");
-		try { const response = await this.call("list_records", { company, search, include_inactive: inactive ? 1 : 0 });
+		const requestedPage = this.pageNumber(page), args = { record_type: this.recordType, company: this.companyScope, search: this.search.value,
+			include_inactive: this.modeling ? 0 : Number(this.includeInactive.checked), page: requestedPage, page_size: this.pageSize };
+		if (!args.company || requestedPage === null) { this.status.textContent = __(!args.company ? "请选择公司后查询。" : "请输入合法页码后查询。"); return; }
+		const sequence = ++this.revision, scroll = [this.scroller.scrollTop, this.scroller.scrollLeft]; this.pendingQuery = sequence;
+		this.rows = []; this.total = null; this.totalPages = 0; this.tbody.replaceChildren(); this.renderPager(); this.status.textContent = __("正在查询…");
+		try { const response = await frappe.call({ method: "jifeng_erp.tool_archive_paging.query_archives", type: "GET", args });
 			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
-			if (this.disposed || sequence !== this.revision || company !== this.companyScope || company !== (this.companyControl.get_value() || null) || search !== this.search.value || inactive !== !!this.includeInactive.checked) return;
-			if (!Array.isArray(response.message) || response.message.some((row) => !this.validArchive(row, company) || !row.name)) throw new Error("Wrong list scope");
-			this.rows = response.message; this.renderRows(); [this.scroller.scrollTop, this.scroller.scrollLeft] = scroll;
-			this.status.textContent = this.rows.length ? __("查询完成") + " · " + this.rows.length + __("条") : __("没有可见记录。");
+			if (!this.currentQuery(sequence, args)) return;
+			const result = response.message;
+			if (!this.validPage(result, args)) throw new Error("Wrong list scope");
+			this.rows = this.modeling ? result.rows.map((row) => this.adaptModeling(row)) : result.rows;
+			this.page = result.page; this.total = result.total; this.totalPages = result.total_pages; this.goto.value = String(this.page);
+			this.renderRows(); this.renderPager(); [this.scroller.scrollTop, this.scroller.scrollLeft] = scroll;
+			this.status.textContent = this.total ? (result.page === requestedPage ? __("查询完成") : __("页码超出当前范围，已返回最后一页")) + " · " + this.rows.length + __("条") : __("没有可见记录。");
 		} catch { if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
-			if (!this.disposed && sequence === this.revision && company === (this.companyControl.get_value() || null)) this.status.textContent = __("查询未完成，原列表已保留；记录超过100条时请缩小关键词后查询。"); }
+			if (this.currentQuery(sequence, args)) { this.rows = []; this.tbody.replaceChildren(); this.total = null; this.totalPages = 0; this.status.textContent = __("查询未完成，未显示部分结果，请核对权限或条件后重查。"); } }
+		finally { if (this.pendingQuery === sequence) { this.pendingQuery = null; this.renderPager(); } }
+	}
+	currentQuery(sequence, args) { return !this.disposed && sequence === this.revision && args.record_type === this.recordType && args.company === this.companyScope &&
+		args.company === (this.companyControl.get_value() || null) && args.search === this.search.value && args.page_size === this.pageSize &&
+		args.include_inactive === (this.modeling ? 0 : Number(this.includeInactive.checked)); }
+	validPage(result, args) {
+		if (!result || !["record_type", "company", "search", "include_inactive", "page_size"].every((field) => result[field] === args[field]) ||
+			result.requested_page !== args.page || !Number.isSafeInteger(result.total) || result.total < 0 || !Number.isSafeInteger(result.total_pages) ||
+			result.total_pages !== Math.ceil(result.total / args.page_size) || result.page !== Math.min(args.page, Math.max(1, result.total_pages)) || !Array.isArray(result.rows)) return false;
+		const length = Math.min(args.page_size, Math.max(0, result.total - (result.page - 1) * args.page_size));
+		if (result.rows.length !== length || new Set(result.rows.map((row) => row?.name)).size !== result.rows.length) return false;
+		return result.rows.every((row) => { const archive = this.modeling ? this.adaptModeling(row) : row;
+			return (!this.modeling || typeof row?.can_write === "boolean" && !!row.field_meta) && this.validArchive(archive, args.company) && typeof archive.name === "string" && !!archive.name &&
+				(args.include_inactive || this.modeling || !Number(archive.values[this.inactive])); });
 	}
 	renderRows() { this.tbody.replaceChildren(); for (const row of this.rows) { const tr = this.element("tr");
 		for (const [field] of this.fields) tr.append(this.element("td", field === "legacy_copy" || field === this.inactive ? row.values[field] ? __("是") : __("否") : row.values[field] ?? ""));
@@ -130,7 +180,7 @@ window.JifengToolArchive = class JifengToolArchive {
 		return this.discardFor(() => { const company = this.companyScope; if (!company) return; if (state) this.closeEditor();
 			this.costs = window.JifengToolCosts.open({ company, record_type: this.recordType, name }, this.bridge, { filters: this.costFilters,
 				stillCurrent: () => !this.disposed && this.companyScope === company && (this.companyControl.get_value() || null) === company,
-				onClose: (filters) => { this.costFilters = filters; this.costs = null; } }); }, state);
+				onClose: (filters) => { this.costFilters = filters; this.costs = null; this.renderPager(); } }); this.renderPager(); }, state);
 	}
 	validArchive(archive, company = null, name = null) { return !!(archive?.record_type === this.recordType && archive.values && archive.field_meta && archive.image_states &&
 		typeof archive.can_write === "boolean" && typeof archive.can_select === "boolean" && (!company || archive.values.company === company) && (!name || archive.name === name) &&
@@ -141,7 +191,7 @@ window.JifengToolArchive = class JifengToolArchive {
 		if ((this.companyControl.get_value() || null) !== this.companyScope && (!await this.changeScope() || name)) return;
 		if (this.disposed || (this.companyControl.get_value() || null) !== this.companyScope) return;
 		if (this.editor && !this.editor.closed) { this.editor.dialog.show(); return this.editor.dialog; }
-		this.cancelExport(); this.opening = true; this.freezeExport(); const company = this.companyScope, sequence = this.revision;
+		this.cancelExport(); this.opening = true; this.revision++; this.pendingQuery = null; this.freezeExport(); const company = this.companyScope, sequence = this.revision;
 		try { const response = await this.call(name ? "read_record" : "init_record", name ? { name } : { company });
 			if ((this.companyControl.get_value() || null) !== this.companyScope) await this.changeScope();
 			if (this.disposed || sequence !== this.revision || company !== this.companyScope || !this.changingCompany && company !== (this.companyControl.get_value() || null) || !this.validArchive(response.message, company, name) || !response.message.field_meta.company || !name && response.message.name) throw new Error("Wrong editor scope");
@@ -279,7 +329,7 @@ window.JifengToolArchive = class JifengToolArchive {
 		finally { state.busy = false; this.freeze(state); if (state.unresolved) state.message.textContent = __("保存结果尚未确认，草稿已保留，请核对保存结果。"); }
 	}
 	async accept(state, archive, message) { await this.applyArchive(state, archive); state.unresolved = false; state.conflict = null; state.candidate = null; state.requestId = null;
-		state.dialog.set_title(__(this.title)); state.message.textContent = __(message); if (this.companyScope === archive.values.company) this.query(); frappe.show_alert({ message: __(message), indicator: "green" }); }
+		state.dialog.set_title(__(this.title)); state.message.textContent = __(message); if (this.companyScope === archive.values.company) this.query(this.page, true); frappe.show_alert({ message: __(message), indicator: "green" }); }
 	showConflict(state, archive) { if (!this.completeResult(state, archive)) return; state.conflict = archive; state.review.replaceChildren(this.element("p", __("当前值与草稿或版本不同，请核对后明确采用；采用不会再次保存。")));
 		const table = this.element("table"), heading = this.element("tr"); for (const label of ["字段", "保留草稿", "服务器当前值"]) heading.append(this.element("th", __(label))); table.append(heading);
 		for (const [field, value] of Object.entries(state.candidate.values)) { const row = this.element("tr"); row.append(this.element("td", __(this.labels[field] || field)),
