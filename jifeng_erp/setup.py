@@ -146,6 +146,7 @@ def install():
     _install_wage_reversal_permissions()
     _install_separation_permissions()
     _install_receipt_export_permission()
+    _install_subcontracting_bom_permission()
     from jifeng_erp.desktop_entry import repair_legacy_desktop_entry
 
     repair_legacy_desktop_entry()
@@ -179,6 +180,46 @@ def _install_receipt_export_permission():
     if not same_permission_rules(current, desired, fields=fields) or not same_permission_rules(unchanged, native, fields=fields):
         frappe.throw("收货单导出权限安装结果不一致，请回滚本次权限安装后检查。")
     return {"status": "installed", "doctype": doctype, "role": "Stock Manager", "permission": "export"}
+
+
+def _install_subcontracting_bom_permission():
+    """Let the manufacturing supervisor maintain an uncustomized native map."""
+    from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
+    from frappe.permissions import setup_custom_perms
+    from jifeng_erp.receipt_export_permissions import permission_projection, same_permission_rules
+
+    doctype, role = "Subcontracting BOM", "Manufacturing Manager"
+    native_flags = {df.fieldname for df in frappe.get_meta("DocPerm").fields if df.fieldtype == "Check"}
+    custom_flags = {df.fieldname for df in frappe.get_meta("Custom DocPerm").fields if df.fieldtype == "Check"}
+    if native_flags != custom_flags or not {"read", "create", "write", "if_owner"} <= native_flags:
+        return {"status": "permission_schema_requires_review", "doctype": doctype}
+    fields = ("role", "permlevel", *sorted(native_flags))
+    native = frappe.get_all("DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    custom = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    if custom:
+        return {"status": "site_policy_preserved", "doctype": doctype}
+    if any(row.get("role") == role for row in native):
+        return {"status": "native_role_preserved", "doctype": doctype}
+    # This is the observed ERPNext default, not a generic grant to every site.
+    expected = dict(role="System Manager", permlevel=0,
+                    read=1, create=1, write=1, delete=1, report=1, export=1, share=1, print=1, email=1)
+    meta = frappe.get_meta(doctype)
+    if meta.istable or meta.is_submittable or not same_permission_rules(native, [expected], fields=fields):
+        return {"status": "native_rule_not_applicable", "doctype": doctype}
+    addition = {"role": role, "permlevel": 0, **{flag: int(flag in {"read", "create", "write"}) for flag in native_flags}}
+    desired = permission_projection(native, fields=fields) + [addition]
+    setup_custom_perms(doctype)  # Normal clone retains the complete System Manager rule.
+    cloned = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    if not same_permission_rules(cloned, native, fields=fields):
+        frappe.throw("委外映射的站点权限已变化，请回滚本次权限安装后检查。")
+    frappe.get_doc({"doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
+                    "parentfield": "permissions", **addition}).insert(ignore_permissions=True)
+    validate_permissions_for_doctype(doctype)
+    current = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    unchanged = frappe.get_all("DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    if not same_permission_rules(current, desired, fields=fields) or not same_permission_rules(unchanged, native, fields=fields):
+        frappe.throw("委外映射权限安装结果不一致，请回滚本次权限安装后检查。")
+    return {"status": "installed", "doctype": doctype, "role": role, "permissions": ["read", "create", "write"]}
 
 
 def _install_wage_source_permissions():
