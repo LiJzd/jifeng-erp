@@ -192,8 +192,12 @@ doc_events = {
         "on_update_after_submit": "jifeng_erp.workflow.refresh_sales_order_flows",
         "on_cancel": "jifeng_erp.workflow.refresh_sales_order_flows",
     },
-    "Delivery Note": {"before_validate": "jifeng_erp.fulfillment.validate_fulfillment_flow"},
-    "Sales Invoice": {"before_validate": "jifeng_erp.fulfillment.validate_fulfillment_flow"},
+    "Delivery Note": {"before_validate": "jifeng_erp.fulfillment.validate_fulfillment_flow",
+                      "on_submit": "jifeng_erp.flow_reposting.schedule_flow_stock_reposting",
+                      "on_cancel": "jifeng_erp.flow_reposting.schedule_flow_stock_reposting"},
+    "Sales Invoice": {"before_validate": "jifeng_erp.fulfillment.validate_fulfillment_flow",
+                      "on_submit": "jifeng_erp.flow_reposting.schedule_flow_stock_reposting",
+                      "on_cancel": "jifeng_erp.flow_reposting.schedule_flow_stock_reposting"},
     # Native Production Plan creates Work Orders with ignore_validate=True.
     # before_validate still runs and must preserve flow identity and quantity limits.
     "Work Order": {"before_validate": ["jifeng_erp.setup.validate_flow_links",
@@ -217,12 +221,16 @@ doc_events = {
                                             "jifeng_erp.sample_source_permissions.before_validate_source_binding"],
                           "validate": "jifeng_erp.production_instruction.validate_flow_allocation"},
     "Subcontracting Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
-    "Subcontracting Receipt": {"validate": "jifeng_erp.setup.validate_flow_links"},
+    "Subcontracting Receipt": {"validate": "jifeng_erp.setup.validate_flow_links",
+                              "on_submit": "jifeng_erp.flow_reposting.schedule_flow_stock_reposting",
+                              "on_cancel": "jifeng_erp.flow_reposting.schedule_flow_stock_reposting"},
     "Material Request": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Purchase Order": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Purchase Receipt": {"validate": "jifeng_erp.setup.validate_flow_links"},
     "Purchase Invoice": {"validate": "jifeng_erp.setup.validate_flow_links"},
-    "Stock Entry": {"validate": "jifeng_erp.setup.validate_flow_links"},
+    "Stock Entry": {"validate": "jifeng_erp.setup.validate_flow_links",
+                    "on_submit": "jifeng_erp.flow_reposting.schedule_flow_stock_reposting",
+                    "on_cancel": "jifeng_erp.flow_reposting.schedule_flow_stock_reposting"},
 }
 for _doctype in _sample_permission_parents + _sample_permission_children:
     doc_events.setdefault(_doctype, {})["validate_share"] = (
