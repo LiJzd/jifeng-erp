@@ -598,6 +598,72 @@ class ToolCosts(unittest.TestCase):
             self.module.get_tool_cost_allocation(receipt["name"])
         self.assertIsNone(self.module._AUTHORIZING.get())
 
+    def test_exact_allocation_capture_does_not_enumerate_unrelated_allocations(self):
+        target, unrelated = self.create(), self.create()
+        self.hooks_enabled = True
+        scans, conditions = [], []
+        get_all, get_list = self.frappe.get_all, self.frappe.get_list
+        def raw(doctype, filters=None, **kwargs):
+            if doctype == self.module.DOCTYPE and filters is None:
+                scans.append(doctype)
+            return get_all(doctype, filters=filters, **kwargs)
+        def native_query(doctype, **kwargs):
+            # Native DatabaseQuery runs its query condition before row access.
+            if doctype == self.module.CHILD:
+                conditions.append(self.module.tool_cost_allocation_item_query_conditions())
+            return get_list(doctype, **kwargs)
+        self.frappe.get_all, self.frappe.get_list = raw, native_query
+        with patch.object(self.module, "_native_guard", wraps=self.module._native_guard) as guards:
+            view = self.module.get_tool_cost_allocation(target["name"])
+        self.assertEqual([row["historical_amount"] for row in view["items"]], ["70", "50"])
+        self.assertEqual(scans, [])
+        self.assertEqual(guards.call_count, 1)  # The public document gate remains.
+        self.assertEqual(len(conditions), 2)  # Each stable capture reads its own children.
+        self.assertTrue(all(target["name"] in condition and unrelated["name"] not in condition
+                            for condition in conditions))
+        self.assertIsNone(self.module._AUTHORIZING.get())
+
+    def test_exact_allocation_capture_still_rejects_hidden_sources_and_table_fields(self):
+        receipt = self.create()
+        self.payment("PRIVATE_PAYMENT", 40)
+        self.hooks_enabled = True
+        for doctype, name in (("Payment Entry", "PRIVATE_PAYMENT"), ("Journal Entry", "J"),
+                              (self.module.DOCTYPE, receipt["name"])):
+            with self.subTest(doctype=doctype):
+                self.denied = {(doctype, name, "read")}
+                with self.assertRaises(PermissionError) as error:
+                    self.module._stable("C", lambda read: self.module._allocation_view(read, receipt["name"]))
+                self.assertNotIn("PRIVATE_PAYMENT", str(error.exception))
+                self.assertIsNone(self.module._AUTHORIZING.get())
+        self.denied.clear()
+        for hidden, masked in (({(self.module.CHILD, "amount")}, set()),
+                               (set(), {(self.module.DOCTYPE, "items")})):
+            with self.subTest(hidden=hidden, masked=masked):
+                self.hidden, self.masked = hidden, masked
+                with self.assertRaises(PermissionError):
+                    self.module._stable("C", lambda read: self.module._allocation_view(read, receipt["name"]))
+                self.assertIsNone(self.module._AUTHORIZING.get())
+        self.hidden, self.masked = set(), set()
+        self.assertEqual(self.module.get_tool_cost_allocation(receipt["name"])["source"]["paid_amount"], "40")
+
+    def test_exact_allocation_capture_rereads_children_between_stable_captures(self):
+        receipt = self.create()
+        self.hooks_enabled = True
+        calls = [0]
+        def mutate(doctype, filters):
+            # Change both stored parent/child views before the second capture
+            # loads them, rather than merely corrupting one projection.
+            if doctype == "Company" and filters == {"name": "C"}:
+                calls[0] += 1
+                if calls[0] == 3:
+                    parent = self.docs[self.module.DOCTYPE, receipt["name"]]
+                    parent["items"][0].tool_label = "changed between captures"
+                    self.docs[self.module.CHILD, parent["items"][0].name].tool_label = "changed between captures"
+        self.raw_mutation = mutate
+        with self.assertRaisesRegex(ValueError, "来源或权限已变化"):
+            self.module._stable("C", lambda read: self.module._allocation_view(read, receipt["name"]))
+        self.assertIsNone(self.module._AUTHORIZING.get())
+
     def test_complete_batch_scan_does_not_skip_payment_201(self):
         for index in range(201):
             self.payment("P" + str(index).zfill(3), "0.01")

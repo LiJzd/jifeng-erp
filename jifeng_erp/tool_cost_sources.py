@@ -283,6 +283,11 @@ class _Read:
             if select:
                 _permission(doc, "select")
             return doc
+        # Keep this exact parent scope through its child queries. Resetting it
+        # after the parent row makes native child permissions enumerate and
+        # revalidate every allocation instead of this requested document.
+        # This only prevents recursive guards: native roles/UP, fields/table
+        # access and the complete source proof still run in this capture.
         token = _AUTHORIZING.set((name, frappe.session.user)) if doctype == DOCTYPE else None
         try:
             try:
@@ -293,28 +298,28 @@ class _Read:
             except (frappe.PermissionError, frappe.DoesNotExistError):
                 _deny()
             rows = self.records(doctype, {"name": name}, PARENTS[doctype])
+            if len(rows) != 1 or any(_cell(doctype, field, doc.get(field)) != _cell(doctype, field, value) for field, value in rows[0].items()):
+                _changed()
+            if "company" in PARENTS[doctype] and doc.company != self.company:
+                _deny()
+            self.documents[key] = doc
+            for fieldname, (child, fields) in TABLES.get(doctype, {}).items():
+                _table(doc, fieldname, child)
+                children = self.records(child, {"parent": name}, fields, doctype)
+                # Each native parent currently has only one table of each child
+                # type. Parent-only scope detects corrupt child parentfield/type.
+                actual = sorted(doc.get(fieldname) or [], key=lambda row: row.name)
+                if len(actual) != len(children):
+                    _invalid()
+                for row, saved in zip(actual, children):
+                    if (saved["parenttype"] != doctype or saved["parentfield"] != fieldname
+                            or any(_cell(child, field, row.get(field)) != _cell(child, field, value) for field, value in saved.items())):
+                        _invalid()
+                self.children[key + (fieldname,)] = children
+            return doc
         finally:
             if token is not None:
                 _AUTHORIZING.reset(token)
-        if len(rows) != 1 or any(_cell(doctype, field, doc.get(field)) != _cell(doctype, field, value) for field, value in rows[0].items()):
-            _changed()
-        if "company" in PARENTS[doctype] and doc.company != self.company:
-            _deny()
-        self.documents[key] = doc
-        for fieldname, (child, fields) in TABLES.get(doctype, {}).items():
-            _table(doc, fieldname, child)
-            children = self.records(child, {"parent": name}, fields, doctype)
-            # Each native parent currently has only one table of each child
-            # type. Parent-only scope detects corrupt child parentfield/type.
-            actual = sorted(doc.get(fieldname) or [], key=lambda row: row.name)
-            if len(actual) != len(children):
-                _invalid()
-            for row, saved in zip(actual, children):
-                if (saved["parenttype"] != doctype or saved["parentfield"] != fieldname
-                        or any(_cell(child, field, row.get(field)) != _cell(child, field, value) for field, value in saved.items())):
-                    _invalid()
-            self.children[key + (fieldname,)] = children
-        return doc
 
     def account(self, name, root, types=None):
         doc = self.source("Account", name)
