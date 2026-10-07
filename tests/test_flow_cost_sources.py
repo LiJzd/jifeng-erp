@@ -71,7 +71,13 @@ class TestFlowCostSources(unittest.TestCase):
         model.get_permitted_fields = lambda doctype, **kw: self.permitted[doctype] - self.hidden.get(doctype, set())
         utils = types.ModuleType("frappe.utils")
         utils.flt = lambda value, precision=None: round(float(value), precision) if precision is not None else float(value)
-        patches = patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model, "frappe.utils": utils})
+        # Payroll source closure is tested in its own native-shape harness.
+        # These inventory cases receive no accrued wages unless stated below.
+        wage_sources = types.ModuleType("jifeng_erp.flow_wage_cost_sources")
+        self.wage_cost_result = {"rows": [], "total": Decimal(0), "currency": "CNY", "finish_guard": Mock()}
+        wage_sources.posted_flow_wage_costs = Mock(side_effect=lambda flow: self.wage_cost_result)
+        patches = patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model, "frappe.utils": utils,
+                                          "jifeng_erp.flow_wage_cost_sources": wage_sources})
         patches.start()
         self.addCleanup(patches.stop)
         spec = importlib.util.spec_from_file_location("flow_cost_sources_under_test", ROOT / "jifeng_erp/flow_cost_sources.py")
@@ -630,6 +636,27 @@ class TestFlowCostSources(unittest.TestCase):
         self.assertEqual([row["manufacture"] for row in result["manufactures"]], ["MAKE"])
         first.docstatus = 2
         self.assertEqual(self.module.posted_flow_costs("FLOW")["manufactures"], [])
+
+    def test_exact_accrued_wages_add_processing_once_and_cancel_leaves_material(self):
+        self.manufacture(material=40, other=0)
+        self.wage_cost_result.update(rows=[{"wage_entry": "WAGE", "journal_entry": "PAYROLL-JE",
+                                            "work_order": "WO", "job_card": "CARD", "amount": Decimal(20)}], total=Decimal(20))
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["processing"]), (40, 20))
+        self.assertEqual(result["wages"][0]["journal_entry"], "PAYROLL-JE")
+        self.wage_cost_result["finish_guard"].assert_called_once()
+        self.wage_cost_result.update(rows=[], total=Decimal(0))
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["processing"], result["wages"]), (40, 0, []))
+
+    def test_unidentified_manufacturing_labor_never_doubles_an_accrued_wage(self):
+        self.manufacture(other=6)
+        self.wage_cost_result.update(rows=[{"work_order": "WO", "job_card": "CARD", "amount": Decimal(20)}], total=Decimal(20))
+        with self.assertRaisesRegex(ValueError, "避免重复"):
+            self.module.posted_flow_costs("FLOW")
+        self.wage_cost_result["rows"][0].update(work_order=None, job_card=None)
+        with self.assertRaisesRegex(ValueError, "避免重复"):
+            self.module.posted_flow_costs("FLOW")
 
     def test_manufacturing_uses_persisted_company_currency_fee_not_current_conversion(self):
         self.manufacture(other=6)

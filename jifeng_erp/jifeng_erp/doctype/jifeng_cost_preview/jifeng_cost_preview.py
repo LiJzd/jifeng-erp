@@ -96,7 +96,9 @@ class JifengCostPreview(Document):
         else:
             sources = {row["issue"] for row in result["issues"]} | {
                 row["receipt"] for row in result["receipts"]
-            } | {row["manufacture"] for row in result.get("manufactures", [])}
+            } | {row["manufacture"] for row in result.get("manufactures", [])} | {
+                row["journal_entry"] for row in result.get("wages", [])
+            }
         self.receipt_cost_sources = "\n".join(sorted(sources)) or None
         self.receipt_cost_loaded_at = now()
         self._cost_refresh_result = result
@@ -214,7 +216,7 @@ class JifengCostPreview(Document):
 
     @frappe.whitelist()
     def load_posted_costs(self, preserve_input=False):
-        """Refresh trial costs from posted issues, manufacturing and receipts."""
+        """Refresh trial costs from inventory sources and actual wage accruals."""
         self.check_permission("write")
         frappe.db.get_value(self.doctype, self.name, "name", for_update=True)
         self._reload_for_cost_selection(preserve_input)
@@ -224,8 +226,8 @@ class JifengCostPreview(Document):
         from jifeng_erp.workflow import posted_flow_costs
 
         result = posted_flow_costs(self.flow_order)
-        if not result["issues"] and not result["receipts"] and not result.get("manufactures") and not self.receipt_cost_loaded_at:
-            frappe.throw("没有已提交且关联本流程单的物料出库、普通制造或委外收货，费用未更改")
+        if not any(result.get(key) for key in ("issues", "receipts", "manufactures", "wages")) and not self.receipt_cost_loaded_at:
+            frappe.throw("没有已提交且关联本流程单的物料出库、制造、委外收货或工资计提，费用未更改")
         self.cost_basis = POSTED_ACTUAL
         self._apply_actual_costs(result)
         self._save_selected_basis(POSTED_ACTUAL)

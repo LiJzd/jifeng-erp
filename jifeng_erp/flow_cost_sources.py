@@ -1063,16 +1063,29 @@ def receipt_batch_candidates(flow_order):
 
 
 def posted_flow_costs(flow_order):
+    from jifeng_erp.flow_wage_cost_sources import posted_flow_wage_costs
+
     session = _Session(flow_order, include_stages=True)
     issues = _issue_dto(session)
     receipts = _receipt_dto(session)
     manufactures = session.load_manufactures()
     manufacture_material = sum((row["material"] for row in manufactures), Decimal(0))
     manufacture_other = sum((row["other"] for row in manufactures), Decimal(0))
+    wages = posted_flow_wage_costs(flow_order)
+    if wages["currency"] != session.currency:
+        _invalid()
+    if wages["total"]:
+        wage_work_orders = {row["work_order"] for row in wages["rows"] if row.get("work_order")}
+        manual_wages = any(not row.get("job_card") for row in wages["rows"])
+        if any(row["other"] and (manual_wages or row["work_order"] in wage_work_orders)
+               for row in manufactures):
+            frappe.throw("同一生产范围已有制造附加费和工资计提，尚未核实附加费是否包含人工；请先明确费用来源，避免重复计入工资成本")
     session.finish()
+    wages["finish_guard"]()
     return {"issues": issues["rows"], "receipts": receipts["rows"], "manufactures": manufactures, "totals": {
         "issue_material": issues["totals"]["material"], "receipt_material": receipts["totals"]["material"],
         "manufacture_material": manufacture_material, "manufacture_other": manufacture_other,
         "material": issues["totals"]["material"] + receipts["totals"]["material"] + manufacture_material,
-        "processing": receipts["totals"]["processing"], "other": receipts["totals"]["other"] + manufacture_other},
+        "processing": receipts["totals"]["processing"] + wages["total"], "other": receipts["totals"]["other"] + manufacture_other},
+        "wages": wages["rows"],
         "currency": session.currency}

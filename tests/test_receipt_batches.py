@@ -445,6 +445,21 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
         self.assertEqual(preview.receipt_cost_sources, "SCR")
         self.assert_no_posting()
 
+    def test_wage_accrual_changes_cost_not_quantity_and_reverse_retains_inventory_sources(self):
+        preview = self.saving_preview()
+        self.native.manufacture(material=40, other=0)
+        self.native.wage_cost_result.update(rows=[{"wage_entry": "WAGE", "journal_entry": "PAYROLL-JE",
+            "work_order": "WO", "job_card": "CARD", "amount": Decimal(20)}], total=Decimal(20))
+        preview.validate()
+        self.assertEqual((preview.material_amount, preview.processing_amount, preview.total_cost,
+                          preview.receipt_cost_sources), (44, 28, "72", "MAKE\nPAYROLL-JE\nSCR"))
+        self.assertEqual((preview.batches[0].received_qty, preview.batches[0].good_qty), (4, 2))
+        self.native.wage_cost_result.update(rows=[], total=Decimal(0))
+        preview.recalculate_actual_costs()
+        self.assertEqual((preview.total_cost, preview.processing_amount, preview.receipt_cost_sources), ("52", 8, "MAKE\nSCR"))
+        self.assertEqual((preview.batches[0].received_qty, preview.batches[0].good_qty), (4, 2))
+        self.assert_no_posting()
+
     def test_manufacturing_read_permission_failure_never_saves_partial_estimate(self):
         preview = self.saving_preview("流程估算", None)
         self.native.manufacture()
@@ -469,8 +484,8 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
  const frm={doc,is_new:()=>false,is_dirty:()=>true,set_intro:()=>{},add_custom_button:(n,f)=>buttons[n]=f,
  save:()=>{throw Error('no automatic pre-save');},call:async(method,args)=>calls.push({method,args,note:doc.note,batches:doc.batches}),reload_doc:async()=>{}};
  handlers.refresh(frm);const selected=buttons['带入已过账实际费用']();await new Promise(r=>setImmediate(r));
- assert.equal(messages.length,0);assert.equal(calls.length,0);assert.match(confirmation.message,/普通制造 MAKE&lt;1&gt;（工单 WO）/);
- assert.match(confirmation.message,/材料费 40.*其他费 6/);assert.match(confirmation.message,/WIP移库.*不重复/);
+ assert.equal(messages.length,0);assert.equal(calls.length,0);assert.match(confirmation.message,/制造 MAKE&lt;1&gt;（工单 WO）/);
+ assert.match(confirmation.message,/材料费 40.*其他费 6/);assert.match(confirmation.message,/内部转料.*不重复/);
  confirmation.yes();await selected;assert.equal(calls.length,1);assert.equal(calls[0].method,'load_posted_costs');
  assert.equal(calls[0].args.preserve_input,true);assert.equal(calls[0].note,'pending');assert.strictEqual(calls[0].batches,doc.batches);
 })().catch(e=>{console.error(e);process.exitCode=1;});
