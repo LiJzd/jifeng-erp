@@ -407,6 +407,35 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		finally { this.selectingTemporaryWorker = false; }
 	}
 
+	guardFinancialReportInitialization(child, spec) {
+		const reports = ["Profit and Loss Statement", "Cash Flow", "Balance Sheet"];
+		if (spec.kind !== "report" || spec.route?.[0] !== "query-report" ||
+			!reports.includes(spec.route[1]) || spec.filters?.filter_based_on !== "Date Range") return;
+		const prototype = child.frappe.views?.QueryReport?.prototype;
+		if (!prototype?.setup_filters) throw new Error("Native report filters unavailable");
+		const setup = prototype.setup_filters;
+		// This prototype belongs to this tab's isolated Desk iframe. Native v16's
+		// financial mode callback refreshes even during set_route_filters, before
+		// the two required dates have been filled. Preserve its display changes,
+		// but respect the report's own initialization guard for that callback.
+		prototype.setup_filters = function (...args) {
+			const result = setup.apply(this, args);
+			if (this.report_name !== spec.route[1]) return result;
+			const mode = this.get_filter("filter_based_on", false);
+			const change = mode?.on_change;
+			if (typeof change !== "function") return result;
+			const report = this;
+			mode.on_change = function (...values) {
+				if (!report._no_refresh) return change.apply(this, values);
+				const refresh = report.refresh;
+				report.refresh = () => Promise.resolve();
+				try { return change.apply(this, values); }
+				finally { report.refresh = refresh; }
+			};
+			return result;
+		};
+	}
+
 	mount(host, spec) {
 		if (spec.temporaryWorkers) {
 			const workbench = new window.JifengTemporaryWorkers(host, this, spec.temporaryWorkers);
@@ -578,6 +607,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 						await child.frappe.new_doc(spec.doctype, { ...spec.values });
 					}
 					else {
+						this.guardFinancialReportInitialization(child, spec);
 						child.frappe.route_options = { ...(spec.filters || {}) };
 						await child.frappe.set_route(...spec.route);
 						if (stopped) return;
