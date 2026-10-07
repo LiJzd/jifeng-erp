@@ -658,6 +658,76 @@ class TestProcurementFulfillment(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.read()
 
+    def stage_subcontract(self):
+        _sco, fg, _service, _scr, receipt = self.subcontract()
+        self.flow(item="FG")
+        self.add("Item", "SEMI")
+        self.add("Job Card", "JC", company="JF", docstatus=0, work_order="WO", production_item="FG",
+            operation_id="WO-OP", operation="PLATING", finished_good="SEMI", semi_fg_bom="STAGE-BOM",
+            track_semi_finished_goods=1, is_subcontracted=1)
+        self.add("Work Order", "WO", company="JF", docstatus=1, production_item="FG", jf_flow_order="FLOW",
+            track_semi_finished_goods=1)
+        self.line("Work Order", "WO", "WO-OP", operation="PLATING", finished_good="SEMI", is_subcontracted=1)
+        self.add("BOM", "STAGE-BOM", company="JF", docstatus=1, item="SEMI")
+        self.line("BOM", "STAGE-BOM", "BOM-RAW", item_code="RAW")
+        self.first.update(fg_item="SEMI", job_card="JC", bom="STAGE-BOM", jf_flow_order="FLOW")
+        for row in (fg, receipt):
+            row.update(item_code="SEMI", job_card="JC", bom="STAGE-BOM", jf_flow_order="FLOW")
+        return fg, receipt
+
+    def test_native_stage_closure_keeps_service_and_two_partial_receipts_without_qty_conversion(self):
+        _fg, receipt = self.stage_subcontract()
+        self.add(self.module.SCR, "SCR2", company="JF", supplier="SUP", docstatus=1, is_return=0,
+                 posting_date=date(2026, 10, 5))
+        row = self.line(self.module.SCR, "SCR2", "SCR2-FG", **{key: value for key, value in receipt.items()
+            if key not in self.module.CHILD | {"doctype"}})
+        row.qty = 1
+        result = self.read()
+        self.assertEqual(result["items"][0]["item_code"], "SERVICE")
+        self.assertEqual(result["items"][0]["fg_item"], "SEMI")
+        self.assertEqual([(entry["items"][0]["item_code"], entry["items"][0]["qty"])
+            for entry in result["subcontracting_receipts"]], [("SEMI", 2), ("SEMI", 1)])
+        self.assertTrue(result["readonly"])
+        self.frappe.db.commit.assert_not_called()
+        self.frappe.db.set_value.assert_not_called()
+
+    def test_stage_cannot_replace_job_card_operation_or_bom_or_bypass_projected_permissions(self):
+        fg, _receipt = self.stage_subcontract()
+        card = self.documents["Job Card", "JC"]
+        for document, field, value in ((fg, "job_card", "WRONG"), (fg, "bom", "WRONG"),
+                (card, "operation_id", "WRONG"), (self.documents["BOM", "STAGE-BOM"], "item", "FG"),
+                (self.documents["Work Order", "WO"], "company", "OTHER")):
+            old = document[field]
+            document[field] = value
+            with self.subTest(field=field), self.assertRaises((ValueError, PermissionError)):
+                self.read()
+            document[field] = old
+        for key in (("Job Card", "JC", "read"), ("Work Order", "WO", "read"), ("BOM", "STAGE-BOM", "read")):
+            self.denied.add(key)
+            with self.assertRaises(PermissionError):
+                self.read()
+            self.denied.clear()
+        for doctype, field in (("Work Order Operation", "finished_good"), ("Purchase Order Item", "job_card")):
+            self.hidden[doctype] = {field}
+            with self.assertRaises((ValueError, PermissionError)):
+                self.read()
+            self.hidden.clear()
+
+    def test_cancelled_stage_history_keeps_exact_native_links_and_live_edits_invalidate_read(self):
+        self.stage_subcontract()
+        self.documents["Work Order", "WO"].docstatus = 2
+        self.documents["Job Card", "JC"].docstatus = 2
+        self.read()
+        counter = [0]
+        def change(filters):
+            if filters == {"name": "JC"}:
+                counter[0] += 1
+                if counter[0] == 2:
+                    self.documents["Job Card", "JC"].semi_fg_bom = "OTHER"
+        self.list_hooks["Job Card"] = change
+        with self.assertRaises((ValueError, PermissionError)):
+            self.read()
+
     def test_scr_return_primary_and_secondary_original_rows(self):
         self.subcontract()
         self.line(self.module.SCR, "SCR", "SCR-SECONDARY", item_code="SECONDARY", secondary_item_type="Scrap",

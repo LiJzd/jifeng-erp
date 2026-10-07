@@ -26,7 +26,8 @@ class Record(dict):
         return bool(self.get("__islocal", True))
 
     def check_permission(self, permission):
-        return None
+        if permission in self.get("denied", set()):
+            raise PermissionError("native read denied")
 
 
 class TestFlowStockEntry(unittest.TestCase):
@@ -40,11 +41,15 @@ class TestFlowStockEntry(unittest.TestCase):
             Record(item_code="SCRAP", jf_flow_order=None),
         ])
         frappe = types.ModuleType("frappe")
-        frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
-        frappe.get_doc = lambda doctype, name, **kwargs: {
+        self.frappe = frappe
+        frappe.PermissionError = PermissionError
+        frappe.session = Record(user="stock-user")
+        frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
+        self.documents = {
             ("Work Order", "WO-1"): self.work_order,
             ("Jifeng Flow Order", "FLOW-1"): self.flow,
-        }[(doctype, name)]
+        }
+        frappe.get_doc = lambda doctype, name, **kwargs: self.documents[(doctype, name)]
         sources = {
             ("Material Request Item", "MR-ROW"): Record(
                 parent="MR-1", item_code="SILVER", jf_flow_order="FLOW-1"),
@@ -64,6 +69,7 @@ class TestFlowStockEntry(unittest.TestCase):
         }
         frappe.db = types.SimpleNamespace(get_value=lambda doctype, name, fields, as_dict=False:
                                           sources.get((doctype, name)))
+        self.sources = sources
         custom = types.ModuleType("frappe.custom.doctype.custom_field.custom_field")
         custom.create_custom_fields = lambda *args, **kwargs: None
         modules = {
@@ -73,11 +79,13 @@ class TestFlowStockEntry(unittest.TestCase):
             "frappe.custom.doctype.custom_field": types.ModuleType("frappe.custom.doctype.custom_field"),
             "frappe.custom.doctype.custom_field.custom_field": custom,
         }
-        with patch.dict(sys.modules, modules):
-            path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "setup.py"
-            spec = importlib.util.spec_from_file_location("flow_setup_under_test", path)
-            self.setup = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(self.setup)
+        modules_patch = patch.dict(sys.modules, modules)
+        modules_patch.start()
+        self.addCleanup(modules_patch.stop)
+        path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "setup.py"
+        spec = importlib.util.spec_from_file_location("flow_setup_under_test", path)
+        self.setup = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.setup)
         workflow = types.ModuleType("jifeng_erp.workflow")
         workflow.stock_plan_quantity = lambda flow: 5
         workflow_patch = patch.dict(sys.modules, {"jifeng_erp.workflow": workflow})
@@ -209,6 +217,180 @@ class TestFlowStockEntry(unittest.TestCase):
         doc.company = "OTHER"
         with self.assertRaisesRegex(ValueError, "公司、商品不一致"):
             self.setup.validate_flow_links(doc)
+
+    def stage(self):
+        path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "subcontract_stage.py"
+        spec = importlib.util.spec_from_file_location("jifeng_erp.subcontract_stage", path)
+        stage = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stage)
+        import jifeng_erp
+
+        module_patch = patch.dict(sys.modules, {"jifeng_erp.subcontract_stage": stage})
+        package_patch = patch.object(jifeng_erp, "subcontract_stage", stage, create=True)
+        module_patch.start()
+        package_patch.start()
+        self.addCleanup(module_patch.stop)
+        self.addCleanup(package_patch.stop)
+        self.stage_module = stage
+        self.hidden = {}
+        schemas = dict(stage.TABLES)
+        schemas["Subcontracting Order supplied"] = ("supplied_items", "Subcontracting Order Supplied Item",
+            stage.CHILD | {"reference_name", "main_item_code", "rm_item_code"})
+        def meta(doctype):
+            def field(name):
+                for parent, (table, child, _fields) in schemas.items():
+                    if (parent == doctype or parent == doctype + " supplied") and name == table:
+                        return Record(fieldname=name, fieldtype="Table", options=child, permlevel=0)
+                return Record(fieldname=name, fieldtype="Data", permlevel=0)
+            return types.SimpleNamespace(get_field=field, get_permlevel_access=lambda **kwargs: {0})
+        self.frappe.get_meta = meta
+        model = types.ModuleType("frappe.model")
+        child_fields = {child: fields for _field, child, fields in schemas.values()}
+        model.get_permitted_fields = lambda doctype, **kwargs: (
+            stage.PARENTS.get(doctype, child_fields.get(doctype, {"name"})) - self.hidden.get(doctype, set()))
+        model_patch = patch.dict(sys.modules, {"frappe.model": model})
+        model_patch.start()
+        self.addCleanup(model_patch.stop)
+        self.flow.update(doctype="Jifeng Flow Order", modified="v1")
+        self.work_order.update(doctype="Work Order", name="WO-1", docstatus=1, track_semi_finished_goods=1,
+            operations=[Record(name="OP-ROW", parent="WO-1", parenttype="Work Order", parentfield="operations",
+                               operation="PLATING", finished_good="SEMI", is_subcontracted=1)])
+        self.card = Record(doctype="Job Card", name="JC", company="JF", docstatus=0, work_order="WO-1",
+            production_item="RING", operation_id="OP-ROW", operation="PLATING", finished_good="SEMI",
+            semi_fg_bom="STAGE-BOM", track_semi_finished_goods=1, is_subcontracted=1)
+        self.bom = Record(doctype="BOM", name="STAGE-BOM", docstatus=1, company="JF", item="SEMI",
+            items=[Record(item_code="PREVIOUS-SEMI")])
+        self.po_row = Record(name="PO-STAGE", parent="PO-STAGE", parenttype="Purchase Order", parentfield="items",
+            item_code="SERVICE", fg_item="SEMI", job_card="JC", bom="STAGE-BOM", jf_flow_order=None, qty=2)
+        self.po_stage = Record(doctype="Purchase Order", name="PO-STAGE", company="JF", supplier="SUP", docstatus=1,
+            is_subcontracted=1, is_old_subcontracting_flow=0, items=[self.po_row])
+        self.sco_row = Record(name="SCO-STAGE", parent="SCO-STAGE", parenttype="Subcontracting Order", parentfield="items",
+            item_code="SEMI", job_card="JC", bom="STAGE-BOM", purchase_order_item="PO-STAGE", jf_flow_order=None, qty=2)
+        self.sco_stage = Record(doctype="Subcontracting Order", name="SCO-STAGE", company="JF", supplier="SUP", docstatus=1,
+            purchase_order="PO-STAGE", items=[self.sco_row], supplied_items=[Record(name="RM-STAGE", parent="SCO-STAGE",
+            parenttype="Subcontracting Order", parentfield="supplied_items", reference_name="SCO-STAGE",
+            main_item_code="SEMI", rm_item_code="PREVIOUS-SEMI")])
+        self.scr_row = Record(name="SCR-STAGE", parent="SCR-STAGE", parenttype="Subcontracting Receipt", parentfield="items",
+            item_code="SEMI", job_card="JC", bom="STAGE-BOM", purchase_order="PO-STAGE", purchase_order_item="PO-STAGE",
+            subcontracting_order="SCO-STAGE", subcontracting_order_item="SCO-STAGE", jf_flow_order=None, qty=1)
+        self.scr_stage = Record(doctype="Subcontracting Receipt", name="SCR-STAGE", company="JF", supplier="SUP", items=[self.scr_row])
+        self.documents.update({("Job Card", "JC"): self.card, ("BOM", "STAGE-BOM"): self.bom,
+            ("Purchase Order", "PO-STAGE"): self.po_stage, ("Subcontracting Order", "SCO-STAGE"): self.sco_stage})
+        for item in ("SEMI", "PREVIOUS-SEMI", "SERVICE"):
+            self.documents["Item", item] = Record(name=item)
+        self.sources["Subcontracting Order Item", "SCO-STAGE"] = self.sco_row
+        self.sources["Subcontracting Order Supplied Item", "RM-STAGE"] = self.sco_stage.supplied_items[0]
+        return stage
+
+    def test_native_stage_po_sco_two_partial_receipts_keep_final_flow_and_quantities(self):
+        self.stage()
+        self.setup.validate_flow_links(self.po_stage)
+        self.setup.validate_flow_links(self.sco_stage)
+        for quantity in (1, 0.5):
+            self.scr_row.qty = quantity
+            self.setup.validate_flow_links(self.scr_stage)
+            self.assertEqual(self.scr_row.qty, quantity)
+            self.assertEqual(self.scr_row.jf_flow_order, "FLOW-1")
+        self.assertEqual((self.po_row.jf_flow_order, self.sco_row.jf_flow_order), ("FLOW-1", "FLOW-1"))
+        self.assertEqual(self.flow.item_code, "RING")
+
+    def test_stage_must_match_actual_operation_bom_company_and_job_card(self):
+        self.stage()
+        for record, field, value in ((self.card, "operation_id", "OTHER"), (self.card, "finished_good", "SILVER"),
+                (self.work_order, "track_semi_finished_goods", 0), (self.card, "track_semi_finished_goods", 0),
+                (self.bom, "item", "SILVER"), (self.bom, "company", "OTHER"), (self.sco_row, "bom", "OTHER"),
+                (self.work_order.operations[0], "is_subcontracted", 0), (self.card, "docstatus", 2)):
+            old = record[field]
+            record[field] = value
+            with self.subTest(field=field), self.assertRaises((ValueError, KeyError)):
+                self.setup.validate_flow_links(self.sco_stage)
+            record[field] = old
+
+    def test_stage_cannot_hide_fields_or_sources_or_use_mapper_wrong_po_row(self):
+        self.stage()
+        for record in (self.card, self.work_order, self.bom, self.po_stage, self.documents["Item", "SEMI"]):
+            record.denied = {"read"}
+            with self.assertRaises(PermissionError):
+                self.setup.validate_flow_links(self.sco_stage)
+            record.denied = set()
+        self.hidden["Work Order Operation"] = {"finished_good"}
+        with self.assertRaises(PermissionError):
+            self.setup.validate_flow_links(self.sco_stage)
+        self.hidden.clear()
+        other = Record(**self.po_row)
+        other.name, other.job_card = "OTHER-ROW", "OTHER-JC"
+        other_card = Record(**self.card)
+        other_card.name = "OTHER-JC"
+        self.documents["Job Card", "OTHER-JC"] = other_card
+        self.po_stage["items"].append(other)
+        self.sco_row.purchase_order_item = "OTHER-ROW"
+        with self.assertRaises(ValueError):
+            self.setup.validate_flow_links(self.sco_stage)
+
+    def test_stage_stock_flow_comes_from_exact_native_bom_and_rejects_outsourced_duplicate_manufacture(self):
+        self.stage()
+        self.card.is_subcontracted = self.work_order.operations[0].is_subcontracted = 0
+        stock = Record(doctype="Stock Entry", company="JF", work_order="WO-1", job_card="JC", bom_no="STAGE-BOM",
+            purpose="Manufacture", items=[Record(item_code="PREVIOUS-SEMI", jf_flow_order=None),
+                                           Record(item_code="SEMI", jf_flow_order=None)])
+        self.setup.validate_flow_links(stock)
+        self.assertEqual([row.jf_flow_order for row in stock["items"]], ["FLOW-1", "FLOW-1"])
+        stock["items"][1].item_code = "RING"
+        with self.assertRaisesRegex(ValueError, "不属于当前报工阶段"):
+            self.setup.validate_flow_links(stock)
+        stock["items"][1].item_code = "SEMI"
+        stock["items"][0].item_code = "ARBITRARY"
+        with self.assertRaises(ValueError):
+            self.setup.validate_flow_links(stock)
+        stock["items"][0].item_code = "PREVIOUS-SEMI"
+        self.card.is_subcontracted = self.work_order.operations[0].is_subcontracted = 1
+        with self.assertRaisesRegex(ValueError, "重复产出"):
+            self.setup.validate_flow_links(stock)
+
+    def test_subcontract_stage_transfers_only_exact_supplied_bom_item(self):
+        self.stage()
+        self.setup.validate_flow_links(self.po_stage)
+        self.setup.validate_flow_links(self.sco_stage)
+        row = Record(item_code="PREVIOUS-SEMI", sco_rm_detail="RM-STAGE", subcontracted_item="SEMI", jf_flow_order=None)
+        stock = Record(doctype="Stock Entry", company="JF", subcontracting_order="SCO-STAGE", items=[row])
+        self.setup.validate_flow_links(stock)
+        self.assertEqual(row.jf_flow_order, "FLOW-1")
+        self.bom["items"][0].item_code = "OTHER"
+        with self.assertRaises(ValueError):
+            self.setup.validate_flow_links(stock)
+
+    def test_stage_service_invoice_keeps_po_source_without_relabelling_service(self):
+        self.stage()
+        self.setup.validate_flow_links(self.po_stage)
+        self.sources["Purchase Order Item", "PO-STAGE"] = self.po_row
+        row = Record(item_code="SERVICE", purchase_order="PO-STAGE", po_detail="PO-STAGE", jf_flow_order=None)
+        invoice = Record(doctype="Purchase Invoice", company="JF", supplier="SUP", items=[row])
+        self.setup.validate_flow_links(invoice)
+        self.assertEqual((row.item_code, row.jf_flow_order), ("SERVICE", "FLOW-1"))
+
+    def test_semi_finished_work_order_cannot_manufacture_without_exact_stage_job_card(self):
+        self.stage()
+        self.entry.purpose = "Manufacture"
+        with self.assertRaisesRegex(ValueError, "重复产出"):
+            self.setup.validate_flow_links(self.entry)
+
+    def test_stage_return_keeps_original_job_card_and_native_negative_quantity(self):
+        self.stage()
+        self.scr_stage.docstatus = 1
+        self.documents["Subcontracting Receipt", "SCR-STAGE"] = self.scr_stage
+        self.setup.validate_flow_links(self.scr_stage)
+        original = self.scr_row
+        self.sources["Subcontracting Receipt Item", "SCR-STAGE"] = original
+        returned = Record(**original)
+        returned.name, returned.parent, returned.qty = "RET-ROW", "RETURN", -0.5
+        returned.subcontracting_receipt_item = "SCR-STAGE"
+        document = Record(doctype="Subcontracting Receipt", name="RETURN", company="JF", supplier="SUP",
+            is_return=1, return_against="SCR-STAGE", items=[returned])
+        self.setup.validate_flow_links(document)
+        self.assertEqual((returned.qty, returned.jf_flow_order), (-0.5, "FLOW-1"))
+        original.job_card = "DIFFERENT"
+        with self.assertRaises(ValueError):
+            self.setup.validate_flow_links(document)
 
 
 if __name__ == "__main__":

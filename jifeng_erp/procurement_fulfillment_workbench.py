@@ -13,6 +13,8 @@ import frappe
 from frappe.model import get_permitted_fields
 from frappe.utils import getdate
 
+from jifeng_erp import subcontract_stage
+
 
 PO, PR, PI = "Purchase Order", "Purchase Receipt", "Purchase Invoice"
 SCO, SCR = "Subcontracting Order", "Subcontracting Receipt"
@@ -85,6 +87,14 @@ TABLES = {
     DN: ("items", "Delivery Note Item", CHILD | {"item_code", "against_sales_order", "so_detail", "against_sales_invoice", "si_detail",
                                                "dn_detail", "jf_flow_order"}, set()),
 }
+for _doctype in (PO, SCO, SCR):
+    _field, _child, _required, _optional = TABLES[_doctype]
+    TABLES[_doctype] = (_field, _child, _required, _optional | {"job_card", "bom"})
+for _doctype in (subcontract_stage.JC, subcontract_stage.WO, subcontract_stage.BOM):
+    PARENTS[_doctype] = (subcontract_stage.PARENTS[_doctype], set())
+for _doctype in (subcontract_stage.WO, subcontract_stage.BOM):
+    _field, _child, _required = subcontract_stage.TABLES[_doctype]
+    TABLES[_doctype] = (_field, _child, _required, set())
 EXTRAS = {
     SCO: ("service_items", "Subcontracting Order Service Item", CHILD | {"item_code", "purchase_order_item"},
           {"qty", "rate", "amount"}),
@@ -320,6 +330,13 @@ class _Sources:
         self.source("Item", rows[0]["item_code"])
         return document, rows[0]
 
+    def stage_reader(self, doctype, name):
+        row = self.source(doctype, name)
+        document = {**row, "doctype": doctype}
+        if doctype in TABLES:
+            document[TABLES[doctype][0]] = self.children[doctype, name]
+        return document
+
     def named(self, doctype, filters):
         return [row["name"] for row in self.records(doctype, filters, {"name", "modified"})]
 
@@ -434,7 +451,10 @@ def _origin(graph, doctype, parent, child, visiting=None, extra=False):
     if doctype not in (PO, PR, PI, SCO, SCR):
         _invalid()
     if row.get("jf_flow_order"):
-        _flow(graph, row["jf_flow_order"], row["item_code"], finished=doctype in (SCO, SCR))
+        stage = subcontract_stage.procurement_stage({**document, "doctype": doctype}, row,
+            read=graph.stage_reader, historical=True) if not extra else None
+        _flow(graph, row["jf_flow_order"], stage["flow"]["item_code"] if stage else row["item_code"],
+              finished=doctype in (SCO, SCR) or bool(stage))
     direct = _direct_order(graph, doctype, document, row, extra)
     if key in visiting:
         # Native PI -> later PR can coexist with the reverse invoice link.

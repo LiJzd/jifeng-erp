@@ -349,8 +349,9 @@ def _propagate_procurement_flow(doc):
 
 
 def _propagate_subcontracting_stock_flow(doc):
+    stages = {}
     if not doc.get("subcontracting_order"):
-        return
+        return stages
     for row in doc.get("items") or []:
         if not row.get("sco_rm_detail"):
             continue
@@ -368,14 +369,22 @@ def _propagate_subcontracting_stock_flow(doc):
             continue
         source = frappe.db.get_value(
             "Subcontracting Order Item", supplied.reference_name,
-            ["parent", "item_code", "jf_flow_order"], as_dict=True,
+            ["parent", "item_code", "jf_flow_order", "job_card"], as_dict=True,
         )
         if not source or source.parent != doc.subcontracting_order or source.item_code != supplied.main_item_code:
             frappe.throw("委外发料成品与委外订单明细不一致")
-        if source.jf_flow_order:
-            if row.get("jf_flow_order") and row.jf_flow_order != source.jf_flow_order:
+        source_flow = source.jf_flow_order
+        if source.get("job_card"):
+            from jifeng_erp.subcontract_stage import subcontract_material_stage
+
+            stage = subcontract_material_stage(doc, row)
+            stages[id(row)] = stage
+            source_flow = stage["flow"].get("name")
+        if source_flow:
+            if row.get("jf_flow_order") and row.jf_flow_order != source_flow:
                 frappe.throw("委外发料流程单与来源单据不一致")
-            row.jf_flow_order = source.jf_flow_order
+            row.jf_flow_order = source_flow
+    return stages
 
 
 def validate_flow_links(doc, method=None):
@@ -394,6 +403,16 @@ def validate_flow_links(doc, method=None):
                 frappe.throw("报工单与流程单的公司、商品不一致")
         doc.jf_flow_order = source_flow
         return
+    stage_links, stock_stage_items, work_stage = {}, {}, None
+    if doc.doctype in ("Purchase Order", "Subcontracting Order", "Subcontracting Receipt"):
+        for row in doc.get("items") or []:
+            if not row.get("job_card"):
+                continue
+            from jifeng_erp.subcontract_stage import procurement_stage
+
+            stage = procurement_stage(doc, row, historical=doc.docstatus == 2)
+            stage_links[id(row)] = stage
+            row.jf_flow_order = stage["flow"].get("name")
     if doc.doctype in _PROCUREMENT_SOURCES:
         _propagate_procurement_flow(doc)
     if doc.doctype == "Stock Entry":
@@ -401,7 +420,11 @@ def validate_flow_links(doc, method=None):
             from jifeng_erp.material_issue import validate_material_issue
 
             validate_material_issue(doc)
-        _propagate_subcontracting_stock_flow(doc)
+        stock_stage_items = _propagate_subcontracting_stock_flow(doc)
+        if doc.get("job_card"):
+            from jifeng_erp.subcontract_stage import stock_stage
+
+            work_stage = stock_stage(doc)
     if doc.doctype == "Work Order":
         from jifeng_erp.production_instruction import validate_work_order
 
@@ -411,6 +434,9 @@ def validate_flow_links(doc, method=None):
     if doc.doctype == "Stock Entry" and doc.get("work_order"):
         work_order = frappe.get_doc("Work Order", doc.work_order)
         if work_order.get("jf_flow_order"):
+            if (work_order.get("track_semi_finished_goods") and doc.get("purpose") == "Manufacture"
+                    and not work_stage):
+                frappe.throw("半成品工单制造须从准确报工工序生成，不能从整张工单另造入库重复产出")
             if any(row.get("jf_flow_order") and row.jf_flow_order != work_order.jf_flow_order
                    for row in doc.get("items") or []):
                 frappe.throw("生产工单库存明细不能关联其他流程单")
@@ -425,9 +451,14 @@ def validate_flow_links(doc, method=None):
             if work_order.production_item != work_flow.item_code:
                 frappe.throw("生产工单商品与流程单商品不一致")
             valid_items = {row.item_code for row in work_flow.materials} | {work_flow.item_code}
+            if work_stage:
+                valid_items = work_stage["materials"] | (
+                    {work_stage["item"]} if doc.get("purpose") == "Manufacture" else set())
             for row in doc.get("items") or []:
                 if row.get("jf_flow_order") and row.jf_flow_order != work_flow.name:
                     frappe.throw("生产工单库存明细不能关联其他流程单")
+                if work_stage and row.get("jf_flow_order") and row.item_code not in valid_items:
+                    frappe.throw("库存明细不属于当前报工阶段BOM，不能关联该流程单")
                 if row.item_code in valid_items:
                     row.jf_flow_order = work_flow.name
     # Use a common Flow lock for downstream writes and explicit plan-unit
@@ -452,11 +483,20 @@ def validate_flow_links(doc, method=None):
             stock_plan_quantity(flow)
         if flow.company != doc.company:
             frappe.throw("流程单与业务凭证公司不一致")
-        if doc.doctype in ("Subcontracting Order", "Subcontracting Receipt") and flow.item_code != row.item_code:
+        stage = stage_links.get(id(row))
+        if doc.doctype in ("Subcontracting Order", "Subcontracting Receipt") and flow.item_code != row.item_code and not stage:
             frappe.throw("委外单据商品与流程单商品不一致")
         if doc.doctype in (
             "Stock Entry", "Material Request", "Purchase Order", "Purchase Receipt", "Purchase Invoice",
         ):
             valid_items = {m.item_code for m in flow.materials} | {flow.item_code}
             if row.item_code not in valid_items:
-                frappe.throw("凭证物料不在流程单物料分析中，请先补齐分析")
+                if doc.doctype in ("Purchase Order", "Purchase Receipt", "Purchase Invoice"):
+                    from jifeng_erp.subcontract_stage import procurement_stage
+
+                    stage = stage or procurement_stage(doc, row, historical=doc.docstatus == 2)
+                allowed_stage = (stage and stage["flow"].get("name") == flow.name)
+                allowed_stock = (id(row) in stock_stage_items or (work_stage and row.item_code in
+                    work_stage["materials"] | ({work_stage["item"]} if doc.get("purpose") == "Manufacture" else set())))
+                if not allowed_stage and not allowed_stock:
+                    frappe.throw("凭证物料不在流程单物料分析中，请先补齐分析")
