@@ -32,28 +32,29 @@ frappe.ui.form.on("Jifeng Expense Voucher", {
                         account_currency: source.paid_to_account_currency } }) },
                 { fieldname: "amount", label: "本次付款金额", fieldtype: "Currency", reqd: 1,
                     default: source.outstanding_amount },
-            ], (values) => {
+            ], async (values) => {
                 // Construct an unsaved native document only. Native Payment Entry
                 // validates current PLE balance, party, accounts and allocation.
-                frappe.new_doc("Payment Entry", {
+                await new Promise(resolve => frappe.model.with_doctype("Payment Entry", resolve));
+                const payment = frappe.model.get_new_doc("Payment Entry");
+                Object.assign(payment, {
                     company: source.company, payment_type: "Pay", party_type: source.party_type,
                     party: source.party, paid_to: source.paid_to, paid_from: values.paid_from,
-                }, (payment) => {
-                    // This is a prepared source document, like a native mapped
-                    // Payment Entry. The generic new-doc Link triggers clear
-                    // party/references when party_type initializes; native
-                    // onload, save and submit validation still run normally.
-                    payment.__run_link_triggers = false;
-                    payment.paid_to_account_currency = source.paid_to_account_currency;
-                    payment.paid_amount = values.amount;
-                    payment.received_amount = values.amount;
-                    const row = frappe.model.add_child(payment, "Payment Entry Reference", "references");
-                    Object.assign(row, {
-                        reference_doctype: source.reference_doctype, reference_name: source.reference_name,
-                        total_amount: source.total_amount, outstanding_amount: source.outstanding_amount,
-                        allocated_amount: values.amount,
-                    });
+                    paid_to_account_currency: source.paid_to_account_currency,
+                    paid_amount: values.amount, received_amount: values.amount,
                 });
+                // Prepare the entire native source document before routing;
+                // new_doc's callback can run after the form has begun loading.
+                // Initial party_type Link triggers would erase its references.
+                payment.__run_link_triggers = false;
+                frappe.model.clear_table(payment, "references");
+                const row = frappe.model.add_child(payment, "Payment Entry Reference", "references");
+                Object.assign(row, {
+                    reference_doctype: source.reference_doctype, reference_name: source.reference_name,
+                    total_amount: source.total_amount, outstanding_amount: source.outstanding_amount,
+                    allocated_amount: values.amount,
+                });
+                await frappe.set_route("Form", "Payment Entry", payment.name);
             }, "赊账费用付款", "打开付款单");
             frm._jf_credit_dialog = dialog;
             const previous_hide = dialog.on_hide;
