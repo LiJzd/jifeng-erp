@@ -387,7 +387,9 @@ class JifengWageWorkbench {
                     if (values.job_card && (source.operation !== values.operation)) throw new Error("工序必须与所选报工单一致。");
                     if (this.rows.some(row => row.job_card && row.job_card === values.job_card)) throw new Error("这道报工单已加入明细，请先核对原行。");
                     if (timed && (!(Number(values.hours) > 0) || !(Number(values.hourly_rate) > 0))) throw new Error("计时录入需要明确填写正数小时和计时单价。");
-                    for (const field of ["quantity", "piece_rate", "hours", "hourly_rate", "extra_amount"]) {
+                    // Native Dialog omits hidden fields from get_values. Pure
+                    // time entry explicitly sets piece quantity/rate to zero below.
+                    for (const field of [...(timed ? [] : ["quantity", "piece_rate"]), "hours", "hourly_rate", "extra_amount"]) {
                         if (!Number.isFinite(Number(values[field])) || Number(values[field]) < 0) throw new Error("数量、单价、小时和附加费需要填写非负数。");
                     }
                     const reference = history?.reference() || {};
