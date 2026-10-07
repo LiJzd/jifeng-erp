@@ -25,7 +25,7 @@ QA_USER = "qa@jifeng.test"
 CUSTOMER = "QA 测试客户"
 SUPPLIER = "QA 测试电镀供应商"
 ROLES = (
-    "Stock Manager", "Manufacturing Manager", "Sales Manager", "Purchase Manager",
+    "Stock Manager", "Manufacturing Manager", "Manufacturing User", "Sales Manager", "Purchase Manager",
     "Accounts Manager", "HR Manager", "Quality Manager", "Projects Manager",
     "Item Manager", "Sales Master Manager", "Purchase Master Manager",
 )
