@@ -17,6 +17,7 @@ from uuid import uuid4
 
 ROOT = Path(__file__).parents[1]
 DOCTYPE = "Jifeng Plating Color"
+RECEIPT = "Jifeng Plating Color Receipt"
 EXPECTED_TYPES = {"镀色": "color"}
 SCHEMA = json.loads(
     (
@@ -24,6 +25,8 @@ SCHEMA = json.loads(
         / "jifeng_erp/jifeng_erp/doctype/jifeng_plating_color/jifeng_plating_color.json"
     ).read_text(encoding="utf-8")
 )
+
+RECEIPT_SCHEMA = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_plating_color_receipt/jifeng_plating_color_receipt.json").read_text(encoding="utf-8"))
 
 
 class Row(dict):
@@ -47,7 +50,7 @@ class Document(Row):
 
     @property
     def meta(self):
-        return self.environment.meta
+        return self.environment.receipt_meta if self.doctype == RECEIPT else self.environment.meta
 
     def is_new(self):
         return bool(self.get("__islocal"))
@@ -68,36 +71,40 @@ class Document(Row):
             raise PermissionError("native " + action)
 
     def get_doc_before_save(self):
-        saved = self.environment.documents.get(self.name)
+        store = self.environment.receipts if self.doctype == RECEIPT else self.environment.documents
+        saved = store.get(self.name)
         return Document(deepcopy(saved)) if saved else None
 
     def save(self):
         env, new = self.environment, self.is_new()
+        receipt = self.doctype == RECEIPT
+        store = env.receipts if receipt else env.documents
         self.check_permission("create" if new else "write")
-        if new:
-            env.module.before_insert_dictionary(self)
-        env.module.validate_dictionary(self)
-        if any(
-            row["request_id"] == self.request_id and row["name"] != self.name
-            for row in env.documents.values()
-        ):
-            env.frappe.local.message_log = list(
-                getattr(env.frappe.local, "message_log", None) or []
-            ) + [{"message": "private unique index"}]
+        if receipt:
+            env.module.validate_receipt(self)
+        else:
+            if new:
+                env.module.before_insert_dictionary(self)
+            env.module.validate_dictionary(self)
+        unique_fields = ("creation_request_id", "delete_request_id") if receipt else ("request_id",)
+        if any(self.get(field) and row.get(field) == self.get(field) and row["name"] != self.name
+               for row in store.values() for field in unique_fields):
+            env.frappe.local.message_log = list(getattr(env.frappe.local, "message_log", None) or []) + [{"message": "private unique index"}]
             raise KeyError("private unique SQL")
         env.tick += 1
-        self.name = self.name or "PL-C-" + str(env.tick)
-        self.modified = datetime(2026, 10, 2, 0, 0, 0) + timedelta(
-            microseconds=env.tick
-        )
+        self.name = self.name or ("RECEIPT-" if receipt else "PL-C-") + str(env.tick)
+        self.modified = datetime(2026, 10, 2) + timedelta(microseconds=env.tick)
         self.creation = self.creation or self.modified
         self.owner = self.owner or env.frappe.session.user
         self.modified_by = env.frappe.session.user
         self["__islocal"] = 0
-        env.documents[self.name] = deepcopy(dict(self))
-        if not new:
-            env.versions.append(deepcopy(dict(self)))
-        if env.fail_after_save:
+        store[self.name] = deepcopy(dict(self))
+        if not receipt:
+            if new:
+                env.module.after_insert_dictionary(self)
+            else:
+                env.versions.append(deepcopy(dict(self)))
+        if env.fail_after_save and not receipt:
             env.db.after_commit.add(lambda: None)
             env.frappe.flags.currently_saving = ["unexpected save context"]
             raise ValueError("native post-save failure")
@@ -107,6 +114,7 @@ class Document(Row):
 class PlatingColorTest(unittest.TestCase):
     def setUp(self):
         self.documents, self.versions, self.series, self.snapshots = {}, [], {}, {}
+        self.receipts, self.deleted, self.references = {}, [], set()
         self.role_denials, self.document_denials, self.denied_companies = (
             set(),
             set(),
@@ -124,6 +132,9 @@ class PlatingColorTest(unittest.TestCase):
         self.meta.get_field = lambda name: next(
             (field for field in self.meta.fields if field.fieldname == name), None
         )
+        self.receipt_meta = Row(fields=[Row(field) for field in RECEIPT_SCHEMA["fields"]])
+        self.receipt_meta.get_field = lambda name: next((field for field in self.receipt_meta.fields if field.fieldname == name), None)
+        self.receipt_meta.get_permlevel_access = lambda *args, **kwargs: self.mask_levels
         self.meta.get_permlevel_access = Mock(
             side_effect=lambda action, parenttype: self.mask_levels
         )
@@ -150,7 +161,10 @@ class PlatingColorTest(unittest.TestCase):
                 )
             )
         )
-        self.frappe.get_meta = Mock(return_value=self.meta)
+        self.frappe.get_meta = Mock(side_effect=lambda dt: self.receipt_meta if dt == RECEIPT else self.meta)
+        self.frappe.utils = Row(now_datetime=lambda: datetime(2026, 10, 7))
+        self.frappe.LinkExistsError = RuntimeError
+        self.frappe.delete_doc = Mock(side_effect=self.delete_native)
         self.frappe.new_doc = Mock(side_effect=self.new_doc)
         self.frappe.get_doc = Mock(side_effect=self.get_doc)
         self.frappe.get_list = Mock(side_effect=self.get_list)
@@ -161,7 +175,7 @@ class PlatingColorTest(unittest.TestCase):
             savepoint=self.savepoint,
             rollback=self.rollback,
             get_value=Mock(
-                side_effect=lambda dt, name, field, **kwargs: self.series.get(name)
+                side_effect=self.db_value
             ),
             **{
                 field: Queue()
@@ -173,6 +187,7 @@ class PlatingColorTest(unittest.TestCase):
                 )
             },
         )
+        self.db.exists = lambda dt, name: name in (self.receipts if dt == RECEIPT else self.documents)
         self.frappe.db = self.db
         model, naming = (
             types.ModuleType("frappe.model"),
@@ -180,7 +195,7 @@ class PlatingColorTest(unittest.TestCase):
         )
         model.get_permitted_fields = lambda dt, permission_type, **kwargs: (
             (
-                {field.fieldname for field in self.meta.fields}
+                {field.fieldname for field in (self.receipt_meta if dt == RECEIPT else self.meta).fields}
                 | {"name", "modified", "creation", "owner", "modified_by"}
             )
             - self.hidden[permission_type]
@@ -228,6 +243,8 @@ class PlatingColorTest(unittest.TestCase):
         Document.environment = self
 
     def new_doc(self, doctype):
+        if doctype == RECEIPT:
+            return Document(doctype=RECEIPT, name=None, __islocal=1)
         self.assertEqual(doctype, DOCTYPE)
         return Document(
             doctype=DOCTYPE,
@@ -239,7 +256,11 @@ class PlatingColorTest(unittest.TestCase):
             __islocal=1,
         )
 
-    def get_doc(self, doctype, name, **kwargs):
+    def get_doc(self, doctype, name=None, **kwargs):
+        if isinstance(doctype, dict):
+            return Document(**doctype, __islocal=0)
+        if doctype == RECEIPT:
+            return Document(deepcopy(self.receipts[name]))
         if doctype == "Company":
 
             def check(action):
@@ -258,9 +279,10 @@ class PlatingColorTest(unittest.TestCase):
         return Document(deepcopy(self.documents[name]))
 
     def get_list(self, doctype, filters, fields, **options):
-        self.assertEqual(doctype, DOCTYPE)
+        self.assertIn(doctype, (DOCTYPE, RECEIPT))
         result = []
-        for name, row in self.documents.items():
+        store = self.receipts if doctype == RECEIPT else self.documents
+        for name, row in store.items():
             if name in self.document_denials or row["company"] in self.denied_companies:
                 continue
             if not all(row.get(field) == value for field, value in filters.items()):
@@ -291,12 +313,33 @@ class PlatingColorTest(unittest.TestCase):
         return str(self.series[key]).zfill(digits)
 
     def savepoint(self, point):
-        self.snapshots[point] = deepcopy((self.documents, self.versions, self.series))
+        self.snapshots[point] = deepcopy((self.documents, self.versions, self.series, self.receipts, self.deleted))
 
     def rollback(self, save_point):
-        self.documents, self.versions, self.series = deepcopy(
-            self.snapshots[save_point]
-        )
+        self.documents, self.versions, self.series, self.receipts, self.deleted = deepcopy(self.snapshots[save_point])
+
+    def db_value(self, doctype, filters, field, **kwargs):
+        if doctype == "Series":
+            return self.series.get(filters)
+        self.assertIn(doctype, (DOCTYPE, RECEIPT))
+        store = self.receipts if doctype == RECEIPT else self.documents
+        rows = [row for row in store.values() if all(row.get(key) == value for key, value in filters.items())]
+        return rows[0].get(field) if rows else None
+
+    def delete_native(self, doctype, name, **kwargs):
+        self.assertEqual(doctype, DOCTYPE)
+        self.assertEqual(kwargs, {"ignore_missing": False})
+        document = self.get_doc(doctype, name)
+        document.check_permission("delete")
+        self.module.before_delete_dictionary(document)
+        if name in self.references:
+            raise self.frappe.LinkExistsError("actual native Link protection")
+        self.deleted.append(deepcopy(self.documents.pop(name)))
+        self.module.after_delete_dictionary(document)
+
+    def delete_payload(self, archive, **changes):
+        return {"name": archive["name"], "creation": str(archive["creation"]), "version": archive["version"],
+                "company": archive["company"], "dictionary_type": "镀色", "request_id": str(uuid4()), **changes}
 
     def payload(self, **changes):
         return {
@@ -331,13 +374,14 @@ class PlatingColorTest(unittest.TestCase):
             | changes
         )
 
-    def test_schema_sales_roles_only_and_no_native_delete_export(self):
+    def test_schema_sales_roles_only_and_native_manager_delete(self):
         self.assertEqual(
             {row["role"] for row in SCHEMA["permissions"]},
             {"System Manager", "Sales Manager", "Sales User"},
         )
         for row in SCHEMA["permissions"]:
-            self.assertFalse(row.get("delete") or row.get("export"))
+            self.assertFalse(row.get("export"))
+            self.assertEqual(bool(row.get("delete")), row["role"] != "Sales User")
             if row["role"] == "Sales User":
                 self.assertFalse(row.get("create") or row.get("write"))
         self.assertTrue(self.meta.get_field("abbreviation").read_only)
@@ -406,10 +450,8 @@ class PlatingColorTest(unittest.TestCase):
         self.document_denials.add(archive["name"])
         self.frappe.local.message_log = [{"message": "existing"}]
         before = deepcopy((self.documents, self.versions, self.series))
-        self.assertEqual(
-            self.module.resolve_creation(payload["request_id"], "镀色", "C-1"),
-            {"status": "not_found"},
-        )
+        with self.assertRaises(PermissionError):
+            self.module.resolve_creation(payload["request_id"], "镀色", "C-1")
         with self.assertRaisesRegex(ValueError, "身份冲突") as caught:
             self.module.save_dictionary(payload)
         self.assertIsNone(caught.exception.__context__)
@@ -753,12 +795,191 @@ class PlatingColorTest(unittest.TestCase):
             with self.subTest(length=length), self.assertRaises(ValueError):
                 self.module.list_dictionary("镀色", "C-1", page_length=length)
 
-    def test_deletion_is_rejected_even_for_administrator(self):
+    def test_creation_deleted_replay_and_same_name_replacement_keep_permanent_identity(self):
+        payload = self.payload()
+        archive = self.module.save_dictionary(payload)
+        delete_request = self.delete_payload(archive)
+        reply = self.module.delete_dictionary(delete_request)
+        self.assertEqual(reply["status"], "deleted")
+        self.assertEqual(len(self.deleted), 1)
+        self.assertEqual(self.module.resolve_delete(delete_request), reply)
+        self.assertEqual(self.module.resolve_creation(payload["request_id"], "镀色", "C-1")["status"], "deleted")
+        before = deepcopy((self.documents, self.receipts, self.series))
+        with self.assertRaisesRegex(ValueError, "已删除"):
+            self.module.save_dictionary(payload)
+        self.assertEqual((self.documents, self.receipts, self.series), before)
+        replacement = self.new_doc(DOCTYPE)
+        replacement.name, replacement.company, replacement.value = archive["name"], "C-1", "同名新镀色"
+        replacement.save()
+        self.assertNotEqual(replacement.request_id, payload["request_id"])
+        self.assertNotEqual(replacement.creation.isoformat(), archive["creation"])
+        self.assertEqual(self.module.resolve_delete(delete_request), reply)
+        self.assertEqual(self.module.resolve_creation(payload["request_id"], "镀色", "C-1")["status"], "deleted")
+        with self.assertRaisesRegex(ValueError, "删除请求已使用"):
+            self.module.delete_dictionary(delete_request)
+        self.assertEqual(self.documents[replacement.name]["value"], "同名新镀色")
+
+    def test_direct_native_form_create_and_delete_use_the_same_permanent_record(self):
+        document = self.new_doc(DOCTYPE)
+        document.company, document.value = "C-1", "原生表单镀色"
+        document.save()
+        request_id = document.request_id
+        self.assertEqual(len(self.receipts), 1)
+        self.frappe.delete_doc(DOCTYPE, document.name, ignore_missing=False)
+        record = next(iter(self.receipts.values()))
+        self.assertEqual(record["status"], "deleted")
+        self.assertEqual(record["creation_request_id"], request_id)
+        self.assertEqual(record["color_name"], self.deleted[0]["name"])
+        self.assertEqual(self.module.resolve_creation(request_id, "镀色", "C-1")["status"], "deleted")
+        with patch.object(self.module, "uuid4", return_value=request_id), self.assertRaisesRegex(ValueError, "身份冲突"):
+            replacement = self.new_doc(DOCTYPE)
+            replacement.company, replacement.value = "C-1", "另一原生新建"
+            replacement.save()
+        self.assertFalse(self.documents)
+
+    def test_deletion_preserves_native_http_timestamp_strings_after_exact_comparison(self):
         archive = self.saved()
-        self.frappe.session.user = "Administrator"
-        with self.assertRaisesRegex(ValueError, "删除尚未实现"):
-            self.module.prevent_delete(self.get_doc(DOCTYPE, archive["name"]))
+        self.assertIsInstance(archive["creation"], datetime)
+        listed = self.module.list_dictionary("镀色", "C-1")["rows"][0]
+        self.assertIsInstance(listed["creation"], datetime)
+        request = self.delete_payload(archive, version=archive["version"].replace("T", " "))
+        self.assertIn(" ", request["creation"])
+        self.assertTrue(request["creation"].endswith("000001"))
+        reply = self.module.delete_dictionary(request)
+        self.assertEqual(reply, {"status": "deleted", **request})
+        self.assertEqual(self.module.resolve_delete(request), reply)
+        iso_request = {**request, "creation": request["creation"].replace(" ", "T"),
+                       "version": request["version"].replace(" ", "T")}
+        self.assertEqual(self.module.resolve_delete(iso_request), {"status": "deleted", **iso_request})
+        for field in ("creation", "version"):
+            changed = datetime.fromisoformat(request[field]) + timedelta(microseconds=1)
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.module.resolve_delete({**request, field: str(changed)})
+
+    def test_native_link_rejection_rolls_back_receipt_and_keeps_source_and_deleted_audit(self):
+        archive = self.saved()
+        self.references.add(archive["name"])
+        before = deepcopy((self.documents, self.receipts, self.deleted, self.series))
+        with self.assertRaisesRegex(ValueError, "业务引用") as caught:
+            self.module.delete_dictionary(self.delete_payload(archive))
+        self.assertIsNone(caught.exception.__context__)
+        self.assertEqual((self.documents, self.receipts, self.deleted, self.series), before)
+        self.assertEqual(self.frappe.delete_doc.call_args.kwargs, {"ignore_missing": False})
+        self.assertTrue(all(record["status"] == "active" for record in self.receipts.values()))
+
+    def test_late_native_delete_failure_rolls_back_both_color_and_permanent_status(self):
+        archive = self.saved()
+        before = deepcopy((self.documents, self.receipts, self.deleted, self.series))
+        original = self.module.after_delete_dictionary
+        def late_failure(document):
+            original(document)
+            raise ValueError("native audit or attachment failure")
+        with patch.object(self.module, "after_delete_dictionary", side_effect=late_failure), self.assertRaises(ValueError):
+            self.module.delete_dictionary(self.delete_payload(archive))
+        self.assertEqual((self.documents, self.receipts, self.deleted, self.series), before)
+
+    def test_stale_creation_version_and_cross_company_never_delete_a_color(self):
+        archive = self.saved()
+        before = deepcopy((self.documents, self.receipts, self.deleted))
+        for changes in ({"creation": "2020-01-01T00:00:00"}, {"version": "2020-01-01T00:00:00"}, {"company": "C-2"}):
+            with self.subTest(changes=changes), self.assertRaises(RuntimeError):
+                self.module.delete_dictionary(self.delete_payload(archive, **changes))
+            self.assertEqual((self.documents, self.receipts, self.deleted), before)
+        self.frappe.delete_doc.assert_not_called()
+
+    def test_delete_permission_mask_and_company_revocation_keep_business_unchanged(self):
+        archive = self.saved()
+        before = deepcopy((self.documents, self.receipts, self.deleted))
+        self.role_denials.add("delete")
+        with self.assertRaises(PermissionError):
+            self.module.delete_dictionary(self.delete_payload(archive))
+        self.role_denials.clear()
+        self.hidden["read"].add("creation")
+        with self.assertRaises(PermissionError):
+            self.module.delete_dictionary(self.delete_payload(archive))
+        self.hidden["read"].clear()
+        self.denied_companies.add("C-1")
+        with self.assertRaises(PermissionError):
+            self.module.delete_dictionary(self.delete_payload(archive))
+        self.assertEqual((self.documents, self.receipts, self.deleted), before)
+
+    def test_receipts_cannot_be_created_edited_deleted_or_renamed_by_native_forms(self):
+        archive = self.saved()
+        record = self.get_doc(RECEIPT, next(iter(self.receipts)))
+        record.status = "deleted"
+        with self.assertRaisesRegex(ValueError, "只能由原生"):
+            record.save()
+        with self.assertRaisesRegex(ValueError, "只能由原生"):
+            self.new_doc(RECEIPT).save()
+        for action in (lambda: self.module.prevent_receipt_change(record), lambda: self.module.prevent_receipt_change(record, "new", False)):
+            with self.assertRaisesRegex(ValueError, "永久保留"):
+                action()
+        self.assertEqual(self.receipts[record.name]["status"], "active")
         self.assertIn(archive["name"], self.documents)
+
+    def test_unknown_or_current_source_is_not_deletion_evidence_and_no_read_calls_write(self):
+        archive = self.saved()
+        request = self.delete_payload(archive)
+        before = deepcopy((self.documents, self.receipts, self.deleted, self.series))
+        self.assertEqual(self.module.resolve_delete(request), {"status": "not_deleted", **request})
+        self.assertEqual(self.module.resolve_delete(request | {"name": "ABSENT"}), {"status": "unknown"})
+        self.assertEqual((self.documents, self.receipts, self.deleted, self.series), before)
+        self.frappe.delete_doc.assert_not_called()
+
+    def test_deleted_record_read_still_requires_source_scope_fields_and_receipt_fields(self):
+        payload = self.payload()
+        archive = self.module.save_dictionary(payload)
+        request = self.delete_payload(archive)
+        self.module.delete_dictionary(request)
+        for field in ("creation", "owner", "value", "deleted_version"):
+            self.hidden["read"].add(field)
+            with self.subTest(field=field), self.assertRaises(PermissionError):
+                self.module.resolve_delete(request)
+            self.hidden["read"].clear()
+        self.document_denials.add(archive["name"])
+        with self.assertRaises(PermissionError):
+            self.module.resolve_creation(payload["request_id"], "镀色", "C-1")
+        self.document_denials.clear()
+        self.denied_companies.add("C-1")
+        with self.assertRaises(PermissionError):
+            self.module.resolve_delete(request)
+
+    def test_receipt_creation_failure_rolls_back_insert_and_number_in_api_transaction(self):
+        before = deepcopy((self.documents, self.receipts, self.series, self.deleted))
+        with patch.object(self.module, "_save_record", side_effect=PermissionError("receipt create denied")), self.assertRaises(PermissionError):
+            self.saved()
+        self.assertEqual((self.documents, self.receipts, self.series, self.deleted), before)
+
+    def test_on_trash_to_after_delete_version_drift_cannot_write_a_false_receipt(self):
+        archive = self.saved()
+        before = deepcopy((self.documents, self.receipts, self.deleted))
+        original = self.module.after_delete_dictionary
+        def changed_version(document):
+            document.modified += timedelta(seconds=1)
+            original(document)
+        with patch.object(self.module, "after_delete_dictionary", side_effect=changed_version), self.assertRaisesRegex(ValueError, "准确原生来源"):
+            self.module.delete_dictionary(self.delete_payload(archive))
+        self.assertEqual((self.documents, self.receipts, self.deleted), before)
+
+    def test_permanent_record_does_not_duplicate_original_text_number_or_digest(self):
+        archive = self.saved()
+        record = next(iter(self.receipts.values()))
+        for field in ("code", "value", "color_system", "remarks", "legacy_number", "creation_digest", "request_digest"):
+            self.assertNotIn(field, record)
+        self.hidden["read"].update(("legacy_number", "code", "color_system", "remarks"))
+        self.assertNotIn("legacy_number", self.module.read_dictionary(archive["name"], "镀色"))
+        self.assertNotIn("legacy_number", record)
+
+    def test_two_colors_can_keep_two_permanent_deletion_records(self):
+        archives = [self.saved(value="第一镀色"), self.saved(value="第二镀色")]
+        requests = [self.delete_payload(archive) for archive in archives]
+        for request in requests:
+            self.assertEqual(self.module.delete_dictionary(request)["status"], "deleted")
+        self.assertFalse(self.documents)
+        self.assertEqual(len(self.receipts), 2)
+        self.assertEqual(len(self.deleted), 2)
+        for request in requests:
+            self.assertEqual(self.module.resolve_delete(request)["request_id"], request["request_id"])
 
     def test_fixed_readonly_type_and_independent_schema(self):
         self.assertEqual(self.module.TYPES, EXPECTED_TYPES)
@@ -799,6 +1020,7 @@ class PlatingColorTest(unittest.TestCase):
                     "select": 1,
                     "write": 1,
                     "create": 1,
+                    "delete": 1,
                 },
                 {
                     "role": "Sales Manager",
@@ -806,6 +1028,7 @@ class PlatingColorTest(unittest.TestCase):
                     "select": 1,
                     "write": 1,
                     "create": 1,
+                    "delete": 1,
                 },
                 {"role": "Sales User", "read": 1, "select": 1},
             ],

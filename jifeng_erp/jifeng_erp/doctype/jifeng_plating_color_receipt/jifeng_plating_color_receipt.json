@@ -1,0 +1,129 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Plating Color Receipt",
+ "module": "Jifeng ERP",
+ "autoname": "hash",
+ "allow_rename": 0,
+ "track_changes": 1,
+ "field_order": [
+  "company",
+  "dictionary_type",
+  "creation_request_id",
+  "color_name",
+  "color_creation",
+  "color_owner",
+  "status",
+  "delete_request_id",
+  "deleted_version",
+  "deleted_at",
+  "deleted_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "公司",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "dictionary_type",
+   "fieldtype": "Data",
+   "label": "档案类型",
+   "read_only": 1,
+   "no_copy": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "creation_request_id",
+   "fieldtype": "Data",
+   "label": "原新建请求",
+   "read_only": 1,
+   "no_copy": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "color_name",
+   "fieldtype": "Data",
+   "label": "镀色编号",
+   "read_only": 1,
+   "no_copy": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "color_creation",
+   "fieldtype": "Datetime",
+   "label": "镀色创建时间",
+   "read_only": 1,
+   "no_copy": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "color_owner",
+   "fieldtype": "Data",
+   "label": "镀色创建人",
+   "read_only": 1,
+   "no_copy": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "记录状态",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "active\ndeleted",
+   "reqd": 1
+  },
+  {
+   "fieldname": "delete_request_id",
+   "fieldtype": "Data",
+   "label": "删除请求",
+   "read_only": 1,
+   "no_copy": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "deleted_version",
+   "fieldtype": "Datetime",
+   "label": "删除前版本",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "deleted_at",
+   "fieldtype": "Datetime",
+   "label": "删除时间",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "deleted_by",
+   "fieldtype": "Data",
+   "label": "删除人",
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "create": 1,
+   "write": 1
+  },
+  {
+   "role": "Sales Manager",
+   "read": 1,
+   "create": 1,
+   "write": 1
+  },
+  {
+   "role": "Sales User",
+   "read": 1
+  }
+ ],
+ "description": "镀色原生新建和删除的永久操作记录；不可手工建立、修改、删除或重命名。不替代原生 Deleted Document 审计。"
+}

@@ -333,9 +333,10 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		state.busy = true; state.conflict = null; state.review.replaceChildren(); this.freeze(state);
 		try {
 			const candidate = state.candidate;
-			const response = await frappe.call({ method: this.dictionaryApi + "." + (candidate.name ? "read_dictionary" : "resolve_creation"),
+			const response = await frappe.call({ method: this.dictionaryApi + "." + (candidate.name ? "read_dictionary" : "resolve_creation"), type: "GET",
 				args: candidate.name ? { name: candidate.name, dictionary_type: this.type } :
 					{ request_id: candidate.request_id, dictionary_type: this.type, company: candidate.company }, freeze: true });
+			if (!candidate.name && await this.resolveCreationState(state, response.message)) return;
 			const archive = candidate.name ? response.message : response.message?.status === "found" ? response.message.archive : null;
 			if (this.matches(state, archive)) { await this.accept(state, archive, "已核对保存结果"); return; }
 			const fields = this.editorFields().filter((field) => field !== "legacy_number" && field in candidate);
@@ -365,6 +366,9 @@ window.JifengProductDictionary = class JifengProductDictionary {
 		finally { state.busy = false; this.freeze(state); }
 	}
 
+	async resolveCreationState(state, result) { return false; }
+	newDraftReady(state) {}
+
 	acceptCurrent(state) {
 		if (state.closed || state.busy || !state.unresolved || !state.conflict || state.confirming) return;
 		const archive = state.conflict; state.confirming = true;
@@ -391,6 +395,7 @@ window.JifengProductDictionary = class JifengProductDictionary {
 				const requestId = this.requestID();
 				state.archive = archive; state.requestId = requestId; state.candidate = null; state.conflict = null;
 				state.review.replaceChildren(); await state.dialog.set_values(this.values(state)); state.original = JSON.stringify(this.payload(state));
+				this.newDraftReady(state);
 			} catch { /* Failed initialization keeps the previous saved row/draft. */ }
 			finally { state.busy = false; this.freeze(state); }
 		};

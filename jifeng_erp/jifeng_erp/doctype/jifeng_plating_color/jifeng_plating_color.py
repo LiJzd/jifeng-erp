@@ -2,7 +2,9 @@ from frappe.model.document import Document
 
 from jifeng_erp.plating_color import (
     before_insert_dictionary,
-    prevent_delete,
+    after_insert_dictionary,
+    before_delete_dictionary,
+    after_delete_dictionary,
     validate_dictionary,
 )
 
@@ -15,4 +17,10 @@ class JifengPlatingColor(Document):
         validate_dictionary(self)
 
     def on_trash(self):
-        prevent_delete(self)
+        before_delete_dictionary(self)
+
+    def after_insert(self):
+        after_insert_dictionary(self)
+
+    def after_delete(self):
+        after_delete_dictionary(self)

@@ -19,6 +19,7 @@ from jifeng_erp.personnel_separation import _atomic
 
 
 DOCTYPE = "Jifeng Plating Color"
+RECEIPT = "Jifeng Plating Color Receipt"
 TYPES = {"镀色": "color"}
 EDIT_FIELDS = ("code", "value", "color_system", "remarks", "inactive")
 IDENTITY = ("company", "dictionary_type")
@@ -38,7 +39,14 @@ REQUEST_FIELDS = ("request_id", "request_digest")
 REQUIRED_READ = {"name", "modified", *IDENTITY, "value", "inactive", "numbering_mode"}
 AUDIT_FIELDS = ("creation", "owner", "modified_by")
 _CREATING = ContextVar("jifeng_plating_color_creation", default=None)
+_DELETING = ContextVar("jifeng_plating_color_deletion", default=None)
 _SERVER = object()
+RECEIPT_FIELDS = (
+    "company", "dictionary_type", "creation_request_id",
+    "color_name", "color_creation", "color_owner", "status",
+    "delete_request_id", "deleted_version", "deleted_at", "deleted_by",
+)
+RECEIPT_IDENTITY = RECEIPT_FIELDS[:6]
 COLLISION = "新建请求已使用或身份冲突，请查询核对，不自动重复保存"
 CHANGED = "镀色档案来源已变化，请重新核对"
 BATCH_LENGTH = 200
@@ -201,6 +209,8 @@ def before_insert_dictionary(document):
     }
     _fields({*IDENTITY, "value", "inactive", *populated}, "read")
     _fields({*IDENTITY, "value", "inactive", *populated}, "write")
+    if _creation_record(document.request_id, lock=True):
+        frappe.throw(COLLISION)
     from frappe.model.naming import getseries
 
     document.legacy_number = getseries(
@@ -270,9 +280,136 @@ def validate_dictionary(document):
         document.set(field, _normalize(field, document.get(field)))
 
 
-def prevent_delete(document):
+def _record_fields(permission="read"):
+    permitted = set(get_permitted_fields(RECEIPT, permission_type=permission, ignore_virtual=True))
+    meta = frappe.get_meta(RECEIPT)
+    levels = set(meta.get_permlevel_access("mask", parenttype=None))
+    if frappe.session.user != "Administrator":
+        permitted -= {df.fieldname for df in meta.fields
+                      if df.get("mask") and (df.permlevel or 0) not in levels}
+    if not {"name", *RECEIPT_FIELDS}.issubset(permitted):
+        frappe.throw("没有核对镀色操作记录所需字段的权限", frappe.PermissionError)
+
+
+def _creation_record(request_id, *, lock=False, company=None, dictionary_type=None):
+    filters = {"creation_request_id": request_id}
+    if company is not None:
+        filters.update(company=company, dictionary_type=dictionary_type)
+    return frappe.db.get_value(RECEIPT, filters, "name", for_update=lock)
+
+
+def _source_identity(document):
+    return (
+        document.company, document.dictionary_type, document.get("request_id") or None,
+        document.name, _version(document.creation), document.owner,
+    )
+
+
+def _check_record_identity(record, document):
+    values = tuple(record.get(field) for field in RECEIPT_IDENTITY)
+    expected = _source_identity(document)
+    if any(values[i] != expected[i] for i in range(len(values)) if i != 4) or not same_version(values[4], expected[4]):
+        frappe.throw(CHANGED)
+
+
+def _save_record(record):
+    record.__dict__["_jf_plating_receipt"] = (_SERVER, tuple(record.get(field) for field in RECEIPT_FIELDS))
+    record.save()
+    return record
+
+
+def _active_record(document):
+    name = _creation_record(document.request_id, lock=True) if document.get("request_id") else None
+    if name:
+        record = frappe.get_doc(RECEIPT, name, for_update=True)
+        _check_record_identity(record, document)
+        if record.status != "active":
+            frappe.throw(COLLISION)
+        return record
+    record = frappe.new_doc(RECEIPT)
+    for field, value in zip(RECEIPT_IDENTITY, _source_identity(document)):
+        record.set(field, value)
+    record.status = "active"
+    return _save_record(record)
+
+
+def after_insert_dictionary(document):
+    """The permanent UUID is stored in the same native transaction as the color."""
+    if document.__dict__.get("_jf_plating_color_server") is not _SERVER:
+        frappe.throw("镀色新建记录只能由原生创建流程建立")
+    _active_record(document)
+
+
+def validate_receipt(document):
+    marker = document.__dict__.get("_jf_plating_receipt")
+    if not marker or marker[0] is not _SERVER or marker[1] != tuple(document.get(field) for field in RECEIPT_FIELDS):
+        frappe.throw("镀色操作记录只能由原生镀色创建或删除流程建立")
+    document.check_permission("create" if document.is_new() else "write")
+    _company(document.company)
+    _type(document.dictionary_type)
+    before = document.get_doc_before_save()
+    if before:
+        if before.status != "active" or document.status != "deleted" or any(
+            before.get(field) != document.get(field) for field in RECEIPT_IDENTITY
+        ):
+            frappe.throw("镀色操作记录的原创建身份不可修改")
+    elif document.status != "active" or any(document.get(field) for field in RECEIPT_FIELDS[7:]):
+        frappe.throw("镀色创建记录不能预填删除状态")
+    if document.get("creation_request_id"):
+        _uuid(document.creation_request_id)
+    if document.status == "deleted":
+        _uuid(document.delete_request_id)
+        if not document.deleted_version or not document.deleted_at or document.deleted_by != frappe.session.user:
+            frappe.throw("镀色删除记录不完整")
+
+
+def prevent_receipt_change(*args, **kwargs):
+    frappe.throw("镀色操作记录永久保留，不可删除或重命名")
+
+
+def before_delete_dictionary(document):
     _login()
-    frappe.throw("镀色档案删除尚未实现，请保留词条核对")
+    _company(document.company)
+    _type(document.dictionary_type)
+    document.check_permission("read")
+    document.check_permission("delete")
+    _fields(REQUIRED_READ | {"creation", "owner"} | set(REQUEST_FIELDS), "read")
+    current = frappe.get_doc(DOCTYPE, document.name, for_update=True)
+    if (_source_identity(current) != _source_identity(document)
+        or any(current.get(field) != document.get(field) for field in REQUEST_FIELDS)
+        or not same_version(current.modified, _version(document.modified))):
+        frappe.throw(CHANGED, frappe.TimestampMismatchError)
+    _projection(current)
+    payload = _DELETING.get() or {
+        "request_id": str(uuid4()), "name": document.name,
+        "creation": _version(document.creation), "version": _version(document.modified),
+        "company": document.company, "dictionary_type": document.dictionary_type,
+    }
+    _check_delete_identity(payload, current)
+    if frappe.db.get_value(RECEIPT, {"delete_request_id": payload["request_id"]}, "name", for_update=True):
+        frappe.throw("删除请求已使用，请只读核对删除记录")
+    record = _active_record(current)
+    document.__dict__["_jf_plating_delete"] = (_SERVER, record.name, dict(payload), _source_identity(current), current.get("request_digest"))
+
+
+def after_delete_dictionary(document):
+    marker = document.__dict__.get("_jf_plating_delete")
+    if (not marker or marker[0] is not _SERVER or marker[3] != _source_identity(document)
+        or marker[4] != document.get("request_digest")
+        or not same_version(document.modified, marker[2]["version"])):
+        frappe.throw("镀色删除记录缺少准确原生来源")
+    if frappe.db.exists(DOCTYPE, document.name):
+        frappe.throw("镀色原生删除结果未确认")
+    record = frappe.get_doc(RECEIPT, marker[1], for_update=True)
+    _check_record_identity(record, document)
+    if record.status != "active":
+        frappe.throw("镀色删除记录状态已变化")
+    record.status = "deleted"
+    record.delete_request_id = marker[2]["request_id"]
+    record.deleted_version = marker[2]["version"]
+    record.deleted_at = frappe.utils.now_datetime()
+    record.deleted_by = frappe.session.user
+    _save_record(record)
 
 
 def _version(value):
@@ -372,6 +509,8 @@ def _pack(document, *, unscoped=False):
                 else {*IDENTITY, "value", "inactive"}.issubset(writable)
             )
         ),
+        "can_delete": bool(existing and "creation" in values and
+            frappe.has_permission(DOCTYPE, "delete", doc=document, throw=False)),
     }
 
 
@@ -442,7 +581,8 @@ def _scan(filters, options, readable, company, dictionary_type, include_inactive
                         for field in ("name", *FIELDS, *AUDIT_FIELDS)
                         if field in row
                     }
-                    | {"version": _version(row["modified"])}
+                    | {"version": _version(row["modified"]), "can_delete": bool(
+                        "creation" in row and frappe.has_permission(DOCTYPE, "delete", doc=document, throw=False))}
                 )
         if len(listed) < BATCH_LENGTH:
             break
@@ -521,6 +661,13 @@ def read_dictionary(name, dictionary_type):
 
 
 def _receipt(request_id, dictionary_type, company):
+    permanent = _creation_record(request_id, company=company, dictionary_type=dictionary_type)
+    if permanent:
+        record = _read_record(permanent)
+        if (record.company, record.dictionary_type) != (company, dictionary_type):
+            frappe.throw(COLLISION)
+        if record.status == "deleted":
+            frappe.throw("此新建请求的镀色已删除，请保留删除记录并使用新的新建请求")
     if not frappe.has_permission(DOCTYPE, "read"):
         frappe.throw("没有核对镀色档案的权限", frappe.PermissionError)
     _fields(REQUIRED_READ | set(REQUEST_FIELDS), "read")
@@ -536,6 +683,8 @@ def _receipt(request_id, dictionary_type, company):
         limit_page_length=1,
     )
     if not listed:
+        if permanent:
+            frappe.throw(CHANGED)
         return None
     if not receipt_fields.issubset(listed[0]):
         frappe.throw("没有读取镀色档案新建回执投影的权限", frappe.PermissionError)
@@ -551,22 +700,161 @@ def _receipt(request_id, dictionary_type, company):
         or not same_version(document.modified, _version(listed[0]["modified"]))
     ):
         frappe.throw(CHANGED)
+    if permanent:
+        _check_record_identity(record, document)
     return document
 
 
-@frappe.whitelist()
+def _read_record(name):
+    if not frappe.has_permission(DOCTYPE, "read"):
+        frappe.throw("没有核对镀色档案的权限", frappe.PermissionError)
+    _fields(REQUIRED_READ | {"creation", "owner"}, "read")
+    _record_fields()
+    fields = ["name", "modified", *RECEIPT_FIELDS]
+    rows = frappe.get_list(RECEIPT, filters={"name": name}, fields=fields, limit_page_length=1)
+    if not rows or not set(fields).issubset(rows[0]):
+        frappe.throw("没有核对该镀色操作记录的权限", frappe.PermissionError)
+    record = frappe.get_doc(RECEIPT, name)
+    record.check_permission("read")
+    if any(_version(record.get(field)) != _version(rows[0][field]) for field in fields):
+        frappe.throw(CHANGED)
+    _company(record.company)
+    _type(record.dictionary_type)
+    # The deleted source's existing Company/owner scope remains authoritative.
+    # No former color values or raw digest are returned from the receipt.
+    source = frappe.get_doc({"doctype": DOCTYPE, "name": record.color_name,
+        "company": record.company, "dictionary_type": record.dictionary_type,
+        "creation": record.color_creation, "owner": record.color_owner})
+    source.check_permission("read")
+    return record
+
+
+def _deleted_reply(record, *, creation_request=False):
+    if record.status != "deleted":
+        frappe.throw(CHANGED)
+    return {"status": "deleted", "company": record.company,
+        "dictionary_type": record.dictionary_type, "name": record.color_name,
+        "creation": _version(record.color_creation), "version": _version(record.deleted_version),
+        "request_id": record.creation_request_id if creation_request else record.delete_request_id}
+
+
+@frappe.whitelist(methods=["GET"])
 def resolve_creation(request_id, dictionary_type, company):
     """Read-only receipt lookup; not_found does not authorize a retry."""
     _login()
     _uuid(request_id)
     _type(dictionary_type)
     _company(company)
+    permanent = _creation_record(request_id, company=company, dictionary_type=dictionary_type)
+    if permanent:
+        record = _read_record(permanent)
+        if (record.company, record.dictionary_type) != (company, dictionary_type):
+            frappe.throw(COLLISION)
+        if record.status == "deleted":
+            return _deleted_reply(record, creation_request=True)
     document = _receipt(request_id, dictionary_type, company)
     return (
         {"status": "found", "archive": _pack(document)}
         if document
         else {"status": "not_found"}
     )
+
+
+def _delete_payload(payload):
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (ValueError, TypeError):
+            frappe.throw("镀色删除请求必须是有效对象")
+    required = {"name", "creation", "version", "request_id", *IDENTITY}
+    if not isinstance(payload, dict) or set(payload) != required:
+        frappe.throw("镀色删除请求身份不完整")
+    _name(payload["name"])
+    _uuid(payload["request_id"])
+    _type(payload["dictionary_type"])
+    _company(payload["company"])
+    for field in ("creation", "version"):
+        if not isinstance(payload[field], str) or not payload[field]:
+            frappe.throw("镀色删除须包含准确创建身份和版本")
+        try:
+            stamp = datetime.fromisoformat(payload[field])
+        except ValueError:
+            frappe.throw("镀色删除创建身份或版本无效")
+        if stamp.tzinfo is not None:
+            frappe.throw("镀色删除须使用原生创建身份和版本")
+    return payload
+
+
+def _check_delete_identity(payload, document):
+    if (document.name, document.company, document.dictionary_type) != (
+        payload["name"], payload["company"], payload["dictionary_type"]
+    ) or not same_version(document.creation, payload["creation"]) or not same_version(document.modified, payload["version"]):
+        frappe.throw(CHANGED, frappe.TimestampMismatchError)
+
+
+@frappe.whitelist(methods=["POST"])
+@_atomic
+def delete_dictionary(payload):
+    _login()
+    payload = _delete_payload(payload)
+    if frappe.db.get_value(RECEIPT, {"delete_request_id": payload["request_id"]}, "name", for_update=True):
+        frappe.throw("删除请求已使用，请只读核对删除记录，不要重复删除")
+    document = frappe.get_doc(DOCTYPE, payload["name"], for_update=True)
+    document.check_permission("read")
+    document.check_permission("delete")
+    _check_delete_identity(payload, document)
+    _projection(document)
+    context = _DELETING.set(payload)
+    messages_before = list(getattr(frappe.local, "message_log", None) or [])
+    linked = False
+    try:
+        # Native permissions, every real Link and Deleted Document audit remain.
+        try:
+            frappe.delete_doc(DOCTYPE, document.name, ignore_missing=False)
+        except frappe.LinkExistsError:
+            linked = True
+    finally:
+        _DELETING.reset(context)
+    if linked:
+        frappe.local.message_log = messages_before
+        frappe.throw("镀色已有业务引用，不能删除")
+    name = frappe.db.get_value(RECEIPT, {"delete_request_id": payload["request_id"]}, "name")
+    if not name:
+        frappe.throw("镀色删除结果未确认")
+    return _resolved_deletion(payload, _read_record(name))
+
+
+def _resolved_deletion(payload, record):
+    reply = _deleted_reply(record)
+    if any(reply[field] != payload[field] for field in ("name", "company", "dictionary_type", "request_id")) or any(
+        not same_version(reply[field], payload[field]) for field in ("creation", "version")
+    ):
+        frappe.throw(CHANGED)
+    # HTTP source audit timestamps use native space formatting. After exact
+    # native timestamp comparison, preserve the caller's held wire strings.
+    return {**reply, "creation": payload["creation"], "version": payload["version"]}
+
+
+@frappe.whitelist(methods=["GET"])
+def resolve_delete(payload):
+    """Only the matching permanent after-delete record proves completion."""
+    _login()
+    payload = _delete_payload(payload)
+    name = frappe.db.get_value(RECEIPT, {"delete_request_id": payload["request_id"]}, "name")
+    if name:
+        return _resolved_deletion(payload, _read_record(name))
+    # Absence alone never permits resubmission or identifies a same-name row.
+    if not frappe.has_permission(DOCTYPE, "read"):
+        frappe.throw("没有核对镀色档案的权限", frappe.PermissionError)
+    _fields(REQUIRED_READ | {"creation"}, "read")
+    rows = frappe.get_list(DOCTYPE, filters={"name": payload["name"], **{field: payload[field] for field in IDENTITY}},
+        fields=["name", "creation", "modified"], limit_page_length=1)
+    if rows and {"name", "creation", "modified"}.issubset(rows[0]) and same_version(rows[0]["creation"], payload["creation"]):
+        document = frappe.get_doc(DOCTYPE, payload["name"])
+        document.check_permission("read")
+        _check_delete_identity(payload, document)
+        return {"status": "not_deleted", **payload}
+    return {"status": "unknown"}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -626,7 +914,15 @@ def save_dictionary(payload):
             for field in EDIT_FIELDS
         }
         digest = _digest(payload["company"], payload["dictionary_type"], values)
-        previous = _receipt(request_id, payload["dictionary_type"], payload["company"])
+        unreadable = False
+        messages_before = list(getattr(frappe.local, "message_log", None) or [])
+        try:
+            previous = _receipt(request_id, payload["dictionary_type"], payload["company"])
+        except frappe.PermissionError:
+            unreadable = True
+        if unreadable:
+            frappe.local.message_log = messages_before
+            frappe.throw(COLLISION)
         if previous:
             if previous.request_digest != digest:
                 frappe.throw(COLLISION)
