@@ -1,8 +1,21 @@
 /* Order vocabularies have scoped records and preserve the two observed layouts. */
 window.JifengOrderDictionary = class JifengOrderDictionary extends window.JifengProductDictionary {
 	constructor(host, type = "订单类型", title = type) {
-		super(host, type, { api: "jifeng_erp.order_dictionary", title, hideAbbreviation: true, editorSuffix: true });
+		super(host, type, { api: "jifeng_erp.order_dictionary", title, hideAbbreviation: true, editorSuffix: true,
+			...(type === "订单要求" ? { editorFields: ["legacy_number", "value", "remarks", "inactive"] } : {}) });
 	}
+
+	canCreate() { return this.type === "订单要求"; }
+	updateAddButton() {
+		if (this.addButton) this.addButton.disabled = !this.canCreate() || !this.company() || !this.readyArchive?.can_write || this.opening;
+	}
+	async openEditor(name) {
+		if (!name && !this.canCreate()) return;
+		const result = await super.openEditor(name);
+		if (!this.canCreate()) this.editor?.newButton?.hide?.();
+		return result;
+	}
+	newDraft(state) { if (this.canCreate()) super.newDraft(state); }
 
 	build() {
 		this.start = 0; this.total = 0; this.loadedScope = null;

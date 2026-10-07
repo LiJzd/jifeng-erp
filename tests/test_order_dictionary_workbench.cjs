@@ -16,6 +16,8 @@ async function main() {
 	assert.equal(calls.at(-1).options.args.dictionary_type, "订单类型");
 	calls.at(-1).resolve(empty({ company: null, number_preview: null })); await bench.ready;
 	assert.equal(bench.host.descendants("th").map((e) => e.textContent).join("/"), "编号/名称/备注/简拼/停用/操作/日期/修改人/修改日期/修改/删除");
+	assert.equal(bench.addButton.disabled, true, "order type creation remains disabled");
+	const blockedCreateCalls = calls.length; await bench.openEditor(); assert.equal(calls.length, blockedCreateCalls, "order type cannot open a new draft");
 	assert.ok(bench.host.descendants("button").find((e) => e.textContent === "更新简拼").disabled);
 	assert.ok(bench.host.descendants("input").find((e) => e.type === "checkbox" && e.checked && e.disabled));
 	bench.companyControl.set_value("Company A"); calls.at(-1).resolve(result()); await tick();
@@ -42,39 +44,27 @@ async function main() {
 		const query = bench.query(); calls.at(-1).resolve(bad); await query;
 		assert.equal(bench.rows.length, 0); assert.match(bench.status.textContent, /查询失败/);
 	}
-	const open = bench.openEditor(); calls.at(-1).resolve(empty()); await open;
-	const state = bench.editor, dialog = state.dialog;
-	assert.equal(dialog.config.title, "订单类型新增");
-	assert.equal(dialog.config.fields.filter((f) => !f.hidden).map((f) => f.label).join("/"), "编号/名称/备注/停用");
-	assert.equal(dialog.fields_dict.legacy_number.df.read_only, true); assert.equal(dialog.fields_dict.remarks.df.fieldtype, "Data");
-	await dialog.set_values({ value: " 订单类型原文 ", remarks: hostile, abbreviation: "禁止发送" });
-	assert.equal("abbreviation" in bench.payload(state), false); assert.equal("legacy_number" in bench.payload(state), false);
-	const save = bench.save(state), saveCall = calls.at(-1);
-	assert.equal(saveCall.options.method, "jifeng_erp.order_dictionary.save_dictionary");
-	assert.equal(saveCall.options.args.payload.value, " 订单类型原文 ");
-	saveCall.reject(new Error("lost receipt")); await save;
-	const callCount = calls.length; assert.equal(state.unresolved, true);
-	await bench.save(state); bench.newDraft(state); dialog.hide(); assert.equal(calls.length, callCount);
-	const resolve = bench.resolve(state); assert.equal(calls.at(-1).options.method, "jifeng_erp.order_dictionary.resolve_creation");
-	calls.at(-1).resolve({ status: "found", archive: customer({ value: " 订单类型原文 ", remarks: hostile, inactive: 0 }) }); await resolve;
-	assert.equal(state.unresolved, false); assert.equal(state.requestId, null);
-	assert.equal(calls.at(-1).options.method, "jifeng_erp.order_dictionary.list_dictionary");
-	calls.at(-1).resolve(result({ search: "新词" })); await tick();
-	dialog.hide();
+	const editOrderType = bench.openEditor("WORD-1"); calls.at(-1).resolve(customer()); await editOrderType;
+	await bench.editor.dialog.set_values({ value: "订单类型修改原文" });
+	assert.equal(bench.payload(bench.editor).value, "订单类型修改原文");
+	const editOrderTypeSave = bench.save(bench.editor);
+	calls.at(-1).resolve(customer({ value: "订单类型修改原文", version: "2026-10-07T00:00:03" })); await editOrderTypeSave;
+	assert.equal(bench.editor.archive.value, "订单类型修改原文", "existing order-type edits remain available");
+	bench.editor.dialog.hide();
 	const read = bench.openEditor("WORD-1"); calls.at(-1).resolve(customer({ can_write: false })); await read;
 	assert.equal(bench.editor.dialog.fields_dict.abbreviation.df.hidden, true, "unverified old editor field is not invented");
 	assert.equal(bench.editor.dialog.get_primary_btn().disabled, true);
 	bench.editor.dialog.hide();
 	const stale = bench.query(), staleCall = calls.at(-1); bench.destroy(); staleCall.resolve(result({ search: "新词" })); await stale;
 	assert.equal(bench.disposed, true);
-	const delayed = new window.JifengOrderDictionary(new Element());
-	calls.at(-1).resolve(empty({ company: null, number_preview: null })); await delayed.ready;
-	delayed.companyControl.set_value("Company A"); calls.at(-1).resolve(result()); await tick();
+	const delayed = new window.JifengOrderDictionary(new Element(), "订单要求");
+	calls.at(-1).resolve(empty({ dictionary_type: "订单要求", company: null, number_preview: null })); await delayed.ready;
+	delayed.companyControl.set_value("Company A"); calls.at(-1).resolve(result({ dictionary_type: "订单要求" })); await tick();
 	const nativeSetValues = Dialog.prototype.set_values; let release;
 	Dialog.prototype.set_values = async function(values) { await new Promise((yes) => { release = yes; }); return nativeSetValues.call(this, values); };
-	const opening = delayed.openEditor(); calls.at(-1).resolve(empty()); await tick();
+	const opening = delayed.openEditor(); calls.at(-1).resolve(empty({ dictionary_type: "订单要求" })); await tick();
 	const openingState = delayed.editor; assert.ok(openingState && release);
-	delayed.companyControl.set_value("Company B"); calls.at(-1).resolve(result({ company: "Company B" }));
+	delayed.companyControl.set_value("Company B"); calls.at(-1).resolve(result({ company: "Company B", dictionary_type: "订单要求" }));
 	release(); await opening; Dialog.prototype.set_values = nativeSetValues;
 	assert.equal(delayed.editor, null); assert.equal(openingState.dialog.hidden, true);
 	assert.equal(openingState.dialog.$wrapper.element.removed, true, "late field initialization cannot show an old-company dialog");
@@ -86,10 +76,16 @@ async function main() {
 		const typed = entry.workbench;
 		assert.equal(calls.at(-1).options.args.dictionary_type, type, "bridge forwards the exact dictionary identity");
 		calls.at(-1).resolve(empty({ dictionary_type: type, company: null, number_preview: null })); await entry.ready;
+		assert.equal(typed.addButton.disabled, true, "a company must be selected before add is enabled");
 		assert.equal(typed.host.descendants("th").map((e) => e.textContent).join("/"), order ?
 			"编号/名称/备注/简拼/停用/修改/删除" : "编号/名称/备注/简拼/停用/操作/日期/修改人/修改日期/修改/删除");
 		typed.companyControl.set_value("Company A");
 		calls.at(-1).resolve(result({ dictionary_type: type, total: 1, rows: [row({ dictionary_type: type })] })); await tick();
+		assert.equal(typed.addButton.disabled, false, "writable order requirement exposes create");
+		typed.readyArchive = { can_write: false }; typed.updateAddButton();
+		assert.equal(typed.addButton.disabled, true, "create is hidden from a read-only role");
+		const deniedCreateCalls = calls.length; await typed.openEditor(); assert.equal(calls.length, deniedCreateCalls);
+		typed.readyArchive = { can_write: true }; typed.updateAddButton();
 		assert.equal(typed.tbody.descendants("td").length, order ? 7 : 11);
 		const wrong = typed.query(); calls.at(-1).resolve(result({ total: 1, rows: [row()] })); await wrong;
 		assert.equal(typed.rows.length, 0, "a response for order type cannot populate another dictionary");
@@ -99,13 +95,28 @@ async function main() {
 		const typedState = typed.editor;
 		assert.equal(typedState.dialog.config.title, type + "新增");
 		assert.equal(typedState.dialog.config.fields.filter((f) => !f.hidden).map((f) => f.label).join("/"), "编号/名称/备注/停用");
+		assert.equal(typed.editorFields().join(","), "legacy_number,value,remarks,inactive");
 		await typedState.dialog.set_values({ value: type + "原文", remarks: "备注原文", inactive: 0 });
 		const saving = typed.save(typedState);
 		assert.equal(calls.at(-1).options.args.payload.dictionary_type, type);
 		assert.equal("legacy_number" in calls.at(-1).options.args.payload, false);
-		calls.at(-1).resolve(customer({ dictionary_type: type, value: type + "原文", remarks: "备注原文" })); await saving;
+		assert.deepEqual(Object.keys(calls.at(-1).options.args.payload).sort(),
+			["company", "dictionary_type", "inactive", "numbering_mode", "remarks", "request_id", "value"].sort());
+		const createCall = calls.at(-1), savedValues = calls.at(-1).options.args.payload;
+		createCall.reject(new Error("lost receipt")); await saving;
+		assert.equal(typedState.unresolved, true, "unknown result preserves a held draft");
+		const countBeforeRetry = calls.length; await typed.save(typedState); typed.newDraft(typedState);
+		assert.equal(calls.length, countBeforeRetry, "unknown result cannot be saved or replaced blindly");
+		const resolving = typed.resolve(typedState);
+		assert.equal(calls.at(-1).options.method, "jifeng_erp.order_dictionary.resolve_creation");
+		calls.at(-1).resolve({ status: "found", archive: customer({ dictionary_type: type,
+			company: savedValues.company, name: "JF-DICT-1", version: "2026-10-07T00:00:00",
+			value: "订单要求原文", remarks: "备注原文", inactive: 0 }) }); await resolving;
 		assert.equal(typedState.unresolved, false);
+		assert.equal(typedState.requestId, null);
+		assert.equal(calls.at(-1).options.method, "jifeng_erp.order_dictionary.list_dictionary");
 		calls.at(-1).resolve(result({ dictionary_type: type })); await tick();
+		assert.equal(typedState.unresolved, false);
 		typedState.dialog.hide(); entry.stop();
 	}
 	const workspace = Object.create(window.JifengERPWorkspace.Workspace.prototype), opened = [];
@@ -121,6 +132,6 @@ async function main() {
 		workspace.openPage(name, module); assert.equal(opened.length, count); assert.match(messages.at(-1), new RegExp("订单" + name + "页面未能加载"));
 		window.JifengOrderDictionary = component;
 	}
-	console.log("Two order dictionaries: exact bridge identities, seven/eleven observed columns, four-field saves, scoped paging, cross-type response rejection, unknown-result recovery and no preview fallback passed (models).");
+	console.log("Order dictionary workbench: exact bridge identities, scoped requirement creation, disabled order-type creation, observed columns, paging and cross-type response rejection passed (models).");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
