@@ -374,5 +374,13 @@ def posted_flow_wage_costs(flow_order):
             "payroll_entry": payroll.name, "journal_entry": entry.name, "work_order": work.name if work else None, "job_card": card.name if card else None,
             "amount": _number(detail["amount"])})
     read.finish()
-    return {"rows": output, "total": sum((row["amount"] for row in output), Decimal(0)), "currency": currency,
-        "finish_guard": read.finish}
+    result = {"rows": output, "total": sum((row["amount"] for row in output), Decimal(0)), "currency": currency}
+    payload = _freeze(result)
+
+    def finish_guard():
+        read.finish()
+        if _freeze({key: result[key] for key in ("rows", "total", "currency")}) != payload:
+            _deny()
+
+    result["finish_guard"] = finish_guard
+    return result

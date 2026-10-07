@@ -266,6 +266,15 @@ class TestFlowWageCostSources(unittest.TestCase):
         self.list_hook = revoke
         with self.assertRaises(PermissionError): result["finish_guard"]()
 
+    def test_finish_guard_rejects_in_place_result_mutation_even_when_total_stays_twenty(self):
+        for change in ("amount", "source", "total", "currency"):
+            result = self.result()
+            if change == "amount": result["rows"][0]["amount"] = Decimal(12)
+            elif change == "source": result["rows"][0]["journal_entry"] = "PAYMENT"
+            elif change == "total": result["total"] = Decimal(2020)
+            else: result["currency"] = "USD"
+            with self.subTest(change=change), self.assertRaises(PermissionError): result["finish_guard"]()
+
     def test_submitted_je_without_effective_gl_or_wrong_expense_group_is_rejected(self):
         original = deepcopy(self.data)
         for change in ("no_gl", "cancelled_gl", "wrong_gl", "wrong_je", "asset_component", "wrong_reference"):
