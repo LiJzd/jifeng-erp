@@ -19,6 +19,7 @@ from frappe.utils import flt
 
 from jifeng_erp.costing import CostingError, receipt_batch_quantities
 from jifeng_erp import subcontract_stage
+from jifeng_erp.flow_cost_scoped_query import record_list
 
 
 FLOW = "Jifeng Flow Order"
@@ -236,12 +237,11 @@ class _Session:
 
     def records(self, doctype, filters, fields, parenttype=None, **options):
         _fields(doctype, fields, parenttype)
-        native_options = {"parent_doctype": parenttype} if parenttype else {}
         raw = frappe.get_all(doctype, filters=filters, fields=["*"], order_by="name asc",
                              limit_page_length=0, **options)
         try:
-            rows = frappe.get_list(doctype, filters=filters, fields=sorted(fields), order_by="name asc",
-                                   limit_page_length=0, **native_options, **options)
+            rows = record_list(doctype, filters=filters, fields=sorted(fields),
+                               parenttype=parenttype, **options)
         except frappe.PermissionError:
             _deny()
         names = [row.get("name") for row in rows]
@@ -963,9 +963,8 @@ class _Session:
         for doctype, filters, fields, parenttype, options, raw_state, native_state in self.queries:
             if fields is not None:
                 _fields(doctype, fields, parenttype)
-                native_options = {"parent_doctype": parenttype} if parenttype else {}
-                rows = frappe.get_list(doctype, filters=filters, fields=list(fields), order_by="name asc",
-                                       limit_page_length=0, **native_options, **options)
+                rows = record_list(doctype, filters=filters, fields=list(fields),
+                                   parenttype=parenttype, **options)
                 if _freeze(rows) != native_state:
                     _deny()
             raw = frappe.get_all(doctype, filters=filters, fields=["*"], order_by="name asc",

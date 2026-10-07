@@ -91,8 +91,15 @@ class TestFlowCostSources(unittest.TestCase):
         wage_sources = types.ModuleType("jifeng_erp.flow_wage_cost_sources")
         self.wage_cost_result = {"rows": [], "total": Decimal(0), "currency": "CNY", "finish_guard": Mock()}
         wage_sources.posted_flow_wage_costs = Mock(side_effect=lambda flow: self.wage_cost_result)
+        # Engine hook ordering/population is covered by the adapter harness;
+        # these source-closure cases retain their independent native read model.
+        scoped_query = types.ModuleType("jifeng_erp.flow_cost_scoped_query")
+        scoped_query.record_list = lambda doctype, *, filters, fields, parenttype=None, **options: self.frappe.get_list(
+            doctype, filters=filters, fields=fields, order_by="name asc", limit_page_length=0,
+            **({"parent_doctype": parenttype} if parenttype else {}), **options)
         patches = patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model, "frappe.utils": utils,
-                                          "jifeng_erp.flow_wage_cost_sources": wage_sources})
+                                          "jifeng_erp.flow_wage_cost_sources": wage_sources,
+                                          "jifeng_erp.flow_cost_scoped_query": scoped_query})
         patches.start()
         self.addCleanup(patches.stop)
         spec = importlib.util.spec_from_file_location("flow_cost_sources_under_test", ROOT / "jifeng_erp/flow_cost_sources.py")
