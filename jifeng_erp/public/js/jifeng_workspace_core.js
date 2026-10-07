@@ -104,7 +104,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "销售",
 		groups: [
 			{ name: "基础资料", items: ["客户类型", "客户等级", "客户分类", "客户档案", "入库部门", "入库类型", "商品信息", "条码打印", "销售员", "条码标题", "收款方式", "快递公司", "销售页脚", "零售倍率", "库位模式"] },
-			{ name: "正式业务", items: ["销售订单", "销售履行核对", "零售开单", "零售单记录", "零售开班", "零售结班", "发货单", "销售发票", "已过账销售台账", "分批回货成本试算"] },
+			{ name: "正式业务", items: ["销售订单", "销售履行核对", "成品入库来源核对", "零售开单", "零售单记录", "零售开班", "零售结班", "发货单", "销售发票", "已过账销售台账", "分批回货成本试算"] },
 			{ name: "销售操作", items: ["销售入库", "前台开单", "销售调拨", "库位下架", "销售反审", "销售跟踪", "成品出库", "客户返修"] },
 			{ name: "仓库管理", items: ["销售盘点", "差异处理", "库存", "盘点明细", "PDA数据", "库存明细", "库位库存", "库位修改", "库存排行", "历史库存", "库存预警"] },
 			{ name: "报表分析", items: ["销售单查询", "日报表", "销售报表", "销售分析", "销售排行", "入库排行", "进销存", "入库明细", "明细查询", "调拨明细", "下架明细", "销售比", "新款分析", "明细成本", "同比", "部门同比", "导购同比", "客户同比", "品牌同比", "类别同比"] },
@@ -158,7 +158,7 @@ const JIFENG_LIVE_ROUTES = {
 // Server-backed entry whose available operations remain explicitly limited.
 const JIFENG_PARTIAL_ROUTES = { 产品: { 镀色: true, 样品制作单: true, 样品单反审: true }, 工资: { 历史: true, 临工档案: true, 临工浏览: true, 临工: true, 临工明细: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
 	物料: { 采购履行核对: true, 跟踪: true }, 材料: { 采购履行核对: true, 跟踪: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true },
-	销售: { 销售履行核对: true, 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
+	销售: { 销售履行核对: true, 成品入库来源核对: true, 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true } };
 
 const JIFENG_LIVE_CATALOGS = {
 	物料: { 浏览: "物料" },
@@ -175,7 +175,7 @@ const JIFENG_LIVE_PAGES = {
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
 		算料汇总: { name: "jifeng-order-material-workbench", mode: "summary" } },
 	权限: { 权限管理: "permission-manager" },
-	销售: { 销售履行核对: { salesFulfillment: true }, 零售开单: "point-of-sale", 前台开单: "point-of-sale" },
+	销售: { 销售履行核对: { salesFulfillment: true }, 成品入库来源核对: { finishedIntakeSources: true }, 零售开单: "point-of-sale", 前台开单: "point-of-sale" },
 };
 
 const JIFENG_LIVE_CREATE = {
@@ -416,6 +416,9 @@ class JifengLegacyWorkspace {
 		}
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
+			if (livePage.finishedIntakeSources) {
+				this.openFinishedIntakeSources(); return;
+			}
 			if (livePage.temporaryWorkers) {
 				if (!this.formalBridge || !window.JifengTemporaryWorkers) {
 					frappe.msgprint(__("临工页面未能加载，请刷新后重试。")); return;
@@ -567,6 +570,84 @@ class JifengLegacyWorkspace {
 			module: moduleName,
 			page: name,
 		});
+	}
+
+	openFinishedIntakeSources() {
+		let dialog, revision = 0, closed = false;
+		const results = () => dialog?.fields_dict.results.$wrapper.get(0);
+		const element = (tag, value, className) => {
+			const node = document.createElement(tag);
+			if (value !== undefined) node.textContent = String(value ?? "");
+			if (className) node.className = className;
+			return node;
+		};
+		const changed = () => {
+			revision++;
+			results()?.replaceChildren(element("p", __("请选择公司和流程单，点击查询核对已提交的成品来源。")));
+		};
+		const validName = value => typeof value === "string" && value.trim() === value && value.length > 0 && value.length <= 140;
+		const validQuantity = value => typeof value === "string" && /^[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value) && Number.isFinite(Number(value));
+		dialog = new frappe.ui.Dialog({
+			title: __("成品入库来源核对"), size: "extra-large",
+			fields: [
+				{ fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), reqd: 1,
+					default: this.dashboard?.company || frappe.defaults.get_user_default("Company"),
+					onchange: () => { if (dialog) { dialog.set_value("flow_order", ""); changed(); } } },
+				{ fieldname: "flow_order", fieldtype: "Link", options: "Jifeng Flow Order", label: __("流程单"), reqd: 1, onchange: changed },
+				{ fieldname: "results", fieldtype: "HTML" },
+			],
+			primary_action_label: __("查询"),
+			primary_action: async values => {
+				const request = ++revision, company = values.company, flow = values.flow_order, host = results();
+				host.replaceChildren(element("p", __("正在核对成品凭证及库存流水…")));
+				dialog.get_primary_btn().prop("disabled", true);
+				try {
+					const response = await frappe.call({ method: "jifeng_erp.sales_intake_sources.read_sources", type: "GET",
+						args: { company, flow_order: flow } });
+					if (closed || request !== revision || dialog.get_value("company") !== company || dialog.get_value("flow_order") !== flow) return;
+					const data = response.message, keys = new Set();
+					if (!data || data.company !== company || data.flow_order !== flow || !validName(data.item_code) || !validName(data.stock_uom) ||
+						data.stock_posting_required !== false || !Array.isArray(data.sources) || data.sources.length > 1000 || data.sources.some(row => {
+							const key = row && [row.source_doctype, row.source_name, row.source_detail].join("\u0000");
+							if (!row || !["Stock Entry", "Subcontracting Receipt"].includes(row.source_doctype) ||
+								!validName(row.source_name) || !validName(row.source_detail) || !validName(row.warehouse) ||
+								row.flow_order !== flow || row.item_code !== data.item_code || row.stock_uom !== data.stock_uom ||
+								!validQuantity(row.stock_qty) || Number(row.stock_qty) === 0 ||
+								!["receipt", "return"].includes(row.direction) || (Number(row.stock_qty) < 0) !== (row.direction === "return") || keys.has(key)) return true;
+							keys.add(key); return false;
+						})) throw new Error("Unexpected finished product source scope");
+					host.replaceChildren(element("p", __("商品") + "：" + data.item_code + "；" + __("库存单位") + "：" + data.stock_uom));
+					host.append(element("p", __("以下为已提交凭证的历史库存变动。已通过制造或委外收货入库的成品请沿用原凭证；当前可售量请查库存。销售标价须按确认的业务规则另行填写。")));
+					if (!data.sources.length) { host.append(element("p", __("本流程单没有已提交的成品入库或退回来源。"))); return; }
+					const wrapper = element("div"), table = element("table", undefined, "table table-bordered"), head = element("thead"), tr = element("tr"), body = element("tbody");
+					wrapper.style.overflowX = "auto";
+					for (const label of ["日期", "来源", "原凭证", "明细编号", "方向", "库存变动", "单位", "仓库", "工单 / 工序卡", "退回原单"]) tr.append(element("th", __(label)));
+					head.append(tr);
+					for (const row of data.sources) {
+						const line = element("tr"), voucher = element("td"), link = element("button", row.source_name, "btn btn-link btn-sm");
+						link.type = "button";
+						link.addEventListener("click", () => {
+							if (closed || request !== revision || dialog.get_value("company") !== company || dialog.get_value("flow_order") !== flow) return;
+							dialog.hide();
+							if (this.formalBridge) this.formalBridge.open({ title: row.source_name, module: "销售", kind: "form",
+								doctype: row.source_doctype, route: ["Form", row.source_doctype, row.source_name] });
+							else frappe.set_route("Form", row.source_doctype, row.source_name);
+						});
+						voucher.append(link);
+						line.append(element("td", row.posting_date), element("td", __(row.source_doctype === "Stock Entry" ? "制造入库" : "委外收货")), voucher,
+							element("td", row.source_detail), element("td", __(row.direction === "return" ? "退回" : "入库")), element("td", row.stock_qty),
+							element("td", row.stock_uom), element("td", row.warehouse), element("td", [row.work_order, row.job_card].filter(Boolean).join(" / ")), element("td", row.return_against || ""));
+						body.append(line);
+					}
+					table.append(head, body); wrapper.append(table); host.append(wrapper);
+				} catch {
+					if (!closed && request === revision) host.replaceChildren(element("p", __("未能完整核对成品来源，请检查来源权限或单据状态后重新查询。")));
+				} finally { if (!closed) dialog.get_primary_btn().prop("disabled", false); }
+			},
+		});
+		dialog.fields_dict.flow_order.get_query = () => ({ filters: { company: dialog.get_value("company") } });
+		dialog.on_hide = () => { closed = true; revision++; };
+		changed(); dialog.show();
 	}
 
 	addTab(tab) {
