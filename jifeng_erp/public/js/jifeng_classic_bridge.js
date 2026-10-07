@@ -19,6 +19,16 @@ window.JifengClassicBridge = class JifengClassicBridge {
 
 	open(spec) {
 		const key = "formal:" + spec.module + ":" + spec.title;
+		const existing = this.workspace.tabs?.find(tab => tab.key === key);
+		if (existing && spec.module === "总经理" && spec.kind === "report" &&
+			JSON.stringify(existing.spec?.filters) !== JSON.stringify(spec.filters)) {
+			// A changed dashboard scope replaces this read-only report's iframe;
+			// reusing the old tab otherwise keeps its previous company/period.
+			const entry = this.frames.get(key);
+			entry?.stop?.(); entry?.container.remove();
+			this.frames.delete(key);
+			existing.spec = spec;
+		}
 		this.workspace.addTab({ key, title: spec.title, module: spec.module, kind: "formal", spec });
 	}
 

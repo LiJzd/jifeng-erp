@@ -61,4 +61,15 @@ for (const spec of [
 	{ kind: "report", route: ["query-report", "Profit and Loss Statement"], filters: { filter_based_on: "Fiscal Year" } },
 ]) bridge.guardFinancialReportInitialization(other, spec);
 assert.equal(OtherReport.prototype.setup_filters, native, "other routes and fiscal-year reports are untouched");
+// Opening a manager report again after querying a new period must drop stale data.
+const reportKey = "formal:总经理:利润";
+const oldSpec = { module: "总经理", title: "利润", kind: "report", route: ["query-report", "Profit and Loss Statement"], filters: { company: "C", period_end_date: "2026-10-08" } };
+const newSpec = { ...oldSpec, filters: { company: "C", period_end_date: "2026-10-31" } };
+let stopped = 0, removed = 0, selected;
+bridge.workspace = { tabs: [{ key: reportKey, spec: oldSpec }], addTab(tab) { selected = tab.key; } };
+bridge.frames = new Map([[reportKey, { stop() { stopped++; }, container: { remove() { removed++; } } }]]);
+bridge.open(newSpec);
+assert.equal(stopped, 1); assert.equal(removed, 1); assert.equal(selected, reportKey);
+assert.equal(bridge.workspace.tabs[0].spec.filters.period_end_date, "2026-10-31");
+assert.equal(bridge.frames.has(reportKey), false);
 console.log("financial report initialization: passed");

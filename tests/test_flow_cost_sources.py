@@ -50,6 +50,21 @@ class Meta:
 
 
 class TestFlowCostSources(unittest.TestCase):
+    def test_stage_input_accepts_native_child_documents_without_dict_subscription(self):
+        class NativeChild:
+            name = "EARLIER-OP"
+            def get(self, field):
+                return {"finished_good": "SEMI", "sequence_id": 1}.get(field)
+        session = self.module._Session.__new__(self.module._Session)
+        earlier = NativeChild()
+        stage = {"work_order": Record(name="WO", operations=[earlier]),
+                 "job_card": Record(sequence_id=2),
+                 "bom": Record(items=[Record(item_code="SEMI")])}
+        self.assertEqual(session._stage_input(stage, "SEMI"), ("WO", "EARLIER-OP", "SEMI"))
+        stage["job_card"].sequence_id = 1
+        with self.assertRaisesRegex(ValueError, "前序阶段"):
+            session._stage_input(stage, "SEMI")
+
     def setUp(self):
         self.documents, self.permitted, self.metas = {}, {}, {}
         self.hidden, self.omitted, self.mask_levels, self.read_levels = {}, {}, {}, {}

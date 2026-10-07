@@ -286,9 +286,20 @@ console.log(`A/B ${entries.length} existing menu dispatches, exact filters, all 
 async function dashboardReportScope() {
 	for (const Workspace of [Classic, Modern]) {
 		const workspace = Object.create(Workspace.prototype), opened = [], requests = [];
+		workspace.activeTab = () => ({ module: "销售" });
 		workspace.dashboardRequest = 1;
 		workspace.dashboard = { company: "VISIBLE", from_date: "2026-10-03", to_date: "2026-10-08",
 			financial_reports: [{ name: "General Ledger", label: "总账" }] };
+		frappe.call = async args => {
+			requests.push(plain(args));
+			return { message: { ...workspace.dashboard, ...args.args } };
+		};
+		await workspace.loadDashboard({ company: "VISIBLE", from_date: "2026-10-01", to_date: "2026-10-31" });
+		await workspace.loadDashboard(); // Return to the dashboard from a report.
+		assert.deepEqual(requests[1].args, { company: "VISIBLE", from_date: "2026-10-01", to_date: "2026-10-31" });
+		assert.equal(workspace.dashboard.to_date, "2026-10-31");
+		workspace.dashboard.from_date = "2026-10-03"; workspace.dashboard.to_date = "2026-10-08";
+		requests.length = 0;
 		workspace.formalBridge = { open: value => opened.push(plain(value)) };
 		const result = { route: ["query-report", "General Ledger"], filters: { company: "VISIBLE",
 			from_date: "2026-10-03", to_date: "2026-10-08", show_cancelled_entries: 0 } };

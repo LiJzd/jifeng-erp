@@ -356,7 +356,7 @@ class _Session:
         stages = [row for row in work.get("operations") or [] if row.get("finished_good") == item]
         if stages:
             if (len(stages) != 1 or stages[0].get("sequence_id") in (None, "")
-                    or _number(stages[0]["sequence_id"]) >= _number(card.get("sequence_id"))):
+                    or _number(stages[0].get("sequence_id")) >= _number(card.get("sequence_id"))):
                 frappe.throw("耗用商品没有唯一的同工单前序阶段，不能推测内部半成品成本")
             return work.name, stages[0].name, item
         if item not in self.allowed_items - {self.fg.name}:

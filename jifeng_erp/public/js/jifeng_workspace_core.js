@@ -763,7 +763,14 @@ class JifengLegacyWorkspace {
 		return '<section class="jfe-dashboard"><div class="jfe-module-title"><span class="jfe-module-icon">总</span><div><h1>经营总览</h1><p>来自正式单据，按当前账号权限显示</p></div></div>' + controls + body + '</section>';
 	}
 
-	async loadDashboard(filters = {}) {
+	async loadDashboard(filters = null) {
+		// Returning from a report must retain the last queried company/period.
+		// An empty request would replace that scope with today's defaults.
+		if (filters === null) {
+			const previous = this.dashboard;
+			filters = previous?.company ? { company: previous.company,
+				from_date: previous.from_date, to_date: previous.to_date } : {};
+		}
 		const request = ++this.dashboardRequest;
 		try {
 			const response = await frappe.call({ method: "jifeng_erp.dashboard.overview", args: filters });
