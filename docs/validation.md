@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 订单词典四作用域原生回滚和单JS安装通过
+
+原生QA准备于`D:/codex-temp/order-requirement-native-qa-20261007-r1/`，只用普通init/save/resolve/read接口和既有44角色非Administrator账号。R1在首轮序列读取因默认creation排序报1054，尚未保存词条，正常回滚关闭；错误收据`c7c747bb917cbc169c6d8481fcdd7e3bb94741fc35054f2fe4b47bcb55a4b286`保留。R2只为五处Series读取指定name排序，独立新只读连接先核R1的20表/结构恢复一致，再执行四组公司×类型用例；未重放R1入口。R2 runner SHA`63280d6be40d21ba9e4d49a110a0ea011831fc20df1461ba594bd16e8c90204b`，cases SHA`ac6e20466151a27d9c118948057a4fccf1385b84bed7b10b5528e31895ba6492`。
+
+实际PASS收据`9f5f31db6b002cb0502eb6980046f641cfb59a9322df7b55c75834be97b110a5`：两家真实可见可写公司、两词典类型、四个新建/修改QA记录，服务器序列准确增加且预览不分配，同UUID幂等/变更摘要拒绝、回执、可编辑字段、过期版本及公司/类型锁定均通过。20次正常DML仅限词典/Series/Version；完整回滚后独立fresh RO确认20表数据/授权/焦点元数据和结构相等，前后图同SHA`6918013317676d033940156c858ccd2afe2e4ed50e39a8b4163eee249f45e423`。三个实际连接关闭，零COMMIT/DDL，新公司/账号/角色为0，636来源完整元数据及owner/数据服务/RQ保持。权限较宽，不算窄销售岗位或GUI/公网验收。
+
+单JS安装helper`D:/codex-temp/order-requirement-ui-local-install-20261007-r1/install.py`，SHA`bcfa92e0349d0cc03bcb6386cbe8cde439733f857f894d40170222581fff23fd`，独立源码审查通过。实际PASS收据`56ab754bb5b3f24fcb6bd57a7430d3e9e05942f0b9cf8ee328cb021bd3b5f6f2`：从已提交`0f70a73`取订单词典JS，仅替换1/636来源，另635文件完整元数据保持，1/45版本资源URL变化；正常native client cache仅清理准确app_hooks键一次，READ ONLY物理连接关闭，零业务DML/DDL/COMMIT。仅本地owned Web各停/启一次，三数据服务和已有RQ保持，新owner SHA`f70fc7845a2197eb0da05ca28797aaca11a6bb2ef3e33792c02924e74be7e077`。私有原图/载荷留root700目录、600文件；未执行浏览器或公网更新，完整旧模块目标未完成。
+
 ## 2026-10-07 工序删除本地安装和原生生命周期回滚通过
 
 R1四源交换后，证据文件命名检查在元数据保存前拒绝；R2修正命名后，原生TIME的timedelta序列化在保存前拒绝；R3补精确标量后，首条父元数据SQL在执行前被错误的Random命名预期拒绝。三份失败收据分别`523b6116fff2fb33b77737cb08fb96117499068022eee76d959b9ae30a5d44e1`、`bbca648a5706917e5bf1a4ab86d241a318e2e83ce896733bae7b77834f967023`、`ede6fbd19a0b84632f62e6004d75086b7af7d6d6077256da4bc41cf8eb2e9932`保留，均无DDL/提交并正常关闭。后续新只读资格及唯一正常保存的预SQL诊断证明，实际hash命名规则保持NULL；诊断零DML/DDL/提交、两连接关闭，新连接57表完整等R3安装前图，收据`fa619cf3c5838498d1e2a5f1df0e0c2cdd8c50d2baee64d9a6919be19dd3d26a`。没有重放已发生的停Web/换源，也没有补写命名规则。
