@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 工序删除源码及安装只读前置通过
+
+六文件提交`54431c5fb88bfb1b98d9523dd4039fccd463a14f`，无push。48 backend unittest、CJS协议/DOM测试及diff检查通过；独立源码审通过。本页新建、已排序与旧工序均可进入正常权限删除，释放仅本服务拥有的Operation Link、永久保留原创建UUID及六项删除记录；正常delete_doc/DeletedDocument与其它原生Link检查保留，不传force/ignore权限。工资Data及取消历史引用拒绝、同名重建/恢复区别、未知只GET及晚到结果不移除新身份均有模型证据；真实数据库删除/恢复和并发尚未验收。
+
+四应用源从准确Git内容准备于`D:/codex-temp/order-operation-delete-local-install-20261007-r1/`，plan SHA `4a0e22ab6fca55493bfde77d41d47dd8cde7500e16cc70c666908b8d85097474`；没有换入candidate。原生框架FS核确认正常DocType.save需临时in_patch/in_import并恢复，追加六字段、operation.reqd/set_only_once明确置0并更新说明，保旧子行身份及权限；唯一列会派生两条DDL，实际执行计数仍须现场核对，不照搬工资R10。
+
+只读R1收据`e6a2fea7e300055d770f6656634dd85f4cb4b78152700bf4b95ae95407e14535`保持failed：检查脚本误把Custom DocPerm作为带parenttype的子表，真实schema/source确认它为普通DocType，SQL报1054；一只读连接回滚关闭，没有安装或源/业务写入，不重放。独立R2仅修这一准确查询，helper SHA`6d658b81a420c0d8abae7874ba406a2bcf5df62fce48f4aa8f59d8fad10fb945`，实际PASS收据`0d9ef3fcdd57e225d8372fdfb39c3c987f54998bad0a38c9113cc562e426f0c2`：旧四字段及两项Check仍1，六新列/字段不存在，当前目标元数据/Operation/排序旧行及结构摘要`d47db4e0cd0460c889715e6af6d4cb0a2947e9ab00ecf7d7e778a0e4bbca8ea4`仅留root600。复用真正成功产品producer的现存44角色候选，现场工序read/create/write/delete、回执read/create/write及当前读写字段mask全通过；此账号含System Manager，不能称仅制造岗位。一个真实原生RO连接正常回滚关闭，零显式COMMIT/DDL/业务写入，准确旧源及owner保持；没有新账号/角色、后台任务消费、服务操作或公网访问。新六字段权限及原生删除生命周期待安装后实测。
+
 ## 2026-10-07 工资分类本机真实HTTP验收通过
 
 唯一入口 `D:/codex-temp/wage-classification-http-read-20261007-r1.py` 限定localhost:18764，拒绝非本机重定向，不导入框架、不访问SQL或后台任务，只允许正常登录/退出POST。复用已有受限GUI上下文及实际G工资身份/版本，不创建账号或工资。实际PASS收据 `3ba87a00dd064f45c9fa65601f4dc2b987f6aaa26797179910fd7720edd606c2`：16请求，其中登录2、正常CSRF退出2、分类GET4、业务POST0。
