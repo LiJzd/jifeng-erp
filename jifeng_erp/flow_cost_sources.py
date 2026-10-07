@@ -950,7 +950,7 @@ class _Session:
                         frappe.throw("相关库存账重过账尚未完成或已失败，不能加载流程成本")
         return tuple(state)
 
-    def finish(self):
+    def finish(self, additional_guard=None):
         self._check_stage_values()
         self.repost_state = self._reposting()
         try:
@@ -973,6 +973,8 @@ class _Session:
             if _freeze(raw) != raw_state:
                 _deny()
         self._check_documents(loaded)
+        if additional_guard:
+            additional_guard()
         # Catch source edits performed by a later list hook, including edits
         # that do not update modified. Authorization metadata is also uncached.
         for doctype, filters, _fields_read, _parenttype, options, raw_state, _native_state in self.queries:
@@ -1080,8 +1082,10 @@ def posted_flow_costs(flow_order):
         if any(row["other"] and (manual_wages or row["work_order"] in wage_work_orders)
                for row in manufactures):
             frappe.throw("同一生产范围已有制造附加费和工资计提，尚未核实附加费是否包含人工；请先明确费用来源，避免重复计入工资成本")
-    session.finish()
-    wages["finish_guard"]()
+    computed_sources = _freeze((issues, receipts, manufactures))
+    session.finish(additional_guard=wages["finish_guard"])
+    if _freeze((issues, receipts, manufactures)) != computed_sources:
+        _deny()
     return {"issues": issues["rows"], "receipts": receipts["rows"], "manufactures": manufactures, "totals": {
         "issue_material": issues["totals"]["material"], "receipt_material": receipts["totals"]["material"],
         "manufacture_material": manufacture_material, "manufacture_other": manufacture_other,

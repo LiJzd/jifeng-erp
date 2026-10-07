@@ -658,6 +658,12 @@ class TestFlowCostSources(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "避免重复"):
             self.module.posted_flow_costs("FLOW")
 
+    def test_final_wage_permission_hook_cannot_change_earlier_inventory_source(self):
+        source = self.manufacture(other=0)
+        self.wage_cost_result["finish_guard"].side_effect = lambda: source.update(docstatus=2)
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+
     def test_manufacturing_uses_persisted_company_currency_fee_not_current_conversion(self):
         self.manufacture(other=6)
         self.add("Currency", "USD")
