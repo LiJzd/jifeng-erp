@@ -5,6 +5,8 @@ module never connects, migrates, commits, transfers files or retries a failed
 experiment. Temporary users, permissions and tightening Property Setters use
 native controllers and existing roles. Only opaque hashes leave the complete
 persisted-row audits; the external runner supplies its independent snapshot.
+The permanent creation/deletion lifecycle requires separate native QA;
+updating this caller does not mean that this legacy experiment has been rerun.
 """
 
 from datetime import date, datetime, time, timedelta
@@ -857,9 +859,7 @@ def smoke(company, other_company):
             )
         passed(current)
 
-        current = "native_delete_blocked_for_administrator_and_guest_denied"
-        frappe.set_user("Administrator")
-        rejected(lambda: frappe.delete_doc(DOCTYPE, direct.name), text="删除尚未实现")
+        current = "guest_endpoints_denied"
         frappe.set_user("Guest")
         for action in (
             lambda: init_dictionary(KIND),
@@ -969,7 +969,8 @@ def smoke(company, other_company):
             "旧编号算法",
             "更新简拼",
             "条码生成",
-            "旧导入删除打印及预览",
+            "旧导入打印及预览",
+            "永久新建及删除回执生命周期：另由独立原生QA验收",
             "前端操作验收",
         ],
     }
