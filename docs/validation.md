@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-10-07 工具分页已安装本地 Web，客户词典删除源码已提交
+
+分页三份 Python 和共用 JS 以冻结字节一次替换到当前本地 candidate：三个旧文件保留 root600 备份，一个新文件原先不存在。完整640来源仅这四项变化，正常 hooks 仍为45资源，仅工具 JS 指纹更新。正常 `frappe.clear_cache` 与 app/global hooks 在一个真实 Unix MySQLdb READ ONLY 连接内返回；实际SQL5、连接创建/关闭1、零业务提交和表结构修改。随后仅精确重启现有 Web unit，两个新 Web 进程资格通过，Redis unit/进程/socket/run_id 保持，未操作 MariaDB。
+
+copy/cache/restart 三阶段各自一次性 intent 和返回结果均成功，分别为 `732c539e18ab27a25276be02787d7a57d98711856b01608d9798a96ecc466419`、`ad6ea22aa8451feab07d9d1315f0f7234cf6a46010cbf40a93f1bbed0e67f990`、`06d731fe900ff3cac2bab52f9a952d8b5f5cd2a0128d0823e33b43110950ec82`。每阶段另以新物理 READ ONLY 连接核全部931表原数据及既存RQ序列化状态保持；只读连接共4、关闭4。当前 owner-after SHA `fda228226253fe0eba1ff3866d34a75f217a28970d703f1fbf37cd26d3455e51`，目录 `tool-archive-paging-install-20261007-r1`。本次安装不计作 HTTP、A/B GUI 或公网发布验收；GUI 专用合成记录仍在准备，公网继续下文已完成的51来源版本。
+
+客户五类词典新增可追溯删除与 GET 结果恢复，提交 `6c0ca5c`。旧10个业务字段/编号规则保持，新增独立11字段永久 Receipt 和两个可空唯一UUID，原 System Manager/Sales Manager 默认权限各增加删除位。删除调用正常 `frappe.delete_doc(ignore_missing=False)`，保留全部静态/动态 Link 检查、原生 Deleted Document 和事务回滚；正式 Form 的创建/删除生命周期共用回执。同名重建按 creation 身份区分，旧创建 UUID 不重分号；未知删除结果只读核对，不自动重发。被原 User Permission 隐藏的在用词条，原创建查询仍返回 not_found，POST 旧 UUID 继续拒绝重建。42后端模型、旧五类/删除/共用商品三组CJS和编译通过，独立窄审无具体阻断。此提交尚未安装到本地或公网；真实 Receipt 结构、Link、Deleted Document、callbacks、HTTP 和 GUI 不计通过，全模块正式交付继续。
+
 ## 2026-10-07 工具档案分页源码与真实回滚验收通过
 
 模具、版种和建模去除原100条硬拒绝，新增共用GET `tool_archive_paging.query_archives`，返回当前公司、类型、关键词、报废条件的授权总数和分页。A/B共用组件支持25/50/100、上/下页和跳页，保存后刷新原页、最后有效页缩短时回到合法页；编辑或未知保存结果窗口继续阻止翻页。旧11/10/8字段顺序、导出、实际费用与单条保存/回执接口保持。前端提交`9b6996a`。
