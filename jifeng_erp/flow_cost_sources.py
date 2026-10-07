@@ -9,6 +9,7 @@ split; secondary items, LCV and ambiguous allocation reject the simplified load.
 The three fee categories are not a claim of native stock valuation or GL totals.
 """
 
+from datetime import timedelta, time
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -17,6 +18,7 @@ from frappe.model import get_permitted_fields
 from frappe.utils import flt
 
 from jifeng_erp.costing import CostingError, receipt_batch_quantities
+from jifeng_erp import subcontract_stage
 
 
 FLOW = "Jifeng Flow Order"
@@ -32,7 +34,7 @@ PARENTS = {
     SCR: IDENTITY | {"company", "posting_date", "posting_time", "is_return", "return_against",
                      "status", "supplier_warehouse"},
     SE: IDENTITY | {"company", "posting_date", "posting_time", "purpose", "stock_entry_type", "jf_material_issue_flow"},
-    SLE: IDENTITY | {"company", "item_code", "warehouse", "stock_uom", "posting_date", "posting_time",
+    SLE: IDENTITY | {"creation", "company", "item_code", "warehouse", "stock_uom", "posting_date", "posting_time",
                      "voucher_type", "voucher_no", "voucher_detail_no", "actual_qty",
                      "stock_value_difference", "is_cancelled", "is_adjustment_entry"},
     "Item": {"name", "modified", "stock_uom", "is_stock_item"},
@@ -40,6 +42,8 @@ PARENTS = {
     "Currency": {"name", "modified"},
     WO: IDENTITY | {"company", "production_item", "jf_flow_order", "track_semi_finished_goods"},
 }
+# These native sources are read only when an actual Job Card stage is present.
+PARENTS.update({kind: fields for kind, fields in subcontract_stage.PARENTS.items() if kind not in PARENTS})
 
 # These fields are needed only when reading a manufacturing source. Existing
 # issue/receipt RPCs must not acquire new manufacturing money-field requirements.
@@ -64,7 +68,9 @@ TABLES = {
         "item_code", "jf_flow_order", "qty", "uom", "stock_uom", "conversion_factor", "transfer_qty",
         "s_warehouse", "t_warehouse"}),),
 }
+TABLES.update({kind: (table,) for kind, table in subcontract_stage.TABLES.items() if kind not in TABLES and kind != WO})
 MANUFACTURE_CHARGES = TABLES[SCR][2]
+STAGE_SEQUENCE_FIELDS = {"sequence_id"}
 
 
 def _deny():
@@ -141,10 +147,29 @@ def _same_quantity(actual, expected, doc, field):
     return left == right
 
 
+def _stock_time(value):
+    # mysqlclient returns a timedelta; documents may use time or native strings.
+    if isinstance(value, timedelta):
+        seconds = Decimal(value.days * 86400 + value.seconds) + Decimal(value.microseconds) / 1000000
+    elif isinstance(value, time):
+        seconds = Decimal(value.hour * 3600 + value.minute * 60 + value.second) + Decimal(value.microsecond) / 1000000
+    else:
+        parts = str(value).split(":")
+        if len(parts) != 3:
+            _invalid()
+        hours, minutes, second = map(_number, parts)
+        if not (0 <= hours < 24 and 0 <= minutes < 60 and 0 <= second < 60):
+            _invalid()
+        seconds = hours * 3600 + minutes * 60 + second
+    if not 0 <= seconds < 86400:
+        _invalid()
+    return seconds
+
+
 def _authorization():
     user = frappe.session.user
     doctypes = sorted(set(PARENTS) | {child for tables in TABLES.values() for _, child, _ in tables}
-                      | {"Company", REPOST})
+                      | {child for _, child, _ in subcontract_stage.TABLES.values()} | {"Company", REPOST})
     state = []
     for doctype, filters in (
         ("Has Role", {"parenttype": "User", "parent": user}),
@@ -167,7 +192,7 @@ def _authorization():
 
 
 class _Session:
-    def __init__(self, flow_name):
+    def __init__(self, flow_name, *, include_stages=False, stage_quantities_only=False):
         if frappe.session.user == "Guest":
             _deny()
         if frappe.conf.get("read_from_replica"):
@@ -175,6 +200,9 @@ class _Session:
         if not isinstance(flow_name, str) or not flow_name or flow_name != flow_name.strip():
             frappe.throw("请选择明确的流程单")
         self.queries, self.documents, self.children = [], {}, {}
+        self.include_stages = include_stages
+        self.stage_quantities_only = stage_quantities_only
+        self.extra_tables, self.receipt_stages, self.stage_events = {}, {}, []
         self.authorization = _authorization()
         self.company = None
         self.flow = self.source(FLOW, flow_name)
@@ -279,11 +307,154 @@ class _Session:
     def table(self, doctype, name, fieldname):
         return self.children[doctype, name, fieldname]
 
+    def _stage_reader(self, doctype, name):
+        """Use the existing stage proof within this request's complete read graph."""
+        doc = self.source(doctype, name)
+        fields = PARENTS[doctype] | subcontract_stage.PARENTS.get(doctype, set())
+        if doctype == subcontract_stage.JC:
+            fields = fields | STAGE_SEQUENCE_FIELDS
+        rows = self.records(doctype, {"name": name}, fields)
+        if len(rows) != 1 or any(doc.get(key) != value for key, value in rows[0].items()):
+            _invalid()
+        self.documents[doctype, name] = (doc, _freeze(doc), "read", fields)
+        if doctype in subcontract_stage.TABLES:
+            field, childtype, fields = subcontract_stage.TABLES[doctype]
+            for native_field, _child, native_fields in TABLES.get(doctype, ()):
+                if native_field == field:
+                    fields = fields | native_fields
+            if doctype == WO:
+                fields = fields | STAGE_SEQUENCE_FIELDS
+            _table(doctype, field, childtype)
+            children = self.records(childtype, {"parent": name}, fields, doctype)
+            actual = {row.name: row for row in doc.get(field) or []}
+            if len(actual) != len(doc.get(field) or []) or set(actual) != {row["name"] for row in children}:
+                _invalid()
+            for row in children:
+                if (row.get("parenttype") != doctype or row.get("parentfield") != field
+                        or any(actual[row["name"]].get(key) != value for key, value in row.items())):
+                    _invalid()
+            self.children[doctype, name, field] = children
+            self.extra_tables[doctype, name] = (field, childtype, fields)
+        return doc
+
+    def _stage_node(self, stage):
+        work, card = stage["work_order"], stage["job_card"]
+        operation = subcontract_stage.detail(work, card.get("operation_id"), "operations")
+        if len([row for row in work.get("operations") or [] if row.get("finished_good") == stage["item"]]) != 1:
+            frappe.throw("阶段商品没有唯一的同工单产出工序，不能推测半成品或最终批次来源")
+        sequence = _number(operation.get("sequence_id"))
+        if (operation.get("sequence_id") in (None, "") or sequence <= 0
+                or _number(card.get("sequence_id")) != sequence):
+            frappe.throw("阶段工序顺序缺失或与原工单不一致，不能推测半成品成本来源")
+        return work.name, operation.name, stage["item"]
+
+    def _stage_input(self, stage, item):
+        """A unique earlier operation is an internal source, never an Item guess."""
+        work, card = stage["work_order"], stage["job_card"]
+        if item not in {row.get("item_code") for row in stage["bom"].get("items") or []}:
+            _invalid()
+        stages = [row for row in work.get("operations") or [] if row.get("finished_good") == item]
+        if stages:
+            if (len(stages) != 1 or stages[0].get("sequence_id") in (None, "")
+                    or _number(stages[0]["sequence_id"]) >= _number(card.get("sequence_id"))):
+                frappe.throw("耗用商品没有唯一的同工单前序阶段，不能推测内部半成品成本")
+            return work.name, stages[0].name, item
+        if item not in self.allowed_items - {self.fg.name}:
+            frappe.throw("阶段耗料既非流程原料也非准确前序半成品，不能加载部分成本")
+        return None
+
+    def _stage_event(self, stage, doc, detail, item, ledger, *, output=False):
+        node = self._stage_node(stage) if output else self._stage_input(stage, item)
+        quantity = sum((_number(row["actual_qty"]) for row in ledger), Decimal(0))
+        value = sum((_number(row["stock_value_difference"]) for row in ledger), Decimal(0))
+        if not output:
+            quantity, value = -quantity, -value
+        if (quantity > 0 and value < 0) or (quantity < 0 and value > 0):
+            frappe.throw("阶段库存净价值方向与实际数量不一致，请先核对原生估值调整")
+        if node:
+            if not ledger:
+                _invalid()
+            primary = next((row for row in ledger if _number(row["actual_qty"])), None)
+            if not primary or not primary.get("creation"):
+                _invalid()
+            self.stage_events.append((node, output, quantity, value, doc, detail, primary["name"]))
+        return Decimal(0) if node and not output else value
+
+    def _check_stage_values(self):
+        """Exclude internal value only after its actual same-WO supply closes.
+
+        Full consumption must match the complete native net output. Partial
+        consumption accepts one observed unit value only; differing batches
+        need provenance that these vouchers do not provide. No FIFO or average
+        of other warehouse stock is invented here.
+        """
+        nodes = {event[0] for event in self.stage_events}
+        stage_items = {node[2] for node in nodes}
+        bound = {(event[4].doctype, event[4].name, event[5]) for event in self.stage_events}
+        if any(row.get("item_code") in stage_items and _number(row.get("actual_qty")) < 0
+                and (doctype, name, row.get("voucher_detail_no")) not in bound
+                for (doctype, name), rows in self.ledger.items() for row in rows):
+            frappe.throw("半成品耗用缺少准确同工单工序来源，不能与阶段成本直接相加")
+        for node in nodes:
+            produced = [event for event in self.stage_events if event[0] == node and event[1]]
+            consumed = [event for event in self.stage_events if event[0] == node and not event[1]]
+            if not consumed:
+                continue
+            if not produced:
+                frappe.throw("前序半成品缺少同流程工单的已过账产出，不能用其他库存代替成本来源")
+            supply_qty = sum((event[2] for event in produced), Decimal(0))
+            supply_value = sum((event[3] for event in produced), Decimal(0))
+            used_qty = sum((event[2] for event in consumed), Decimal(0))
+            used_value = sum((event[3] for event in consumed), Decimal(0))
+            quantity_doc = self.documents[SLE, consumed[0][6]][0]
+            if (supply_qty <= 0 or supply_value < 0 or used_qty < 0 or used_value < 0
+                    or (used_qty > supply_qty and not _same_quantity(used_qty, supply_qty, quantity_doc, "actual_qty"))
+                    or (used_value > supply_value and not _same_quantity(used_value, supply_value, quantity_doc, "stock_value_difference"))):
+                frappe.throw("内部阶段净耗用超过同工单实际产出或价值，不能重复或借用其他流程库存成本")
+            if _same_quantity(used_qty, supply_qty, quantity_doc, "actual_qty"):
+                if not _same_quantity(used_value, supply_value, quantity_doc, "stock_value_difference"):
+                    frappe.throw("内部阶段全部耗用的净价值与前序产出不一致，请核对原生库存估值")
+            elif used_qty:
+                samples = [event for event in produced if event[2] > 0]
+                unit_value = samples[0][3] / samples[0][2] if samples else None
+                if (unit_value is None or any(not _same_quantity(event[3], event[2] * unit_value,
+                        self.documents[SLE, event[6]][0], "stock_value_difference") for event in produced)
+                        or not _same_quantity(used_value, used_qty * unit_value, quantity_doc, "stock_value_difference")):
+                    frappe.throw("分批半成品估值不同或耗用价值不符且没有精确批次来源，不能平均其他库存推算成本")
+            # Native stock operations have their own posting order. Never let a
+            # later production retroactively justify earlier external stock.
+            def key(event):
+                doc = event[4]
+                ledger = self.documents[SLE, event[6]][0]
+                return (str(doc.get("posting_date")), _stock_time(doc.get("posting_time")),
+                        str(ledger.creation), not event[1], doc.name, event[5])
+            available_qty = available_value = Decimal(0)
+            for event in sorted(produced + consumed, key=key):
+                available_qty += event[2] if event[1] else -event[2]
+                available_value += event[3] if event[1] else -event[3]
+                if ((available_qty < 0 and not _same_quantity(available_qty, 0, quantity_doc, "actual_qty"))
+                        or (available_value < 0 and not _same_quantity(available_value, 0, quantity_doc, "stock_value_difference"))):
+                    frappe.throw("内部半成品在准确前序产出之前已被耗用或退回，不能推算流程成本")
+
     def _posted(self, doctype, doc):
         if doc.get("company") != self.company or doc.get("docstatus") != 1:
             _invalid()
         if doctype == SCR and doc.get("status") not in {"Completed", "Return", "Return Issued", "Closed"}:
             _invalid()
+
+    def _receipt_stage(self, doc, row):
+        actual = next(item for item in doc.get("items") if item.name == row["name"])
+        if not actual.get("job_card"):
+            return None
+        if not self.include_stages:
+            frappe.throw("委外回货包含工序阶段，请选择带入流程已过账实际费用，不能只加载回货重复累计半成品价值")
+        self._stage_reader(SCR, doc.name)
+        stage = subcontract_stage.procurement_stage(doc, actual, read=self._stage_reader)
+        if not stage or stage["flow"].name != self.flow.name:
+            _invalid()
+        self._stage_node(stage)
+        self.receipt_stages[row["name"]] = stage
+        return stage
 
     def load_receipts(self):
         if self.receipts is not None:
@@ -314,7 +485,8 @@ class _Session:
                 _invalid()
             for row in self.table(SCR, name, "items"):
                 if row.get("jf_flow_order") == self.flow.name:
-                    if row.get("item_code") != self.fg.name:
+                    stage = self._receipt_stage(doc, row)
+                    if row.get("item_code") != (stage["item"] if stage else self.fg.name):
                         _invalid()
                     self._receipt_row(doc, row)
                     targets[row["name"]] = row
@@ -341,6 +513,9 @@ class _Session:
                 original = targets[reference]
                 if (doc.get("return_against") != original["parent"] or row.get("item_code") != original["item_code"]
                         or row.get("jf_flow_order") not in (None, "", self.flow.name)):
+                    _invalid()
+                stage = self._receipt_stage(doc, row)
+                if bool(stage) != bool(self.receipt_stages.get(reference)):
                     _invalid()
                 self._receipt_row(doc, row)
                 accepted, rejected = -_number(row.get("qty")), -_number(row.get("rejected_qty"))
@@ -384,7 +559,8 @@ class _Session:
             if quantity > _number(original.get("qty")) + _number(original.get("rejected_qty")):
                 _invalid()
         for row in selected:
-            self.receipt_fees[row["name"]] = self._receipt_fee_split(docs[row["parent"]], row)
+            if not (self.stage_quantities_only and row["name"] in self.receipt_stages):
+                self.receipt_fees[row["name"]] = self._receipt_fee_split(docs[row["parent"]], row)
         self.receipts = (docs, targets, selected, returned)
         return self.receipts
 
@@ -451,6 +627,20 @@ class _Session:
             if _number(charge.get("amount")) and (charge.get("account_currency") != self.currency
                     or _number(charge.get("exchange_rate")) != 1):
                 frappe.throw("回货附加费用币种不能明确拆分为公司本币，请核对原生来源")
+        stage = self.receipt_stages.get(row["name"])
+        if stage:
+            actual_material, external_material = Decimal(0), Decimal(0)
+            for item in supplied:
+                ledger = [entry for entry in self.ledger[SCR, doc.name] if entry["voucher_detail_no"] == item["name"]]
+                actual_material -= sum((_number(entry["stock_value_difference"]) for entry in ledger), Decimal(0))
+                if _number(item.get("consumed_qty")):
+                    external_material += self._stage_event(stage, doc, item["name"], item["rm_item_code"], ledger)
+            output = [entry for entry in self.ledger[SCR, doc.name] if entry["voucher_detail_no"] == row["name"]]
+            output_value = self._stage_event(stage, doc, row["name"], row["item_code"], output, output=True)
+            if (not _same_quantity(actual_material, material, actual, "rm_supp_cost")
+                    or not _same_quantity(output_value, material + processing + other, actual, "amount")):
+                frappe.throw("阶段回货库存净价值与精确耗料、委外及附加费用不一致，不能简化成本")
+            material = external_material
         return {"material": material, "processing": processing, "other": other}
 
     def _receipt_ledger(self, doc):
@@ -611,7 +801,20 @@ class _Session:
                     or work.get("jf_flow_order") != self.flow.name or work.get("production_item") != self.fg.name):
                 _invalid()
             if work.get("track_semi_finished_goods") or doc.get("job_card"):
-                frappe.throw("当前成本仅支持普通工单制造；半成品或工序分阶段来源须单独核对，不能重复累计阶段价值")
+                if not self.include_stages or not work.get("track_semi_finished_goods") or not doc.get("job_card"):
+                    frappe.throw("半成品制造缺少准确工序阶段来源，不能重复累计阶段价值")
+                # bom_no is native, but is needed only for a real stage source.
+                fields = self.documents[SE, name][3] | {"bom_no"}
+                rows = self.records(SE, {"name": name}, fields)
+                if len(rows) != 1 or any(doc.get(key) != value for key, value in rows[0].items()):
+                    _invalid()
+                self.documents[SE, name] = (doc, _freeze(doc), "read", fields)
+                stage = subcontract_stage.stock_stage(doc, read=self._stage_reader)
+                if not stage or stage["flow"].name != self.flow.name:
+                    _invalid()
+                self._stage_node(stage)
+            else:
+                stage = None
             expected, consumed, output_qty, allocated = {}, set(), Decimal(0), Decimal(0)
             for row in self.table(SE, name, "items"):
                 item = self.source("Item", row.get("item_code"))
@@ -631,11 +834,13 @@ class _Session:
                     frappe.throw("制造凭证包含副产品、估值分摊或到岸费用，尚不能准确拆分本流程材料与附加费用")
                 self._warehouse(source or target)
                 if source:
-                    if row.get("is_finished_item") or item.name not in self.allowed_items - {self.fg.name}:
+                    if row.get("is_finished_item") or (not stage and item.name not in self.allowed_items - {self.fg.name}):
                         _invalid()
+                    if stage:
+                        self._stage_input(stage, item.name)
                     consumed.add(row["name"])
                 else:
-                    if not row.get("is_finished_item") or item.name != self.fg.name:
+                    if not row.get("is_finished_item") or item.name != (stage["item"] if stage else self.fg.name):
                         _invalid()
                     output_qty += quantity
                     allocated += _number(row.get("additional_cost"))
@@ -681,6 +886,15 @@ class _Session:
                 _invalid()
             if not _same_quantity(output_value, material + other, doc, "total_additional_costs"):
                 frappe.throw("制造成品有效库存账与直接耗料、附加费用不一致；手工估值或独立耗用等来源须先单独核对")
+            if stage:
+                external_material = Decimal(0)
+                for row in self.table(SE, name, "items"):
+                    ledger = [entry for entry in self.ledger[SE, name] if entry["voucher_detail_no"] == row["name"]]
+                    value = self._stage_event(stage, doc, row["name"], row["item_code"], ledger,
+                                              output=row["name"] not in consumed)
+                    if row["name"] in consumed:
+                        external_material += value
+                material = external_material
             result.append({"manufacture": name, "work_order": work.name, "qty": output_qty,
                            "material": material, "other": other})
         self.manufactures = result
@@ -737,6 +951,7 @@ class _Session:
         return tuple(state)
 
     def finish(self):
+        self._check_stage_values()
         self.repost_state = self._reposting()
         try:
             loaded = {key: frappe.get_doc(*key) for key in self.documents}
@@ -790,6 +1005,10 @@ class _Session:
                 fieldname, childtype, fields = MANUFACTURE_CHARGES
                 _table(SE, fieldname, childtype)
                 _fields(childtype, fields, SE)
+            if (doctype, name) in self.extra_tables:
+                fieldname, childtype, fields = self.extra_tables[doctype, name]
+                _table(doctype, fieldname, childtype)
+                _fields(childtype, fields, doctype)
 
 
 def _receipt_dto(session):
@@ -825,11 +1044,14 @@ def material_issue_costs(flow_order):
 
 
 def receipt_batch_candidates(flow_order):
-    session = _Session(flow_order)
+    # This selects final-product quantities, not a receipt-only cost basis.
+    session = _Session(flow_order, include_stages=True, stage_quantities_only=True)
     docs, targets, _selected, returned = session.load_receipts()
     rows = []
     for row in sorted(targets.values(), key=lambda value: (str(docs[value["parent"]].get("posting_date")),
                                                            value["parent"], value.get("idx"))):
+        if row.get("item_code") != session.fg.name:
+            continue
         try:
             quantities = receipt_batch_quantities(row, returned[row["name"]])
         except CostingError as exc:
@@ -841,7 +1063,7 @@ def receipt_batch_candidates(flow_order):
 
 
 def posted_flow_costs(flow_order):
-    session = _Session(flow_order)
+    session = _Session(flow_order, include_stages=True)
     issues = _issue_dto(session)
     receipts = _receipt_dto(session)
     manufactures = session.load_manufactures()

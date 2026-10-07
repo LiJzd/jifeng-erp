@@ -97,6 +97,20 @@ class TestFlowCostSources(unittest.TestCase):
                                     for field in self.module.MANUFACTURE_ITEM_FIELDS})
         self.metas[self.module.SE]["additional_costs"] = Record(fieldname="additional_costs", fieldtype="Table", permlevel=0,
                                                                options="Landed Cost Taxes and Charges")
+        for doctype, fields in self.module.subcontract_stage.PARENTS.items():
+            if doctype == self.module.subcontract_stage.JC:
+                fields = fields | {"sequence_id"}
+            self.permitted[doctype].update(fields)
+            self.metas[doctype].update({field: Record(fieldname=field, fieldtype="Float", permlevel=0)
+                                      for field in fields if field not in self.metas[doctype]})
+        field, childtype, fields = self.module.subcontract_stage.TABLES[self.module.WO]
+        self.schema(childtype, fields | {"sequence_id"}, money)
+        self.metas[self.module.WO][field] = Record(fieldname=field, fieldtype="Table", permlevel=0, options=childtype)
+        for doctype, fields in ((self.module.SE, {"bom_no"}),
+                ("Subcontracting Receipt Item", self.module.subcontract_stage.TABLES[self.module.SCR][2])):
+            self.permitted[doctype].update(fields)
+            self.metas[doctype].update({field: Record(fieldname=field, fieldtype="Data", permlevel=0)
+                                      for field in fields if field not in self.metas[doctype]})
         Document.environment = self
         self.add("Company", "JF", default_currency="CNY")
         self.add("Currency", "CNY")
@@ -126,7 +140,9 @@ class TestFlowCostSources(unittest.TestCase):
         return row
 
     def child(self, parenttype, parent, fieldname, name, **values):
-        tables = self.module.TABLES[parenttype]
+        tables = self.module.TABLES.get(parenttype, ())
+        if parenttype == self.module.WO:
+            tables = (self.module.subcontract_stage.TABLES[parenttype],)
         if parenttype == self.module.SE:
             tables = (*tables, self.module.MANUFACTURE_CHARGES)
         _field, childtype, fields = next(table for table in tables if table[0] == fieldname)
@@ -141,6 +157,8 @@ class TestFlowCostSources(unittest.TestCase):
             raise self.frappe.DoesNotExistError("missing")
         doc = Document(deepcopy(self.documents[doctype, name]))
         tables = self.module.TABLES.get(doctype, ())
+        if doctype == self.module.WO:
+            tables = (self.module.subcontract_stage.TABLES[doctype],)
         if doctype == self.module.SE:
             tables = (*tables, self.module.MANUFACTURE_CHARGES)
         for fieldname, childtype, _fields in tables:
@@ -192,7 +210,7 @@ class TestFlowCostSources(unittest.TestCase):
         return rows[:limit_page_length] if limit_page_length else rows
 
     def ledger(self, name, doctype, voucher, detail, item, warehouse, quantity, value, adjustment=0):
-        return self.add(self.module.SLE, name, company="JF", item_code=item, warehouse=warehouse,
+        return self.add(self.module.SLE, name, creation=datetime(2026, 10, 3, 10), company="JF", item_code=item, warehouse=warehouse,
             stock_uom=self.documents["Item", item].stock_uom, voucher_type=doctype, voucher_no=voucher,
             voucher_detail_no=detail, actual_qty=quantity, stock_value_difference=value, is_cancelled=0,
             is_adjustment_entry=adjustment, posting_date=date(2026, 10, 3), posting_time=timedelta(hours=10))
@@ -248,6 +266,46 @@ class TestFlowCostSources(unittest.TestCase):
             self.child(self.module.SE, name, "additional_costs", name + "-COST", amount=other,
                        account_currency="CNY", exchange_rate=1, base_amount=other)
         return doc
+
+    def stage_chain(self, *, qty=4, rejected=0, loss=0, material=40, other=2):
+        self.add("Item", "SEMI", stock_uom="Nos", is_stock_item=1)
+        wo = self.add(self.module.WO, "STAGE-WO", company="JF", production_item="FG", jf_flow_order="FLOW",
+                      track_semi_finished_goods=1)
+        for sequence, suffix, item, raw, outsourced in ((1, "CAST", "SEMI", "RM", 0), (2, "PLATE", "FG", "SEMI", 1)):
+            self.child(self.module.WO, wo.name, "operations", suffix + "-OP", operation=suffix,
+                       finished_good=item, is_subcontracted=outsourced, sequence_id=sequence)
+            self.add("BOM", suffix + "-BOM", company="JF", item=item)
+            self.child("BOM", suffix + "-BOM", "items", suffix + "-MAT", item_code=raw)
+            self.add("Job Card", suffix + "-JC", company="JF", work_order=wo.name, production_item="FG",
+                operation_id=suffix + "-OP", operation=suffix, finished_good=item, semi_fg_bom=suffix + "-BOM",
+                track_semi_finished_goods=1, is_subcontracted=outsourced, jf_flow_order="FLOW", sequence_id=sequence)
+        cast = self.manufacture("CAST", work=wo.name, material=material, other=other, qty=10)
+        cast.job_card, cast.bom_no = "CAST-JC", "CAST-BOM"
+        self.documents["Stock Entry Detail", "CAST-FG"].item_code = "SEMI"
+        self.documents[self.module.SLE, "CAST-FG-SLE"].item_code = "SEMI"
+        self.add("Purchase Order", "STAGE-PO", company="JF", supplier="PROCESSOR", is_subcontracted=1,
+                 is_old_subcontracting_flow=0)
+        self.child("Purchase Order", "STAGE-PO", "items", "PO-STAGE", item_code="PLATING-SERVICE", fg_item="FG",
+                   job_card="PLATE-JC", bom="PLATE-BOM", jf_flow_order="FLOW")
+        self.add("Item", "PLATING-SERVICE", stock_uom="Nos", is_stock_item=0)
+        self.add("Subcontracting Order", "STAGE-SCO", company="JF", supplier="PROCESSOR", purchase_order="STAGE-PO")
+        self.child("Subcontracting Order", "STAGE-SCO", "items", "SCO-STAGE", item_code="FG",
+                   job_card="PLATE-JC", bom="PLATE-BOM", purchase_order_item="PO-STAGE", jf_flow_order="FLOW")
+        receipt, row = self.stage_receipt("PLATE", qty=qty, rejected=rejected, loss=loss, rate=Decimal(str(material + other)) / 10)
+        return cast, receipt, row
+
+    def stage_receipt(self, name, *, qty, rejected=0, loss=0, rate=Decimal("4.2"), is_return=0, original=None, flow="FLOW"):
+        doc, row = self.receipt(name, qty=qty, rejected=rejected, loss=loss, is_return=is_return, original=original, flow=flow)
+        doc.supplier = "PROCESSOR"
+        row.update(job_card="PLATE-JC", bom="PLATE-BOM", purchase_order="STAGE-PO", purchase_order_item="PO-STAGE",
+            subcontracting_order="STAGE-SCO", subcontracting_order_item="SCO-STAGE", rm_cost_per_qty=rate,
+            rm_supp_cost=rate * row.received_qty, service_cost_per_qty=3, amount=(rate + 3) * row.received_qty)
+        supplied = self.documents["Subcontracting Receipt Supplied Item", name + "-RM"]
+        supplied.update(rm_item_code="SEMI", stock_uom="Nos", rate=rate, amount=rate * row.received_qty)
+        self.documents[self.module.SLE, name + "-RM-SLE"].update(item_code="SEMI", stock_uom="Nos",
+            stock_value_difference=-rate * row.received_qty)
+        self.documents[self.module.SLE, name + "-FG-SLE"].stock_value_difference = row.amount
+        return doc, row
 
     def test_loss_inclusive_fees_use_exact_consumption_not_accepted_times_rates(self):
         self.receipt()
@@ -684,6 +742,197 @@ class TestFlowCostSources(unittest.TestCase):
             doc.docstatus = 1
             self.documents["Landed Cost Taxes and Charges", "MAKE-COST"].base_amount = 6
             self.documents.pop((self.module.REPOST, "JOB"), None)
+
+    def test_stage_raw_material_and_native_fees_are_counted_once_across_batches(self):
+        self.stage_chain()
+        first = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((first["totals"]["material"], first["totals"]["processing"], first["totals"]["other"]), (40, 12, 2))
+        self.assertEqual(first["receipts"][0]["material"], 0)
+        self.assertEqual(sum(first["totals"][field] for field in ("material", "processing", "other")), 54)
+        self.stage_receipt("PLATE2", qty=6)
+        second = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((second["totals"]["material"], second["totals"]["processing"], second["totals"]["other"]), (40, 30, 2))
+        self.assertEqual({row["receipt"] for row in second["receipts"]}, {"PLATE", "PLATE2"})
+        self.assertEqual(second["manufactures"][0]["material"], 40)
+        self.stage_receipt("RETURN", qty=-2, is_return=1, original="PLATE", flow=None)
+        returned = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((returned["totals"]["material"], returned["totals"]["processing"], returned["totals"]["other"]), (40, 24, 2))
+        self.assertEqual(sum(returned["totals"][field] for field in ("material", "processing", "other")), 66)
+        candidates = self.module.receipt_batch_candidates("FLOW")
+        self.assertEqual([(row["receipt"], row["qty"]) for row in candidates], [("PLATE", 2), ("PLATE2", 6)])
+        for writer in (self.frappe.db.commit, self.frappe.db.set_value, self.frappe.db.sql,
+                       self.frappe.new_doc, self.frappe.delete_doc):
+            writer.assert_not_called()
+
+    def test_stage_return_and_reverse_cancel_recompute_net_fees_without_readding_internal_stock(self):
+        cast, plate, _row = self.stage_chain()
+        returned, _ = self.stage_receipt("RETURN", qty=-2, is_return=1, original="PLATE", flow=None)
+        net = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((net["totals"]["material"], net["totals"]["processing"], net["totals"]["other"]), (40, 6, 2))
+        returned.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["processing"], 12)
+        plate.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["processing"], 0)
+        cast.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 0)
+
+    def test_stage_cancelled_missing_or_overconsumed_upstream_cannot_borrow_same_item_stock(self):
+        cast, _plate, _row = self.stage_chain()
+        cast.docstatus = 2
+        with self.assertRaisesRegex(ValueError, "前序半成品缺少"):
+            self.module.posted_flow_costs("FLOW")
+        cast.docstatus = 1
+        self.stage_receipt("PLATE2", qty=7)
+        with self.assertRaisesRegex(ValueError, "净耗用超过"):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_stage_exact_job_card_operation_bom_purchase_and_flow_keys_are_required(self):
+        self.stage_chain()
+        for key, field, value in (
+            (("Job Card", "PLATE-JC"), "operation_id", "CAST-OP"),
+            (("Job Card", "PLATE-JC"), "semi_fg_bom", "CAST-BOM"),
+            ((self.module.WO, "STAGE-WO"), "jf_flow_order", "OTHER"),
+            (("Work Order Operation", "CAST-OP"), "sequence_id", 2),
+            (("Subcontracting Order Item", "SCO-STAGE"), "purchase_order_item", "OTHER"),
+            (("Subcontracting Receipt Item", "PLATE-FG"), "subcontracting_order_item", "OTHER"),
+            (("BOM", "CAST-BOM"), "company", "OTHER"),
+        ):
+            document, old = self.documents[key], self.documents[key].get(field)
+            document[field] = value
+            with self.subTest(field=field, key=key), self.assertRaises((ValueError, PermissionError)):
+                self.module.posted_flow_costs("FLOW")
+            document[field] = old
+        self.child(self.module.WO, "STAGE-WO", "operations", "DUPLICATE-OP", operation="OTHER",
+                   finished_good="SEMI", is_subcontracted=0, sequence_id=1)
+        with self.assertRaisesRegex(ValueError, "唯一"):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_stage_mixed_value_partial_batches_refuse_but_complete_native_value_can_close(self):
+        self.stage_chain()
+        second = self.manufacture("CAST2", work="STAGE-WO", material=60, other=2, qty=10)
+        second.job_card, second.bom_no = "CAST-JC", "CAST-BOM"
+        self.documents["Stock Entry Detail", "CAST2-FG"].item_code = "SEMI"
+        self.documents[self.module.SLE, "CAST2-FG-SLE"].item_code = "SEMI"
+        with self.assertRaisesRegex(ValueError, "分批半成品估值不同"):
+            self.module.posted_flow_costs("FLOW")
+        # The source is a complete native consumption of both batches, whose
+        # aggregate value is already persisted. The service computes no average.
+        self.documents[self.module.SCR, "PLATE"].docstatus = 2
+        self.stage_receipt("ALL", qty=20, rate=Decimal("5.2"))
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["processing"], result["totals"]["other"]), (100, 60, 4))
+
+    def test_stage_source_sle_value_and_posting_order_cannot_be_replaced_by_current_bom_price(self):
+        cast, _plate, _row = self.stage_chain()
+        supplied = self.documents["Subcontracting Receipt Supplied Item", "PLATE-RM"]
+        supplied.amount += 1
+        with self.assertRaises(ValueError):
+            self.module.posted_flow_costs("FLOW")
+        supplied.amount -= 1
+        # 9 sorts after 10 as a timedelta string, but is earlier as native time.
+        cast.posting_time = timedelta(hours=9)
+        for (kind, _), row in self.documents.items():
+            if kind == self.module.SLE and row.voucher_no == cast.name:
+                row.posting_time = cast.posting_time
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 40)
+        cast.posting_time = timedelta(hours=11)
+        for (kind, _), row in self.documents.items():
+            if kind == self.module.SLE and row.voucher_no == cast.name:
+                row.posting_time = cast.posting_time
+        with self.assertRaisesRegex(ValueError, "产出之前"):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_stage_loss_cost_is_native_and_secondary_or_lcv_stays_rejected(self):
+        self.stage_chain(qty=3, loss=1)
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["processing"], 12)
+        for field, value in (("secondary_item_type", "By-Product"), ("landed_cost_voucher_amount", 1)):
+            row = self.documents["Subcontracting Receipt Item", "PLATE-FG"]
+            old = row[field]
+            row[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "副产品"):
+                self.module.posted_flow_costs("FLOW")
+            row[field] = old
+
+    def test_stage_missing_permission_hidden_child_or_late_edit_rejects_complete_result(self):
+        self.stage_chain()
+        self.denied.add(("Job Card", "PLATE-JC", "read"))
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.denied.clear()
+        self.list_denied.add(("Work Order Operation", "CAST-OP"))
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.list_denied.clear()
+        self.metas["Job Card"]["semi_fg_bom"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.metas["Job Card"]["semi_fg_bom"].mask = 0
+        count = 0
+        def change_at_final_read(filters):
+            nonlocal count
+            count += 1
+            if count == 2:
+                self.documents["Job Card", "PLATE-JC"].sequence_id = 3
+        self.list_hooks["Company"] = change_at_final_read
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_receipt_only_stage_does_not_silently_switch_to_posted_manufacturing_basis(self):
+        self.stage_chain()
+        with self.assertRaisesRegex(ValueError, "带入流程已过账"):
+            self.module.receipt_costs("FLOW")
+        self.documents["Subcontracting Receipt Item", "PLATE-FG"].job_card = None
+        with self.assertRaisesRegex(ValueError, "耗用缺少准确"):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_stage_final_quantity_does_not_acquire_manufacturing_money_permissions_or_guess_cost(self):
+        self.stage_chain()
+        self.hidden[self.module.SE] = {"total_additional_costs"}
+        self.hidden["Stock Entry Detail"] = {"additional_cost"}
+        self.documents[self.module.SLE, "CAST-FG-SLE"].stock_value_difference = 99
+        self.assertEqual(self.module.receipt_batch_candidates("FLOW")[0]["qty"], 4)
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+
+    def test_stage_additional_external_raw_consumption_remains_material_not_internal_credit(self):
+        _cast, _receipt, row = self.stage_chain()
+        self.child("BOM", "PLATE-BOM", "items", "EXTRA-RAW", item_code="RM")
+        supplied = self.child(self.module.SCR, "PLATE", "supplied_items", "PLATE-EXTRA", main_item_code="FG",
+            rm_item_code="RM", reference_name=row.name, consumed_qty=1, stock_uom="Kg", rate=10, amount=10)
+        row.update(rm_supp_cost=Decimal("26.8"), rm_cost_per_qty=Decimal("6.7"), amount=Decimal("38.8"))
+        self.ledger("PLATE-EXTRA-SLE", self.module.SCR, "PLATE", supplied.name, "RM", "RM-WH", -1, -10)
+        self.documents[self.module.SLE, "PLATE-FG-SLE"].stock_value_difference = Decimal("38.8")
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["processing"], result["totals"]["other"]), (50, 12, 2))
+        self.assertEqual(result["receipts"][0]["material"], 10)
+
+    def test_outsourced_semi_product_then_native_final_manufacture_does_not_double_value(self):
+        cast, receipt, row = self.stage_chain(qty=10)
+        cast.docstatus = 2
+        for suffix, outsourced in (("CAST", 1), ("PLATE", 0)):
+            self.documents["Work Order Operation", suffix + "-OP"].is_subcontracted = outsourced
+            self.documents["Job Card", suffix + "-JC"].is_subcontracted = outsourced
+        self.documents["Purchase Order Item", "PO-STAGE"].update(fg_item="SEMI", job_card="CAST-JC", bom="CAST-BOM")
+        self.documents["Subcontracting Order Item", "SCO-STAGE"].update(item_code="SEMI", job_card="CAST-JC", bom="CAST-BOM")
+        row.update(item_code="SEMI", job_card="CAST-JC", bom="CAST-BOM", rm_cost_per_qty=4,
+                   rm_supp_cost=40, service_cost_per_qty=1, amount=50)
+        self.documents["Subcontracting Receipt Supplied Item", "PLATE-RM"].update(main_item_code="SEMI", rm_item_code="RM",
+                   consumed_qty=4, stock_uom="Kg", rate=10, amount=40)
+        self.documents[self.module.SLE, "PLATE-RM-SLE"].update(item_code="RM", stock_uom="Kg", actual_qty=-4,
+                   stock_value_difference=-40)
+        self.documents[self.module.SLE, "PLATE-FG-SLE"].update(item_code="SEMI", stock_value_difference=50)
+        final = self.manufacture("FINAL", work="STAGE-WO", material=50, other=1, qty=10, raw_qty=10)
+        final.job_card, final.bom_no = "PLATE-JC", "PLATE-BOM"
+        self.documents["Stock Entry Detail", "FINAL-RM"].update(item_code="SEMI", uom="Nos", stock_uom="Nos")
+        self.documents[self.module.SLE, "FINAL-RM-SLE"].update(item_code="SEMI", stock_uom="Nos")
+        final.posting_time = timedelta(hours=11)
+        for (kind, _), ledger in self.documents.items():
+            if kind == self.module.SLE and ledger.voucher_no == "FINAL":
+                ledger.posting_time = final.posting_time
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["processing"], result["totals"]["other"]), (40, 10, 1))
+        self.assertEqual(result["manufactures"][0]["material"], 0)
+        self.assertEqual(self.module.receipt_batch_candidates("FLOW"), [])
 
 
 if __name__ == "__main__":
