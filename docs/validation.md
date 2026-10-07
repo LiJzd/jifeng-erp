@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-10-07 公网原生有效子表诊断R4实际通过
+
+诊断R2取消与元数据查询无关的驱动实例临时属性检查后，实际在正常get_installed_apps读取defaults缓存时停止：6条只读SQL、缓存3次，未知键严格拒绝。根读取固定镜像实际defaults.py源码，确认正常键为defaults::，新进程缓存支持仅增加该准确前缀，其他未知键、队列、共享缓存连接继续拒绝。R2原生结果SHA `86574876c1e4b32083d87e13588881bf72a791430d58eb04543ebebcc066b097`；此前host入口检查停止单独保留，仅在只读核实尚无R2执行目录后使用新续接helper，未重复旧main。
+
+诊断R3执行137条只读SQL、缓存49次且拒绝0次，实际在DocType内置表字段的df.as_dict()停止。固定镜像实际Meta源码支持include_computed=True，不能把故障误判为参数版本不兼容；实际错误为NoneType不可调用。新定义只对Mapping使用dict(df)，普通DocField仍调用as_dict，computed、自定义字段、Property Setter及严格缺表分类保持。11项纯闭包用例通过，两个独立源码审查通过；不是原生业务验收。R3结果SHA `e89bae580087999c3542a280c55f2f9657785ee5b8d0487d68be34c2ea1afcc9`，错误SHA `20a6aaaf48089d32fab3afbe89cf2cdc8e60ce4f1b23452b344228a1cb72eb86`。额外bootstrap AST探测退出1，根随后只读确认工具已停止、未导入Frappe或访问DB/Redis；该探测不作为诊断通过证据。
+
+根单次派发独立R4，4个新文件39977字节，已有缓存支持仅只读复用；逐块检查当前同SSH socket DIRECT、系统/env/WinHTTP/TUN，无重连或自动回退。实际host成功SHA `8d2b25ca36e2060d4c38c1b69e5b3c4ddd5834d75567fb9513fb06597384ca7b`，原生结果SHA `e00386bb2c54aa680eedbbe1c987c732d3cb5441613eb948ad1f66d8cf65aa58`，driver结果SHA `b9d831995afa7390e51880789a32b648f0aaca4dbe25f1e8e668022fb6e87d9a`。45个根、74条原始及有效关系、3条缺表关系均为native_virtual_child_without_physical_table；未补表或把所有缺表直接忽略。1178条只读SQL、200次私有缓存操作、拒绝0，实际物理连接创建/关闭均1，正常回滚、缓存恢复，DML/DDL/COMMIT/共享Redis命令均0。
+
+根再用独立只读连接核实成功文件和完整私有诊断图SHA `9044339fe76105cf3f588ef91bbefd0aec0f202a3ebd715ecdfc9fca7f37a04c`；host/native输入精确相同，18份框架指纹及6份额外正常权限/备份源码记录，其中Meta重复一致。旧611文件、新628文件、8服务、9配置保持。这里只完成有效元数据诊断，尚未通过五账簿发布门、完整before/after快照、实际驱动类方法资格或执行schema/Compose切换，公网仍为f07。
+
+本地keeper已由根在精确owner/boot/旧cmdline及三个服务检查后续期，私有收据SHA `0718ac5ce5016d30f22e8e8bb863d21a809a669c4aca34db33877e2f829abf56`；未修改本地业务、来源或服务配置，既有Contact后台任务未消费。
+
 ## 2026-10-07 公网只读发布检查的实际停止点
 
 隔离工具没有切换线上代码。preflight R1在正常DB连接前因日志目录不符停止，物理连接0；依据实际私有错误定位后，新R2仅修正cwd到bench/sites，正常只读连接创建/关闭均1，执行189条只读SQL，在完整快照的原始子表闭包遇到不存在的实体表停止。R2结果SHA `1cdd5b685a43ece2d01466e2611cc5ede9c5b585850014af34520f146f81a92e`，错误SHA `578fe9751899187c2c5f566608140ae0a70dd0e105434868f7c0b77aeb5c9845`；尚未形成完整before快照或通过报表发布门。两次均0 DML/DDL/COMMIT，共享Redis命令0，进程私有缓存2条且正常恢复。
