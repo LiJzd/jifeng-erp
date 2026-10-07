@@ -39,6 +39,11 @@ frappe.ui.form.on("Jifeng Expense Voucher", {
                     company: source.company, payment_type: "Pay", party_type: source.party_type,
                     party: source.party, paid_to: source.paid_to, paid_from: values.paid_from,
                 }, (payment) => {
+                    // This is a prepared source document, like a native mapped
+                    // Payment Entry. The generic new-doc Link triggers clear
+                    // party/references when party_type initializes; native
+                    // onload, save and submit validation still run normally.
+                    payment.__run_link_triggers = false;
                     payment.paid_to_account_currency = source.paid_to_account_currency;
                     payment.paid_amount = values.amount;
                     payment.received_amount = values.amount;
