@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-07 工序删除本地安装和原生生命周期回滚通过
+
+R1四源交换后，证据文件命名检查在元数据保存前拒绝；R2修正命名后，原生TIME的timedelta序列化在保存前拒绝；R3补精确标量后，首条父元数据SQL在执行前被错误的Random命名预期拒绝。三份失败收据分别`523b6116fff2fb33b77737cb08fb96117499068022eee76d959b9ae30a5d44e1`、`bbca648a5706917e5bf1a4ab86d241a318e2e83ce896733bae7b77834f967023`、`ede6fbd19a0b84632f62e6004d75086b7af7d6d6077256da4bc41cf8eb2e9932`保留，均无DDL/提交并正常关闭。后续新只读资格及唯一正常保存的预SQL诊断证明，实际hash命名规则保持NULL；诊断零DML/DDL/提交、两连接关闭，新连接57表完整等R3安装前图，收据`fa619cf3c5838498d1e2a5f1df0e0c2cdd8c50d2baee64d9a6919be19dd3d26a`。没有重放已发生的停Web/换源，也没有补写命名规则。
+
+R4唯一续接安装实际PASS：helper `D:/codex-temp/order-operation-delete-local-install-20261007-r1/install_r4.py`，SHA`cd22ac08c3743f1b0e362521c593abd442d74e75e4533a6d0d13f5620bbbb28f`；收据`3da32b372203a5bd094ab48f01108b979b25f416ac6c778c215898e413890ece`，新owner`db50c3ffbba31e56b7dea40749bc8162088ee45bb42fcee473c98b33980937e2`。正常save保原子行身份/验证/权限，六新DocField、六nullable列、一UUID唯一索引和一原生Version准确完成；父变化仅migration_hash及审计，旧operation仅reqd/set_only_once/说明及审计变化。实际DDL2、物理COMMIT4、搜索队列动作0，维护flags值及键存在性恢复，连接关闭。57表范围内旧业务/Auth/权限定义与其它结构保持；636来源、45资产，仅原四文件/一个工序JS版本变化，632其它文件全元数据保持。本地Web一次恢复，数据服务及已有RQ保持，没有业务夹具、账号/角色或公网变更。
+
+实际普通账号原生回滚收据`3778cb715af328f394820dc28cfbe95999872f8727a14c89796ee4dcadcfad7d`：现存非Administrator SysMgr44角色，三类专用QA来源正常删除、工序与排序旧版本拒绝且DML不增、同名不同创建UUID重建、旧创建/删除GET不认领新源、旧UUID POST拒绝均通过。33原生DML、三个Deleted Document、四个永久回执均只存在于该测试事务，完整正常回滚；一连接关闭、零COMMIT/DDL，21表数据/授权图/焦点元数据及结构等本轮before。独立新物理RO连接再次逐值核21表及结构相等，关闭且零写入，收据`dd06ddcc2c0a22d2e2d5d689a5420fcf3f356e7c23de4891e5099f1e8c76f0cc`。不计持久化后的fresh RPC、真实A/B GUI、原生恢复、实际业务引用拒绝或并发通过。
+
+订单要求前端新增提交`0f70a73`，仅当前公司、准确词典类型及已有权限允许；四个观察字段保持，暂定编号由服务器分配，未知结果只读恢复。共享组件的订单类型/镀色新增拒绝，既有修改保持；订单词典CJS及继承镀色CJS通过，后者测试`6fd23f5`改用可到达的现有词条修改，并保留字段mask、冲突与禁止重复POST。此增量未安装/GUI/发布，旧编号和必填规则未确认。公网仍为f07，共享测试数据保持，全旧模块正式交付未完成。以下保留安装前各时点。
+
 ## 2026-10-07 工序删除源码及安装只读前置通过
 
 六文件提交`54431c5fb88bfb1b98d9523dd4039fccd463a14f`，无push。48 backend unittest、CJS协议/DOM测试及diff检查通过；独立源码审通过。本页新建、已排序与旧工序均可进入正常权限删除，释放仅本服务拥有的Operation Link、永久保留原创建UUID及六项删除记录；正常delete_doc/DeletedDocument与其它原生Link检查保留，不传force/ignore权限。工资Data及取消历史引用拒绝、同名重建/恢复区别、未知只GET及晚到结果不移除新身份均有模型证据；真实数据库删除/恢复和并发尚未验收。
