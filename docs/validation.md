@@ -14,6 +14,8 @@ R2 runner `D:/codex-temp/plating-color-native-qa-20261007-r1/run_r2.py` SHA`be7e
 
 固定公网f07到`c067d28811e18c198b90c58f253c2f1c879f26ad`的51生产文件（34M/17A、1030464字节）本地冻结于`D:/codex-temp/erp-public-increment-20261007-r1/source/`；manifest SHA`dc1c7871ce88342f2a0f821d6622290f1b8a784cf5a1e796f32ff09d047410bf`、五类schema/defaultpolicy及ledger只读发布门计划SHA`4fb210be518394bbe36d466e0330eaef723a7cd1d43e8dcd3f7372d53bc6a4c0`。30Python及4JSON解析通过，根逐个核51源与实际candidate字节相同、差异0；这里只是源冻结，不计公网安装通过。
 
+公网当前可用性独立只读收据`be41a10a6aacab9e1ecd6c5b31bac8f74a1a4a1f612c11f95b3da145f3a86307`，helper `D:/codex-temp/erp-public-increment-20261007-r1/availability.py` SHA`15954516cda0491d56f21101cb60cd17e340b48c4eb57a292bc8d51247329da2`。实际匿名GET四次，ping/login为200、A/B为301到login，可信IP证书及同实际TLS socket DIRECT持续核；系统代理/env/WinHTTP/TUN已检查，连接关闭，零业务POST/文件传输/自动重试或回退。只证明当前服务/登录入口可达，不算已发布51项增量、真实登录或GUI业务通过。
+
 ## 2026-10-07 订单词典四作用域原生回滚和单JS安装通过
 
 原生QA准备于`D:/codex-temp/order-requirement-native-qa-20261007-r1/`，只用普通init/save/resolve/read接口和既有44角色非Administrator账号。R1在首轮序列读取因默认creation排序报1054，尚未保存词条，正常回滚关闭；错误收据`c7c747bb917cbc169c6d8481fcdd7e3bb94741fc35054f2fe4b47bcb55a4b286`保留。R2只为五处Series读取指定name排序，独立新只读连接先核R1的20表/结构恢复一致，再执行四组公司×类型用例；未重放R1入口。R2 runner SHA`63280d6be40d21ba9e4d49a110a0ea011831fc20df1461ba594bd16e8c90204b`，cases SHA`ac6e20466151a27d9c118948057a4fccf1385b84bed7b10b5528e31895ba6492`。
