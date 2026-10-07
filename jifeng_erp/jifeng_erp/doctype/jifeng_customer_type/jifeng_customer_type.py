@@ -1,6 +1,9 @@
 from frappe.model.document import Document
 
-from jifeng_erp.customer_type import before_insert_dictionary, prevent_delete, validate_dictionary
+from jifeng_erp.customer_type import (
+    after_delete_dictionary, after_insert_dictionary, before_delete_dictionary,
+    before_insert_dictionary, validate_dictionary,
+)
 
 
 class JifengCustomerType(Document):
@@ -10,5 +13,11 @@ class JifengCustomerType(Document):
     def validate(self):
         validate_dictionary(self)
 
+    def after_insert(self):
+        after_insert_dictionary(self)
+
     def on_trash(self):
-        prevent_delete(self)
+        before_delete_dictionary(self)
+
+    def after_delete(self):
+        after_delete_dictionary(self)

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 ROOT = Path(__file__).parents[1]
 DOCTYPE = "Jifeng Customer Type"
+RECEIPT = "Jifeng Customer Type Receipt"
 EXPECTED_TYPES = {
     "客户类型": "customer_type",
     "客户等级": "customer_grade",
@@ -26,10 +27,16 @@ EXPECTED_TYPES = {
 }
 SCHEMA = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_customer_type/jifeng_customer_type.json").read_text(encoding="utf-8"))
 
+RECEIPT_SCHEMA = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_customer_type_receipt/jifeng_customer_type_receipt.json").read_text(encoding="utf-8"))
+
 
 class Row(dict):
     __getattr__ = dict.get
     __setattr__ = dict.__setitem__
+
+
+class NativeLinkError(Exception):
+    pass
 
 
 class Queue:
@@ -48,7 +55,7 @@ class Document(Row):
 
     @property
     def meta(self):
-        return self.environment.meta
+        return self.environment.meta if self.doctype == DOCTYPE else self.environment.receipt_meta
 
     def is_new(self):
         return bool(self.get("__islocal"))
@@ -65,11 +72,24 @@ class Document(Row):
             raise PermissionError("native " + action)
 
     def get_doc_before_save(self):
-        saved = self.environment.documents.get(self.name)
+        saved = (self.environment.documents if self.doctype == DOCTYPE else self.environment.receipts).get(self.name)
         return Document(deepcopy(saved)) if saved else None
 
     def save(self):
         env, new = self.environment, self.is_new()
+        if self.doctype == RECEIPT:
+            self.check_permission("create" if new else "write")
+            env.module.validate_receipt(self)
+            for field in ("creation_request_id", "delete_request_id"):
+                if self.get(field) and any(row.get(field) == self.get(field) and row["name"] != self.name for row in env.receipts.values()):
+                    raise KeyError("native unique receipt")
+            env.tick += 1
+            self.name = self.name or "REC-" + str(env.tick)
+            self.modified = datetime(2026, 10, 2) + timedelta(microseconds=env.tick)
+            self.creation, self.owner = self.creation or self.modified, self.owner or env.frappe.session.user
+            self["__islocal"] = 0
+            env.receipts[self.name] = deepcopy(dict(self))
+            return self
         self.check_permission("create" if new else "write")
         if new:
             env.module.before_insert_dictionary(self)
@@ -85,6 +105,8 @@ class Document(Row):
         self.modified_by = env.frappe.session.user
         self["__islocal"] = 0
         env.documents[self.name] = deepcopy(dict(self))
+        if new:
+            env.module.after_insert_dictionary(self)
         if not new:
             env.versions.append(deepcopy(dict(self)))
         if env.fail_after_save:
@@ -97,6 +119,8 @@ class Document(Row):
 class CustomerTypeTest(unittest.TestCase):
     def setUp(self):
         self.documents, self.versions, self.series, self.snapshots = {}, [], {}, {}
+        self.receipts, self.deleted_documents, self.references = {}, [], set()
+        self.fail_deleted_audit = False
         self.role_denials, self.document_denials, self.denied_companies = set(), set(), set()
         self.hidden = {"read": set(), "write": set()}
         self.mask_levels, self.omitted, self.tick, self.fail_after_save = set(), set(), 0, False
@@ -107,6 +131,8 @@ class CustomerTypeTest(unittest.TestCase):
         self.frappe = types.ModuleType("frappe")
         self.frappe.session = Row(user="sales-manager@example.invalid")
         self.frappe.PermissionError, self.frappe.TimestampMismatchError = PermissionError, RuntimeError
+        self.frappe.LinkExistsError = NativeLinkError
+        self.frappe.utils = Row(now_datetime=lambda: datetime(2026, 10, 2, 12))
         self.frappe.DoesNotExistError = LookupError
         self.frappe.DuplicateEntryError = self.frappe.UniqueValidationError = KeyError
         self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
@@ -115,18 +141,22 @@ class CustomerTypeTest(unittest.TestCase):
         self.frappe.has_permission = Mock(side_effect=lambda dt, action, doc=None, throw=False:
             action not in self.role_denials and (doc is None or
                 doc.name not in self.document_denials and doc.company not in self.denied_companies))
-        self.frappe.get_meta = Mock(return_value=self.meta)
+        self.receipt_meta = Row(fields=[Row(field) for field in RECEIPT_SCHEMA["fields"]])
+        self.receipt_meta.get_field = lambda name: next((field for field in self.receipt_meta.fields if field.fieldname == name), None)
+        self.receipt_meta.get_permlevel_access = Mock(side_effect=lambda action, parenttype: self.mask_levels)
+        self.frappe.get_meta = Mock(side_effect=lambda dt: self.meta if dt == DOCTYPE else self.receipt_meta)
         self.frappe.new_doc = Mock(side_effect=self.new_doc)
         self.frappe.get_doc = Mock(side_effect=self.get_doc)
         self.frappe.get_list = Mock(side_effect=self.get_list)
+        self.frappe.delete_doc = Mock(side_effect=self.native_delete)
         self.frappe.get_all = Mock(side_effect=AssertionError("unscoped listing forbidden"))
         self.db = types.SimpleNamespace(savepoint=self.savepoint, rollback=self.rollback,
-            get_value=Mock(side_effect=lambda dt, name, field, **kwargs: self.series.get(name)),
+            get_value=Mock(side_effect=self.get_value), exists=lambda dt, name: name in (self.documents if dt == DOCTYPE else self.receipts),
             **{field: Queue() for field in ("before_commit", "after_commit", "before_rollback", "after_rollback")})
         self.frappe.db = self.db
         model, naming = types.ModuleType("frappe.model"), types.ModuleType("frappe.model.naming")
         model.get_permitted_fields = lambda dt, permission_type, **kwargs: (
-            {field.fieldname for field in self.meta.fields} | {"name", "modified", "creation", "owner", "modified_by"}) - self.hidden[permission_type]
+            {field.fieldname for field in (self.meta if dt == DOCTYPE else self.receipt_meta).fields} | {"name", "modified", "creation", "owner", "modified_by"}) - self.hidden[permission_type]
         naming.getseries = Mock(side_effect=self.next_number)
         self.allocate = naming.getseries
         separation = types.ModuleType("jifeng_erp.personnel_separation")
@@ -145,26 +175,34 @@ class CustomerTypeTest(unittest.TestCase):
         Document.environment = self
 
     def new_doc(self, doctype):
-        self.assertEqual(doctype, DOCTYPE)
+        self.assertIn(doctype, (DOCTYPE, RECEIPT))
+        if doctype == RECEIPT:
+            return Document(doctype=RECEIPT, name=None, __islocal=1)
         return Document(doctype=DOCTYPE, name=None, company="DEFAULT-DENIED", dictionary_type="客户类型",
                         numbering_mode=None, inactive=0, __islocal=1)
 
-    def get_doc(self, doctype, name, **kwargs):
+    def get_doc(self, doctype, name=None, **kwargs):
+        if isinstance(doctype, dict):
+            self.assertEqual(doctype["doctype"], DOCTYPE)
+            return Document(deepcopy(doctype))
         if doctype == "Company":
             def check(action):
                 self.assertEqual(action, "select")
                 if name in self.denied_companies:
                     raise PermissionError("company permission")
             return Row(name=name, check_permission=check)
-        self.assertEqual(doctype, DOCTYPE, "must never change native Customer or product types")
-        if self.source_hook:
+        self.assertIn(doctype, (DOCTYPE, RECEIPT), "must never change native Customer or product types")
+        if doctype == DOCTYPE and self.source_hook:
             self.source_hook(name)
-        return Document(deepcopy(self.documents[name]))
+        store = self.documents if doctype == DOCTYPE else self.receipts
+        if name not in store:
+            raise LookupError("native missing")
+        return Document(deepcopy(store[name]))
 
     def get_list(self, doctype, filters, fields, **options):
-        self.assertEqual(doctype, DOCTYPE)
+        self.assertIn(doctype, (DOCTYPE, RECEIPT))
         result = []
-        for name, row in self.documents.items():
+        for name, row in (self.documents if doctype == DOCTYPE else self.receipts).items():
             if name in self.document_denials or row["company"] in self.denied_companies:
                 continue
             if not all(row.get(field) == value for field, value in filters.items()):
@@ -177,15 +215,38 @@ class CustomerTypeTest(unittest.TestCase):
         start, length = options.get("limit_start", 0), options.get("limit_page_length", 20)
         return result[start:start + length]
 
+    def get_value(self, doctype, filters, field, **kwargs):
+        if doctype == "Series":
+            return self.series.get(filters)
+        self.assertEqual(doctype, RECEIPT)
+        return next((row[field] for row in self.receipts.values() if all(row.get(key) == value for key, value in filters.items())), None)
+
+    def native_delete(self, doctype, name, ignore_missing=False):
+        self.assertIn(doctype, (DOCTYPE, RECEIPT))
+        self.assertFalse(ignore_missing)
+        document = self.get_doc(doctype, name)
+        document.check_permission("delete")
+        if doctype == RECEIPT:
+            self.module.prevent_receipt_change(document)
+        self.module.before_delete_dictionary(document)
+        if name in self.references:
+            self.frappe.local.message_log = [{"message": "private linked customer"}]
+            raise self.frappe.LinkExistsError("native Link exists")
+        del self.documents[name]
+        self.module.after_delete_dictionary(document)
+        if self.fail_deleted_audit:
+            raise ValueError("native Deleted Document audit failed")
+        self.deleted_documents.append(deepcopy(dict(document)))
+
     def next_number(self, key, digits):
         self.series[key] = self.series.get(key, 0) + 1
         return str(self.series[key]).zfill(digits)
 
     def savepoint(self, point):
-        self.snapshots[point] = deepcopy((self.documents, self.versions, self.series))
+        self.snapshots[point] = deepcopy((self.documents, self.versions, self.series, self.receipts, self.deleted_documents))
 
     def rollback(self, save_point):
-        self.documents, self.versions, self.series = deepcopy(self.snapshots[save_point])
+        self.documents, self.versions, self.series, self.receipts, self.deleted_documents = deepcopy(self.snapshots[save_point])
 
     def payload(self, **changes):
         return {"request_id": str(uuid4()), "company": "C-1", "dictionary_type": "客户类型",
@@ -199,10 +260,11 @@ class CustomerTypeTest(unittest.TestCase):
         return self.module.save_dictionary({field: archive[field] for field in
             ("name", "version", *self.module.IDENTITY, *self.module.EDIT_FIELDS, "numbering_mode") if field in archive} | changes)
 
-    def test_schema_sales_roles_only_and_no_native_delete_export(self):
+    def test_schema_existing_sales_roles_and_manager_delete_only(self):
         self.assertEqual({row["role"] for row in SCHEMA["permissions"]}, {"System Manager", "Sales Manager", "Sales User"})
         for row in SCHEMA["permissions"]:
-            self.assertFalse(row.get("delete") or row.get("export"))
+            self.assertFalse(row.get("export"))
+            self.assertEqual(bool(row.get("delete")), row["role"] in {"System Manager", "Sales Manager"})
             if row["role"] == "Sales User":
                 self.assertFalse(row.get("create") or row.get("write"))
         self.assertTrue(self.meta.get_field("abbreviation").read_only)
@@ -465,13 +527,6 @@ class CustomerTypeTest(unittest.TestCase):
             with self.subTest(length=length), self.assertRaises(ValueError):
                 self.module.list_dictionary("客户类型", "C-1", page_length=length)
 
-    def test_deletion_is_rejected_even_for_administrator(self):
-        archive = self.saved()
-        self.frappe.session.user = "Administrator"
-        with self.assertRaisesRegex(ValueError, "删除尚未实现"):
-            self.module.prevent_delete(self.get_doc(DOCTYPE, archive["name"]))
-        self.assertIn(archive["name"], self.documents)
-
     def test_five_dictionary_types_keep_schema_columns_default_and_permissions(self):
         self.assertEqual(self.module.TYPES, EXPECTED_TYPES)
         field = self.meta.get_field("dictionary_type")
@@ -482,8 +537,8 @@ class CustomerTypeTest(unittest.TestCase):
         self.assertEqual(SCHEMA["field_order"], columns)
         self.assertEqual([row["fieldname"] for row in SCHEMA["fields"]], columns)
         self.assertEqual(SCHEMA["permissions"], [
-            {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1},
-            {"role": "Sales Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+            {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1, "delete": 1},
+            {"role": "Sales Manager", "read": 1, "select": 1, "write": 1, "create": 1, "delete": 1},
             {"role": "Sales User", "read": 1, "select": 1},
         ])
 
@@ -669,6 +724,261 @@ class CustomerTypeTest(unittest.TestCase):
                         with self.assertRaisesRegex(PermissionError, "company permission"):
                             action()
                     self.assertEqual((self.documents, self.versions, self.series), before)
+
+
+    def deletion(self, archive, **changes):
+        return {field: archive[field] for field in ("name", "creation", "version", *self.module.IDENTITY)} | {"request_id": str(uuid4()), **changes}
+
+    def full_graph(self):
+        return deepcopy((self.documents, self.receipts, self.deleted_documents, self.versions, self.series))
+
+    def test_delete_all_five_types_retains_creation_receipt_and_native_audit(self):
+        for dictionary_type in EXPECTED_TYPES:
+            payload = self.payload(dictionary_type=dictionary_type)
+            archive = self.module.save_dictionary(payload)
+            creation = self.module.resolve_creation(payload["request_id"], dictionary_type, "C-1")
+            self.assertEqual(creation["archive"]["name"], archive["name"])
+            self.assertTrue(archive["can_delete"])
+            deletion = self.deletion(archive, creation=str(archive["creation"]))
+            # Native HTTP creation has a space; version carries ISO T. Echo both exactly.
+            reply = self.module.delete_dictionary(deletion)
+            self.assertEqual(reply, {"status": "deleted", **deletion})
+            self.assertNotIn(archive["name"], self.documents)
+            self.assertEqual(self.deleted_documents[-1]["name"], archive["name"])
+            record = next(r for r in self.receipts.values() if r["creation_request_id"] == payload["request_id"])
+            self.assertEqual((record["status"], record["delete_request_id"]), ("deleted", deletion["request_id"]))
+            graph = self.full_graph()
+            self.assertEqual(self.module.resolve_delete(deletion), reply)
+            deleted = self.module.resolve_creation(payload["request_id"], dictionary_type, "C-1")
+            self.assertEqual((deleted["status"], deleted["request_id"], deleted["name"]), ("deleted", payload["request_id"], archive["name"]))
+            self.assertNotIn("value", deleted)
+            with self.assertRaisesRegex(ValueError, "已删除"):
+                self.module.save_dictionary(payload)
+            with self.assertRaisesRegex(ValueError, "请求已使用"):
+                self.module.delete_dictionary(deletion)
+            self.assertEqual(self.full_graph(), graph)
+        self.assertEqual(len(self.receipts), 5)
+        self.assertEqual(len(self.deleted_documents), 5)
+        for call in self.frappe.delete_doc.call_args_list:
+            self.assertEqual(call.kwargs, {"ignore_missing": False})
+
+    def test_direct_native_forms_share_receipt_delete_and_same_name_recreation_isolation(self):
+        old = self.new_doc(DOCTYPE)
+        old.company, old.value = "C-1", "old direct Form"
+        old.save()
+        old_uuid, old_name = old.request_id, old.name
+        self.assertEqual(len(self.receipts), 1)
+        self.native_delete(DOCTYPE, old.name)
+        record = next(iter(self.receipts.values()))
+        self.assertEqual(record["status"], "deleted")
+        replacement = self.new_doc(DOCTYPE)
+        replacement.company, replacement.value, replacement.name = "C-1", "different identity", old_name
+        replacement.save()  # Native set_name equivalent; no SQL synthesis.
+        self.assertNotEqual(replacement.request_id, old_uuid)
+        self.assertNotEqual(replacement.creation, old.creation)
+        graph = self.full_graph()
+        result = self.module.resolve_creation(old_uuid, "客户类型", "C-1")
+        self.assertEqual((result["status"], result["name"]), ("deleted", old_name))
+        old_delete = {"name": old_name, "creation": str(old.creation), "version": old.modified.isoformat(),
+            "company": old.company, "dictionary_type": old.dictionary_type, "request_id": record["delete_request_id"]}
+        self.assertEqual(self.module.resolve_delete(old_delete), {"status": "deleted", **old_delete})
+        self.assertIn(old_name, self.documents)
+        self.assertEqual(self.documents[old_name]["request_id"], replacement.request_id)
+        with self.assertRaisesRegex(ValueError, "请求已使用"):
+            self.module.delete_dictionary(old_delete)
+        with self.assertRaises(RuntimeError):
+            self.module.delete_dictionary(old_delete | {"request_id": str(uuid4())})
+        self.assertEqual(self.full_graph(), graph)
+
+    def test_native_link_to_customer_profile_blocks_without_modifying_profile_or_receipts(self):
+        schema = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_customer_profile/jifeng_customer_profile.json").read_text(encoding="utf-8"))
+        fields = {df["fieldname"] for df in schema["fields"] if df.get("fieldtype") == "Link" and df.get("options") == DOCTYPE}
+        self.assertEqual(fields, {"category", "grade", "customer_kind"})
+        archive = self.saved()
+        self.references.add(archive["name"])
+        graph = self.full_graph()
+        self.frappe.local.message_log = [{"message": "prior"}]
+        with self.assertRaisesRegex(ValueError, "业务引用") as caught:
+            self.module.delete_dictionary(self.deletion(archive, creation=str(archive["creation"])))
+        self.assertNotIn("private linked", str(caught.exception))
+        self.assertEqual(self.full_graph(), graph)
+        self.assertEqual(self.frappe.local.message_log, [{"message": "prior"}])
+        # Direct Form follows the same native Link failure, under request rollback.
+        self.savepoint("direct")
+        with self.assertRaises(NativeLinkError):
+            self.native_delete(DOCTYPE, archive["name"])
+        self.rollback("direct")
+        self.assertEqual(self.full_graph(), graph)
+
+    def test_deleted_document_audit_failure_rolls_back_source_and_permanent_status(self):
+        archive = self.saved()
+        graph = self.full_graph()
+        prior = lambda: None
+        self.db.after_commit.add(prior)
+        self.fail_deleted_audit = True
+        with self.assertRaisesRegex(ValueError, "Deleted Document"):
+            self.module.delete_dictionary(self.deletion(archive, creation=str(archive["creation"])))
+        self.assertEqual(self.full_graph(), graph)
+        self.assertEqual(self.db.after_commit._functions, [prior])
+        self.assertIsNone(self.module._DELETING.get())
+
+    def test_delete_requires_normal_company_type_read_delete_and_exact_version(self):
+        archive = self.saved()
+        payload = self.deletion(archive, creation=str(archive["creation"]))
+        graph = self.full_graph()
+        for altered in ({"company": "C-2"}, {"dictionary_type": "订单客户分类"},
+                        {"creation": "2020-01-01T00:00:00"}, {"version": "2020-01-01T00:00:00"},
+                        {"force": 1}, {"request_id": "not-UUID"}):
+            with self.subTest(altered=altered), self.assertRaises(ValueError if "force" in altered or "request_id" in altered else RuntimeError):
+                self.module.delete_dictionary(payload | altered)
+            self.assertEqual(self.full_graph(), graph)
+        for action in ("read", "delete"):
+            self.role_denials.add(action)
+            with self.subTest(action=action), self.assertRaises(PermissionError):
+                self.module.delete_dictionary(payload)
+            self.role_denials.clear()
+        self.denied_companies.add("C-1")
+        with self.assertRaises(PermissionError):
+            self.module.delete_dictionary(payload)
+        self.assertEqual(self.full_graph(), graph)
+
+    def test_delete_capability_is_quiet_and_hidden_identity_cannot_be_used(self):
+        archive = self.saved()
+        self.role_denials.add("delete")
+        self.assertFalse(self.module.read_dictionary(archive["name"])["can_delete"])
+        self.assertFalse(self.module.list_dictionary("客户类型", "C-1")["rows"][0]["can_delete"])
+        self.role_denials.clear()
+        graph = self.full_graph()
+        for field in ("creation", "owner", "request_id", "request_digest"):
+            self.hidden["read"].add(field)
+            self.assertFalse(self.module.read_dictionary(archive["name"])["can_delete"])
+            with self.subTest(field=field), self.assertRaises(PermissionError):
+                self.module.delete_dictionary(self.deletion(archive, creation=str(archive["creation"])))
+            self.hidden["read"].clear()
+        self.assertEqual(self.full_graph(), graph)
+
+    def test_permanent_receipt_cannot_be_manually_created_changed_deleted_or_renamed(self):
+        archive = self.saved()
+        graph = self.full_graph()
+        record = self.get_doc(RECEIPT, next(iter(self.receipts)))
+        for attempted in (record, self.new_doc(RECEIPT)):
+            attempted.status = "deleted"
+            with self.assertRaisesRegex(ValueError, "只能由原生"):
+                attempted.save()
+        for action in (lambda: self.native_delete(RECEIPT, record.name),
+                       lambda: self.module.prevent_receipt_change(record)):
+            with self.assertRaisesRegex(ValueError, "永久保留"):
+                action()
+        self.assertEqual(self.full_graph(), graph)
+        self.assertEqual({r["role"] for r in RECEIPT_SCHEMA["permissions"]}, {"System Manager", "Sales Manager", "Sales User"})
+        self.assertTrue(all(not row.get("delete") for row in RECEIPT_SCHEMA["permissions"]))
+        source_field = next(f for f in RECEIPT_SCHEMA["fields"] if f["fieldname"] == "dictionary_name")
+        self.assertEqual(source_field["fieldtype"], "Data", "permanent receipt must not block native delete with its own Link")
+
+    def test_existing_pre_receipt_row_can_delete_without_backfill_on_read(self):
+        archive = self.saved()
+        self.receipts.clear()  # Installed rows predate this new receipt schema.
+        graph = self.full_graph()
+        self.module.read_dictionary(archive["name"])
+        self.module.list_dictionary("客户类型", "C-1")
+        self.assertEqual(self.full_graph(), graph)
+        self.module.delete_dictionary(self.deletion(archive, creation=str(archive["creation"])))
+        self.assertEqual(len(self.receipts), 1)
+        self.assertEqual(next(iter(self.receipts.values()))["status"], "deleted")
+
+    def test_unknown_delete_resolution_does_not_claim_missing_or_same_name_new_source(self):
+        archive = self.saved()
+        payload = self.deletion(archive, creation=str(archive["creation"]))
+        graph = self.full_graph()
+        self.assertEqual(self.module.resolve_delete(payload), {"status": "not_deleted", **payload})
+        self.assertEqual(self.full_graph(), graph)
+        self.documents[archive["name"]]["creation"] += timedelta(days=1)
+        changed = self.full_graph()
+        self.assertEqual(self.module.resolve_delete(payload), {"status": "unknown"})
+        self.assertEqual(self.full_graph(), changed)
+        del self.documents[archive["name"]]
+        self.assertEqual(self.module.resolve_delete(payload), {"status": "unknown"})
+
+    def test_deleted_receipt_still_enforces_source_and_receipt_read_scope(self):
+        archive = self.saved()
+        payload = self.deletion(archive, creation=str(archive["creation"]))
+        self.module.delete_dictionary(payload)
+        graph = self.full_graph()
+        self.hidden["read"].add("deleted_version")
+        with self.assertRaises(PermissionError):
+            self.module.resolve_delete(payload)
+        self.hidden["read"].clear()
+        self.document_denials.add(archive["name"])
+        with self.assertRaises(PermissionError):
+            self.module.resolve_delete(payload)
+        self.assertEqual(self.full_graph(), graph)
+
+
+
+    def test_delete_uuid_cannot_be_reused_for_another_company_or_type(self):
+        first = self.saved()
+        second = self.saved(company="C-2", dictionary_type="订单客户级别")
+        request = self.deletion(first, creation=str(first["creation"]))
+        self.module.delete_dictionary(request)
+        graph = self.full_graph()
+        with self.assertRaisesRegex(ValueError, "请求已使用"):
+            self.module.delete_dictionary(self.deletion(second, creation=str(second["creation"]), request_id=request["request_id"]))
+        with self.assertRaisesRegex(ValueError, "来源已变化"):
+            self.module.resolve_delete(self.deletion(second, creation=str(second["creation"]), request_id=request["request_id"]))
+        self.assertEqual(self.full_graph(), graph)
+
+    def test_receipt_native_write_denial_or_omitted_receipt_projection_rolls_back_delete(self):
+        archive = self.saved()
+        payload = self.deletion(archive, creation=str(archive["creation"]))
+        graph = self.full_graph()
+        self.role_denials.add("write")
+        with self.assertRaises(PermissionError):
+            self.module.delete_dictionary(payload)
+        self.role_denials.clear()
+        self.assertEqual(self.full_graph(), graph)
+        self.omitted.add("deleted_version")
+        with self.assertRaises(PermissionError):
+            self.module.delete_dictionary(payload)
+        self.assertEqual(self.full_graph(), graph)
+
+    def test_native_controller_and_legacy_audit_cover_receipt_without_claiming_delete_pass(self):
+        directory = ROOT / "jifeng_erp/jifeng_erp/doctype"
+        source = (directory / "jifeng_customer_type/jifeng_customer_type.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        controller = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+        calls = {node.name: [call.func.id for call in ast.walk(node) if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)]
+                 for node in controller.body if isinstance(node, ast.FunctionDef)}
+        self.assertIn("after_insert_dictionary", calls["after_insert"])
+        self.assertIn("before_delete_dictionary", calls["on_trash"])
+        self.assertIn("after_delete_dictionary", calls["after_delete"])
+        receipt_source = (directory / "jifeng_customer_type_receipt/jifeng_customer_type_receipt.py").read_text(encoding="utf-8")
+        self.assertIn("def before_rename", receipt_source)
+        legacy = (ROOT / "jifeng_erp/customer_type_validation.py").read_text(encoding="utf-8")
+        contents = next(node for node in ast.parse(legacy).body if isinstance(node, ast.FunctionDef) and node.name == "_contents")
+        self.assertTrue(any(isinstance(node, ast.Name) and node.id == "RECEIPT" for node in ast.walk(contents)))
+        self.assertNotIn('text="删除尚未实现"', legacy)
+        self.assertIn('"delete_lifecycle_verified": False', legacy)
+
+
+
+    def test_hidden_active_source_get_keeps_not_found_but_uuid_is_never_reallocated(self):
+        payload = self.payload()
+        archive = self.module.save_dictionary(payload)
+        self.document_denials.add(archive["name"])
+        graph, allocations = self.full_graph(), self.allocate.call_count
+        self.assertEqual(self.module.resolve_creation(payload["request_id"], "客户类型", "C-1"), {"status": "not_found"})
+        with self.assertRaisesRegex(ValueError, "身份冲突"):
+            self.module.save_dictionary(payload)
+        self.assertEqual(self.full_graph(), graph)
+        self.assertEqual(self.allocate.call_count, allocations)
+        self.hidden["read"].add("request_digest")
+        with self.assertRaises(PermissionError):
+            self.module.resolve_creation(payload["request_id"], "客户类型", "C-1")
+        self.hidden["read"].clear()
+        self.role_denials.add("read")
+        with self.assertRaises(PermissionError):
+            self.module.resolve_creation(payload["request_id"], "客户类型", "C-1")
+        self.assertEqual(self.full_graph(), graph)
 
 
 if __name__ == "__main__":

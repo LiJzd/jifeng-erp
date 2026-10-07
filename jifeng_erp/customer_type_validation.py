@@ -1,6 +1,6 @@
 """One real-role customer-type experiment in the designated local clone.
 
-After an explicit targeted DocType reload, call smoke directly once. This
+After explicit installation of both customer dictionary DocTypes, call smoke once. This
 helper never migrates, commits, downloads, changes permissions/schema or opens
 a browser. Do not use bench execute's retry fallback. Every fixture and native
 Version/counter is rolled back, with complete persisted hashes and all table
@@ -26,8 +26,8 @@ from jifeng_erp.product_dictionary_validation import (
     _document_snapshot, _native_contents as _base_contents, _sql_row_hash,
 )
 from jifeng_erp.customer_type import (
-    AUTO_MODE, COLLISION, DOCTYPE, EDIT_FIELDS, IDENTITY, REQUEST_FIELDS, TYPES, _columns, _series_key,
-    init_dictionary, list_dictionary, read_dictionary, resolve_creation, save_dictionary,
+    AUTO_MODE, COLLISION, DOCTYPE, RECEIPT, EDIT_FIELDS, IDENTITY, REQUEST_FIELDS, TYPES, _columns, _series_key,
+    delete_dictionary, init_dictionary, list_dictionary, read_dictionary, resolve_creation, resolve_delete, save_dictionary,
 )
 
 
@@ -48,7 +48,7 @@ def _customer_metadata():
 
 def _contents():
     result = _base_contents()
-    doctypes = {DOCTYPE, "Customer"}
+    doctypes = {DOCTYPE, RECEIPT, "Customer"}
     for doctype in tuple(doctypes):
         doctypes.update(field.options for field in frappe.get_meta(doctype).get_table_fields())
     for doctype in sorted(doctypes):
@@ -415,13 +415,14 @@ def smoke(company, other_company):
             rejected(lambda start=start: list_dictionary("客户类型", company, start=start))
         passed()
 
-        current = "deletion_blocked_for_administrator_and_guest_denied"
-        frappe.set_user("Administrator")
-        rejected(lambda: frappe.delete_doc(DOCTYPE, direct.name), text="删除尚未实现")
+        # Deletion lifecycle is exercised by separate native QA; this legacy
+        # smoke now checks Guest refusal, not the obsolete global delete block.
+        current = "guest_dictionary_endpoints_denied"
         frappe.set_user("Guest")
         for action in (lambda: init_dictionary("客户类型"), lambda: list_dictionary("客户类型", company),
                        lambda: read_dictionary(renamed["name"]), lambda: resolve_creation(str(uuid4()), "客户类型", company),
-                       lambda: save_dictionary(payload())):
+                       lambda: save_dictionary(payload()), lambda: delete_dictionary({}),
+                       lambda: resolve_delete({})):
             rejected(action, frappe.PermissionError)
         passed()
     except Exception as error:
@@ -457,5 +458,5 @@ def smoke(company, other_company):
         "table_counts_before": counts_before, "table_counts_after": _tab_counts(tables)[1],
         "whole_ledger_before": ledger_before, "whole_ledger_after": _ledger_snapshot(),
         "customer_metadata_before": customer_meta_before, "customer_metadata_after": _customer_metadata(),
-        "gui_verified": False, "concurrency": "serial rollback experiment; no concurrent/load test",
-        "remaining": ["旧编号算法", "更新简拼", "旧删除操作", "旧打印及预览", "前端操作验收"]}
+        "gui_verified": False, "delete_lifecycle_verified": False, "concurrency": "serial rollback experiment; no concurrent/load test",
+        "remaining": ["旧编号算法", "更新简拼", "新删除生命周期独立原生验收", "旧删除操作", "旧打印及预览", "前端操作验收"]}

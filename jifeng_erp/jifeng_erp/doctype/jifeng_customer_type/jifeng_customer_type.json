@@ -14,14 +14,14 @@
   {"fieldname": "value", "fieldtype": "Data", "label": "名称", "reqd": 1, "in_list_view": 1, "description": "本系统要求非空客户词典名称；保存名称原文，各词典记录独立，不改写原生 Customer 的主体类型或客户分组。"},
   {"fieldname": "remarks", "fieldtype": "Small Text", "label": "备注", "description": "保存备注原文。"},
   {"fieldname": "abbreviation", "fieldtype": "Data", "label": "简拼", "read_only": 1, "description": "只读保留原文；旧更新简拼规则尚未确认，本批不生成或更新。"},
-  {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1, "description": "停用影响词典在用查询；本批未实现删除。"},
+  {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1, "description": "停用影响词典在用查询；无业务引用且具有正常删除权限的词条可删除，操作记录永久保留。"},
   {"fieldname": "numbering_mode", "fieldtype": "Data", "label": "服务器编号模式", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1},
   {"fieldname": "request_id", "fieldtype": "Data", "label": "新建请求身份", "hidden": 1, "read_only": 1, "unique": 1, "no_copy": 1, "print_hide": 1},
   {"fieldname": "request_digest", "fieldtype": "Data", "label": "新建请求摘要", "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
  ],
  "permissions": [
-  {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1},
-  {"role": "Sales Manager", "read": 1, "select": 1, "write": 1, "create": 1},
+  {"role": "System Manager", "read": 1, "select": 1, "write": 1, "create": 1, "delete": 1},
+  {"role": "Sales Manager", "read": 1, "select": 1, "write": 1, "create": 1, "delete": 1},
   {"role": "Sales User", "read": 1, "select": 1}
  ]
 }
