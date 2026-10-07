@@ -8,19 +8,17 @@
  "track_changes": 1,
  "sort_field": "sequence",
  "sort_order": "ASC",
- "field_order": ["operation", "sequence", "request_id", "request_digest"],
+ "field_order": ["operation", "sequence", "request_id", "request_digest", "deleted_operation", "deleted_creation", "deleted_version", "deleted_at", "deleted_by", "delete_request_id"],
  "fields": [
   {
    "fieldname": "operation",
    "fieldtype": "Link",
    "label": "共用工序",
    "options": "Operation",
-   "reqd": 1,
    "unique": 1,
    "read_only": 1,
-   "set_only_once": 1,
    "in_list_view": 1,
-   "description": "关联所有公司共用的原生工序；在共用工序页面建立后不能改绑。"
+   "description": "关联所有公司共用的原生工序；不能改绑。删除工序时由共用入口解除关联，并永久保留删除记录。"
   },
   {
    "fieldname": "sequence",
@@ -49,7 +47,13 @@
    "read_only": 1,
    "no_copy": 1,
    "print_hide": 1
-  }
+  },
+  {"fieldname": "deleted_operation", "fieldtype": "Data", "label": "已删除工序", "read_only": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "deleted_creation", "fieldtype": "Data", "label": "已删除工序创建身份", "read_only": 1, "no_copy": 1, "hidden": 1, "print_hide": 1},
+  {"fieldname": "deleted_version", "fieldtype": "Data", "label": "删除前工序版本", "read_only": 1, "no_copy": 1, "hidden": 1, "print_hide": 1},
+  {"fieldname": "deleted_at", "fieldtype": "Datetime", "label": "删除日期", "read_only": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "deleted_by", "fieldtype": "Link", "label": "删除人", "options": "User", "read_only": 1, "no_copy": 1, "print_hide": 1},
+  {"fieldname": "delete_request_id", "fieldtype": "Data", "label": "删除请求身份", "unique": 1, "hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
  ],
  "permissions": [
   {"role": "Manufacturing User", "read": 1, "select": 1, "create": 1, "write": 1},

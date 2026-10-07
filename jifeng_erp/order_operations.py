@@ -28,6 +28,14 @@ AUDIT = ("owner", "creation", "modified_by")
 NATIVE_REQUIRED = {"name", "modified"}
 ORDER_REQUIRED = {"name", "modified", "operation"}
 RECEIPT = {"request_id", "request_digest"}
+DELETION = {
+    "deleted_operation",
+    "deleted_creation",
+    "deleted_version",
+    "deleted_at",
+    "deleted_by",
+    "delete_request_id",
+}
 _SERVER = object()
 _UNSET = object()
 CHANGED = "共用工序来源已变化，请重新读取核对"
@@ -214,6 +222,8 @@ def _projection(document, *, receipt=False, row=None):
     if receipt:
         required = required | RECEIPT
         requested += sorted(RECEIPT)
+    if document.doctype == DOCTYPE:
+        requested += sorted(DELETION)
     _fields(document.doctype, required, "read")
     readable = _columns(document.doctype, "read")
     if row is None:
@@ -312,6 +322,13 @@ def _pack(document, ordering=_UNSET, *, row=None):
         "field_meta": {"operation": _field_meta("operation", readonly=not can_rename)},
         "can_write": bool(can_remarks or can_sequence),
         "can_rename": can_rename,
+        "can_delete": bool(
+            _quiet(document, "delete")
+            and native.get("creation")
+            and DELETION.issubset(_columns(DOCTYPE, "read"))
+            and (DELETION | {"operation"}).issubset(_columns(DOCTYPE, "write"))
+            and _quiet(target, "write" if ordering else "create")
+        ),
         **{field: _version(native[field]) for field in AUDIT if field in native},
         **{
             "ordering_" + field: _version(ordered[field])
@@ -360,6 +377,7 @@ def init_operations():
         "can_write": bool(can_create),
         "can_create": bool(can_create),
         "can_rename": False,
+        "can_delete": False,
         "field_meta": {
             "operation": _field_meta(
                 "operation", readonly=not can_create, creation=True
@@ -639,6 +657,9 @@ def _server_order(document, native):
 
 def before_insert_ordering(document):
     _login()
+    if document.__dict__.get("_jf_order_operation_delete"):
+        _validate_deletion_record(document)
+        return
     marker = document.__dict__.get("_jf_order_operation_server")
     if not marker or marker[0] is not _SERVER:
         frappe.throw("工序排序及新建回执只能由共用工序入口建立")
@@ -671,6 +692,13 @@ def before_insert_ordering(document):
 def validate_ordering(document):
     _login()
     _fields(DOCTYPE, ORDER_REQUIRED, "read")
+    if document.__dict__.get("_jf_order_operation_delete"):
+        _validate_deletion_record(document)
+        return
+    if not document.operation or any(document.get(field) for field in DELETION):
+        # A normal form, copy or stale client cannot revive or alter a record of
+        # deletion. It remains permanent UUID recovery evidence.
+        frappe.throw("已删除工序的回执不能修改或重新关联")
     _native_write(_name(document.operation))
     document.sequence = _sequence(document.sequence)
     if document.is_new():
@@ -724,6 +752,14 @@ def resolve_creation(payload):
         return result
     if ordering.request_digest != _digest(values):
         return result | {"status": "conflict"}
+    if ordering.get("delete_request_id"):
+        deleted = _deletion_projection(ordering)
+        return result | {
+            "status": "deleted",
+            "current_state": _deleted_current(
+                deleted["deleted_operation"], deleted["deleted_creation"]
+            ),
+        }
     document = frappe.get_doc(NATIVE, ordering.operation)
     current = _pack(document, ordering)
     # Optional fields may be omitted in ordinary reads. Recovery needs every
@@ -737,6 +773,245 @@ def resolve_creation(payload):
     )
     current["request_id"] = values["request_id"]
     return result | {"status": "changed" if changed else "found", "operation": current}
+
+
+def _delete_payload(payload):
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (ValueError, TypeError):
+            frappe.throw("工序删除请求须为有效对象")
+    fields = {
+        "operation", "creation", "version", "ordering_name", "ordering_version", "request_id"
+    }
+    if not isinstance(payload, dict) or set(payload) != fields:
+        frappe.throw("删除须提供准确工序身份、两个来源版本和请求身份")
+    _name(payload["operation"])
+    _uuid(payload["request_id"])
+    if not same_version(payload["creation"], payload["creation"]) or not same_version(
+        payload["version"], payload["version"]
+    ):
+        frappe.throw("删除须提供准确工序创建身份和版本")
+    if (payload["ordering_name"] is None) != (payload["ordering_version"] is None):
+        frappe.throw("删除须提供准确排序来源版本")
+    if payload["ordering_name"] is not None:
+        _name(payload["ordering_name"])
+        if not same_version(payload["ordering_version"], payload["ordering_version"]):
+            frappe.throw("删除须提供准确排序来源版本")
+    return payload
+
+
+def _deletion_projection(document):
+    _fields(DOCTYPE, ORDER_REQUIRED | DELETION, "read")
+    row = _projection(document)
+    if (
+        not DELETION.issubset(row)
+        or row["operation"] is not None
+        or not all(row.get(field) for field in DELETION)
+    ):
+        frappe.throw("工序删除记录不完整，请人工核对")
+    return row
+
+
+def _deleted_current(operation, creation):
+    # A permanent record proves a past deletion, not the current absence of its
+    # name. Normal filtered reads distinguish native restore from replacement.
+    # Empty/hidden results are deliberately indistinguishable.
+    _fields(NATIVE, NATIVE_REQUIRED | {"creation"}, "read")
+    rows = frappe.get_list(
+        NATIVE,
+        filters={"name": operation},
+        fields=["name", "modified", "creation"],
+        limit_page_length=1,
+    )
+    if not rows:
+        return "not_visible"
+    current = _projection(frappe.get_doc(NATIVE, operation), row=rows[0])
+    if "creation" not in current or not same_version(
+        current["creation"], _version(current["creation"])
+    ):
+        frappe.throw(CHANGED)
+    return "restored" if same_version(current["creation"], creation) else "replaced"
+
+
+def _validate_deletion_record(document):
+    marker = document.__dict__.get("_jf_order_operation_delete")
+    if not marker or marker[0] is not _SERVER:
+        frappe.throw("工序删除记录只能由共用工序入口建立")
+    _, before_state, native_name, native_creation, native_version, values = marker
+    document.check_permission("create" if document.is_new() else "write")
+    _fields(DOCTYPE, ORDER_REQUIRED | DELETION, "read")
+    _fields(DOCTYPE, DELETION | {"operation"}, "write")
+    native = frappe.get_doc(NATIVE, native_name, for_update=True)
+    native.check_permission("read")
+    native.check_permission("delete")
+    _projection(native)
+    if not same_version(native.creation, native_creation) or not same_version(
+        native.modified, native_version
+    ):
+        frappe.throw(CHANGED, frappe.TimestampMismatchError)
+    if document.operation is not None or tuple(
+        document.get(field) for field in sorted(DELETION)
+    ) != values:
+        frappe.throw("工序删除记录不能指定或修改")
+    before = document.get_doc_before_save()
+    if before_state is None:
+        if (
+            not document.is_new()
+            or before
+            or document.request_id
+            or document.request_digest
+            or document.sequence != 0
+        ):
+            frappe.throw("旧工序删除记录不能伪造新建回执")
+    elif (
+        not before
+        or _state(before) != before_state
+        or _state(document, exclude={"operation", *DELETION})
+        != _state(before, exclude={"operation", *DELETION})
+    ):
+        frappe.throw("删除不能改变工序排序、新建回执及其它属性")
+
+
+def _guard_delete_references(operation):
+    # Existence only: include cancelled history and manual payroll's Data field,
+    # which native Link checking cannot see. No private source names are exposed.
+    for doctype, field in (
+        ("BOM Operation", "operation"),
+        ("Work Order Operation", "operation"),
+        ("Job Card", "operation"),
+        ("Job Card Time Log", "operation"),
+        ("Job Card Operation", "sub_operation"),
+        ("Jifeng Operation Line", "operation"),
+        ("Jifeng Wage Allocation", "operation"),
+        ("Jifeng Wage Entry", "operation"),
+    ):
+        if frappe.db.get_value(doctype, {field: operation}, "name", for_update=True):
+            frappe.throw("工序已有业务或工资引用，不能删除")
+
+
+def _delete_reply(payload, ordering):
+    row = _deletion_projection(ordering)
+    if (
+        row["delete_request_id"] != payload["request_id"]
+        or row["deleted_operation"] != payload["operation"]
+        or not same_version(row["deleted_creation"], payload["creation"])
+        or not same_version(row["deleted_version"], payload["version"])
+        or payload["ordering_name"] is not None
+        and ordering.name != payload["ordering_name"]
+    ):
+        frappe.throw(CHANGED)
+    return {
+        "scope": SCOPE,
+        "status": "deleted",
+        "operation": payload["operation"],
+        "creation": payload["creation"],
+        "version": payload["version"],
+        "request_id": payload["request_id"],
+        "ordering_name": ordering.name,
+    }
+
+
+@frappe.whitelist(methods=["POST"])
+@_atomic
+def delete_operation(payload):
+    _login()
+    _read_access()
+    payload = _delete_payload(payload)
+    _fields(NATIVE, {"name", "modified", "creation"}, "read")
+    _fields(DOCTYPE, ORDER_REQUIRED | DELETION, "read")
+    # A used deletion UUID never authorizes a second POST or a same-name source.
+    if frappe.db.get_value(DOCTYPE, {"delete_request_id": payload["request_id"]}, "name"):
+        frappe.throw("删除请求已使用，请只读核对删除记录，不要重复删除")
+    document = frappe.get_doc(NATIVE, payload["operation"], for_update=True)
+    document.check_permission("read")
+    document.check_permission("delete")
+    projection = _projection(document)
+    if "creation" not in projection:
+        frappe.throw("没有读取工序创建身份的权限", frappe.PermissionError)
+    if not same_version(document.creation, payload["creation"]) or not same_version(
+        document.modified, payload["version"]
+    ):
+        frappe.throw(CHANGED, frappe.TimestampMismatchError)
+    ordering = _ordering(document.name, lock=True)
+    if ordering:
+        if ordering.name != payload["ordering_name"] or not same_version(
+            ordering.modified, payload["ordering_version"]
+        ):
+            frappe.throw(CHANGED, frappe.TimestampMismatchError)
+    elif payload["ordering_name"] is not None:
+        frappe.throw(CHANGED, frappe.TimestampMismatchError)
+    _guard_delete_references(document.name)
+    before = _state(ordering) if ordering else None
+    ordering = ordering or frappe.new_doc(DOCTYPE)
+    ordering.operation = None
+    ordering.deleted_operation = document.name
+    ordering.deleted_creation = _version(document.creation)
+    ordering.deleted_version = _version(document.modified)
+    ordering.deleted_at = frappe.utils.now_datetime()
+    ordering.deleted_by = frappe.session.user
+    ordering.delete_request_id = payload["request_id"]
+    ordering.__dict__["_jf_order_operation_delete"] = (
+        _SERVER,
+        before,
+        document.name,
+        payload["creation"],
+        payload["version"],
+        tuple(ordering.get(field) for field in sorted(DELETION)),
+    )
+    # Release only this service-owned Link through a normal authorized save.
+    # All other Link/Dynamic Link validation and DeletedDocument auditing remain
+    # the native delete lifecycle; no force/ignore_* flags are passed.
+    ordering = _save_ordering(ordering)
+    messages_before = list(getattr(frappe.local, "message_log", None) or [])
+    linked = False
+    try:
+        frappe.delete_doc(NATIVE, document.name, ignore_missing=False)
+    except frappe.LinkExistsError:
+        frappe.local.message_log = messages_before
+        linked = True
+    if linked:
+        # Raise outside the native exception handler so its private document
+        # names cannot survive in the exception chain returned by the API.
+        frappe.throw("工序已有其它业务引用，不能删除")
+    if frappe.db.exists(NATIVE, document.name):
+        frappe.throw("原生工序删除结果未确认，已拒绝本次删除")
+    return _delete_reply(payload, frappe.get_doc(DOCTYPE, ordering.name))
+
+
+@frappe.whitelist(methods=["GET"])
+def resolve_delete(payload):
+    """Only a matching permanent record proves deletion; absence never does."""
+    _login()
+    _read_access()
+    payload = _delete_payload(payload)
+    _fields(DOCTYPE, ORDER_REQUIRED | DELETION, "read")
+    rows = frappe.get_list(
+        DOCTYPE,
+        filters={"delete_request_id": payload["request_id"]},
+        fields=["name"],
+        limit_page_length=1,
+    )
+    if rows:
+        reply = _delete_reply(payload, frappe.get_doc(DOCTYPE, rows[0]["name"]))
+        return reply | {
+            "current_state": _deleted_current(payload["operation"], payload["creation"])
+        }
+    result = {
+        "scope": SCOPE,
+        "status": "unknown",
+        "operation": payload["operation"],
+        "creation": payload["creation"],
+        "version": payload["version"],
+        "request_id": payload["request_id"],
+        "current": None,
+    }
+    rows = frappe.get_list(
+        NATIVE, filters={"name": payload["operation"]}, fields=["name"], limit_page_length=1
+    )
+    if rows:
+        result["current"] = read_operation(payload["operation"])
+    return result
 
 
 def _save_native(document, description, *, creation=False):

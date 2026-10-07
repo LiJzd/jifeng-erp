@@ -14,7 +14,7 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		if (reason) { node.disabled = true; node.title = __(reason); } else node.addEventListener("click", action);
 		return node;
 	}
-	call(method, args = {}) { return frappe.call({ method: "jifeng_erp.order_operations." + method, args }); }
+	call(method, args = {}, type = "POST") { return frappe.call({ method: "jifeng_erp.order_operations." + method, args, type }); }
 	build() {
 		this.host.classList.add("jfe-order-operations"); this.host.replaceChildren();
 		this.status = this.element("p", __("正在读取工序…")); this.status.setAttribute("role", "status");
@@ -75,7 +75,7 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		finally { if (!this.disposed && revision === this.revision) { this.loading = false; this.updatePager(); } }
 	}
 	appendRow(archive) {
-		const state = { archive, controls: {}, busy: false, unresolved: false, knownConflict: false, confirming: false, candidate: null, renameCandidate: null, conflict: null };
+		const state = { archive, controls: {}, busy: false, unresolved: false, knownConflict: false, confirming: false, candidate: null, renameCandidate: null, deleteCandidate: null, conflict: null };
 		state.review = this.element("div"); this.review.append(state.review);
 		const row = this.element("tr"); state.row = row;
 		for (const field of ["sequence", "operation", "remarks"]) {
@@ -98,7 +98,7 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		state.resolveButton = this.button("核对保存结果", () => this.resolve(state)); state.adoptButton = this.button("采用已核对当前值", () => this.adopt(state));
 		state.actions.append(state.saveButton, state.renameButton, state.cancelButton, state.resolveButton, state.adoptButton); row.append(state.actions);
 		state.creation = this.element("td"); state.modifier = this.element("td"); state.modified = this.element("td"); row.append(state.creation, state.modifier, state.modified);
-		const deletion = this.element("td"); deletion.append(this.button("删除", null, "删除暂不可用，请先核对关联工艺与生产记录")); row.append(deletion);
+		const deletion = this.element("td"); state.deleteButton = this.button("删除", () => this.confirmDelete(state)); deletion.append(state.deleteButton); row.append(deletion);
 		this.states.push(state); this.tbody.append(row); this.setValues(state); this.freeze(state); return state;
 	}
 	setValues(state) {
@@ -136,6 +136,9 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		state.cancelButton.hidden = !(dirty || state.busy);
 		state.cancelButton.disabled = blocked; state.resolveButton.hidden = !state.unresolved; state.resolveButton.disabled = state.busy || state.confirming;
 		state.adoptButton.hidden = !state.conflict; state.adoptButton.disabled = state.busy || state.confirming || !state.conflict;
+		state.deleteButton.disabled = blocked || dirty || state.archive.can_delete !== true || !state.archive.name || !state.archive.creation;
+		state.deleteButton.title = state.archive.can_delete === true ? __("仅无业务引用的工序可删除；新建回执与删除记录永久保留。") : __("没有删除工序及保存删除记录所需的权限或创建身份。");
+		state.resolveButton.textContent = __(state.deleteCandidate ? "核对删除结果" : "核对保存结果");
 	}
 	requestID() {
 		const bytes = new Uint8Array(16); crypto.getRandomValues(bytes); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
@@ -189,6 +192,7 @@ window.JifengOrderOperations = class JifengOrderOperations {
 		state.review.replaceChildren(); this.setValues(state); frappe.show_alert({ message: __(message), indicator: "green" });
 	}
 	async resolve(state) {
+		if (state.deleteCandidate) return this.resolveDelete(state);
 		if (state.renameCandidate) return this.resolveRename(state);
 		if (this.disposed || state.busy || state.confirming || !state.unresolved || !state.candidate) return;
 		state.busy = true; state.conflict = null; state.review.replaceChildren(); this.freeze(state);
@@ -197,6 +201,12 @@ window.JifengOrderOperations = class JifengOrderOperations {
 			const response = await this.call(fresh ? "resolve_creation" : "read_operation", fresh ? { payload: state.candidate } : { operation: state.candidate.operation });
 			if (this.disposed || !this.states.includes(state)) return;
 			const reply = response.message;
+			if (fresh && reply?.scope === "shared_operation" && reply.request_id === state.candidate.request_id && reply.status === "deleted" && reply.operation === null) {
+				state.review.append(this.element("p", __("该新建请求对应的工序已删除；旧请求不会再次保存或认领同名新工序。")));
+				if (reply.current_state === "restored" || reply.current_state === "replaced") state.review.append(this.element("p", __(reply.current_state === "restored" ? "同一工序现已通过原生流程恢复，请刷新后核对。" : "当前同名工序是另一创建身份，请刷新后核对。")));
+				state.review.append(this.button("放弃已删除工序的草稿", () => this.discardDeletedCreation(state)));
+				return;
+			}
 			if (fresh && (reply?.scope !== "shared_operation" || reply.request_id !== state.candidate.request_id || !["found", "changed"].includes(reply.status))) return;
 			const archive = fresh ? reply.operation : reply;
 			if (this.matches(state, archive) && !state.knownConflict) { this.accept(state, archive); return; }
@@ -273,6 +283,74 @@ window.JifengOrderOperations = class JifengOrderOperations {
 			}
 			state.review.append(this.element("p", __(held.ordering_name ? "当前结果不足以确认本次改名，请人工核对；不会重复提交。" : "原工序没有稳定排序身份，无法确认本次改名，请人工核对；不会按目标名称猜测或重复提交。")));
 		} catch { /* Keep the original rename request; there is no POST fallback. */ }
+		finally { state.busy = false; this.freeze(state); if (!this.disposed && !this.isDirty()) this.query(this.start); }
+	}
+	discardDeletedCreation(state) {
+		if (this.disposed || state.busy || state.confirming || !state.unresolved || !state.candidate?.request_id) return;
+		const held = state.candidate; state.confirming = true; this.freeze(state);
+		frappe.confirm(__("确认放弃已核对删除记录的工序草稿？不会再次保存。"), () => {
+			state.confirming = false;
+			if (this.disposed || !this.states.includes(state) || state.candidate !== held) return;
+			state.archive = structuredClone(this.blank); state.candidate = null; state.requestId = null; state.unresolved = false;
+			state.review.replaceChildren(); this.setValues(state); this.freeze(state); if (!this.isDirty()) this.query(this.start);
+		}, () => { state.confirming = false; this.freeze(state); });
+	}
+	confirmDelete(state) {
+		if (this.disposed || !this.states.includes(state) || state.busy || state.unresolved || state.confirming || this.dirty(state) || state.archive.can_delete !== true || !state.archive.name || !state.archive.creation) return;
+		const held = { operation: state.archive.name, creation: state.archive.creation, version: state.archive.version,
+			ordering_name: state.archive.ordering_name, ordering_version: state.archive.ordering_version, request_id: this.requestID() };
+		const escape = (value) => value.replace(/[&<>"']/g, (letter) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[letter]));
+		state.confirming = true; this.freeze(state);
+		frappe.confirm(__("确认删除工序") + " “" + escape(held.operation) + "”？" + __("已有业务引用时会拒绝删除；新建回执与删除记录将永久保留。"), () => {
+			state.confirming = false; return this.deleteOperation(state, held);
+		}, () => { state.confirming = false; this.freeze(state); });
+	}
+	deletionMatches(reply, held) {
+		return reply?.scope === "shared_operation" && reply.status === "deleted" && reply.operation === held.operation && reply.creation === held.creation &&
+			reply.version === held.version && reply.request_id === held.request_id && typeof reply.ordering_name === "string" && !!reply.ordering_name &&
+			(held.ordering_name === null || reply.ordering_name === held.ordering_name);
+	}
+	removeDeleted(state, reply) {
+		const held = state.deleteCandidate;
+		if (!held || state.archive.name !== held.operation || state.archive.creation !== held.creation || state.archive.version !== held.version ||
+			state.archive.ordering_name !== held.ordering_name || state.archive.ordering_version !== held.ordering_version) {
+			// The receipt proves this past request, never ownership of a newer row.
+			state.deleteCandidate = null; state.unresolved = false;
+			state.review.append(this.element("p", __("已核对原删除请求，当前行身份已变化，已保留当前工序，请刷新核对。")));
+			return;
+		}
+		this.states = this.states.filter((row) => row !== state); state.row.remove(); state.review.remove();
+		this.total = Math.max(0, this.total - 1); this.updatePager();
+		frappe.show_alert({ message: __(reply?.current_state === "restored" ? "已核对删除记录；同一工序现已恢复，请核对刷新结果" : reply?.current_state === "replaced" ? "已核对删除记录；当前同名工序是另一创建身份" : "已核对工序删除，回执与删除记录已保留"), indicator: "green" });
+	}
+	async deleteOperation(state, held) {
+		if (this.disposed || !this.states.includes(state) || state.busy || state.unresolved || this.dirty(state) || state.archive.can_delete !== true ||
+			state.archive.name !== held.operation || state.archive.creation !== held.creation || state.archive.version !== held.version ||
+			state.archive.ordering_name !== held.ordering_name || state.archive.ordering_version !== held.ordering_version) { this.freeze(state); return; }
+		this.invalidateQuery(); state.deleteCandidate = structuredClone(held); state.busy = true; state.conflict = null; state.knownConflict = false; this.freeze(state);
+		try {
+			const response = await this.call("delete_operation", { payload: state.deleteCandidate });
+			if (this.disposed || !this.states.includes(state)) return;
+			if (this.deletionMatches(response.message, held)) this.removeDeleted(state, response.message); else state.unresolved = true;
+		} catch (error) {
+			if (!this.disposed && this.states.includes(state)) {
+				state.unresolved = !this.definiteFailure(error); if (!state.unresolved) state.deleteCandidate = null;
+			}
+		} finally {
+			state.busy = false; this.freeze(state);
+			if (!this.disposed && state.unresolved) frappe.msgprint(__("删除结果尚未确认，请只读核对删除记录；不会重复删除。"));
+			else if (!this.disposed && !this.isDirty()) this.query(this.start);
+		}
+	}
+	async resolveDelete(state) {
+		if (this.disposed || !this.states.includes(state) || state.busy || state.confirming || !state.unresolved || !state.deleteCandidate) return;
+		const held = state.deleteCandidate; state.busy = true; state.conflict = null; state.review.replaceChildren(); this.freeze(state);
+		try {
+			const response = await this.call("resolve_delete", { payload: held }, "GET"), reply = response.message;
+			if (this.disposed || !this.states.includes(state)) return;
+			if (this.deletionMatches(reply, held)) { this.removeDeleted(state, reply); return; }
+			state.review.append(this.element("p", __("未取得匹配的删除记录，当前名称存在或缺失均不能确认本次删除；请人工核对，不会重复提交。")));
+		} catch { /* Retain the exact request; absence or read denial never permits retry. */ }
 		finally { state.busy = false; this.freeze(state); if (!this.disposed && !this.isDirty()) this.query(this.start); }
 	}
 	destroy() { this.disposed = true; this.revision++; window.removeEventListener("beforeunload", this.beforeUnload); }

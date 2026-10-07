@@ -3,9 +3,9 @@ const assert = require("node:assert/strict"), fs = require("node:fs"), vm = requ
 const { Element, context, window, frappe, calls, messages, tick } = require("./test_product_dictionary_workbench.cjs");
 for (const file of ["jifeng_order_operations", "jifeng_workspace_core"]) vm.runInNewContext(fs.readFileSync(`jifeng_erp/public/js/${file}.js`, "utf8"), context);
 const metadata = () => ({ operation: { fieldtype: "Data", reqd: true }, sequence: { fieldtype: "Int" }, remarks: { fieldtype: "Text" } });
-const archived = (extra = {}) => ({ scope: "shared_operation", name: "OP-A", version: "2026-10-03T00:00:01", ordering_name: null,
-	ordering_version: null, sequence: null, remarks: "原备注", field_meta: metadata(), can_write: true, ...extra });
-const blank = (extra = {}) => archived({ name: null, version: null, remarks: null, can_create: true, ...extra });
+const archived = (extra = {}) => ({ scope: "shared_operation", name: "OP-A", version: "2026-10-03T00:00:01", creation: "2026-10-02T00:00:01", ordering_name: null,
+	ordering_version: null, sequence: null, remarks: "原备注", field_meta: metadata(), can_write: true, can_delete: true, ...extra });
+const blank = (extra = {}) => archived({ name: null, version: null, creation: null, remarks: null, can_create: true, can_delete: false, ...extra });
 const result = (rows = [], extra = {}) => ({ scope: "shared_operation", rows, total: rows.length, start: 0, page_length: 25, ...extra });
 const resolveList = async (rows = []) => { assert.equal(calls.at(-1).options.method, "jifeng_erp.order_operations.list_operations"); calls.at(-1).resolve(result(rows)); await tick(); };
 
@@ -90,7 +90,58 @@ async function main() {
 	workspace.openPage("工序", "订单"); assert.equal(opened.length, 1); assert.match(messages.at(-1), /工序页面未能加载/); window.JifengOrderOperations = component;
 	entry.stop();
 	await renameModels();
+	await deleteModels();
 	console.log("Order operations models passed: eight columns/inline blank row, native identities, two versions, explicit native rename confirmation/recovery, dirty/busy guards, persistent receipt recovery, masked/conflict review and no repeated POST.");
+}
+async function deleteModels() {
+	let confirmation;
+	const previousConfirm = frappe.confirm;
+	frappe.confirm = (message, yes, no) => { confirmation = { message, yes, no }; };
+	const bench = new window.JifengOrderOperations(new Element());
+	const mapped = (extra = {}) => archived({ name: "OP-<svg>", ordering_name: "RECEIPT-A", ordering_version: "2026-10-03T00:00:02", sequence: 0, ...extra });
+	const proof = (held, extra = {}) => ({ scope: "shared_operation", status: "deleted", operation: held.operation, creation: held.creation, version: held.version,
+		request_id: held.request_id, ordering_name: held.ordering_name || "DELETE-RECEIPT", ...extra });
+	try {
+		calls.at(-1).resolve(blank()); await tick(); await resolveList([mapped(), archived({ name: "OP-B", can_delete: false })]); await bench.ready;
+		let row = bench.states[0], denied = bench.states[1];
+		assert.equal(row.deleteButton.disabled, false, "operations created by this page remain deletable");
+		assert.equal(denied.deleteButton.disabled, true); const before = calls.length; bench.confirmDelete(denied); assert.equal(calls.length, before);
+		row.controls.remarks.value = "未保存"; bench.freeze(row); assert.equal(row.deleteButton.disabled, true); bench.confirmDelete(row); assert.equal(confirmation, undefined); bench.cancel(row);
+		bench.confirmDelete(row); assert.equal(calls.length, before, "delete must wait for confirmation"); assert.match(confirmation.message, /OP-&lt;svg&gt;/); assert.equal(confirmation.message.includes("<svg>"), false);
+		assert.equal(row.deleteButton.disabled, true); confirmation.no(); assert.equal(row.deleteButton.disabled, false);
+		bench.confirmDelete(row); const deleting = confirmation.yes(), post = calls.at(-1), held = post.options.args.payload;
+		assert.equal(post.options.method, "jifeng_erp.order_operations.delete_operation"); assert.equal(post.options.type, "POST");
+		assert.equal(held.creation, row.archive.creation); assert.equal(held.ordering_version, row.archive.ordering_version); assert.match(held.request_id, /^[a-f\d-]{36}$/);
+		post.reject(new Error("response lost")); await deleting; assert.equal(row.unresolved, true); assert.equal(row.deleteButton.disabled, true); assert.equal(row.row.removed, undefined);
+		const posts = calls.filter((call) => call.options.method.endsWith("delete_operation")).length;
+		bench.confirmDelete(row); await bench.deleteOperation(row, held); bench.cancel(row); assert.equal(calls.filter((call) => call.options.method.endsWith("delete_operation")).length, posts);
+		const unknown = bench.resolve(row), read = calls.at(-1); assert.equal(read.options.method, "jifeng_erp.order_operations.resolve_delete"); assert.equal(read.options.type, "GET");
+		read.resolve({ scope: "shared_operation", status: "unknown", operation: held.operation, current: null }); await unknown;
+		assert.equal(row.unresolved, true); assert.match(row.review.textContent, /存在或缺失均不能确认/); assert.equal(row.adoptButton.hidden, true);
+		const wrong = bench.resolve(row); calls.at(-1).resolve(proof(held, { request_id: "wrong" })); await wrong; assert.equal(row.unresolved, true);
+		const exact = bench.resolve(row); calls.at(-1).resolve(proof(held, { current_state: "replaced" })); await exact;
+		assert.equal(bench.states.includes(row), false); assert.equal(row.row.removed, true); assert.equal(bench.states.includes(denied), true, "matching deletion removes only its row");
+		await resolveList([mapped({ creation: "2026-10-04T00:00:01", ordering_name: "REPLACEMENT" })]);
+		assert.equal(calls.filter((call) => call.options.method.endsWith("delete_operation")).length, posts);
+		row = bench.states[0]; bench.confirmDelete(row); const changedOwner = confirmation.yes(), oldIdentityPost = calls.at(-1);
+		row.archive = mapped({ creation: "2026-10-05T00:00:01", ordering_name: "NEW-CURRENT" }); bench.setValues(row);
+		oldIdentityPost.resolve(proof(oldIdentityPost.options.args.payload)); await changedOwner;
+		assert.equal(row.row.removed, undefined, "past deletion proof cannot remove a current row with another creation identity");
+		assert.equal(row.unresolved, false); await resolveList([mapped()]);
+		row = bench.states[0]; bench.confirmDelete(row); const failed = confirmation.yes(); calls.at(-1).reject({ responseJSON: { exc_type: "PermissionError" } }); await failed;
+		assert.equal(row.row.removed, undefined); assert.equal(row.unresolved, false); assert.equal(row.deleteCandidate, null); await resolveList([mapped()]);
+		const fresh = bench.states.at(-1); fresh.controls.operation.value = "已删除的新建工序"; bench.freeze(fresh);
+		const creating = bench.save(fresh), creationPost = calls.at(-1); creationPost.reject(new Error("unknown create")); await creating;
+		const request = fresh.candidate, savedPosts = calls.filter((call) => call.options.method.endsWith("save_operation")).length;
+		const deletedCreation = bench.resolve(fresh); calls.at(-1).resolve({ scope: "shared_operation", request_id: request.request_id, status: "deleted", operation: null, current_state: "replaced" }); await deletedCreation;
+		assert.equal(fresh.unresolved, true); assert.equal(fresh.conflict, null); assert.match(fresh.review.textContent, /另一创建身份/);
+		fresh.review.descendants("button")[0].events.get("click")(); confirmation.no(); assert.equal(fresh.candidate, request);
+		fresh.review.descendants("button")[0].events.get("click")(); confirmation.yes(); assert.equal(fresh.candidate, null); assert.equal(fresh.unresolved, false); await resolveList([mapped()]);
+		assert.equal(calls.filter((call) => call.options.method.endsWith("save_operation")).length, savedPosts, "confirmed deleted creation is discarded without another POST or claiming its replacement");
+		row = bench.states[0]; bench.confirmDelete(row); row.archive = mapped({ version: "2026-10-04T00:00:01" }); const noWrite = calls.length; await confirmation.yes(); assert.equal(calls.length, noWrite, "source change during confirmation cannot delete a new version");
+		bench.confirmDelete(row); const late = confirmation.yes(), lastPost = calls.at(-1); bench.destroy(); lastPost.resolve(proof(lastPost.options.args.payload)); await late;
+		assert.equal(row.row.removed, undefined, "late result from a disposed owner cannot alter its view");
+	} finally { bench.destroy(); frappe.confirm = previousConfirm; }
 }
 async function renameModels() {
 	let confirmation;

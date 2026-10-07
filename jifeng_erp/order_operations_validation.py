@@ -248,14 +248,15 @@ def smoke(company, other_company):
     assert operation.fieldtype == "Link" and operation.options == NATIVE
     assert (
         operation.unique
-        and operation.reqd
-        and operation.set_only_once
+        and not operation.reqd
+        and not operation.set_only_once
         and operation.read_only
     )
     assert meta.get_field("sequence").fieldtype == "Int"
     assert {field.fieldname for field in meta.fields if field.unique} == {
         "operation",
         "request_id",
+        "delete_request_id",
     }
     assert all(
         all(
@@ -268,6 +269,10 @@ def smoke(company, other_company):
             )
         )
         for field in RECEIPT
+    )
+    assert all(
+        meta.get_field(field).read_only and meta.get_field(field).no_copy
+        for field in ("deleted_operation", "deleted_creation", "deleted_version", "deleted_at", "deleted_by", "delete_request_id")
     )
     assert {row.role for row in meta.permissions} == {
         "Manufacturing User",

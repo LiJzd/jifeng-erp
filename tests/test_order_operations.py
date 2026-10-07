@@ -82,9 +82,11 @@ class Document(Row):
             env.module.validate_ordering(self)
             if any(
                 (
-                    row["operation"] == self.operation
+                    self.operation is not None and row["operation"] == self.operation
                     or self.request_id
                     and row.get("request_id") == self.request_id
+                    or self.delete_request_id
+                    and row.get("delete_request_id") == self.delete_request_id
                 )
                 and row["name"] != self.name
                 for row in env.tables[ORDER].values()
@@ -210,6 +212,7 @@ class OrderOperationsTest(unittest.TestCase):
             RuntimeError,
         )
         self.frappe.DoesNotExistError = LookupError
+        self.frappe.LinkExistsError = type("LinkExistsError", (Exception,), {})
         self.frappe.DuplicateEntryError = self.frappe.UniqueValidationError = KeyError
         self.frappe.whitelist = lambda **kwargs: lambda method: method
         self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(
@@ -232,9 +235,14 @@ class OrderOperationsTest(unittest.TestCase):
             side_effect=AssertionError("unfiltered listing forbidden")
         )
         self.frappe.rename_doc = Mock(side_effect=self.rename_doc)
+        self.deleted_audit = []
+        self.delete_failure = None
+        self.frappe.delete_doc = Mock(side_effect=self.delete_doc)
+        self.frappe.utils = Row(now_datetime=lambda: datetime(2026, 10, 4, 1, 2, 3))
         self.rename_mutation = None
         self.db = types.SimpleNamespace(
             get_value=Mock(side_effect=self.get_value),
+            exists=lambda dt, name: name in self.tables[dt],
             savepoint=self.savepoint,
             rollback=self.rollback,
             **{
@@ -344,6 +352,8 @@ class OrderOperationsTest(unittest.TestCase):
                     "Job Card",
                     "Job Card Time Log",
                     "Job Card Operation",
+                    "Work Order Operation", "Jifeng Operation Line",
+                    "Jifeng Wage Allocation", "Jifeng Wage Entry",
                 ),
             )
             self.assertEqual(field, "name")
@@ -397,15 +407,34 @@ class OrderOperationsTest(unittest.TestCase):
         return rows[start : start + length]
 
     def savepoint(self, point):
-        self.snapshots[point] = deepcopy((self.tables, self.versions, self.protected))
+        self.snapshots[point] = deepcopy((self.tables, self.versions, self.protected, self.deleted_audit))
 
     def rollback(self, save_point):
-        self.tables, self.versions, self.protected = deepcopy(
+        self.tables, self.versions, self.protected, self.deleted_audit = deepcopy(
             self.snapshots[save_point]
         )
 
     def state(self):
-        return deepcopy((self.tables, self.versions, self.protected))
+        return deepcopy((self.tables, self.versions, self.protected, self.deleted_audit))
+
+    def delete_doc(self, dt, name, **kwargs):
+        self.assertEqual(dt, NATIVE)
+        self.assertEqual(kwargs, {"ignore_missing": False}, "native delete must retain permissions, Link checks and audit")
+        document = self.get_doc(dt, name)
+        document.check_permission("delete")
+        self.assertFalse(any(row.get("operation") == name for row in self.tables[ORDER].values()), "only our receipt Link must already be released")
+        if self.delete_failure == "link":
+            self.frappe.local.message_log.append({"message": "private custom link DOC-SECRET"})
+            raise self.frappe.LinkExistsError("private custom link DOC-SECRET")
+        self.deleted_audit.append(deepcopy(dict(document)))
+        del self.tables[dt][name]
+        if self.delete_failure == "after":
+            self.db.after_commit.add(lambda: None)
+            raise ValueError("native delete post-hook failure")
+
+    def deletion(self, row, **changes):
+        return {"operation": row["name"], "creation": row["creation"], "version": row["version"],
+                "ordering_name": row["ordering_name"], "ordering_version": row["ordering_version"], "request_id": str(uuid4())} | changes
 
     def payload(self, **changes):
         return {
@@ -676,19 +705,23 @@ class OrderOperationsTest(unittest.TestCase):
     def test_schema_is_separate_global_mapping_without_native_schema_or_roles(self):
         self.assertEqual(
             {field["fieldname"] for field in SCHEMA["fields"]},
-            {"operation", "sequence", "request_id", "request_digest"},
+            {"operation", "sequence", "request_id", "request_digest", *self.module.DELETION},
         )
         self.assertEqual(
             {row["role"] for row in SCHEMA["permissions"]},
             {"Manufacturing User", "Manufacturing Manager"},
         )
         self.assertTrue(all(not row.get("delete") for row in SCHEMA["permissions"]))
-        for field in ("operation", "request_id"):
+        for field in ("operation", "request_id", "delete_request_id"):
             self.assertTrue(
                 next(row for row in SCHEMA["fields"] if row["fieldname"] == field)[
                     "unique"
                 ]
             )
+        operation = next(row for row in SCHEMA["fields"] if row["fieldname"] == "operation")
+        self.assertTrue(operation["read_only"])
+        self.assertFalse(operation.get("reqd") or operation.get("set_only_once"), "normal native save must be able to release only the service-owned Link")
+        self.assertTrue(all(field.get("no_copy") and field.get("read_only") for field in SCHEMA["fields"] if field["fieldname"] in self.module.DELETION))
         self.assertNotIn("company", self.module.init_operations())
 
     def test_create_native_and_receipt_share_identity_with_actual_returned_audit(self):
@@ -1188,6 +1221,156 @@ class OrderOperationsTest(unittest.TestCase):
             self.assertEqual(self.state(), before)
             self.assertEqual(self.db.after_commit._functions, [marker])
             self.assertEqual(self.frappe.flags.currently_saving, ["prior"])
+
+    def test_created_operation_delete_keeps_receipt_and_audit_then_same_name_recreates(self):
+        original = self.payload(operation="可删新工序", sequence=9)
+        row = self.module.save_operation(original)
+        ordering_before = deepcopy(self.tables[ORDER][row["ordering_name"]])
+        held = self.deletion(row)
+        reply = self.module.delete_operation(held)
+        self.assertEqual(reply["status"], "deleted")
+        self.assertNotIn(row["name"], self.tables[NATIVE])
+        record = self.tables[ORDER][row["ordering_name"]]
+        self.assertIsNone(record["operation"])
+        for field in ("name", "creation", "owner", "sequence", "request_id", "request_digest"):
+            self.assertEqual(record[field], ordering_before[field])
+        self.assertEqual(record["deleted_operation"], row["name"])
+        self.assertEqual(record["delete_request_id"], held["request_id"])
+        self.assertEqual(self.deleted_audit[0]["name"], row["name"])
+        self.assertEqual(self.module.resolve_creation(original)["status"], "deleted")
+        replacement = self.saved(operation=row["name"])
+        self.assertNotEqual(replacement["creation"], row["creation"])
+        self.assertNotEqual(replacement["ordering_name"], row["ordering_name"])
+        self.assertEqual(self.module.resolve_creation(original), {"scope": "shared_operation", "request_id": original["request_id"], "status": "deleted", "operation": None, "current_state": "replaced"})
+        self.assertEqual(self.module.resolve_delete(held), reply | {"current_state": "replaced"})
+        before = self.state()
+        with self.assertRaisesRegex(ValueError, "删除请求已使用"):
+            self.module.delete_operation(held)
+        with self.assertRaisesRegex(ValueError, "新建请求已使用"):
+            self.module.save_operation(original)
+        self.assertEqual(self.state(), before)
+
+    def test_native_restore_keeps_past_delete_proof_distinct_from_current_identity(self):
+        original = self.payload(operation="原生可恢复")
+        row = self.module.save_operation(original)
+        held = self.deletion(row)
+        self.module.delete_operation(held)
+        self.assertEqual(self.module.resolve_delete(held)["current_state"], "not_visible")
+        # Model only the identity supplied by native DeletedDocument restore;
+        # this does not claim a real native restore lifecycle was executed.
+        self.tables[NATIVE][row["name"]] = deepcopy(self.deleted_audit[0])
+        self.assertEqual(self.module.resolve_delete(held)["current_state"], "restored")
+        self.assertEqual(self.module.resolve_creation(original)["status"], "deleted")
+        self.assertEqual(self.module.resolve_creation(original)["current_state"], "restored")
+        self.document_denials.add((NATIVE, row["name"]))
+        self.assertEqual(self.module.resolve_delete(held)["current_state"], "not_visible")
+
+    def test_existing_and_sorted_operations_delete_and_multiple_null_links_coexist(self):
+        rows = [self.existing("可删旧工序"), self.existing("可删有序工序")]
+        rows[1] = self.update(rows[1], sequence=3)
+        for row in rows:
+            self.assertTrue(row["can_delete"])
+            reply = self.module.delete_operation(self.deletion(row))
+            self.assertEqual(reply["status"], "deleted")
+        self.assertEqual(len(self.tables[ORDER]), 2)
+        self.assertTrue(all(row["operation"] is None for row in self.tables[ORDER].values()))
+        self.assertEqual(len(self.deleted_audit), 2)
+
+    def test_deletion_stale_native_identity_order_and_invalid_shape_never_writes(self):
+        row = self.saved()
+        held = self.deletion(row)
+        before = self.state()
+        for changes in ({"creation": "2026-10-02T00:00:00"}, {"version": "2026-10-02T00:00:00"}, {"ordering_version": "2026-10-02T00:00:00"}, {"ordering_name": "OTHER"}):
+            with self.subTest(changes=changes), self.assertRaises(RuntimeError):
+                self.module.delete_operation(held | changes)
+            self.assertEqual(self.state(), before)
+        for changes in ({"request_id": "bad"}, {"force": 1}, {"creation": ""}, {"ordering_version": None}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.module.delete_operation(held | changes)
+            self.assertEqual(self.state(), before)
+
+    def test_deletion_requires_native_delete_scope_and_readable_writable_record_fields(self):
+        row = self.saved()
+        held = self.deletion(row)
+        before = self.state()
+        for dt, action in ((NATIVE, "delete"), (NATIVE, "read"), (ORDER, "write")):
+            self.denials.add((dt, action))
+            with self.assertRaises(PermissionError):
+                self.module.delete_operation(held)
+            self.assertEqual(self.state(), before)
+            self.denials.clear()
+        for dt, field, permission in ((NATIVE, "creation", "read"), (ORDER, "delete_request_id", "read"), (ORDER, "deleted_operation", "write")):
+            self.hidden[permission][dt].add(field)
+            with self.assertRaises(PermissionError):
+                self.module.delete_operation(held)
+            self.assertEqual(self.state(), before)
+            self.hidden[permission][dt].clear()
+        self.document_denials.add((NATIVE, row["name"]))
+        with self.assertRaises(PermissionError):
+            self.module.delete_operation(held)
+        self.assertEqual(self.state(), before)
+
+    def test_data_payroll_and_cancelled_business_reference_prevent_delete_without_leaking(self):
+        row = self.saved()
+        held = self.deletion(row)
+        for dt, field in (("Jifeng Wage Entry", "operation"), ("Work Order Operation", "operation"), ("Job Card Operation", "sub_operation")):
+            self.protected[dt] = [{field: row["name"], "name": "PRIVATE", "docstatus": 2}]
+            before = self.state()
+            with self.assertRaisesRegex(ValueError, "已有业务或工资引用") as error:
+                self.module.delete_operation(held)
+            self.assertNotIn("PRIVATE", str(error.exception))
+            self.assertEqual(self.state(), before)
+            del self.protected[dt]
+        self.frappe.delete_doc.assert_not_called()
+
+    def test_native_custom_link_refusal_and_post_delete_failure_restore_receipt_and_audit(self):
+        row = self.saved()
+        held = self.deletion(row)
+        before = self.state()
+        self.frappe.local.message_log.append({"message": "prior"})
+        self.delete_failure = "link"
+        with self.assertRaisesRegex(ValueError, "其它业务引用") as error:
+            self.module.delete_operation(held)
+        self.assertIsNone(error.exception.__context__)
+        self.assertEqual(self.frappe.local.message_log, [{"message": "prior"}])
+        self.assertEqual(self.state(), before)
+        self.delete_failure = "after"
+        with self.assertRaisesRegex(ValueError, "post-hook"):
+            self.module.delete_operation(held)
+        self.assertEqual(self.state(), before)
+        self.assertEqual(self.db.after_commit._functions, [])
+
+    def test_deleted_record_cannot_be_forged_mutated_rebound_or_deleted(self):
+        row = self.saved()
+        active = self.get_doc(ORDER, row["ordering_name"])
+        active.deleted_operation = row["name"]
+        with self.assertRaisesRegex(ValueError, "不能修改"):
+            active.save()
+        held = self.deletion(row)
+        self.module.delete_operation(held)
+        for field, value in (("operation", "OTHER"), ("sequence", 0), ("delete_request_id", str(uuid4())), ("request_digest", "fake")):
+            document = self.get_doc(ORDER, row["ordering_name"])
+            document[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "不能修改"):
+                document.save()
+        with self.assertRaisesRegex(ValueError, "不能删除"):
+            self.module.prevent_delete(self.get_doc(ORDER, row["ordering_name"]))
+        document = self.new_doc(ORDER)
+        document.update(operation=None, deleted_operation="fake")
+        with self.assertRaisesRegex(ValueError, "入口建立"):
+            document.save()
+
+    def test_delete_recovery_absence_and_same_name_do_not_prove_success(self):
+        row = self.saved()
+        held = self.deletion(row)
+        result = self.module.resolve_delete(held)
+        self.assertEqual(result["status"], "unknown")
+        self.assertEqual(result["current"]["name"], row["name"])
+        del self.tables[NATIVE][row["name"]]
+        result = self.module.resolve_delete(held)
+        self.assertEqual(result["status"], "unknown")
+        self.assertIsNone(result["current"])
+        self.frappe.delete_doc.assert_not_called()
 
     def test_guest_and_denied_native_read_do_not_reveal_sources(self):
         row = self.saved()
