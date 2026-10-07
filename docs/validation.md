@@ -1,5 +1,14 @@
 # 验证记录
 
+## 2026-10-07 公网独立候选与正常DB ABI实际通过
+
+根一次执行stage driver `014d13c84caa198971f263a92135a10904ac0ab0b9c8c8408e03332a3c2018ba`，原ABI异常误报分支经独立审修正为passed=False，ABI SHA`a69d6ff372e0a8916d16ba320821a2cea619e8d1b07dc9e7869bf973812b8d4a`，pins`8c995a131677473f4b5463854bbf7fa4e4f00f4f2a2514777deff58f4637705b`。6载荷510864字节上传完成，但host在source_candidate_copy阶段因Python3.6.8缺Path.is_relative_to停止；失败driver收据`bba8beb23617d31cef267aa623c2701e4e12842a2860bb1637897e6f403faf68`，私有错误`a6fb27c076e6b5e0733443f6a24d98d8ae7eef1cba7d061352991b86aa30da53`。独立只读检查确认整个NEW/app为准确611基线，34M未写、17A未建、candidate manifest/ABI intent均无；没有重复旧main。
+
+根经独立源码审后执行新resume host`60ea40632d42ec2ebe369c474402c615a047a117d810dcac93b8a7fd7e3c455e`及driver`5484de4c330bb7fcb35d7181e4e07420ce32f309a7bf5b0803cc6b759bb2fe4e`，仅上传17211字节新helper；绑定固定错误、root700、准确611复制、8服务/9配置守门，仅续接51增量阶段。实际stage PASS收据`0f3d614515f7926b3437432ffe471ae2b653f4a5622b2499c2c8ba7c3cf9f31d`，driver收据`940d4fd115bf916dc68de556f6ac398a882c7b0a5a0d1d788ecf52217c5557fb`。新候选620来源/628包/45资源全部字节/大小/mode/root所有权通过，原611及8服务/9配置保持；candidate manifest SHA`a6b0117f28461dc21d59eb3ae0319e67133d438acf5cf57abf2ea9382c209b00`。所有SFTP逐32768块前后同实际socket DIRECT，完整代理/env/WinHTTP/TUN观察，SSH关闭，无自动重试或回退。
+
+原生ABI只读工具以固定镜像、旧app/sites只读绑定执行：真实MariaDBDatabase（mysqlclient）、MySQLdb Connection、固定db主容器实际AF_INET peer、配置/SQL数据库及正常账号哈希相等、tx_read_only=1；physical auto_reconnect关闭，正常回滚及destroy关闭。创建/关闭均1，DML/DDL/COMMIT均0，13框架指纹加3额外实际指纹均记录私有。候选目录位于`/opt/jifeng-erp-test/releases/c067d28-functional-increment-r1`，完整回执留root700/600私有目录；没有切Compose、停服务、改账号/权限/业务或表结构。后续native preflight发现LocalProxy类型误核及共享缓存隔离两源码问题，已安排修正，尚未执行。线上保持f07，全部旧模块正式可用目标继续。
+
+
 ## 2026-10-07 镀色安装及正常原生生命周期回滚通过
 
 源为提交`7c9fd36`、维护修正`85bea19`；45Python模型/四CJS通过。九文件准确冻结plan SHA`fdbe60d1df258a19a7ecb3eec6d025e9ad6d91687ab49cfde73e3c956b922ed9`，此前唯一RO前置收据`e0e4dab8e10548fa90e226491f8585f059bcd689faf054a6c7d071dc5989ac08`确认旧12字段/0业务/0目标Custom DocPerm/无Receipt，零DML/DDL/COMMIT。
