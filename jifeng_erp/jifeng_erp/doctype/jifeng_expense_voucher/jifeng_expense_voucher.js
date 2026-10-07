@@ -1,5 +1,10 @@
 frappe.ui.form.on("Jifeng Expense Voucher", {
     setup(frm) {
+        // The source lifecycle cancels its managed journal with provenance
+        // checks. Native linked-doc cancellation must not cancel it first.
+        frm.ignore_doctypes_on_cancel_all = [...new Set([
+            ...(frm.ignore_doctypes_on_cancel_all || []), "Journal Entry",
+        ])];
         frm.set_query("cost_center", () => ({ filters: { company: frm.doc.company, is_group: 0 } }));
         frm.set_query("expense_account", () => ({ filters: { company: frm.doc.company, is_group: 0, disabled: 0, root_type: "Expense" } }));
         frm.set_query("payment_account", () => ({ filters: { company: frm.doc.company, is_group: 0, disabled: 0, root_type: "Asset", account_type: ["in", ["Cash", "Bank"]] } }));

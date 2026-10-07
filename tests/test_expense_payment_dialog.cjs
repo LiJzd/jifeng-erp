@@ -47,6 +47,11 @@ const frm = { doc: { name: 'EXP-30', docstatus: 1, payment_method: '赊账', jou
     add_custom_button: (label, action) => { buttons[label] = action; },
     call: async method => { assert.equal(method, 'credit_payment_context'); contextCalls++; return { message: source }; } };
 (async () => {
+    const setupForm = { set_query() {}, ignore_doctypes_on_cancel_all: ['Payment Entry'] };
+    handlers['Jifeng Expense Voucher'].setup(setupForm);
+    handlers['Jifeng Expense Voucher'].setup(setupForm);
+    assert.deepEqual(Array.from(setupForm.ignore_doctypes_on_cancel_all), ['Payment Entry', 'Journal Entry'],
+        'source cancellation keeps existing exclusions and delegates only its journal to the native source lifecycle');
     handlers['Jifeng Expense Voucher'].refresh(frm);
     await buttons['办理付款']();
     assert.equal(contextCalls, 1);
