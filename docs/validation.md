@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-07 工资完整GET前两步通过，档案保存检查待修
+
+正常QA七步协调器经根完整源码及独立窄审封存，helper `2843f0509f1bb03d6e81ebc565a2f2255fccd815f9091522097761be37536da2`、manifest `3b481cf97098bf2c890ff93a75ca5efe5dba5dab67e02cb7ce7aa09cceb28d06`。封存保持22个定义正文，28冻结文件核验通过；修复仅属测试连接失败关闭和框架destroy重复关闭，未改业务或原生源码。
+
+实际A收据 `f5fcd71f767dfd4331b50fa9e9dfb49e1e2a9ad1e70ded099f07b7cc6585aa2c`：普通HR User正常保存2.5计时工资草稿，一次原生COMMIT确认；完整GET PermissionError，补充档案业务查询0。一个业务连接、一个真实只读连接均关闭。实际B收据 `619f4efa746f31f5a3a743725242dba3922070025ef4ffe228ceeb96a945dc12`：HR Manager正常首次审核，一次COMMIT确认；完整GET返回准确窄业务投影，旧modified请求ValidationError。一个业务连接、真实只读主连接及_fresh_snapshot克隆均正常回滚关闭。每步源、owner及已知Contact任务的完整RQ图保持；DTO、人员、单据和凭据只留受限私有记录。
+
+C收据 `1ff378f81a2c94153189538d9dd70c8f9d57800f970c5392d3e2a88779c6237d` 保持failed：正常补充档案save会由Document.update_child_table对四类空子表发出精确parent/type/field的DELETE，测试脚本把第一条零影响语句在SQL前拒绝。业务连接关闭、COMMIT sent/ack均0，无提交意图或确认，未执行GET；没有重放。随后唯一只读资格收据 `c276c66544e5290f81d9931aac4a02cceb482af0c7a1cbbb7d211b571283486d` 通过：独立原生连接的四表全行及结构严格等实际B，四个准确QA子表范围计数0，来源、服务和RQ保持，一连接关闭、零COMMIT。
+
+后续独立C–G命名空间将仅放行这四类原生空同步，核准确native frame、SQL/参数、提交前零记录及影响零行，继承真实A/B而不重做。当前只证明完整GET前两步；取消、改单、剩余GET、真实A/B界面、旧空快照、撤权竞态和同名来源重建未验。未登录或改动公网，全部旧模块正式交付目标继续。
+
 ## 2026-10-07 普通岗位工资分类原生回滚验收通过
 
 R5仅将工作台首行工序替换为已核实的既有Operation，后续重试、旧批恢复、新请求及无Job Card计件拒绝均继承；普通直接工资的Data文字工序和正金额保留。根与独立差分审阅后最小封存，helper `cb25c0fc5d71d7ab0b9c9e8d731044f7c589292e76780bd6a412b2bfcede475a`、manifest `019f62da057cfa720b2ec48dabeb704b4e1dbe4cc7c762d713a5c28c15c24bd3`，257冻结文件／236输入保持，原99项native来源未扩增。全部23顶层及8嵌套定义在封存时字节／AST保持，业务用例只改变一行工序选择。
