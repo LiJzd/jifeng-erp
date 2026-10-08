@@ -243,6 +243,44 @@ class TestMaterialReturns(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "无法关联原领料明细"):
             self.module._submitted_by_detail(source, {"ROW-1": evidence}, {"MR-1": submitted})
 
+    def test_submitted_document_is_excluded_from_prior_total_before_current_is_added(self):
+        source_row = Record(name="ROW-1", item_code="RAW", s_warehouse="Stores - JF",
+                            expense_account="Stock Adj - JF", cost_center="Main - JF", project=None)
+        evidence = {"ROW-1": {"row": source_row, "uom": "Nos", "flow": "FLOW-1",
+                              "qty": Decimal("2")}}
+        def return_doc(name, quantity):
+            row = Record(jf_material_return_against_detail="ROW-1", item_code="RAW", stock_uom="Nos",
+                         uom="Nos", conversion_factor=1, s_warehouse=None, t_warehouse="Stores - JF",
+                         jf_flow_order="FLOW-1", expense_account="Stock Adj - JF", cost_center="Main - JF",
+                         project=None, transfer_qty=quantity, qty=quantity, additional_cost=0,
+                         landed_cost_voucher_amount=0)
+            return Record(name=name, docstatus=1, items=[row], doctype="Stock Entry",
+                          meta=Meta("Stock Entry"), additional_costs=[], total_additional_costs=0)
+
+        current = return_doc("MR-CURRENT", Decimal("1"))
+        other = return_doc("MR-OTHER", Decimal("1"))
+        prior = self.module._submitted_by_other_returns(
+            Record(name="MI-1"), evidence,
+            {current.name: current, other.name: other}, current.name)
+        self.assertEqual(prior["ROW-1"], Decimal("1"))
+        self.module._ensure_within_source_quantities(
+            {"ROW-1": Decimal("1")}, prior, {"ROW-1": {"qty": Decimal("2")}})
+
+    def test_return_validation_only_accepts_native_save_submit_update_and_cancel_states(self):
+        self.assertEqual(self.module._return_validation_state(Record(docstatus=0), None), "active")
+        self.assertEqual(self.module._return_validation_state(
+            Record(docstatus=1, _action="submit"), None), "active")
+        self.assertEqual(self.module._return_validation_state(
+            Record(docstatus=1, _action="update_after_submit"), None), "active")
+        previous = Record(docstatus=1)
+        self.assertEqual(self.module._return_validation_state(
+            Record(docstatus=2, _action="cancel"), previous), "cancel")
+        for doc, prior in ((Record(docstatus=1), None),
+                           (Record(docstatus=2, _action="cancel"), None),
+                           (Record(docstatus=3), None)):
+            with self.assertRaisesRegex(ValidationError, "只能保存草稿、提交或按原生流程取消"):
+                self.module._return_validation_state(doc, prior)
+
 
 if __name__ == "__main__":
     unittest.main()

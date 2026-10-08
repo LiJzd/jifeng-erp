@@ -346,6 +346,31 @@ def _submitted_by_detail(source, source_rows, docs):
     return totals
 
 
+def _submitted_by_other_returns(source, source_rows, docs, current_name):
+    """Count posted returns other than the document being validated.
+
+    A Stock Entry being updated after submit is returned by _related() as a
+    submitted document. Its quantity is added separately as the current
+    document below, so including it here would count it twice.
+    """
+    others = {name: returned for name, returned in docs.items() if name != current_name}
+    return _submitted_by_detail(source, source_rows, others)
+
+
+def _return_validation_state(doc, previous):
+    """Return whether this is an active validation or an ordinary cancellation."""
+    status = int(doc.get("docstatus") or 0)
+    action = getattr(doc, "_action", None) or doc.get("_action")
+    if status == 0:
+        return "active"
+    if status == 1 and action in ("submit", "update_after_submit"):
+        return "active"
+    if (status == 2 and action == "cancel" and previous
+            and int(previous.get("docstatus") or 0) == 1):
+        return "cancel"
+    frappe.throw("领料退库只能保存草稿、提交或按原生流程取消。", frappe.ValidationError)
+
+
 def submitted_return_quantities_for_flow(flow_name, issue_names):
     """Return posted quantities by item after checking readable source links."""
     if not issue_names:
@@ -424,6 +449,10 @@ def validate_material_return(doc):
         frappe.throw("领料退库单必须关联原领料凭证。", frappe.ValidationError)
     if doc.doctype != "Stock Entry":
         _throw()
+    previous = doc.get_doc_before_save() if not doc.is_new() else None
+    state = _return_validation_state(doc, previous)
+    if previous and previous.get(SOURCE_FIELD) != source_name:
+        frappe.throw("退库草稿的原领料来源不可更改。", frappe.ValidationError)
     _lock_source(source_name)
     source = _source(source_name, lock=False)
     doc.check_permission("create" if doc.is_new() else "write")
@@ -437,16 +466,18 @@ def validate_material_return(doc):
     if (doc.company != source.company or doc.stock_entry_type != "Material Receipt"
             or doc.purpose != "Material Receipt" or doc.get("is_return") or not doc.items):
         _throw("领料退库必须为同公司Material Receipt并有明细。")
+    # Cancellation must remain possible through the native Stock Entry path.
+    # The canceled document is not part of the active cumulative quantity and
+    # needs no fresh valuation/cap check to reverse its own ledger entries.
+    if state == "cancel":
+        return True
     _no_additional_costs(doc)
     source_rows = _source_rows(source)
     rates = _source_rates(source, source_rows)
     related = _related(source, lock=True)
     if len([value for value in related.values() if value.docstatus == 0 and value.name != doc.name]) > 0:
         frappe.throw("原领料已有另一张退库草稿，请先核对或删除后再保存。", frappe.ValidationError)
-    previous = doc.get_doc_before_save() if not doc.is_new() else None
-    if previous and previous.get(SOURCE_FIELD) != source_name:
-        frappe.throw("退库草稿的原领料来源不可更改。", frappe.ValidationError)
-    submitted = _submitted_by_detail(source, source_rows, related)
+    submitted = _submitted_by_other_returns(source, source_rows, related, doc.name)
     current = defaultdict(Decimal)
     seen = set()
     for row in doc.items:
