@@ -100,6 +100,13 @@ def dependencies(kind):
     if kind != "subcontracting_material":
         shared["Subcontracting Receipt"] = spec({"company", "supplier", "supplier_name", "posting_date", "is_return", "return_against"},
                                                {"items": table("Subcontracting Receipt Item", SCR_ROW)})
+    if kind == "subcontracting_receipt":
+        shared["Company"]["fields"].add("default_currency")
+        shared["Item"] = spec({"name", "stock_uom", "is_stock_item"})
+        shared["Warehouse"] = spec({"company", "is_group"})
+        shared["Stock Ledger Entry"] = spec({"company", "posting_date", "posting_time", "voucher_type", "voucher_no",
+            "voucher_detail_no", "item_code", "warehouse", "stock_uom", "actual_qty", "stock_value_difference",
+            "is_cancelled", "is_adjustment_entry"})
     else:
         # Material movements use Order Item identity/item/unit/Flow, not plan quantities.
         shared["Subcontracting Order"]["tables"]["items"] = table("Subcontracting Order Item",

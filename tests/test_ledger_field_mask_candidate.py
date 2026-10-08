@@ -80,6 +80,7 @@ class Environment:
                      "DocType": [], "Custom Field": [], "Property Setter": [], "Report": [], "Custom Role": []}
         self.frappe = types.ModuleType("frappe")
         self.frappe._dict, self.frappe.PermissionError = Row, PermissionError
+        self.frappe.ValidationError, self.frappe.DoesNotExistError = ValueError, LookupError
         self.frappe.session = types.SimpleNamespace(user="ordinary")
         self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         self.frappe.get_meta = lambda doctype: self.meta[doctype]
@@ -214,7 +215,15 @@ class CandidateModels(unittest.TestCase):
         e.doc("Subcontracting Order", "SCO", company="CO", supplier="SUP", supplier_name="supplier", transaction_date="2026-10-06", status="Open", items=[self.sco_row], supplied_items=[supplied])
         self.scr_row = e.row("Subcontracting Receipt Item", "SCRI", item_code="FG", item_name="finished", stock_uom="Nos", qty=3, rejected_qty=1, process_loss_qty=1,
                             conversion_factor=2, warehouse="MAIN", rejected_warehouse="REJECT", subcontracting_order="SCO", subcontracting_order_item="SCOI")
-        e.doc("Subcontracting Receipt", "SCR", company="CO", supplier="SUP", supplier_name="supplier", posting_date="2026-10-06", is_return=0, items=[self.scr_row])
+        e.doc("Subcontracting Receipt", "SCR", company="CO", supplier="SUP", supplier_name="supplier", posting_date="2026-10-06", posting_time="10:00:00", is_return=0, items=[self.scr_row])
+        e.doc("Stock Ledger Entry", "SLE-SCR-MAIN", company="CO", posting_date="2026-10-06", posting_time="10:00:00",
+              voucher_type="Subcontracting Receipt", voucher_no="SCR", voucher_detail_no="SCRI", item_code="FG",
+              warehouse="MAIN", stock_uom="Nos", actual_qty=6, stock_value_difference=Decimal("15"),
+              is_cancelled=0, is_adjustment_entry=0)
+        e.doc("Stock Ledger Entry", "SLE-SCR-REJECT", company="CO", posting_date="2026-10-06", posting_time="10:00:00",
+              voucher_type="Subcontracting Receipt", voucher_no="SCR", voucher_detail_no="SCRI", item_code="FG",
+              warehouse="REJECT", stock_uom="Nos", actual_qty=2, stock_value_difference=Decimal("5"),
+              is_cancelled=0, is_adjustment_entry=0)
         se_row = e.row("Stock Entry Detail", "SEI", item_code="RAW", item_name="raw", stock_uom="Kg", transfer_qty=Decimal("4.125"), sco_rm_detail="SUPP", subcontracted_item="FG", s_warehouse="MAIN", t_warehouse="SUPWH")
         e.doc("Stock Entry", "SE", company="CO", posting_date="2026-10-06", posting_time="10:00:00", purpose="Send to Subcontractor", is_return=0, subcontracting_order="SCO", items=[se_row])
         self.filters = {"company":"CO", "from_date":"2026-10-01", "to_date":"2026-10-06"}
@@ -339,6 +348,53 @@ class CandidateModels(unittest.TestCase):
         receipt = self.sub.subcontracting_receipt_ledger(self.filters)[1][0]
         self.assertEqual((progress["accepted_qty"],progress["rejected_qty"],progress["loss_qty"],progress["remaining_qty"]),(6,2,2,0))
         self.assertEqual(receipt["covered_qty"],10)
+        self.assertEqual((receipt["inventory_qty_change"], receipt["inventory_value_change"], receipt["currency"],
+                          receipt["inventory_value_status"]), (Decimal(8), Decimal(20), "USD", "有效库存账"))
+
+    def test_subcontract_receipt_ledger_reports_exact_signed_return_sle_value(self):
+        row = deepcopy(self.env.data["Subcontracting Receipt", "SCR"].items[0])
+        row.update(name="SRET-I", qty=-1, rejected_qty=0, process_loss_qty=0, warehouse="MAIN",
+                   subcontracting_receipt_item="SCRI")
+        self.env.doc("Subcontracting Receipt", "SRET", company="CO", supplier="SUP", supplier_name="supplier",
+                     posting_date="2026-10-06", posting_time="11:00:00", is_return=1, return_against="SCR", items=[row])
+        self.env.doc("Stock Ledger Entry", "SLE-SRET", company="CO", posting_date="2026-10-06", posting_time="11:00:00",
+                     voucher_type="Subcontracting Receipt", voucher_no="SRET", voucher_detail_no="SRET-I", item_code="FG",
+                     warehouse="MAIN", stock_uom="Nos", actual_qty=-2, stock_value_difference=Decimal("-5"),
+                     is_cancelled=0, is_adjustment_entry=0)
+
+        rows = self.sub.subcontracting_receipt_ledger(self.filters)[1]
+        values = {row["receipt"]: (row["inventory_qty_change"], row["inventory_value_change"])
+                  for row in rows}
+        self.assertEqual(values, {"SCR": (Decimal(8), Decimal(20)), "SRET": (Decimal(-2), Decimal("-5"))})
+
+    def test_subcontract_receipt_ledger_rejects_masked_stock_value(self):
+        self.env.meta["Stock Ledger Entry"].fields["stock_value_difference"]["mask"] = 1
+        with self.assertRaises(PermissionError):
+            self.sub.subcontracting_receipt_ledger(self.filters)
+
+    def test_subcontract_receipt_ledger_rejects_missing_or_mismatched_sle(self):
+        del self.env.data["Stock Ledger Entry", "SLE-SCR-REJECT"]
+        with self.assertRaisesRegex(ValueError, "缺行"):
+            self.sub.subcontracting_receipt_ledger(self.filters)
+        self.env.data["Stock Ledger Entry", "SLE-SCR-REJECT"] = self.env.doc(
+            "Stock Ledger Entry", "SLE-SCR-REJECT", company="CO", posting_date="2026-10-06", posting_time="10:00:00",
+            voucher_type="Subcontracting Receipt", voucher_no="SCR", voucher_detail_no="SCRI", item_code="FG",
+            warehouse="REJECT", stock_uom="Nos", actual_qty=1, stock_value_difference=Decimal("5"),
+            is_cancelled=0, is_adjustment_entry=0)
+        with self.assertRaisesRegex(ValueError, "数量与有效库存账不一致"):
+            self.sub.subcontracting_receipt_ledger(self.filters)
+
+    def test_pending_native_revaluation_hides_affected_value(self):
+        self.env.meta["Repost Item Valuation"] = Meta(self.env, "Repost Item Valuation", {
+            "name", "company", "docstatus", "status", "based_on", "item_code", "warehouse", "posting_date"})
+        self.env.doc("Repost Item Valuation", "RIV-1", company="CO", docstatus=1, status="Queued",
+                     based_on="Item and Warehouse", item_code="FG", warehouse="MAIN", posting_date="2026-10-01")
+
+        row = self.sub.subcontracting_receipt_ledger(self.filters)[1][0]
+
+        self.assertEqual(row["inventory_qty_change"], Decimal(8))
+        self.assertIsNone(row["inventory_value_change"])
+        self.assertEqual(row["inventory_value_status"], "库存重估未完成")
 
     def test_subcontract_child_loss_mask_is_not_hidden_by_derived_column(self):
         self.env.meta["Subcontracting Receipt Item"].fields["process_loss_qty"]["mask"] = 1

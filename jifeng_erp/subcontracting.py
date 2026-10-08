@@ -1,6 +1,7 @@
 """Read submitted subcontracting movements with their exact source rows and permissions."""
 
 from decimal import Decimal, InvalidOperation
+import json
 
 import frappe
 from frappe.utils import cint, date_diff, getdate, today
@@ -332,10 +333,19 @@ def subcontracting_receipt_ledger(filters=None):
         if row.get("flow_order"):
             guard.document(frappe.get_doc("Jifeng Flow Order", row["flow_order"]))
         check_protected_reference("Jifeng Flow Order", row.get("flow_order"), company=filters.company)
+    company = guard.document(frappe.get_doc("Company", filters.company), permission="select",
+                             extra={"default_currency"})
+    valuation = _receipt_stock_valuation(rows, selected, company.default_currency, filters.company, guard)
+    for row in rows:
+        row.update(valuation[(row["receipt"], row["receipt_item"])])
     columns = [_column("posting_date", "记账日期", "Date"), _column("receipt", "收回/退回单", "Link", "Subcontracting Receipt", 175),
                _column("entry_type", "业务类型", width=110)] + _source_columns() + [
         _column("accepted_qty", "接收变动", "Float"), _column("rejected_qty", "拒收变动", "Float"),
         _column("loss_qty", "确认损耗", "Float"), _column("covered_qty", "覆盖数量变动", "Float"),
+        _column("inventory_qty_change", "库存数量变动", "Float"),
+        _column("inventory_value_change", "库存价值变动（公司本币）", "Currency", "currency", 180),
+        _column("currency", "本币", "Link", "Currency", 90),
+        _column("inventory_value_status", "库存估价状态", width=150),
         _column("warehouse", "本行库存仓库", "Link", "Warehouse", 170),
         _column("rejected_warehouse", "拒收仓库", "Link", "Warehouse", 170),
         _column("quality_inspection", "品检单", "Link", "Quality Inspection", 155),
@@ -345,6 +355,172 @@ def subcontracting_receipt_ledger(filters=None):
     ]
     guard.finish()
     return columns, rows
+
+
+def _receipt_stock_valuation(rows, receipts, currency, company, guard):
+    """Project signed stock movements from active ledger rows for exact receipt details."""
+    result, expected, detail_names = {}, {}, {}
+    receipt_by_name = {name: doc for name, doc in receipts.items()}
+    for movement in rows:
+        doc = receipt_by_name.get(movement["receipt"])
+        source = next((row for row in doc.items if row.name == movement["receipt_item"]), None) if doc else None
+        if not source:
+            frappe.throw("委外收回库存估价缺少原始明细，请先核对", frappe.PermissionError)
+        key = (movement["receipt"], movement["receipt_item"])
+        detail_names.setdefault(movement["receipt"], set()).add(movement["receipt_item"])
+        item = guard.document(frappe.get_doc("Item", source.item_code), extra={"stock_uom", "is_stock_item"})
+        if item.stock_uom != source.stock_uom:
+            frappe.throw("委外收回库存单位与商品库存单位不一致，不能读取库存价值", frappe.ValidationError)
+        if not item.is_stock_item:
+            result[key] = {"inventory_qty_change": None, "inventory_value_change": None,
+                           "currency": currency, "inventory_value_status": "非库存商品"}
+            continue
+        quantities = {}
+        for field, warehouse_field in (("accepted_qty", "warehouse"), ("rejected_qty", "rejected_warehouse")):
+            quantity = _quantity(movement[field])
+            if not quantity:
+                continue
+            warehouse_name = source.get(warehouse_field)
+            if not warehouse_name:
+                frappe.throw("委外收回库存仓库缺失，不能读取库存价值", frappe.ValidationError)
+            warehouse = guard.document(frappe.get_doc("Warehouse", warehouse_name),
+                                       extra={"company", "is_group"})
+            if warehouse.company != company or warehouse.is_group:
+                frappe.throw("委外收回库存仓库与公司不一致，不能读取库存价值", frappe.ValidationError)
+            pair = (source.item_code, warehouse_name)
+            quantities[pair] = quantities.get(pair, Decimal(0)) + quantity
+        expected[key] = quantities
+        result[key] = {"inventory_qty_change": sum(quantities.values(), Decimal(0)),
+                       "inventory_value_change": Decimal(0) if not quantities else None,
+                       "currency": currency,
+                       "inventory_value_status": "无实物流入/退回" if not quantities else "待核对库存账"}
+
+    voucher_names = sorted(detail_names)
+    details = sorted({name for values in detail_names.values() for name in values})
+    actual = {}
+    if voucher_names and details:
+        filters = {"company": company, "voucher_type": "Subcontracting Receipt",
+                   "voucher_no": ["in", voucher_names], "voucher_detail_no": ["in", details], "is_cancelled": 0}
+        fields = ["name", "company", "docstatus", "posting_date", "posting_time", "voucher_type", "voucher_no",
+                  "voucher_detail_no", "item_code", "warehouse", "stock_uom", "actual_qty",
+                  "stock_value_difference", "is_cancelled", "is_adjustment_entry"]
+        raw_rows = guard.query("get_all", "Stock Ledger Entry", filters=filters, fields=fields,
+                               order_by="name asc", limit_page_length=0)
+        visible_rows = guard.query("get_list", "Stock Ledger Entry", filters=filters, fields=fields,
+                                   order_by="name asc", limit_page_length=0)
+        if {row.name for row in raw_rows} != {row.name for row in visible_rows}:
+            frappe.throw("无法完整读取委外收回库存账，不能显示部分库存价值", frappe.PermissionError)
+        for row in visible_rows:
+            ledger = guard.document(frappe.get_doc("Stock Ledger Entry", row.name), extra=set(fields) - {"name"})
+            key = (row.voucher_no, row.voucher_detail_no)
+            target = (row.item_code, row.warehouse)
+            receipt = receipt_by_name.get(row.voucher_no)
+            source = next((item for item in receipt.items if item.name == row.voucher_detail_no), None) if receipt else None
+            if (not receipt or not source or row.company != company or row.docstatus != 1 or row.is_cancelled
+                    or row.voucher_type != "Subcontracting Receipt"
+                    or row.posting_date != receipt.posting_date or row.posting_time != receipt.posting_time):
+                frappe.throw("委外收回库存账来源或记账时间不一致，不能显示库存价值", frappe.ValidationError)
+            item = guard.document(frappe.get_doc("Item", row.item_code), extra={"stock_uom", "is_stock_item"})
+            warehouse = guard.document(frappe.get_doc("Warehouse", row.warehouse), extra={"company", "is_group"})
+            if (not item.is_stock_item or row.item_code != source.item_code or row.stock_uom != item.stock_uom
+                    or warehouse.company != company or warehouse.is_group or target not in expected.get(key, {})):
+                frappe.throw("委外收回库存账商品、单位或仓库无法与收回明细对应", frappe.ValidationError)
+            if row.actual_qty in (None, "") or row.stock_value_difference in (None, ""):
+                frappe.throw("委外收回库存账缺少数量或库存价值变动", frappe.ValidationError)
+            qty = _quantity(row.actual_qty)
+            value = _quantity(row.stock_value_difference)
+            if row.is_adjustment_entry:
+                if qty:
+                    frappe.throw("委外库存重估行出现数量变动，不能显示库存价值", frappe.ValidationError)
+            elif not qty or (qty > 0) != (expected[key][target] > 0):
+                frappe.throw("委外收回库存账数量方向与原始明细不一致", frappe.ValidationError)
+            bucket = actual.setdefault(key, {"quantities": {}, "value": Decimal(0)})
+            bucket["quantities"][target] = bucket["quantities"].get(target, Decimal(0)) + qty
+            bucket["value"] += value
+            bucket.setdefault("documents", []).append(ledger)
+
+    for key, pairs in expected.items():
+        if not pairs:
+            continue
+        bucket = actual.get(key)
+        if not bucket or set(bucket["quantities"]) != set(pairs):
+            frappe.throw("委外收回有效库存账缺行，不能显示部分库存价值", frappe.ValidationError)
+        for pair, quantity in pairs.items():
+            rows_for_pair = [doc for doc in bucket["documents"] if (doc.item_code, doc.warehouse) == pair]
+            actual_qty = bucket["quantities"].get(pair, Decimal(0))
+            if not rows_for_pair:
+                frappe.throw("委外收回有效库存账缺行，不能显示部分库存价值", frappe.ValidationError)
+            precision = rows_for_pair[0].precision("actual_qty") if callable(getattr(rows_for_pair[0], "precision", None)) else 6
+            if abs(actual_qty - quantity) > Decimal(1).scaleb(-precision):
+                frappe.throw("委外收回库存数量与有效库存账不一致", frappe.ValidationError)
+        result[key]["inventory_value_change"] = bucket["value"]
+        result[key]["inventory_value_status"] = "有效库存账"
+
+    pending = _receipt_reposting_rows(rows, expected, actual, receipts, company, guard)
+    for key in pending:
+        if key in result:
+            result[key]["inventory_value_change"] = None
+            result[key]["inventory_value_status"] = "库存重估未完成"
+    return result
+
+
+def _receipt_reposting_rows(rows, expected, actual, receipts, company, guard):
+    """Identify only active native revaluation jobs that can change these rows."""
+    guard.include_doctypes({"Repost Item Valuation"})
+    try:
+        jobs = guard.query("get_all", "Repost Item Valuation", filters={"company": company}, fields=["*"],
+                           order_by="name asc", limit_page_length=0)
+    except (frappe.DoesNotExistError, frappe.ValidationError, frappe.PermissionError):
+        frappe.throw("无法确认库存重估状态，不能显示部分库存价值", frappe.ValidationError)
+    keys_by_pair, dates = {}, {}
+    receipt_names = {row["receipt"] for row in rows}
+    for movement in rows:
+        key = (movement["receipt"], movement["receipt_item"])
+        dates[key] = str(receipts[movement["receipt"]].posting_date)
+        for pair in expected.get(key, {}):
+            keys_by_pair.setdefault(pair, set()).add(key)
+    pending = set()
+    for job in jobs:
+        if job.get("docstatus") != 1 or job.get("status") in {"Completed", "Skipped", "Cancelled"}:
+            continue
+        if job.get("status") not in {"Queued", "In Progress", "Failed"}:
+            frappe.throw("存在未完成且状态无法核实的库存重估，不能显示部分库存价值", frappe.ValidationError)
+        if job.get("voucher_type") == "Subcontracting Receipt" and job.get("voucher_no") in receipt_names:
+            pending.update(key for key in dates if key[0] == job.voucher_no)
+            continue
+        seeds = []
+        if job.get("based_on") == "Item and Warehouse":
+            seeds = [job]
+        elif job.get("based_on") == "Transaction":
+            if job.get("reposting_data_file"):
+                pending.update(dates)
+                continue
+            if job.get("items_to_be_repost"):
+                try:
+                    seeds = json.loads(job.items_to_be_repost)
+                except (TypeError, ValueError):
+                    frappe.throw("库存重估范围无法确认，不能显示部分库存价值", frappe.ValidationError)
+                if not isinstance(seeds, list):
+                    frappe.throw("库存重估范围无法确认，不能显示部分库存价值", frappe.ValidationError)
+            elif job.get("voucher_type") and job.get("voucher_no"):
+                seeds = guard.query("get_all", "Stock Ledger Entry", filters={"company": company,
+                    "voucher_type": job.voucher_type, "voucher_no": job.voucher_no},
+                    fields=["item_code", "warehouse", "posting_date"], order_by="name asc", limit_page_length=0)
+            if not seeds:
+                pending.update(dates)
+                continue
+        else:
+            pending.update(dates)
+            continue
+        for seed in seeds:
+            item_code, warehouse, posting_date = seed.get("item_code"), seed.get("warehouse"), seed.get("posting_date")
+            if not item_code or not warehouse or not posting_date:
+                pending.update(dates)
+                continue
+            for pair, keys in keys_by_pair.items():
+                if pair == (item_code, warehouse):
+                    pending.update(key for key in keys if str(posting_date) <= dates[key])
+    return pending
 
 
 def _source_columns():

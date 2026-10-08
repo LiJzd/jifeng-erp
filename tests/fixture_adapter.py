@@ -9,6 +9,7 @@ import pathlib
 import sys
 import types
 from copy import deepcopy
+from decimal import Decimal
 from unittest.mock import Mock, patch
 
 CANDIDATE = pathlib.Path(__file__).parents[1]
@@ -164,6 +165,28 @@ def subcontracting_ledger(case, selected=None):
     # Native parent, field and finish gates use the actual candidate helper.
     selected = selected if selected is not None else {"SCR": case.original, "RETURN": case.return_doc}
     filters = Row(company="JF", from_date="2026-09-01", to_date="2026-09-30")
+    # This legacy movement test predates the SLE projection; give its two
+    # vouchers explicit native stock facts so the report exercises the same
+    # exact-detail valuation contract as the candidate tests.
+    case.env.additional.setdefault("Item", {})["FG"] = Row(name="FG", stock_uom="Nos", is_stock_item=1)
+    case.env.additional.setdefault("Warehouse", {}).update({
+        "Good": Row(name="Good", company="JF", is_group=0),
+        "Rejected": Row(name="Rejected", company="JF", is_group=0),
+    })
+    case.env.additional.setdefault("Stock Ledger Entry", {}).update({
+        "SLE-SCR-GOOD": Row(name="SLE-SCR-GOOD", company="JF", posting_date=case.original.posting_date,
+            posting_time=None, voucher_type="Subcontracting Receipt", voucher_no="SCR", voucher_detail_no="R1",
+            item_code="FG", warehouse="Good", stock_uom="Nos", actual_qty=6, stock_value_difference=Decimal("15"),
+            is_cancelled=0, is_adjustment_entry=0),
+        "SLE-SCR-REJECTED": Row(name="SLE-SCR-REJECTED", company="JF", posting_date=case.original.posting_date,
+            posting_time=None, voucher_type="Subcontracting Receipt", voucher_no="SCR", voucher_detail_no="R1",
+            item_code="FG", warehouse="Rejected", stock_uom="Nos", actual_qty=2, stock_value_difference=Decimal("5"),
+            is_cancelled=0, is_adjustment_entry=0),
+        "SLE-RETURN": Row(name="SLE-RETURN", company="JF", posting_date=case.return_doc.posting_date,
+            posting_time=None, voucher_type="Subcontracting Receipt", voucher_no="RETURN", voucher_detail_no="RET1",
+            item_code="FG", warehouse="Good", stock_uom="Nos", actual_qty=-1, stock_value_difference=Decimal("-2.5"),
+            is_cancelled=0, is_adjustment_entry=0),
+    })
     source_readable = case.report._readable_documents
     def readable(doctype, query, complete=False, *, guard=None):
         if doctype == "Subcontracting Receipt" and isinstance(query, dict) and "posting_date" in query:
