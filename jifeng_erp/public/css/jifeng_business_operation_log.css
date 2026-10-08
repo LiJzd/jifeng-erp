@@ -1,0 +1,113 @@
+.jifeng-business-operation-log {
+	--jol-border: var(--border-color, #dfe3e8);
+	--jol-muted: var(--text-muted, #687386);
+	color: var(--text-color, #252b36);
+	font-size: 13px;
+	padding: 16px;
+}
+
+.jifeng-business-operation-log .jol-header h1 {
+	font-size: 20px;
+	font-weight: 600;
+	margin: 0 0 4px;
+}
+
+.jifeng-business-operation-log .jol-header p,
+.jifeng-business-operation-log .jol-status {
+	color: var(--jol-muted);
+	margin: 0 0 14px;
+}
+
+.jifeng-business-operation-log .jol-filters {
+	align-items: end;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-bottom: 12px;
+}
+
+.jifeng-business-operation-log .jol-field {
+	display: grid;
+	font-size: 12px;
+	gap: 4px;
+}
+
+.jifeng-business-operation-log input,
+.jifeng-business-operation-log select {
+	background: var(--control-bg, #fff);
+	border: 1px solid var(--jol-border);
+	border-radius: 5px;
+	color: inherit;
+	min-height: 32px;
+	padding: 4px 8px;
+}
+
+.jifeng-business-operation-log button {
+	background: var(--control-bg, #fff);
+	border: 1px solid var(--jol-border);
+	border-radius: 5px;
+	color: inherit;
+	cursor: pointer;
+	min-height: 32px;
+	padding: 5px 12px;
+}
+
+.jifeng-business-operation-log button.primary {
+	background: var(--primary, #2490ef);
+	border-color: var(--primary, #2490ef);
+	color: #fff;
+}
+
+.jifeng-business-operation-log button:disabled {
+	cursor: default;
+	opacity: .55;
+}
+
+.jifeng-business-operation-log .jol-status[data-kind="error"] {
+	color: var(--red-600, #c0392b);
+}
+
+.jifeng-business-operation-log .jol-table-wrap {
+	border: 1px solid var(--jol-border);
+	border-radius: 6px;
+	overflow: auto;
+}
+
+.jifeng-business-operation-log .jol-table {
+	border-collapse: collapse;
+	min-width: 850px;
+	width: 100%;
+}
+
+.jifeng-business-operation-log .jol-table th,
+.jifeng-business-operation-log .jol-table td {
+	border-bottom: 1px solid var(--jol-border);
+	padding: 8px 10px;
+	text-align: left;
+	vertical-align: top;
+}
+
+.jifeng-business-operation-log .jol-table th {
+	background: var(--subtle-fg, #f7f8fa);
+	font-weight: 600;
+	position: sticky;
+	top: 0;
+}
+
+.jifeng-business-operation-log .jol-table a {
+	color: var(--link-color, #1673c9);
+	text-decoration: underline;
+}
+
+.jifeng-business-operation-log .jol-pager {
+	align-items: center;
+	display: flex;
+	gap: 10px;
+	justify-content: flex-end;
+	margin-top: 10px;
+}
+
+@media (max-width: 700px) {
+	.jifeng-business-operation-log { padding: 10px; }
+	.jifeng-business-operation-log .jol-filters { align-items: stretch; flex-direction: column; }
+}
