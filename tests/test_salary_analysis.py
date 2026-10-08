@@ -28,6 +28,8 @@ class TestSalaryAnalysis(unittest.TestCase):
 			"overwrite_salary_structure_amount"}
 		self.H.CONTEXT_FIELDS = {"company", "from_date", "to_date", "use_date", "date_basis", "search"}
 		self.H._money = lambda value: format(Decimal(value), "f")
+		self.H._Unclassified = type("Unclassified", (Exception,), {})
+		self.H._source = lambda *args: (_ for _ in ()).throw(self.H._Unclassified())
 		self.H._name = lambda value: value if isinstance(value, str) and value else (_ for _ in ()).throw(ValueError())
 		self.H._context = lambda value: value
 		self.H._permission_state = lambda: "same"
@@ -52,7 +54,7 @@ class TestSalaryAnalysis(unittest.TestCase):
 			"net_pay": "1030.00", "rounded_total": "1030", "start_date": "2026-10-01", "end_date": "2026-10-31",
 			"company": "QA", "currency": "CNY"}, "children": {"earnings": [{"amount": "1030.10",
 			"additional_salary": "", "do_not_include_in_total": 0}], "deductions": []}}]}
-		result = self.A._build(snapshot, "")
+		result = self.A._build(snapshot, "", "CNY")
 		self.assertEqual(result["settlements"], {"gross_pay": "1030.10", "total_deduction": "0.10",
 			"net_pay": "1030.00", "rounded_total": "1030"})
 		self.assertEqual(result["department"], [{"name": "装配", "amount": "1030.10", "share_percent": "100.00"}])
@@ -67,11 +69,24 @@ class TestSalaryAnalysis(unittest.TestCase):
 			"additional_salary": "AS-1", "do_not_include_in_total": 0}], "deductions": []}}]}
 		wage = {"name": "WAGE-1", "modified": "v3", "operation": "装配", "total_amount": "30"}
 		with patch.object(self.A, "_operation", return_value=(wage, Decimal("30"), Decimal("1000"))):
-			result = self.A._build(snapshot, "")
+			result = self.A._build(snapshot, "", "CNY")
 		self.assertEqual(result["operation"], [
 			{"name": "未归类", "amount": "1000", "share_percent": "97.09"},
 			{"name": "装配", "amount": "30", "share_percent": "2.91"}])
 		self.assertEqual(result["sources"][0]["wage_entry"], "WAGE-1")
+
+	def test_independent_additional_salary_row_uses_salary_history_source_validation(self):
+		wage = {"name": "WAGE-2", "modified": "v7", "docstatus": 1, "company": "QA", "employee": "EMP-1",
+			"salary_component": "EXTRA", "payroll_date": "2026-10-15", "piece_amount": "0", "time_amount": "30",
+			"extra_amount": "0", "total_amount": "30", "operation": "装配"}
+		class Capture:
+			records = {}
+			def project(self, doctype, name, fields, **kwargs): return None, wage
+		self.H._Capture = Capture
+		self.H._source = lambda *args: ({"time": Decimal("30")}, [{"doctype": "Jifeng Wage Entry", "name": "WAGE-2", "version": "v7"}])
+		child = {"additional_salary": "AS-2", "amount": "30", "default_amount": "0", "additional_amount": "30"}
+		result = self.A._operation(Capture(), {"records": {}}, {}, child)
+		self.assertEqual(result[1:], (Decimal("30"), Decimal(0)))
 
 	def test_operation_link_requires_exact_additional_increment_and_reconciled_components(self):
 		additional = {"name": "AS-1", "modified": "v2", "docstatus": 1, "company": "QA", "employee": "EMP-1",
@@ -86,6 +101,7 @@ class TestSalaryAnalysis(unittest.TestCase):
 			records = {}
 			def project(self, doctype, name, fields, **kwargs):
 				return None, {"Additional Salary": additional, "Jifeng Wage Entry": wage, "Company": company}[doctype]
+		self.H._Capture = Capture
 		capture = Capture()
 		slip = {"company": "QA", "employee": "EMP-1", "currency": "CNY", "start_date": "2026-10-01", "end_date": "2026-10-31"}
 		child = {"additional_salary": "AS-1", "additional_amount": "30", "default_amount": "1000",
@@ -97,7 +113,7 @@ class TestSalaryAnalysis(unittest.TestCase):
 
 	def test_public_query_is_get_only_and_returns_saved_scope_with_empty_valid_result(self):
 		context = {"company": "QA", "from_date": "2026-10-01", "to_date": "2026-10-31",
-			"use_date": True, "date_basis": "period_end", "search": ""}
+			"use_date": True, "date_basis": "period_end", "search": "", "currency": ""}
 		self.H._stable_snapshot = lambda selected: {"rows": [], "records": {}}
 		result = self.A.query_salary_analysis(json.dumps({**context, "employee": ""}))
 		self.assertTrue(result["readonly"])
@@ -105,6 +121,16 @@ class TestSalaryAnalysis(unittest.TestCase):
 		self.assertEqual(result["context"], {**context, "employee": ""})
 		self.assertEqual(result["salary_slips"], 0)
 		self.assertEqual(result["department"], [])
+
+	def test_mixed_currency_scope_returns_selection_required_without_cross_currency_totals(self):
+		context = {"company": "QA", "from_date": "2026-10-01", "to_date": "2026-10-31",
+			"use_date": True, "date_basis": "period_end", "search": "", "employee": "", "currency": ""}
+		self.H._stable_snapshot = lambda selected: {"records": {}, "rows": [
+			{"row": {"currency": "CNY", "employee": "EMP-1"}}, {"row": {"currency": "USD", "employee": "EMP-2"}}]}
+		result = self.A.query_salary_analysis(json.dumps(context))
+		self.assertTrue(result["requires_currency"])
+		self.assertEqual(result["currencies"], ["CNY", "USD"])
+		self.assertNotIn("settlements", result)
 
 
 if __name__ == "__main__":

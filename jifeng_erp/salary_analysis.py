@@ -27,11 +27,12 @@ def _context(value):
     try:
         if isinstance(value, str):
             value = json.loads(value)
-        if not isinstance(value, dict) or set(value) != H.CONTEXT_FIELDS | {"employee"}:
+        if not isinstance(value, dict) or set(value) != H.CONTEXT_FIELDS | {"employee", "currency"}:
             raise ValueError
         result = {key: value[key] for key in H.CONTEXT_FIELDS}
         employee = _employee(value["employee"])
-        return H._context(result), employee
+        currency = _employee(value["currency"])
+        return H._context(result), employee, currency
     except (ValueError, TypeError, OverflowError):
         frappe.throw("工资分析筛选无效，请核对公司、日期及员工")
 
@@ -52,6 +53,28 @@ def _operation(capture, snapshot, slip, child):
     """Return an exact additional-salary increment only when its saved row reconciles."""
     if not child["additional_salary"]:
         return None
+    # The native independent Additional Salary row has amount == the wage
+    # amount. Reuse the history reader's complete identity/period/amount check
+    # for this layout; its separate default/extra fields are not a mix formula.
+    try:
+        parts, references = H._source(capture, slip, child)
+    except H._Unclassified:
+        parts, references = None, []
+    if parts is not None:
+        wages = [reference for reference in references if reference["doctype"] == "Jifeng Wage Entry"]
+        if len(wages) != 1:
+            raise H._Unclassified
+        reference = wages[0]
+        H._meta_contract("Jifeng Wage Entry", {"operation": ("Data", None)})
+        operation_capture = H._Capture()
+        _, wage = operation_capture.project("Jifeng Wage Entry", reference["name"], OPERATION_FIELDS)
+        if wage["modified"] != reference["version"] or wage["docstatus"] != 1:
+            raise H._Changed
+        _compare_snapshot(snapshot, capture)
+        _compare_snapshot(snapshot, operation_capture)
+        if not isinstance(wage["operation"], str) or not wage["operation"].strip():
+            return None
+        return wage, Decimal(wage["total_amount"]), Decimal(0)
     H._meta_contract("Additional Salary", {"company": ("Link", "Company"), "employee": ("Link", "Employee"),
         "currency": ("Link", "Currency"), "salary_component": ("Link", "Salary Component"),
         "amount": ("Currency", None), "ref_doctype": ("Link", "DocType"),
@@ -68,7 +91,8 @@ def _operation(capture, snapshot, slip, child):
     H._meta_contract("Jifeng Wage Entry", {"company": ("Link", "Company"), "employee": ("Link", "Employee"),
         "salary_component": ("Link", "Salary Component"), **{field: ("Currency", None)
             for field in ("piece_amount", "time_amount", "extra_amount", "total_amount")}})
-    _, wage = capture.project("Jifeng Wage Entry", additional["ref_docname"], OPERATION_FIELDS)
+    operation_capture = H._Capture()
+    _, wage = operation_capture.project("Jifeng Wage Entry", additional["ref_docname"], OPERATION_FIELDS)
     _, company = capture.project("Company", slip["company"], {"name", "default_currency"}, select=True)
     if (wage["docstatus"] != 1
             or any(wage[field] != additional[field] for field in ("company", "employee", "salary_component", "payroll_date"))
@@ -83,14 +107,15 @@ def _operation(capture, snapshot, slip, child):
     if base is None or Decimal(base) + Decimal(child["additional_amount"]) != Decimal(child["amount"]):
         return None
     _compare_snapshot(snapshot, capture)
+    _compare_snapshot(snapshot, operation_capture)
     if not isinstance(wage["operation"], str) or not wage["operation"].strip():
         return None
     return wage, Decimal(child["additional_amount"]), Decimal(base)
 
 
-def _build(snapshot, employee_filter):
+def _build(snapshot, employee_filter, currency_filter):
     totals = {key: Decimal(0) for key in ("gross_pay", "total_deduction", "net_pay", "rounded_total")}
-    departments, groups, operations, sources = {}, {"未归类": Decimal(0)}, {}, []
+    departments, groups, operations, sources = {}, {}, {}, []
     capture = H._Capture()
     seen_wages = set()
     selected = 0
@@ -98,13 +123,15 @@ def _build(snapshot, employee_filter):
         slip = item["row"]
         if employee_filter and slip["employee"] != employee_filter:
             continue
+        if currency_filter and slip["currency"] != currency_filter:
+            continue
         selected += 1
         for key in totals:
             totals[key] += Decimal(slip[key])
         department = slip["department"] or "未归类"
         departments[department] = departments.get(department, Decimal(0)) + Decimal(slip["gross_pay"])
         # No immutable historical employee group is captured on Salary Slip.
-        groups["未归类"] += Decimal(slip["gross_pay"])
+        groups["未归类"] = groups.get("未归类", Decimal(0)) + Decimal(slip["gross_pay"])
         for child in item["children"]["earnings"]:
             if child["do_not_include_in_total"]:
                 continue
@@ -122,12 +149,12 @@ def _build(snapshot, employee_filter):
             if wage["name"] in seen_wages:
                 raise H._Changed
             seen_wages.add(wage["name"])
-            amount = Decimal(wage["total_amount"])
+            source_amount = Decimal(wage["total_amount"])
             operations[wage["operation"]] = operations.get(wage["operation"], Decimal(0)) + wage_amount
             operations["未归类"] = operations.get("未归类", Decimal(0)) + base_amount
             sources.append({"salary_slip": slip["name"], "salary_slip_version": slip["version"],
                 "employee": slip["employee"], "employee_name": slip["employee_name"],
-                "operation": wage["operation"], "amount": _money(amount),
+                "operation": wage["operation"], "amount": _money(source_amount),
                 "wage_entry": wage["name"], "wage_entry_version": wage["modified"]})
     _compare_snapshot(snapshot, capture)
     return {"settlements": {key: _money(value) for key, value in totals.items()},
@@ -149,7 +176,8 @@ def _chart(values, total):
 
 @frappe.whitelist(methods=["GET"])
 def query_salary_analysis(context):
-    context, employee = _context(context)
+    context, employee, currency = _context(context)
+    requested_currency = currency
     if frappe.session.user == "Guest":
         _deny()
     try:
@@ -157,14 +185,33 @@ def query_salary_analysis(context):
         if employee:
             capture = H._Capture()
             capture.project("Employee", employee, {"name"}, select=True)
+        if currency:
+            capture = H._Capture()
+            capture.project("Currency", currency, {"name"}, select=True)
         snapshot = H._stable_snapshot(context)
+        currencies = sorted({item["row"]["currency"] for item in snapshot["rows"]
+            if not employee or item["row"]["employee"] == employee})
+        if currency and currency not in currencies:
+            # An explicitly selected currency with no matching slips remains a
+            # valid empty result, but it must still be a readable Currency.
+            pass
+        elif not currency and len(currencies) > 1:
+            if before != H._permission_state():
+                raise H._Changed
+            return {"readonly": True, "scope": SCOPE,
+                "context": {**context, "employee": employee, "currency": ""},
+                "requires_currency": True, "currencies": currencies}
+        if not currency and len(currencies) == 1:
+            currency = currencies[0]
         with localcontext() as decimal_context:
             decimal_context.prec = 1000
-            first = _build(snapshot, employee)
-            second = _build(snapshot, employee)
+            first = _build(snapshot, employee, currency)
+            second = _build(snapshot, employee, currency)
         if first != second or before != H._permission_state():
             raise H._Changed
-        return {"readonly": True, "scope": SCOPE, "context": {**context, "employee": employee}, **second}
+        return {"readonly": True, "scope": SCOPE,
+            "context": {**context, "employee": employee, "currency": requested_currency},
+            "currency": currency, **second}
     except (H._Unavailable, H._Unclassified, frappe.PermissionError,
             frappe.DoesNotExistError, ValueError, TypeError, OverflowError):
         _deny()

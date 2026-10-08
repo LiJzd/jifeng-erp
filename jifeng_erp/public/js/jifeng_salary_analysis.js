@@ -24,6 +24,9 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 		const employeeHost = this.el("div");
 		this.employee = frappe.ui.form.make_control({ parent: employeeHost, render_input: true,
 			df: { fieldname: "employee", fieldtype: "Link", options: "Employee", label: __("员工（可选）") } });
+		const currencyHost = this.el("div");
+		this.currency = frappe.ui.form.make_control({ parent: currencyHost, render_input: true,
+			df: { fieldname: "currency", fieldtype: "Link", options: "Currency", label: __("币种（混合币种时必选）") } });
 		this.from = this.el("input"); this.from.type = "date"; this.from.value = frappe.datetime.month_start();
 		this.from.setAttribute("aria-label", __("开始日期"));
 		this.to = this.el("input"); this.to.type = "date"; this.to.value = frappe.datetime.get_today();
@@ -37,7 +40,7 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 		this.search.placeholder = __("工资条编号或姓名关键词"); this.search.setAttribute("aria-label", __("查询关键词"));
 		this.status = this.el("p", __("请选择公司并查询。"), "jfe-salary-analysis-status"); this.status.setAttribute("role", "status");
 		this.queryButton = this.button("查询", () => this.query());
-		toolbar.append(companyHost, employeeHost, this.from, this.to, this.basis, this.search, this.queryButton);
+		toolbar.append(companyHost, employeeHost, currencyHost, this.from, this.to, this.basis, this.search, this.queryButton);
 		this.container.append(toolbar, this.el("p", __("仅读取已提交工资条。净应发不代表已付款；工序金额只归属于已核实的工资附加薪资来源。"), "jfe-salary-analysis-note"), this.status);
 		this.totals = this.el("section", undefined, "jfe-salary-analysis-totals");
 		this.charts = this.el("div", undefined, "jfe-salary-analysis-charts");
@@ -47,7 +50,7 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 		for (const field of [this.from, this.to, this.basis, this.search]) {
 			field.addEventListener("input", () => this.invalidate()); field.addEventListener("change", () => this.invalidate());
 		}
-		for (const control of [this.company, this.employee])
+		for (const control of [this.company, this.employee, this.currency])
 			control.$input?.on?.("input.jifeng-salary-analysis change.jifeng-salary-analysis", () => this.invalidate());
 	}
 	invalidate() {
@@ -64,10 +67,12 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 	context() {
 		const company = this.company.get_value() || "", typed = this.company.$input?.val?.();
 		const employee = this.employee.get_value() || "", employeeTyped = this.employee.$input?.val?.();
+		const currency = this.currency.get_value() || "", currencyTyped = this.currency.$input?.val?.();
 		if (!company.trim() || company !== company.trim() || (typeof typed === "string" && typed.trim() !== company) ||
-			(employee && (employee !== employee.trim() || (typeof employeeTyped === "string" && employeeTyped.trim() !== employee)))) return null;
+			(employee && (employee !== employee.trim() || (typeof employeeTyped === "string" && employeeTyped.trim() !== employee))) ||
+			(currency && (currency !== currency.trim() || (typeof currencyTyped === "string" && currencyTyped.trim() !== currency)))) return null;
 		return { company, from_date: this.from.value, to_date: this.to.value, use_date: true,
-			date_basis: this.basis.value, search: this.search.value.trim(), employee };
+			date_basis: this.basis.value, search: this.search.value.trim(), employee, currency };
 	}
 	valid(context) {
 		return !!context && /^\d{4}-\d{2}-\d{2}$/.test(context.from_date) && /^\d{4}-\d{2}-\d{2}$/.test(context.to_date) &&
@@ -86,8 +91,13 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 				type: "GET", args: { context: JSON.stringify(context) } });
 			if (this.disposed || revision !== this.revision) return;
 			const result = response.message;
-			if (result?.readonly !== true || result.scope !== "salary_analysis" || !this.validResult(result, context)) throw new Error("Invalid salary analysis");
-			this.render(result); this.status.textContent = __("已读取") + " " + result.salary_slips + __(" 张已提交工资条；所有金额均取保存值。");
+			if (result?.readonly !== true || result.scope !== "salary_analysis") throw new Error("Invalid salary analysis");
+			if (result.requires_currency === true) {
+				if (!this.sameContext(result.context, context) || !Array.isArray(result.currencies) || result.currencies.length < 2 || !result.currencies.every(value => typeof value === "string")) throw new Error("Invalid currency selection response");
+				this.status.textContent = __("当前范围含多种币种，未进行跨币种合计。请在币种筛选中选择一个币种后查询。"); return;
+			}
+			if (!this.validResult(result, context)) throw new Error("Invalid salary analysis");
+			this.render(result); this.status.textContent = __("已读取") + " " + result.salary_slips + __(" 张已提交工资条 · 币种：") + (result.currency || __("无数据")) + "。";
 		} catch {
 			if (!this.disposed && revision === this.revision) this.status.textContent = __("来源或权限无法完整核实，请缩小范围或重新查询。");
 		} finally {
@@ -96,8 +106,11 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 	}
 	validMoney(value) { return typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value); }
 	validChart(rows) { return Array.isArray(rows) && rows.every(row => row && typeof row.name === "string" && this.validMoney(row.amount) && /^\d+(?:\.\d+)?$/.test(row.share_percent)); }
+	sameContext(actual, expected) {
+		return actual && ["company", "from_date", "to_date", "use_date", "date_basis", "search", "employee", "currency"].every(key => actual[key] === expected[key]);
+	}
 	validResult(result, context) {
-		return result.context && ["company", "from_date", "to_date", "use_date", "date_basis", "search", "employee"].every(key => result.context[key] === context[key]) &&
+		return this.sameContext(result.context, context) && typeof result.currency === "string" &&
 			Number.isSafeInteger(result.salary_slips) && result.salary_slips >= 0 && result.settlements &&
 			["gross_pay", "total_deduction", "net_pay", "rounded_total"].every(key => this.validMoney(result.settlements[key])) &&
 			this.validChart(result.department) && this.validChart(result.group) && this.validChart(result.operation) &&
@@ -105,7 +118,7 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 			Array.isArray(result.notes) && result.notes.every(note => typeof note === "string");
 	}
 	render(result) {
-		this.totals.replaceChildren(this.el("h2", __("工资结算")));
+		this.totals.replaceChildren(this.el("h2", __("工资结算") + (result.currency ? " · " + result.currency : "")));
 		const dl = this.el("dl", undefined, "jfe-salary-analysis-total-grid");
 		for (const [label, field] of [["总收入", "gross_pay"], ["总扣款", "total_deduction"], ["净应发（未证明付款）", "net_pay"], ["舍入净应发", "rounded_total"]]) {
 			dl.append(this.el("dt", __(label)), this.el("dd", result.settlements[field]));
