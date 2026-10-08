@@ -31,20 +31,22 @@ def _fields(doctype, names, parenttype=None):
     for name in names:
         field = meta.get_field(name)
         if (name not in permitted or not field or (field.permlevel or 0) not in levels
-                or (field.mask and (field.permlevel or 0) in masks)):
+                or (field.mask and (field.permlevel or 0) not in masks)):
             _deny()
 
 
 def _table(parent, fieldname, childtype, child_fields):
     meta = frappe.get_meta(parent.doctype)
     field = meta.get_field(fieldname)
+    permitted = set(get_permitted_fields(
+        parent.doctype, permission_type="read", ignore_virtual=True))
     levels = set(meta.get_permlevel_access(
         permission_type="read", user=frappe.session.user))
     masks = set(meta.get_permlevel_access(
         permission_type="mask", user=frappe.session.user))
-    if (not field or field.fieldtype != "Table" or field.options != childtype
+    if (fieldname not in permitted or not field or field.fieldtype != "Table" or field.options != childtype
             or (field.permlevel or 0) not in levels
-            or (field.mask and (field.permlevel or 0) in masks)):
+            or (field.mask and (field.permlevel or 0) not in masks)):
         _deny()
     _fields(childtype, child_fields, parent.doctype)
 
@@ -133,18 +135,25 @@ def _read_batch(payroll, slips, selected_employees, company, currency):
     return validated_slips
 
 
-def _linked_journal(slips, company):
+def _linked_journal(slips, company, payroll):
     links = {slip.journal_entry for slip in slips if slip.journal_entry}
     if not links:
         return None
     if (len(links) != 1 or any(slip.docstatus != 1 or not slip.journal_entry for slip in slips)):
         _invalid("工资单已部分关联计提凭证，不能重复或补建计提")
     name = next(iter(links))
-    journal = frappe.get_doc(JOURNAL, name)
+    journal = frappe.get_doc(JOURNAL, name, for_update=True)
     _require_document(journal, "read")
     _fields(JOURNAL, {"company"})
     if journal.docstatus != 1 or journal.company != company.name:
         _invalid("工资单关联的计提凭证未提交或公司不一致")
+    _table(journal, "accounts", "Journal Entry Account", {"reference_type", "reference_name"})
+    payroll_references = [row for row in (journal.get("accounts") or [])
+                          if row.get("reference_type") == PAYROLL]
+    if (not payroll_references
+            or not any(row.get("reference_name") == payroll.name for row in payroll_references)
+            or any(row.get("reference_name") != payroll.name for row in payroll_references)):
+        _invalid("工资单关联凭证没有准确引用本工资发放单")
     return name
 
 
@@ -178,19 +187,27 @@ def complete_payroll_accrual(payroll_entry):
     payroll = frappe.get_doc(PAYROLL, payroll_entry)
     _require_document(payroll, "read")
     _require_document(payroll, "write")
+    _require_document(payroll, "submit")
     parent_fields = {"company", "start_date", "end_date"}
     payroll_meta = frappe.get_meta(PAYROLL)
     if payroll_meta.has_field("currency"):
         parent_fields.add("currency")
+    if payroll_meta.has_field("status"):
+        parent_fields.add("status")
     _fields(PAYROLL, parent_fields)
     if payroll.docstatus != 1:
         _invalid("只能完成已提交的工资发放单")
+    if payroll.get("status") == "Queued":
+        _invalid("工资发放单正在后台处理，请等待任务完成后刷新")
 
     payroll = frappe.get_doc(PAYROLL, payroll.name, for_update=True)
     _require_document(payroll, "read")
     _require_document(payroll, "write")
+    _require_document(payroll, "submit")
     if payroll.docstatus != 1:
         _invalid("工资发放单状态已变化，请刷新后核对")
+    if payroll.get("status") == "Queued":
+        _invalid("工资发放单正在后台处理，请等待任务完成后刷新")
 
     company = frappe.get_doc("Company", payroll.company)
     _require_document(company, "read")
@@ -202,14 +219,7 @@ def complete_payroll_accrual(payroll_entry):
         _invalid("工资发放单缺少有效币种")
 
     selected_employees = _employee_selection(payroll)
-    employee_fields = set(get_permitted_fields("Employee", permission_type="read", ignore_virtual=True))
-    employee_meta = frappe.get_meta("Employee")
-    employee_masks = set(employee_meta.get_permlevel_access(
-        permission_type="mask", user=frappe.session.user))
-    employee_company = employee_meta.get_field("company")
-    if ("company" not in employee_fields or not employee_company
-            or (employee_company.mask and (employee_company.permlevel or 0) in employee_masks)):
-        _deny()
+    _fields("Employee", {"company"})
     for employee_name in selected_employees:
         employee = frappe.get_doc("Employee", employee_name)
         _require_document(employee, "read")
@@ -219,7 +229,7 @@ def complete_payroll_accrual(payroll_entry):
     slips = _source_slips(payroll)
     names = [slip.name for slip in slips]
     slips = _read_batch(payroll, slips, selected_employees, company, currency)
-    linked = _linked_journal(slips, company)
+    linked = _linked_journal(slips, company, payroll)
     if linked:
         return _complete_response(payroll, linked, slips, True)
 
@@ -254,11 +264,17 @@ def complete_payroll_accrual(payroll_entry):
         _set_flag(flags, "via_payroll_entry", had_flag, previous_flag)
 
     final_slips = [frappe.get_doc(SLIP, name) for name in names]
-    journal_name = _linked_journal(final_slips, company)
+    journal_name = _linked_journal(final_slips, company, payroll)
     if not journal_name:
         _invalid("原生工资计提未将凭证关联到本批全部工资单")
+    native_updates = {}
     if payroll_meta.has_field("salary_slips_submitted") and not payroll.get("salary_slips_submitted"):
-        payroll.db_set("salary_slips_submitted", 1)
+        native_updates["salary_slips_submitted"] = 1
+    if payroll_meta.has_field("status") and payroll.get("status") != "Submitted":
+        native_updates["status"] = "Submitted"
+    if native_updates:
+        for fieldname, value in native_updates.items():
+            payroll.db_set(fieldname, value)
         payroll.reload()
     return _complete_response(payroll, journal_name, final_slips, False)
 

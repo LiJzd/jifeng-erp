@@ -20,8 +20,9 @@ class Field:
 
 
 class Meta:
-    def __init__(self, fields):
+    def __init__(self, fields, mask_levels=(0,)):
         self.fields = fields
+        self.mask_levels = mask_levels
 
     def get_field(self, name):
         return self.fields.get(name)
@@ -30,7 +31,7 @@ class Meta:
         return name in self.fields
 
     def get_permlevel_access(self, **kwargs):
-        return [0]
+        return self.mask_levels if kwargs.get("permission_type") == "mask" else [0]
 
 
 class Doc(Record):
@@ -74,9 +75,13 @@ class TestPayrollCompletion(unittest.TestCase):
         self.slip_names = []
         self.visible_names = None
         self.accrual_calls = 0
+        self.mask_access = {"Payroll Entry": [0], "Salary Slip": [0], "Employee": [0],
+                            "Company": [0], "Journal Entry": [0],
+                            "Payroll Employee Detail": [0], "Journal Entry Account": [0]}
+        self.masked_fields = set()
         self.parent = Doc(name="PR-1", doctype="Payroll Entry", docstatus=1,
                           company="QA Co", start_date="2026-10-01", end_date="2026-10-31",
-                          currency="CNY", salary_slips_submitted=0,
+                          currency="CNY", status="Submitted", salary_slips_submitted=0,
                           employees=[Record(employee="HR1"), Record(employee="HR2")])
         self.docs[("Payroll Entry", "PR-1")] = self.parent
         self.company = Doc(name="QA Co", doctype="Company", default_currency="CNY")
@@ -114,19 +119,24 @@ class TestPayrollCompletion(unittest.TestCase):
     def get_meta(self, doctype):
         if doctype == "Payroll Entry":
             return Meta({"company": Field(), "start_date": Field(), "end_date": Field(),
-                         "currency": Field(), "salary_slips_submitted": Field(),
-                         "employees": Field("Table", "Payroll Employee Detail")})
+                         "currency": Field(), "salary_slips_submitted": Field(), "status": Field(),
+                         "employees": Field("Table", "Payroll Employee Detail")}, self.mask_access[doctype])
         if doctype == "Payroll Employee Detail":
-            return Meta({"employee": Field()})
+            return Meta({"employee": Field()}, self.mask_access[doctype])
         if doctype == "Salary Slip":
-            return Meta({key: Field() for key in ("company", "employee", "currency", "start_date",
-                         "end_date", "payroll_entry", "net_pay", "journal_entry")})
+            fields = {key: Field(mask=(doctype, key) in self.masked_fields) for key in
+                      ("company", "employee", "currency", "start_date", "end_date",
+                       "payroll_entry", "net_pay", "journal_entry")}
+            return Meta(fields, self.mask_access[doctype])
         if doctype == "Company":
-            return Meta({"default_currency": Field()})
+            return Meta({"default_currency": Field()}, self.mask_access[doctype])
         if doctype == "Employee":
-            return Meta({"company": Field()})
+            return Meta({"company": Field()}, self.mask_access[doctype])
         if doctype == "Journal Entry":
-            return Meta({"company": Field()})
+            return Meta({"company": Field(), "accounts": Field("Table", "Journal Entry Account")},
+                        self.mask_access[doctype])
+        if doctype == "Journal Entry Account":
+            return Meta({"reference_type": Field(), "reference_name": Field()}, self.mask_access[doctype])
         return Meta({})
 
     def get_doc(self, doctype, name, **kwargs):
@@ -149,7 +159,8 @@ class TestPayrollCompletion(unittest.TestCase):
 
     def make_accrual(self, slips):
         self.accrual_calls += 1
-        self.journal = Doc(name="JE-1", doctype="Journal Entry", docstatus=1, company="QA Co")
+        self.journal = Doc(name="JE-1", doctype="Journal Entry", docstatus=1, company="QA Co",
+                           accounts=[Record(reference_type="Payroll Entry", reference_name="PR-1")])
         self.docs[("Journal Entry", "JE-1")] = self.journal
         for slip in slips:
             slip.journal_entry = "JE-1"
@@ -168,15 +179,27 @@ class TestPayrollCompletion(unittest.TestCase):
         self.assertFalse(result["already_completed"])
         self.assertEqual(self.accrual_calls, 1)
         self.assertEqual(self.parent.salary_slips_submitted, 1)
+        self.assertEqual(self.parent.status, "Submitted")
 
     def test_repeat_returns_existing_journal_without_second_accrual(self):
         self.docs[("Salary Slip", "SS-2")].docstatus = 1
-        self.journal = Doc(name="JE-1", doctype="Journal Entry", docstatus=1, company="QA Co")
+        self.journal = Doc(name="JE-1", doctype="Journal Entry", docstatus=1, company="QA Co",
+                           accounts=[Record(reference_type="Payroll Entry", reference_name="PR-1")])
         self.docs[("Salary Slip", "SS-1")].journal_entry = "JE-1"
         self.docs[("Salary Slip", "SS-2")].journal_entry = "JE-1"
         result = self.run_endpoint()
         self.assertTrue(result["already_completed"])
         self.assertEqual(result["journal_entry"], "JE-1")
+        self.assertEqual(self.accrual_calls, 0)
+
+    def test_existing_slip_link_requires_submitted_journal_referencing_this_payroll(self):
+        for name in self.slip_names:
+            self.docs[("Salary Slip", name)].docstatus = 1
+            self.docs[("Salary Slip", name)].journal_entry = "JE-1"
+        self.journal = Doc(name="JE-1", doctype="Journal Entry", docstatus=1, company="QA Co",
+                           accounts=[Record(reference_type="Payroll Entry", reference_name="PR-OTHER")])
+        with self.assertRaisesRegex(ValueError, "没有准确引用本工资发放单"):
+            self.run_endpoint()
         self.assertEqual(self.accrual_calls, 0)
 
     def test_hidden_slip_or_cross_company_employee_is_rejected_before_writes(self):
@@ -189,6 +212,28 @@ class TestPayrollCompletion(unittest.TestCase):
             self.run_endpoint()
         self.assertEqual(self.docs[("Salary Slip", "SS-2")].docstatus, 0)
         self.assertEqual(self.accrual_calls, 0)
+
+    def test_queued_batch_and_missing_parent_submit_permission_are_rejected(self):
+        self.parent.status = "Queued"
+        with self.assertRaisesRegex(ValueError, "正在后台处理"):
+            self.run_endpoint()
+        self.assertEqual(self.accrual_calls, 0)
+        self.parent.status = "Submitted"
+        self.parent.permissions["submit"] = False
+        with self.assertRaises(PermissionError):
+            self.run_endpoint()
+        self.assertEqual(self.docs[("Salary Slip", "SS-2")].docstatus, 0)
+
+    def test_mask_field_allowed_only_when_mask_level_is_authorized(self):
+        self.masked_fields.add(("Salary Slip", "net_pay"))
+        self.mask_access["Salary Slip"] = []
+        with self.assertRaises(PermissionError):
+            self.run_endpoint()
+        self.assertEqual(self.accrual_calls, 0)
+        self.mask_access["Salary Slip"] = [0]
+        result = self.run_endpoint()
+        self.assertEqual(self.accrual_calls, 1)
+        self.assertEqual(result["journal_entry"], "JE-1")
 
     def test_submit_failure_restores_via_flag_and_does_not_accrue(self):
         self.docs[("Salary Slip", "SS-2")].submit_error = True
