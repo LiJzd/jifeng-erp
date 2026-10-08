@@ -35,6 +35,7 @@ class TestMaterialIssue(unittest.TestCase):
         self.current_flow = None
         self.warehouse = Record(company="JF", is_group=0, disabled=0)
         self.history = []
+        self.returned = {}
         frappe = types.ModuleType("frappe")
         frappe.QueryTimeoutError = type("QueryTimeoutError", (Exception,), {})
         frappe.QueryDeadlockError = type("QueryDeadlockError", (Exception,), {})
@@ -54,12 +55,16 @@ class TestMaterialIssue(unittest.TestCase):
         workflow = types.ModuleType("jifeng_erp.workflow")
         workflow.validate_flow_source = lambda flow: None
         workflow.stock_plan_quantity = lambda flow: Decimal(str(flow.planned_qty))
+        returns = types.ModuleType("jifeng_erp.material_returns")
+        returns.submitted_return_quantities_for_flow = lambda flow_name, issue_names: self.returned
+        self.returns_module = returns
         modules = {
             "frappe": frappe, "erpnext": erpnext, "erpnext.stock": stock,
             "erpnext.stock.doctype": stock_doctype,
             "erpnext.stock.doctype.item": item_package,
             "erpnext.stock.doctype.item.item": item_module,
             "jifeng_erp.workflow": workflow,
+            "jifeng_erp.material_returns": returns,
         }
         with patch.dict(sys.modules, modules):
             path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "material_issue.py"
@@ -96,6 +101,10 @@ class TestMaterialIssue(unittest.TestCase):
                           s_warehouse="MAIN - JF", t_warehouse=None, jf_flow_order="FLOW-1")],
         )
 
+    def validate(self, entry):
+        with patch.dict(sys.modules, {"jifeng_erp.material_returns": self.returns_module}):
+            self.issue.validate_material_issue(entry)
+
     def test_required_quantity_converts_recipe_unit_to_stock_unit(self):
         required, units = self.issue._required_stock(self.flow)
         self.assertEqual(required["SILVER"], 1000)
@@ -108,31 +117,38 @@ class TestMaterialIssue(unittest.TestCase):
 
     def test_partial_issues_leave_balance(self):
         self.history = [Record(parent="SE-OLD", item_code="SILVER", transfer_qty=400)]
-        self.issue.validate_material_issue(self.entry(600))
+        self.validate(self.entry(600))
+
+    def test_submitted_material_returns_reduce_net_flow_issue_cap(self):
+        self.history = [Record(parent="SE-OLD", item_code="SILVER", transfer_qty=400)]
+        self.returned = {"SILVER": Decimal("100")}
+        self.validate(self.entry(700))
+        with self.assertRaisesRegex(ValueError, "累计领料数量超过"):
+            self.validate(self.entry(701))
 
     def test_overissue_is_rejected(self):
         self.history = [Record(parent="SE-OLD", item_code="SILVER", transfer_qty=400)]
         with self.assertRaisesRegex(ValueError, "累计领料数量超过"):
-            self.issue.validate_material_issue(self.entry(601))
+            self.validate(self.entry(601))
 
     def test_other_flow_row_is_rejected(self):
         entry = self.entry(100)
         entry.items[0].jf_flow_order = "FLOW-OTHER"
         with self.assertRaisesRegex(ValueError, "全部关联本流程单"):
-            self.issue.validate_material_issue(entry)
+            self.validate(entry)
 
     def test_validator_loads_current_locked_flow_instead_of_old_document(self):
         self.flow.planned_qty = 6
         self.current_flow = Record(self.flow)
         self.current_flow.planned_qty = 5
         with self.assertRaisesRegex(ValueError, "累计领料数量超过"):
-            self.issue.validate_material_issue(self.entry(1100))
+            self.validate(self.entry(1100))
 
     def test_busy_submitted_history_is_rejected_instead_of_treated_as_empty(self):
         self.issue.frappe.db.sql = lambda *args, **kwargs: (_ for _ in ()).throw(
             self.issue.frappe.QueryTimeoutError("native lock conflict"))
         with self.assertRaisesRegex(ValueError, "正在被核对"):
-            self.issue.validate_material_issue(self.entry(100))
+            self.validate(self.entry(100))
 
 
 if __name__ == "__main__":

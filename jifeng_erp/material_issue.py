@@ -69,10 +69,18 @@ def _submitted_stock(flow_name, exclude=None):
     except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
         frappe.throw("相关领料凭证正在被核对，请稍后重新查询")
     issued = defaultdict(Decimal)
+    issue_names = set()
     for row in rows:
         if row.parent == exclude:
             continue
+        issue_names.add(row.parent)
         issued[row.item_code] += Decimal(str(row.transfer_qty or 0))
+    from jifeng_erp.material_returns import submitted_return_quantities_for_flow
+    returned = submitted_return_quantities_for_flow(flow_name, issue_names)
+    for item_code, quantity in returned.items():
+        issued[item_code] -= quantity
+        if issued[item_code] < -TOLERANCE:
+            frappe.throw("已提交领料退库数量超过流程单有效领料数量，不能继续配料")
     return issued
 
 

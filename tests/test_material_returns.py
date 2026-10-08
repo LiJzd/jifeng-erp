@@ -25,6 +25,9 @@ class Record(dict):
     def __setattr__(self, key, value):
         self[key] = value
 
+    def check_permission(self, permission):
+        return None
+
 
 class ValidationError(ValueError):
     pass
@@ -35,13 +38,24 @@ class PermissionError(ValueError):
 
 
 class Meta:
-    def __init__(self):
+    def __init__(self, name="Stock Entry Detail"):
+        self.doctype = "DocType"
+        self.name = name
         self.masked = set()
+        self.last_parenttype = None
+        self.allowed = {"name", "item_code", "qty", "transfer_qty", "jf_material_return_against_detail",
+                        "amount", "total_additional_costs", "additional_costs"}
+
+    def get_permitted_fieldnames(self, parenttype=None, permission_type="read"):
+        self.last_parenttype = parenttype
+        return self.allowed
 
     def get_permlevel_access(self, **kwargs):
         return set() if kwargs.get("permission_type") == "mask" else {0}
 
     def get_field(self, name):
+        if name == "additional_costs":
+            return Record(fieldtype="Table", options="Landed Cost Taxes and Charges", permlevel=0, mask=0)
         return Record(mask=int(name in self.masked), permlevel=0)
 
 
@@ -55,8 +69,9 @@ class TestMaterialReturns(unittest.TestCase):
         self.frappe.QueryTimeoutError = type("QueryTimeoutError", (Exception,), {})
         self.frappe.QueryDeadlockError = type("QueryDeadlockError", (Exception,), {})
         self.frappe.session = Record(user="qa@example.test")
-        self.meta = Meta()
-        self.frappe.get_meta = lambda doctype: self.meta
+        self.meta = Meta("Stock Ledger Entry")
+        self.metas = {}
+        self.frappe.get_meta = lambda doctype: self.meta if doctype == "Stock Ledger Entry" else self.metas.setdefault(doctype, Meta(doctype))
 
         def throw(message, exc=ValidationError):
             raise exc(message)
@@ -163,6 +178,51 @@ class TestMaterialReturns(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "没有读取原领料库存价值字段的权限"):
             self.module._permitted_query_fields("Stock Ledger Entry", ["stock_value_difference"])
 
+    def test_child_meta_uses_actual_meta_name_not_doc_type_label(self):
+        child_meta = Meta("Stock Entry Detail")
+        self.module._permitted_fields(child_meta, ("item_code",), parenttype="Stock Entry")
+        self.assertEqual(child_meta.name, "Stock Entry Detail")
+        self.assertEqual(child_meta.last_parenttype, "Stock Entry")
+
+    def test_return_cannot_add_header_or_row_additional_costs(self):
+        header_meta = Meta("Stock Entry")
+        row = Record(additional_cost=0, landed_cost_voucher_amount=0)
+        doc = Record(doctype="Stock Entry", meta=header_meta, additional_costs=[], total_additional_costs=0,
+                     items=[row])
+        self.module._no_additional_costs(doc)
+        doc.additional_costs = [Record(name="CHARGE", amount=1)]
+        with self.assertRaisesRegex(ValidationError, "不得增加额外费用"):
+            self.module._no_additional_costs(doc)
+        doc.additional_costs = []
+        row.additional_cost = 1
+        with self.assertRaisesRegex(ValidationError, "明细不得增加额外费用"):
+            self.module._no_additional_costs(doc)
+
+    def test_flow_net_helper_reads_source_linked_submitted_returns_and_caps_cumulatively(self):
+        rows = [Record(name="MR-1"), Record(name="MR-2")]
+        docs = {row.name: Record(name=row.name, company="JF", docstatus=1, is_return=0,
+                                 jf_material_return_against="MI-1", jf_material_issue_flow="FLOW-1",
+                                 items=[Record(transfer_qty=Decimal("0.7"))]) for row in rows}
+        self.frappe.db = types.SimpleNamespace(sql=lambda *args, **kwargs: rows)
+        self.frappe.get_doc = lambda doctype, name, **kwargs: docs[name]
+        source = Record(name="MI-1", company="JF")
+        evidence = {"ROW-1": {"row": Record(item_code="RAW"), "qty": Decimal("1.5")}}
+        with patch.object(self.module, "_permitted_fields"), \
+             patch.object(self.module, "_permitted_table"), \
+             patch.object(self.module, "_source", return_value=source), \
+             patch.object(self.module, "_source_rows", return_value=evidence), \
+             patch.object(self.module, "_submitted_by_detail", return_value={"ROW-1": Decimal("1.4")}):
+            totals = self.module.submitted_return_quantities_for_flow("FLOW-1", {"MI-1"})
+        self.assertEqual(totals["RAW"], Decimal("1.4"))
+        with patch.object(self.module, "_permitted_fields"), \
+             patch.object(self.module, "_permitted_table"), \
+             patch.object(self.module, "_source", return_value=source), \
+             patch.object(self.module, "_source_rows", return_value={
+                 "ROW-1": {"row": Record(item_code="RAW"), "qty": Decimal("1.3")}}), \
+             patch.object(self.module, "_submitted_by_detail", return_value={"ROW-1": Decimal("1.4")}):
+            with self.assertRaisesRegex(ValidationError, "累计超过"):
+                self.module.submitted_return_quantities_for_flow("FLOW-1", {"MI-1"})
+
     def test_submitted_return_cumulative_uses_exact_source_child_only(self):
         source_row = Record(name="ROW-1", item_code="RAW", s_warehouse="Stores - JF", expense_account="Stock Adj - JF",
                             cost_center="Main - JF", project=None)
@@ -172,8 +232,10 @@ class TestMaterialReturns(unittest.TestCase):
                       uom="Nos", conversion_factor=1, s_warehouse=None, t_warehouse="Stores - JF",
                       jf_flow_order="FLOW-1", expense_account="Stock Adj - JF",
                       cost_center="Main - JF", project=None, transfer_qty=1, qty=1)
-        submitted = Record(name="MR-1", docstatus=1, items=[item])
-        draft = Record(name="MR-2", docstatus=0, items=[Record(item)])
+        submitted = Record(name="MR-1", docstatus=1, items=[item], doctype="Stock Entry",
+                           meta=Meta("Stock Entry"), additional_costs=[], total_additional_costs=0)
+        draft = Record(name="MR-2", docstatus=0, items=[Record(item)], doctype="Stock Entry",
+                       meta=Meta("Stock Entry"), additional_costs=[], total_additional_costs=0)
         totals = self.module._submitted_by_detail(source, {"ROW-1": evidence},
                                                   {"MR-1": submitted, "MR-2": draft})
         self.assertEqual(totals["ROW-1"], Decimal("1"))

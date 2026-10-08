@@ -33,14 +33,20 @@ def _throw(message=_SOURCE_ERROR, exc=frappe.ValidationError):
 def _permitted_fields(doc, fields, permission="read", parenttype=None):
     if frappe.session.user == "Administrator":
         return
+    if isinstance(doc, str):
+        meta = frappe.get_meta(doc)
+    elif getattr(doc, "doctype", None) == "DocType" and getattr(doc, "name", None):
+        # Frappe Meta objects have doctype="DocType" and name=<actual doctype>.
+        meta = doc
+    else:
+        meta = doc.meta
     if parenttype:
-        permitted = set(frappe.get_meta(doc.doctype).get_permitted_fieldnames(
+        permitted = set(meta.get_permitted_fieldnames(
             parenttype=parenttype, permission_type=permission))
     else:
-        permitted = set(doc.meta.get_permitted_fieldnames(permission_type=permission))
+        permitted = set(meta.get_permitted_fieldnames(permission_type=permission))
     if not set(fields).issubset(permitted):
         frappe.throw("没有读取或填写领料退库所需字段的权限", frappe.PermissionError)
-    meta = frappe.get_meta(doc.doctype)
     mask_levels = set(meta.get_permlevel_access(permission_type="mask", parenttype=parenttype,
                                                 user=frappe.session.user))
     if any((field := meta.get_field(name)) and field.get("mask")
@@ -255,18 +261,31 @@ def _related(source, *, lock=False):
         returned = frappe.get_doc("Stock Entry", name, for_update=lock)
         returned.check_permission("read")
         _permitted_fields(returned, ("company", "stock_entry_type", "purpose", "docstatus", SOURCE_FIELD,
-                                     FLOW_FIELD, "is_return"))
+                                     FLOW_FIELD, "is_return", "total_additional_costs"))
         _permitted_table(returned, "items", "Stock Entry Detail", (
             "item_code", "qty", "uom", "stock_uom", "conversion_factor", "transfer_qty",
             "s_warehouse", "t_warehouse", "expense_account", "cost_center", "project",
-            FLOW_ROW_FIELD, SOURCE_ROW_FIELD,
+            FLOW_ROW_FIELD, SOURCE_ROW_FIELD, "additional_cost", "landed_cost_voucher_amount",
+            "set_basic_rate_manually", "basic_rate",
         ))
+        _permitted_table(returned, "additional_costs", "Landed Cost Taxes and Charges", ("name", "amount"))
         if (returned.company != source.company or returned.stock_entry_type != "Material Receipt"
                 or returned.purpose != "Material Receipt" or returned.get(SOURCE_FIELD) != source.name
                 or returned.get("is_return")):
             _throw()
         docs[name] = returned
     return docs
+
+
+def _no_additional_costs(doc, permission="write"):
+    _permitted_fields(doc, ("total_additional_costs",), permission)
+    _permitted_table(doc, "additional_costs", "Landed Cost Taxes and Charges", ("name", "amount"), permission)
+    if doc.get("additional_costs") or _decimal(doc.get("total_additional_costs"), "退库额外费用") != 0:
+        frappe.throw("领料退库不得增加额外费用或改变原领料价值。", frappe.ValidationError)
+    for row in doc.items:
+        if (_decimal(row.get("additional_cost"), "退库明细额外费用") != 0
+                or _decimal(row.get("landed_cost_voucher_amount"), "退库明细分摊金额") != 0):
+            frappe.throw("领料退库明细不得增加额外费用或分摊金额。", frappe.ValidationError)
 
 
 def _source_rates(source, source_rows):
@@ -316,6 +335,7 @@ def _source_rates(source, source_rows):
 def _submitted_by_detail(source, source_rows, docs):
     totals = defaultdict(Decimal)
     for returned in docs.values():
+        _no_additional_costs(returned, permission="read")
         for row in returned.items:
             detail_name = row.get(SOURCE_ROW_FIELD)
             if detail_name not in source_rows:
@@ -323,6 +343,57 @@ def _submitted_by_detail(source, source_rows, docs):
             _validate_return_row(source, returned, row, source_rows[detail_name], None)
             if returned.docstatus == 1:
                 totals[detail_name] += _decimal(row.transfer_qty, "退库库存数量")
+    return totals
+
+
+def submitted_return_quantities_for_flow(flow_name, issue_names):
+    """Return posted quantities by item after checking readable source links."""
+    if not issue_names:
+        return defaultdict(Decimal)
+    try:
+        names = frappe.db.sql("""SELECT name FROM `tabStock Entry`
+            WHERE jf_material_issue_flow=%s AND docstatus=1
+              AND stock_entry_type='Material Receipt' AND purpose='Material Receipt'
+              AND jf_material_return_against IS NOT NULL AND jf_material_return_against!=''
+            ORDER BY name LIMIT %s FOR UPDATE NOWAIT""", (flow_name, MAX_RELATED + 1), as_dict=True)
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
+        frappe.throw("相关领料退库正在被核对，请稍后重试", frappe.ValidationError)
+    if len(names) > MAX_RELATED:
+        frappe.throw("相关领料退库数量过多，无法安全核对净领料。", frappe.ValidationError)
+    totals = defaultdict(Decimal)
+    known_issues = set(issue_names)
+    by_source = defaultdict(dict)
+    for result in names:
+        name = result.name
+        try:
+            returned = frappe.get_doc("Stock Entry", name, for_update=True)
+            returned.check_permission("read")
+        except frappe.PermissionError:
+            frappe.throw("没有读取流程退库凭证的权限，不能计算净领料。", frappe.PermissionError)
+        _permitted_fields(returned, ("company", "stock_entry_type", "purpose", "docstatus", "is_return",
+                                     SOURCE_FIELD, FLOW_FIELD))
+        _permitted_table(returned, "items", "Stock Entry Detail", (
+            "name", "item_code", "qty", "uom", "stock_uom", "conversion_factor", "transfer_qty",
+            "s_warehouse", "t_warehouse", "expense_account", "cost_center", "project",
+            FLOW_ROW_FIELD, SOURCE_ROW_FIELD,
+        ))
+        source_name = returned.get(SOURCE_FIELD)
+        if (returned.docstatus != 1 or returned.get("is_return") or returned.get(FLOW_FIELD) != flow_name
+                or source_name not in known_issues):
+            _throw("流程存在无法核实来源的已提交领料退库，不能计算净领料。")
+        by_source[source_name][returned.name] = returned
+    for source_name, returned_docs in by_source.items():
+        try:
+            source = _source(source_name, lock=False)
+        except frappe.PermissionError:
+            frappe.throw("没有读取流程原领料凭证的权限，不能计算净领料。", frappe.PermissionError)
+        if any(source.company != doc.company for doc in returned_docs.values()):
+            _throw()
+        source_rows = _source_rows(source)
+        returned_by_detail = _submitted_by_detail(source, source_rows, returned_docs)
+        _ensure_within_source_quantities(returned_by_detail, defaultdict(Decimal), source_rows)
+        for detail_name, quantity in returned_by_detail.items():
+            totals[source_rows[detail_name]["row"].item_code] += quantity
     return totals
 
 
@@ -360,11 +431,13 @@ def validate_material_return(doc):
     _permitted_table(doc, "items", "Stock Entry Detail", (
         "item_code", "qty", "uom", "stock_uom", "conversion_factor", "transfer_qty",
         "s_warehouse", "t_warehouse", "basic_rate", "set_basic_rate_manually", "expense_account",
-        "cost_center", "project", FLOW_ROW_FIELD, SOURCE_ROW_FIELD,
+        "cost_center", "project", FLOW_ROW_FIELD, SOURCE_ROW_FIELD, "additional_cost",
+        "landed_cost_voucher_amount",
     ), "write")
     if (doc.company != source.company or doc.stock_entry_type != "Material Receipt"
             or doc.purpose != "Material Receipt" or doc.get("is_return") or not doc.items):
         _throw("领料退库必须为同公司Material Receipt并有明细。")
+    _no_additional_costs(doc)
     source_rows = _source_rows(source)
     rates = _source_rates(source, source_rows)
     related = _related(source, lock=True)
