@@ -1,0 +1,15 @@
+.jifeng-production-instruction-list { padding: 16px; color: var(--text-color, #252b36); }
+.jifeng-production-instruction-list h1 { margin: 0 0 6px; font-size: 20px; }
+.jifeng-production-instruction-list > p { color: var(--text-muted, #687386); }
+.jifeng-production-instruction-list .jpil-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 14px 0; }
+.jifeng-production-instruction-list .jpil-filters label { display: grid; gap: 4px; font-size: 12px; }
+.jifeng-production-instruction-list input { min-height: 32px; padding: 4px 7px; border: 1px solid var(--border-color, #dfe3e8); border-radius: 4px; }
+.jifeng-production-instruction-list button { min-height: 32px; padding: 4px 10px; border: 1px solid var(--border-color, #dfe3e8); border-radius: 4px; background: var(--control-bg, #fff); color: inherit; cursor: pointer; }
+.jifeng-production-instruction-list button:disabled { cursor: default; opacity: .55; }
+.jifeng-production-instruction-list .btn-primary { background: var(--btn-primary, #2490ef); color: #fff; }
+.jifeng-production-instruction-list .jpil-status { min-height: 22px; color: var(--text-muted, #687386); }
+.jifeng-production-instruction-list .jpil-table { width: 100%; border-collapse: collapse; }
+.jifeng-production-instruction-list .jpil-table th, .jifeng-production-instruction-list .jpil-table td { padding: 7px; border: 1px solid var(--border-color, #dfe3e8); text-align: left; vertical-align: top; }
+.jifeng-production-instruction-list .jpil-table th { white-space: nowrap; background: var(--subtle-fg, #f6f7f8); }
+.jifeng-production-instruction-list .jpil-pager { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 12px; }
+@media print { .jifeng-production-instruction-list .jpil-filters, .jifeng-production-instruction-list .jpil-pager, .jifeng-production-instruction-list .jpil-table td:nth-last-child(-n+3) { display: none; } }
