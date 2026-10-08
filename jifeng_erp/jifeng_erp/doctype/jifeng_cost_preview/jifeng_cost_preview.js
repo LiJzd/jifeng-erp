@@ -92,7 +92,9 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                         "此前带入的所选费用已无有效来源，材料费、加工费和其他费将清零。";
                     if (reader === "posted_flow_costs") {
                         const sources = [
-                            ...result.issues.map(row => `物料出库 ${row.issue}`),
+                            ...result.issues.map(row => row.source_material_issue
+                                ? `领料退库 ${row.issue}（原领料 ${row.source_material_issue}）`
+                                : `物料出库 ${row.issue}`),
                             ...result.receipts.map(row => `委外回货 ${row.receipt}`),
                             ...(result.manufactures || []).map(row => `制造 ${row.manufacture}（工单 ${row.work_order}）`),
                             ...(result.wages || []).map(row => `工资计提 ${row.journal_entry}（计薪 ${row.wage_entry}）`),
