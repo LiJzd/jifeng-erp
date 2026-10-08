@@ -63,7 +63,7 @@
   },
   {
    "fieldname": "image_url",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "label": "图片地址",
    "read_only": 1
   },

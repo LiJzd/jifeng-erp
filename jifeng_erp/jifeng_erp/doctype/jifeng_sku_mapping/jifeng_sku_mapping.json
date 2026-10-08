@@ -97,7 +97,7 @@
   },
   {
    "fieldname": "source_image",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "label": "源图片地址",
    "read_only": 1
   },
