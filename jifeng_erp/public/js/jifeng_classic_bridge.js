@@ -557,7 +557,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 				clearInterval(timer);
 				try {
 					const style = child.document.createElement("style");
-					style.textContent = ".navbar,.layout-side-section{display:none!important}.layout-main-section-wrapper{margin:0!important}.page-container{padding-top:0!important}.page-head{top:0!important}" +
+					style.textContent = ".navbar,.layout-side-section,.body-sidebar{display:none!important}.layout-main-section-wrapper{margin:0!important}.page-container{padding-top:0!important}.page-head{top:0!important}" +
 						(spec.hideCreate ? ".page-head .primary-action{display:none!important}" : "");
 					child.document.head.appendChild(style);
 					if (spec.kind === "page" && spec.route?.[0] === "jifeng-piece-workers") {
