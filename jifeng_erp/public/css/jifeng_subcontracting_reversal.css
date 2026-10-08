@@ -1,0 +1,14 @@
+.jifeng-subcontracting-reversal { padding: 16px; color: var(--text-color, #252b36); }
+.jifeng-subcontracting-reversal h1 { margin: 0 0 6px; font-size: 20px; }
+.jifeng-subcontracting-reversal > p { color: var(--text-muted, #687386); }
+.jifeng-subcontracting-reversal .jsr-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 14px 0; }
+.jifeng-subcontracting-reversal .jsr-filters label { display: grid; gap: 4px; font-size: 12px; }
+.jifeng-subcontracting-reversal input, .jifeng-subcontracting-reversal select { min-height: 32px; padding: 4px 7px; border: 1px solid var(--border-color, #dfe3e8); border-radius: 4px; }
+.jifeng-subcontracting-reversal button { min-height: 32px; padding: 4px 10px; border: 1px solid var(--border-color, #dfe3e8); border-radius: 4px; background: var(--control-bg, #fff); color: inherit; cursor: pointer; }
+.jifeng-subcontracting-reversal button:disabled { cursor: default; opacity: .55; }
+.jifeng-subcontracting-reversal .btn-primary { background: var(--btn-primary, #2490ef); color: #fff; }
+.jifeng-subcontracting-reversal .jsr-message { min-height: 22px; color: var(--text-muted, #687386); }
+.jifeng-subcontracting-reversal .jsr-table { width: 100%; border-collapse: collapse; }
+.jifeng-subcontracting-reversal .jsr-table th, .jifeng-subcontracting-reversal .jsr-table td { padding: 7px; border: 1px solid var(--border-color, #dfe3e8); text-align: left; vertical-align: top; }
+.jifeng-subcontracting-reversal .jsr-table th { white-space: nowrap; background: var(--subtle-fg, #f6f7f8); }
+.jifeng-subcontracting-reversal .jsr-pager { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 12px; }
