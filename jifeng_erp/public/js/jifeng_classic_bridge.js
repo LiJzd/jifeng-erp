@@ -15,6 +15,8 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		frappe.router.on("change", this.align);
 		this.observer = new ResizeObserver(this.align);
 		this.observer.observe(workspace.host);
+		this.reportRefreshClick = this.reportRefreshClick.bind(this);
+		workspace.host.addEventListener("click", this.reportRefreshClick);
 	}
 
 	open(spec) {
@@ -34,8 +36,38 @@ window.JifengClassicBridge = class JifengClassicBridge {
 
 	content(tab) {
 		const escape = (value) => this.workspace.esc(value);
-		return '<section class="jfe-formal-page">' +
+		const reportRefresh = tab.spec?.kind === "report" && tab.spec.route?.[0] === "query-report"
+			? '<div style="display:flex;justify-content:flex-end;padding:4px 0 8px"><button type="button" class="jfe-button small" data-jfe-report-refresh="' +
+				escape(tab.key) + '">刷新报表</button></div>' : "";
+		return '<section class="jfe-formal-page">' + reportRefresh +
 			'<div class="jfe-formal-anchor" aria-label="' + escape(tab.title) + '"></div></section>';
+	}
+
+	reportRefreshClick(event) {
+		const button = event.target.closest?.("[data-jfe-report-refresh]");
+		if (!button || !this.workspace.host.contains(button)) return;
+		event.preventDefault();
+		event.stopPropagation();
+		this.refreshReport(button.dataset.jfeReportRefresh);
+	}
+
+	refreshReport(key) {
+		const tab = this.workspace.tabs.find(item => item.key === key);
+		if (!tab || this.workspace.activeKey !== key || tab.spec?.kind !== "report" ||
+			tab.spec.route?.[0] !== "query-report") return false;
+		const entry = this.frames.get(key), iframe = entry?.iframe;
+		if (!iframe || iframe.isConnected === false || !iframe.classList?.contains("is-ready")) return false;
+		const child = iframe.contentWindow, route = child?.frappe?.get_route?.();
+		const report = child?.frappe?.query_report, QueryReport = child?.frappe?.views?.QueryReport;
+		if (!QueryReport || !(report instanceof QueryReport) ||
+			report.report_name !== tab.spec.route[1] || route?.[0] !== "query-report" ||
+			route?.[1] !== tab.spec.route[1] || typeof report.setup_progress_bar !== "function" ||
+			typeof report.refresh !== "function") return false;
+		// Match Frappe's native Reload Report action: QueryReport.refresh() reruns
+		// with the visible filter values. refresh_report() would reset route filters.
+		report.setup_progress_bar();
+		report.refresh();
+		return true;
 	}
 
 	sync() {
