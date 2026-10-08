@@ -68,6 +68,41 @@ class TestJushuitan(unittest.TestCase):
             api.refresh("test-refresh")
         self.assertEqual(session.post.call_count, 1)
 
+    def test_initial_authorization_is_explicit_single_signed_post(self):
+        import re
+        from unittest.mock import patch
+
+        api, session = self.make_client([response({
+            "access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 2592000,
+        })])
+        api.token = None
+        with patch("jifeng_erp.jushuitan.time.time", return_value=1000):
+            result = api.get_initial_token()
+        self.assertEqual(result["access_token"], "new-access")
+        self.assertEqual(session.post.call_count, 1)
+        args, kwargs = session.post.call_args
+        self.assertEqual(args[0], "https://dev-api.jushuitan.com/openWeb/auth/getInitToken")
+        params = kwargs["data"]
+        self.assertEqual(params["timestamp"], "1000")
+        self.assertEqual(params["grant_type"], "authorization_code")
+        self.assertEqual(params["charset"], "utf-8")
+        self.assertRegex(params["code"], re.compile(r"^[a-f0-9]{6}$"))
+        self.assertEqual(params["sign"], sign({k: v for k, v in params.items() if k != "sign"}, "test-secret"))
+        self.assertFalse(kwargs["allow_redirects"])
+
+    def test_initial_authorization_unknown_result_is_not_retried(self):
+        api, session = self.make_client([requests.Timeout()])
+        with self.assertRaisesRegex(JushuitanError, "结果未知"):
+            api.get_initial_token()
+        self.assertEqual(session.post.call_count, 1)
+
+    def test_query_still_requires_access_token(self):
+        api, session = self.make_client([])
+        api.token = None
+        with self.assertRaisesRegex(JushuitanError, "Access Token"):
+            api.orders(1)
+        session.post.assert_not_called()
+
     def test_no_write_endpoint_or_unknown_host_is_allowed(self):
         api, session = self.make_client([])
         with self.assertRaises(JushuitanError):

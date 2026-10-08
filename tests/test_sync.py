@@ -5,7 +5,7 @@ import sys
 import types
 import unittest
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
 
@@ -17,7 +17,12 @@ class Settings(types.SimpleNamespace):
 class TestSyncCheckpoints(unittest.TestCase):
     def setUp(self):
         self.frappe = types.ModuleType("frappe")
-        self.frappe.whitelist = lambda: lambda fn: fn
+        def whitelist(*, methods=None):
+            def decorate(fn):
+                fn.allowed_http_methods = methods
+                return fn
+            return decorate
+        self.frappe.whitelist = whitelist
         self.frappe.db = Mock()
         self.frappe.db.exists.return_value = True
         self.frappe.enqueue = Mock()
@@ -77,6 +82,48 @@ class TestSyncCheckpoints(unittest.TestCase):
     def test_pagination_flag_is_required(self):
         with self.assertRaises(self.sync.JushuitanError):
             self.sync._page_list({"datas": []}, "datas")
+
+    def test_initial_authorization_saves_only_validated_token_pair(self):
+        settings = Settings(app_type="自有商城", app_key="public-key", environment="测试",
+                            access_token="", refresh_token="", token_expires_at=None)
+        settings.get_password = lambda field, **kwargs: "app-secret" if field == "app_secret" else None
+        settings.save = Mock()
+        self.frappe.only_for = Mock()
+        self.frappe.cache = types.SimpleNamespace(lock=lambda *args, **kwargs: nullcontext())
+        self.frappe.get_single = Mock(return_value=settings)
+        self.frappe.throw = lambda message: (_ for _ in ()).throw(RuntimeError(message))
+        timestamp = datetime(2026, 10, 8, 10, 0, 0)
+        self.sync.now_datetime = lambda: timestamp
+        fake_client = Mock()
+        fake_client.get_initial_token.return_value = {
+            "access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600,
+        }
+        self.sync.Client = Mock(return_value=fake_client)
+
+        result = self.sync.acquire_initial_authorization()
+
+        self.assertIn("已加密保存", result)
+        self.assertEqual(settings.access_token, "new-access")
+        self.assertEqual(settings.refresh_token, "new-refresh")
+        self.assertEqual(settings.token_expires_at, timestamp + timedelta(seconds=3600))
+        settings.save.assert_called_once_with()
+        self.frappe.only_for.assert_called_once_with("System Manager")
+
+    def test_token_acquisition_and_rotation_are_post_only(self):
+        self.assertEqual(self.sync.acquire_initial_authorization.allowed_http_methods, ["POST"])
+        self.assertEqual(self.sync.refresh_authorization.allowed_http_methods, ["POST"])
+
+    def test_initial_authorization_rejects_provider_app_without_saving(self):
+        settings = Settings(app_type="服务商", app_key="public-key", environment="测试",
+                            access_token="old-access", refresh_token="old-refresh")
+        self.frappe.only_for = Mock()
+        self.frappe.cache = types.SimpleNamespace(lock=lambda *args, **kwargs: nullcontext())
+        self.frappe.get_single = Mock(return_value=settings)
+        self.frappe.throw = lambda message: (_ for _ in ()).throw(RuntimeError(message))
+        self.sync.Client = Mock()
+        with self.assertRaisesRegex(RuntimeError, "自有商城"):
+            self.sync.acquire_initial_authorization()
+        self.sync.Client.assert_not_called()
 
     def test_sku_page_and_fixed_window_resume_after_bounded_run(self):
         settings, api = self.settings(), Mock()

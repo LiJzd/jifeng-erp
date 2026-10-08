@@ -41,7 +41,7 @@ def test_connection():
     return {"message": "订单查询成功" if count else "订单查询成功，但空结果尚不能校验商家数据覆盖", "returned_orders": count}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def refresh_authorization():
     frappe.only_for("System Manager")
     with frappe.cache.lock("jifeng:jushuitan:sync", timeout=120, blocking_timeout=1):
@@ -61,6 +61,30 @@ def refresh_authorization():
         settings.token_expires_at = now_datetime() + timedelta(seconds=int(data["expires_in"]))
         settings.save()
         return "授权已刷新并加密保存"
+
+
+@frappe.whitelist(methods=["POST"])
+def acquire_initial_authorization():
+    """Explicitly acquire credentials for a self-owned Jushuitan app."""
+    frappe.only_for("System Manager")
+    with frappe.cache.lock("jifeng:jushuitan:sync", timeout=120, blocking_timeout=1):
+        settings = frappe.get_single("Jushuitan Settings")
+        if settings.app_type != "自有商城":
+            frappe.throw("初始授权接口仅适用于自有商城应用；服务商应用需按官方流程授权")
+        app_secret = settings.get_password("app_secret", raise_exception=False)
+        if not settings.app_key or not app_secret:
+            frappe.throw("请先配置 App Key 和 App Secret")
+        try:
+            data = Client(settings.app_key, app_secret, None, settings.environment).get_initial_token()
+        except JushuitanError as exc:
+            frappe.throw(str(exc))
+        # Persist only a complete, validated response. Password fields are encrypted
+        # by Frappe when the singleton is saved; credentials never enter messages.
+        settings.access_token = data["access_token"]
+        settings.refresh_token = data["refresh_token"]
+        settings.token_expires_at = now_datetime() + timedelta(seconds=int(data["expires_in"]))
+        settings.save()
+        return "初始授权已加密保存；后续请在到期前手动刷新"
 
 
 def scheduled_sync():

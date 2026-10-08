@@ -49,17 +49,20 @@
   {
    "fieldname": "access_token",
    "fieldtype": "Password",
-   "label": "Access Token"
+   "label": "Access Token",
+   "description": "自有商城初始令牌可在应用详情“我的授权”查看，也可使用“获取初始授权”。请在到期前刷新；已过期令牌需要重新授权。"
   },
   {
    "fieldname": "refresh_token",
    "fieldtype": "Password",
-   "label": "Refresh Token"
+   "label": "Refresh Token",
+   "description": "与 Access Token 配套；成功刷新会轮换保存两个令牌。"
   },
   {
    "fieldname": "token_expires_at",
    "fieldtype": "Datetime",
-   "label": "授权到期时间"
+   "label": "授权到期时间",
+   "description": "按授权响应的 expires_in 记录，用于确保只在有效期内刷新。"
   },
   {
    "fieldname": "merchant_id",

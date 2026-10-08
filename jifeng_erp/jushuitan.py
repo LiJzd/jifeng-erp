@@ -4,6 +4,7 @@ Protocol: https://openweb.jushuitan.com/doc?docId=30 and docId=70.
 """
 import hashlib
 import json
+import secrets
 import time
 
 import requests
@@ -33,8 +34,8 @@ class Client:
     def __init__(self, app_key, app_secret, access_token, environment="测试", session=None, sleep=time.sleep):
         if environment not in HOSTS:
             raise JushuitanError("请选择正式或测试环境")
-        if not all((app_key, app_secret, access_token)):
-            raise JushuitanError("请配置 App Key、App Secret 和商家授权 Token")
+        if not all((app_key, app_secret)):
+            raise JushuitanError("请配置 App Key 和 App Secret")
         self.base = HOSTS[environment]
         self.app_key, self.secret, self.token = app_key, app_secret, access_token
         self.session = session or requests.Session()
@@ -43,6 +44,8 @@ class Client:
     def query(self, path, business):
         if path not in (ORDER_QUERY, SKU_QUERY):
             raise JushuitanError("此客户端只允许订单和商品查询")
+        if not self.token:
+            raise JushuitanError("请先配置商家 Access Token，或在授权到期前刷新")
         for attempt in range(4):
             parameters = {
                 "app_key": self.app_key, "access_token": self.token,
@@ -120,6 +123,44 @@ class Client:
                 raise ValueError
         except (TypeError, ValueError):
             raise JushuitanError("令牌有效期无效，请核实授权结果") from None
+        return data
+
+    def get_initial_token(self):
+        """Acquire self-owned-app credentials only when explicitly requested.
+
+        The route/parameters mirror the existing Atlas self-owned-app clients.
+        This is deliberately a single request: an unknown result is never retried.
+        """
+        params = {
+            "app_key": self.app_key,
+            "timestamp": str(int(time.time())),
+            "grant_type": "authorization_code",
+            "charset": "utf-8",
+            "code": secrets.token_hex(3),
+        }
+        params["sign"] = sign(params, self.secret)
+        try:
+            response = self.session.post(
+                self.base + "/openWeb/auth/getInitToken", data=params,
+                timeout=(10, 40), allow_redirects=False,
+                headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+            )
+            if response.status_code != 200:
+                raise JushuitanError("初始授权结果未知，请先核实聚水潭授权状态；系统不会自动重复请求")
+            payload = response.json()
+        except (requests.RequestException, ValueError, TypeError):
+            raise JushuitanError("初始授权结果未知，请先核实聚水潭授权状态；系统不会自动重复请求") from None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or str(payload.get("code")) != "0":
+            raise JushuitanError("初始授权未成功，请确认自有商城应用授权状态")
+        if not all(data.get(key) for key in ("access_token", "refresh_token", "expires_in")):
+            raise JushuitanError("初始授权响应缺少令牌或有效期，请核实授权状态")
+        try:
+            expires_in = int(data["expires_in"])
+            if not 0 < expires_in <= 90 * 24 * 60 * 60:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise JushuitanError("初始授权返回的有效期无效，请核实授权状态") from None
         return data
 
 
