@@ -3,10 +3,13 @@ const assert = require("node:assert/strict"), fs = require("node:fs"), path = re
 class Element {
 	constructor() { this.children = []; this.style = {}; this.hidden = false; this.html = ""; this.classList = { add() {}, remove() {}, toggle() {} }; }
 	appendChild(child) { this.children.push(child); child.parentElement = this; }
+	append(...children) { children.forEach(child => this.appendChild(child)); }
+	replaceChildren(...children) { this.children = []; this.append(...children); }
 	remove() { this.removed = true; }
 	getClientRects() { return [{}]; }
 	getBoundingClientRect() { return { top: 20, left: 30, width: 500, height: 450 }; }
 	querySelectorAll() { return []; }
+	addEventListener() {}
 }
 let route = "jifeng-legacy";
 const messages = [], confirmations = [];
@@ -17,6 +20,10 @@ window.JifengSupplierPayables = class {};
 window.JifengInventoryTracking = class {};
 window.JifengFinanceDictionary = class {};
 window.JifengTemporaryWorkers = class {};
+window.JifengBusinessOperationLog = class {};
+window.JifengProductionInstructionList = class {};
+window.JifengSubcontractingReconciliation = class {};
+window.JifengSubcontractingReversal = class {};
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
@@ -55,10 +62,13 @@ function dispatch(Workspace, entry) {
 	workspace.formalBridge = { open: spec => calls.push({ action: "open", spec }), openCreate: spec => calls.push({ action: "create", spec }) };
 	workspace.addTab = tab => calls.push({ action: "tab", tab });
 	workspace.openModule = module => calls.push({ action: "module", module });
+	workspace.openFinishedIntakeSources = () => calls.push({ action: "finished-intake-dialog" });
 	workspace.openPage(entry.name, entry.module);
 	return plain(calls);
 }
 for (const entry of entries) {
+	// POS resolves its native doctype asynchronously; verify it below after the settings response.
+	if (entry.module === "销售" && entry.name === "零售单记录") continue;
 	const before = messages.length, classic = dispatch(Classic, entry), modern = dispatch(Modern, entry);
 	assert.deepEqual(modern, classic, `${entry.module}/${entry.name}: identical source, mode, filters and create values`);
 	assert.equal(classic.length, 1, `${entry.module}/${entry.name}: one original dispatch`);
@@ -118,7 +128,8 @@ for (const [name, mode] of [["临工档案", "archive"], ["临工浏览", "brows
 }
 assert.equal(dispatch(Modern, find("工资", "历史"))[0].spec.salaryHistory, true);
 assert.equal(shared.availability("工资", "历史分析"), "partial", "salary analysis uses saved payroll sources, not the wage-entry report");
-assert.equal(find("工资", "工资发放").group, "工资操作", "monthly payroll is visible in the wage operations group");
+assert.ok(entries.some(entry => entry.module === "工资" && entry.name === "工资发放" && entry.group === "工资操作"),
+	"monthly payroll remains visible in the existing wage operations group");
 assert.deepEqual(dispatch(Modern, find("工资", "工资发放"))[0].spec.route, ["List", "Payroll Entry"], "monthly payroll opens the native Payroll Entry list");
 assert.deepEqual(dispatch(Classic, find("工资", "工资发放"))[0].spec.route, ["List", "Payroll Entry"]);
 for (const [module, name, flag] of [["物料", "采购履行核对", "procurementFulfillment"], ["材料", "采购履行核对", "procurementFulfillment"], ["销售", "销售履行核对", "salesFulfillment"], ["财务", "供应商应付核对", "supplierPayables"], ["物料", "跟踪", "inventoryTracking"], ["材料", "跟踪", "inventoryTracking"]]) {
@@ -126,7 +137,34 @@ for (const [module, name, flag] of [["物料", "采购履行核对", "procuremen
 	assert.equal(dispatch(Modern, find(module, name))[0].spec[flag], true);
 }
 assert.equal(shared.availability("销售", "销售跟踪"), "preview");
-assert.equal(shared.availability("财务", "电镀账"), "preview");
+const connectedEntries = [["生产", "生产指令单", "productionInstructionList", true],
+	["发镀", "电镀对账", "subcontractingReconciliation", "plating"],
+	["外发", "对账", "subcontractingReconciliation", "outsourcing"],
+	["财务", "电镀账", "subcontractingReconciliation", "plating"],
+	["财务", "委外账", "subcontractingReconciliation", "outsourcing"],
+	["发镀", "电镀反审", "subcontractingReversal", "plating_order"],
+	["发镀", "品检反审", "subcontractingReversal", "plating_inspection"],
+	["外发", "反审", "subcontractingReversal", "outer_order"],
+	["外发", "收回反审", "subcontractingReversal", "outer_receipt"]];
+for (const [module, name, flag, value] of connectedEntries) {
+	assert.equal(shared.availability(module, name), "partial", "unverified legacy rules remain explicitly limited");
+	const call = dispatch(Modern, find(module, name))[0];
+	assert.equal(call.action, "open", "formal component opens before native create or local preview dispatch");
+	assert.equal(call.spec[flag], value);
+	assert.equal(call.spec.availability, "partial");
+	assert.deepEqual(call, dispatch(Classic, find(module, name))[0]);
+}
+for (const [flag, component] of [["productionInstructionList", "JifengProductionInstructionList"],
+	["subcontractingReconciliation", "JifengSubcontractingReconciliation"], ["subcontractingReversal", "JifengSubcontractingReversal"]]) {
+	const original = window[component]; delete window[component];
+	for (const [module, name, expectedFlag] of connectedEntries.filter(entry => entry[2] === flag)) {
+		assert.equal(expectedFlag, flag);
+		const before = messages.length;
+		assert.deepEqual(dispatch(Modern, find(module, name)), []);
+		assert.equal(messages.length, before + 1, "missing formal component cannot fall back to local rows or native creation");
+	}
+	window[component] = original;
+}
 for (const name of ["收款银行", "付款银行", "费用科目"]) {
 	assert.equal(shared.availability("财务", name), "partial");
 	assert.equal(dispatch(Modern, find("财务", name))[0].spec.financeDictionary, name);
@@ -334,4 +372,110 @@ async function dashboardReportScope() {
 	}
 	console.log("A/B dashboard report company/date scope, stale response and permission refusal passed (protocol only).");
 }
-dashboardReportScope().catch(error => { console.error(error); process.exitCode = 1; });
+async function companyWorkbenchLifecycle() {
+	const retailCalls = [];
+	for (const Workspace of [Classic, Modern]) {
+		const workspace = Object.create(Workspace.prototype), calls = [];
+		workspace.formalBridge = { open: spec => calls.push(plain(spec)) };
+		frappe.db = { get_single_value: async (doctype, field) => {
+			assert.equal(doctype, "POS Settings"); assert.equal(field, "invoice_type"); return "POS Invoice";
+		} };
+		workspace.openPage("零售单记录", "销售"); await new Promise(resolve => setTimeout(resolve, 0));
+		assert.equal(calls.length, 1); assert.deepEqual(calls[0].route, ["List", "POS Invoice"]);
+		retailCalls.push(calls);
+	}
+	assert.deepEqual(retailCalls[0], retailCalls[1]);
+	const components = [];
+	class CompanyComponent {
+		static mount(host, options) {
+			const instance = { host, options, ready: Promise.resolve(true), destroyed: 0, refreshed: 0,
+				destroy() { this.destroyed++; }, refresh() { this.refreshed++; }, setVisible(value) { this.visible = value; } };
+			components.push(instance); return instance;
+		}
+	}
+	window.JifengProductionInstructionList = CompanyComponent;
+	window.JifengSubcontractingReversal = CompanyComponent;
+	let control;
+	frappe.defaults = { get_user_default: () => "DEFAULT" };
+	frappe.ui = { form: { make_control({ df }) {
+		const listeners = new Map();
+		control = { value: "", typed: "", df, removed: false,
+			get_value() { return this.value; }, get_input_value() { return this.typed; },
+			async set_value(value) { this.value = value; this.typed = value; df.onchange(); },
+			$input: { on(events, callback) { listeners.set(events, callback); }, off() { control.removed = true; } },
+			type(value, accept = false) { this.typed = value; if (accept) this.value = value;
+				for (const callback of listeners.values()) callback(); },
+		};
+		return control;
+	} } };
+	for (const Workspace of [Classic, Modern]) {
+		for (const [module, name, flag, value] of connectedEntries.filter(entry => entry[2] !== "subcontractingReconciliation")) {
+			const bridge = Object.create(window.JifengClassicBridge.prototype), opened = [], created = [];
+			bridge.openCompanySource = async (...values) => { opened.push(values); return true; };
+			bridge.openCreate = async spec => { created.push(spec); return true; };
+			const spec = dispatch(Workspace, find(module, name))[0].spec;
+			const entry = bridge.mount(new Element(), spec); await entry.ready;
+			const initial = components.at(-1), originalOptions = initial.options, field = control;
+			assert.equal(initial.options.company, "DEFAULT"); assert.equal(initial.options.kind, flag === "subcontractingReversal" ? value : undefined);
+			assert.equal(entry.workbench.isDirty(), false); assert.equal(entry.workbench.getCloseBlock(), "");
+			field.type("OTHER");
+			assert.equal(initial.destroyed, 1, "typing a new company disposes the former company's rows and pending response identity");
+			assert.equal(components.at(-1), initial, "unaccepted Link input cannot start another query");
+			assert.equal(await originalOptions.openForm("Production Plan", "OLD"), false);
+			assert.equal(await originalOptions.newForm("Production Plan"), false);
+			assert.equal(opened.length, 0); assert.equal(created.length, 0);
+			field.type("OTHER", true);
+			const current = components.at(-1);
+			assert.notEqual(current, initial); assert.equal(current.options.company, "OTHER");
+			await current.options.openForm("Production Plan", "CURRENT");
+			assert.equal(opened[0][1], "OTHER"); assert.equal(opened[0][2], "Production Plan"); assert.equal(opened[0][3], "CURRENT");
+			await current.options.newForm("Production Plan", { company: "WRONG", remark: "保留默认字段" });
+			assert.deepEqual(plain(created[0].values), { company: "OTHER", remark: "保留默认字段" });
+			entry.workbench.setVisible(false); assert.equal(current.visible, false);
+			assert.equal(await current.options.openForm("Production Plan", "HIDDEN"), false);
+			entry.workbench.setVisible(true); entry.workbench.setVisible(true);
+			assert.equal(current.refreshed, 1, "returning from a native source refreshes once without resetting filters");
+			entry.workbench.refresh(); assert.equal(current.refreshed, 2);
+			entry.stop(); entry.stop(); assert.equal(current.destroyed, 1); assert.equal(field.removed, true);
+			assert.equal(await current.options.newForm("Production Plan"), false, "destroyed views cannot open a native draft");
+		}
+	}
+	window.JifengSubcontractingReconciliation = class {
+		constructor(host, bridge, kind) { this.host = host; this.bridge = bridge; this.kind = kind; this.ready = Promise.resolve(true); }
+		destroy() { this.destroyed = true; }
+	};
+	const bridge = Object.create(window.JifengClassicBridge.prototype);
+	for (const [module, name, flag, kind] of connectedEntries.filter(entry => entry[2] === "subcontractingReconciliation")) {
+		assert.equal(flag, "subcontractingReconciliation");
+		const entry = bridge.mount(new Element(), dispatch(Modern, find(module, name))[0].spec); await entry.ready;
+		assert.equal(entry.workbench.kind, kind); assert.equal(entry.workbench.bridge, bridge);
+		bridge.frames = new Map([[name, entry]]);
+		assert.equal(bridge.canClose(name), true); assert.equal(bridge.closeBlock(name), "");
+		entry.stop(); assert.equal(entry.workbench.destroyed, true);
+	}
+	const frm = { doctype: "Quality Inspection", docname: "QI", doc: { doctype: "Quality Inspection", name: "QI", company: "OTHER" }, cscript: { is_onload: false } };
+	const native = { iframe: { contentWindow: { frappe: { get_route: () => ["Form", "Quality Inspection", "QI"] }, cur_frm: frm } } };
+	bridge.frames = new Map([["source", native]]);
+	assert.equal(bridge.nativeForm(native, "source", { doctype: "Quality Inspection", name: "QI", company: "DEFAULT" }), null);
+	assert.equal(bridge.nativeForm(native, "source", { doctype: "Quality Inspection", name: "QI", company: "OTHER" }), frm);
+	const sourceSpec = { title: "生产指令单", module: "生产" }, sourceEntry = { ready: Promise.resolve(true) }, routes = [];
+	bridge.open = spec => routes.push(plain(spec));
+	bridge.frames = new Map([["formal:生产:PLAN", sourceEntry]]);
+	bridge.waitNativeForm = async (entry, key, target) => {
+		assert.equal(entry, sourceEntry); assert.equal(key, "formal:生产:PLAN");
+		assert.deepEqual(plain(target), { doctype: "Production Plan", name: "PLAN", company: "OTHER" }); return frm;
+	};
+	assert.equal(await bridge.openCompanySource(sourceSpec, "OTHER", "Production Plan", "PLAN"), true);
+	assert.deepEqual(routes, [{ title: "PLAN", module: "生产", kind: "form", doctype: "Production Plan", route: ["Form", "Production Plan", "PLAN"], company: "OTHER" }]);
+	const draft = { doctype: "Production Plan", docname: "new-plan", doc: { doctype: "Production Plan", name: "new-plan",
+		company: "OTHER", docstatus: 0, __islocal: 1 }, cscript: { is_onload: false } };
+	const draftFrame = { contentWindow: { frappe: { get_route: () => ["Form", "Production Plan", "new-plan"] }, cur_frm: draft } };
+	assert.equal(bridge.nativeDraft(draftFrame, { doctype: "Production Plan", values: { company: "OTHER" } }), draft);
+	assert.equal(bridge.nativeDraft(draftFrame, { doctype: "Production Plan", values: { company: "DEFAULT" } }), null);
+	draft.cscript.is_onload = true;
+	assert.equal(bridge.nativeDraft(draftFrame, { doctype: "Production Plan", values: { company: "OTHER" } }), null);
+	draft.cscript.is_onload = false; delete draft.doc.__islocal;
+	assert.equal(bridge.nativeDraft(draftFrame, { doctype: "Production Plan", values: { company: "OTHER" } }), null);
+	console.log("A/B production/reversal company mounting, native callbacks, remount/refresh/disposal and reconciliation/source company guards passed (protocol only).");
+}
+companyWorkbenchLifecycle().then(dashboardReportScope).catch(error => { console.error(error); process.exitCode = 1; });

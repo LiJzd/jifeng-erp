@@ -156,8 +156,9 @@ const JIFENG_LIVE_ROUTES = {
 };
 
 // Server-backed entry whose available operations remain explicitly limited.
-const JIFENG_PARTIAL_ROUTES = { 产品: { 镀色: true, 样品制作单: true, 样品单反审: true }, 工资: { 历史: true, 历史分析: true, 临工档案: true, 临工浏览: true, 临工: true, 临工明细: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
-	物料: { 采购履行核对: true, 跟踪: true, 领料退库: true }, 材料: { 采购履行核对: true, 跟踪: true, 领料退库: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true },
+const JIFENG_PARTIAL_ROUTES = { 产品: { 镀色: true, 样品制作单: true, 样品单反审: true }, 工资: { 历史: true, 历史分析: true, 临工档案: true, 临工浏览: true, 临工: true, 临工明细: true },
+	物料: { 采购履行核对: true, 跟踪: true, 领料退库: true }, 材料: { 采购履行核对: true, 跟踪: true, 领料退库: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true, 委外账: true, 电镀账: true },
+	生产: { 生产指令单: true }, 发镀: { 电镀厂: true, 电镀对账: true, 电镀反审: true, 品检反审: true }, 外发: { 外发工厂: true, 对账: true, 反审: true, 收回反审: true },
 	销售: { 销售履行核对: true, 成品入库来源核对: true, 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true },
 	日志: { 操作日志: true } };
 
@@ -170,7 +171,13 @@ const JIFENG_LIVE_PAGES = {
 	物料: { 采购履行核对: { procurementFulfillment: true }, 跟踪: { inventoryTracking: true } },
 	材料: { 采购履行核对: { procurementFulfillment: true }, 跟踪: { inventoryTracking: true } },
 	财务: { 供应商应付核对: { supplierPayables: true }, 收款银行: { financeDictionary: "收款银行" },
-		付款银行: { financeDictionary: "付款银行" }, 费用科目: { financeDictionary: "费用科目" } },
+		付款银行: { financeDictionary: "付款银行" }, 费用科目: { financeDictionary: "费用科目" },
+		委外账: { subcontractingReconciliation: "outsourcing" }, 电镀账: { subcontractingReconciliation: "plating" } },
+	生产: { 生产指令单: { productionInstructionList: true } },
+	发镀: { 电镀对账: { subcontractingReconciliation: "plating" }, 电镀反审: { subcontractingReversal: "plating_order" },
+		品检反审: { subcontractingReversal: "plating_inspection" } },
+	外发: { 对账: { subcontractingReconciliation: "outsourcing" }, 反审: { subcontractingReversal: "outer_order" },
+		收回反审: { subcontractingReversal: "outer_receipt" } },
 	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers", 历史: { salaryHistory: true }, 历史分析: { salaryAnalysis: true },
 		临工档案: { temporaryWorkers: "archive" }, 临工浏览: { temporaryWorkers: "browse" }, 临工: { temporaryWorkers: "wage" }, 临工明细: { temporaryWorkers: "details" } },
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
@@ -206,7 +213,6 @@ const JIFENG_LIVE_CREATE = {
 		调岗办理: { doctype: "Employee Transfer", values: {} },
 	},
 	工资: { 调薪录入: { doctype: "Salary Structure Assignment", values: {} }, 多人计件分配: { doctype: "Jifeng Wage Allocation", values: {} } },
-	生产: { 生产指令单: { doctype: "Production Plan", values: {} } },
 	发镀: {
 		新建委外采购: { doctype: "Purchase Order", values: { is_subcontracted: 1 } },
 		电镀单: { doctype: "Subcontracting Order", values: {} },
@@ -419,6 +425,14 @@ class JifengLegacyWorkspace {
 		}
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
+			for (const [flag, component] of [["productionInstructionList", "JifengProductionInstructionList"],
+				["subcontractingReconciliation", "JifengSubcontractingReconciliation"], ["subcontractingReversal", "JifengSubcontractingReversal"]]) {
+				if (!livePage[flag]) continue;
+				if (!this.formalBridge || !window[component]) {
+					frappe.msgprint(__("正式业务页面未能加载，请刷新后重试。")); return;
+				}
+				this.formalBridge.open({ title: name, module: moduleName, kind: "page", [flag]: livePage[flag], availability: "partial" }); return;
+			}
 			if (livePage.salaryAnalysis) {
 				if (!window.JifengSalaryAnalysis) { frappe.msgprint(__("工资历史分析页面未能加载，请刷新页面后重试。")); return; }
 				this.addTab({ key: "salary-analysis", title: name, kind: "salary-analysis", module: moduleName }); return;

@@ -23,6 +23,9 @@ app_include_css = ["/assets/jifeng_erp/css/jifeng_business_operation_log.css",
                    "/assets/jifeng_erp/css/jifeng_procurement_fulfillment.css",
                    "/assets/jifeng_erp/css/jifeng_supplier_payables.css",
                    "/assets/jifeng_erp/css/jifeng_finance_dictionary.css",
+                   "/assets/jifeng_erp/css/jifeng_production_instruction_list.css",
+                   "/assets/jifeng_erp/css/jifeng_subcontracting_reconciliation.css",
+                   "/assets/jifeng_erp/css/jifeng_subcontracting_reversal.css",
                    "/assets/jifeng_erp/css/jifeng_modern.css"]
 app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jifeng_erp/js/jifeng_hr_dictionary.js",
                   "/assets/jifeng_erp/js/jifeng_source_reports.js",
@@ -53,6 +56,9 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_finance_dictionary.js",
                   "/assets/jifeng_erp/js/jifeng_system_information.js",
                   "/assets/jifeng_erp/js/jifeng_business_operation_log.js",
+                  "/assets/jifeng_erp/js/jifeng_production_instruction_list.js",
+                  "/assets/jifeng_erp/js/jifeng_subcontracting_reconciliation.js",
+                  "/assets/jifeng_erp/js/jifeng_subcontracting_reversal.js",
                   "/assets/jifeng_erp/js/jifeng_workspace_core.js",
                   "/assets/jifeng_erp/js/jifeng_modern_workspace.js"]
 

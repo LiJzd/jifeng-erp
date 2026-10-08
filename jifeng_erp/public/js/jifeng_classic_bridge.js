@@ -109,6 +109,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 	canClose(key) {
 		const entry = this.frames.get(key);
 		if (this.supplierPaymentCloseBlock(entry)) return false;
+		if (entry?.readOnly) return true;
 		return entry?.workbench ? !entry.workbench.isDirty() : !this.isDirty(entry?.iframe);
 	}
 
@@ -116,6 +117,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		const entry = this.frames.get(key);
 		const paymentBlock = this.supplierPaymentCloseBlock(entry);
 		if (paymentBlock) return paymentBlock;
+		if (entry?.readOnly) return "";
 		return entry?.workbench ? entry.workbench.getCloseBlock() : this.frameCloseBlock(entry?.iframe);
 	}
 
@@ -135,7 +137,17 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		const child = entry.iframe?.contentWindow, route = child?.frappe?.get_route?.(), frm = child?.cur_frm;
 		return Array.isArray(route) && route.length === 3 && route[0] === "Form" && route[1] === target.doctype && route[2] === target.name &&
 			frm?.doctype === target.doctype && frm.docname === target.name && frm.doc?.doctype === target.doctype && frm.doc.name === target.name &&
+			(!target.company || frm.doc.company === target.company) &&
 			frm.cscript?.is_onload === false ? frm : null;
+	}
+
+	nativeDraft(frame, spec) {
+		if (frame?.isConnected === false) return null;
+		const child = frame?.contentWindow, route = child?.frappe?.get_route?.(), frm = child?.cur_frm;
+		return Array.isArray(route) && route.length === 3 && route[0] === "Form" && route[1] === spec.doctype &&
+			route[2] === frm?.docname && frm?.doctype === spec.doctype && frm.doc?.doctype === spec.doctype &&
+			frm.doc.name === frm.docname && frm.doc.__islocal && frm.doc.docstatus === 0 &&
+			frm.doc.company === spec.values.company && frm.cscript?.is_onload === false ? frm : null;
 	}
 
 	waitNativeForm(entry, key, target) {
@@ -358,6 +370,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 			entry.iframe.remove();
 			for (const cached of this.frames.values()) {
 				try { cached.iframe?.contentWindow?.cur_list?.refresh(); } catch { /* page may still be loading */ }
+				if (cached.refreshOnCreate) cached.workbench.refresh();
 			}
 		};
 		const close = () => { dispose(); hide(); };
@@ -384,6 +397,7 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		});
 		dialog.add_custom_action(__("关闭"), () => dialog.hide());
 		dialog.show();
+		return entry.ready;
 	}
 
 	openPersonnel(name, options = {}) {
@@ -478,7 +492,80 @@ window.JifengClassicBridge = class JifengClassicBridge {
 		};
 	}
 
+	async openCompanySource(spec, company, doctype, name) {
+		this.open({ title: name, module: spec.module, kind: "form", doctype,
+			route: ["Form", doctype, name], company });
+		const key = "formal:" + spec.module + ":" + name, entry = this.frames.get(key);
+		if (!entry || await entry.ready === false) return false;
+		const frm = await this.waitNativeForm(entry, key, { doctype, name, company });
+		if (!frm) frappe.msgprint(__("原单尚未准确加载，请核对单号、公司和读取权限。"));
+		return !!frm;
+	}
+
+	mountCompanyWorkbench(host, spec, Component) {
+		const shell = document.createElement("section"), companyHost = document.createElement("div"), body = document.createElement("div");
+		Object.assign(shell.style, { height: "100%", overflow: "auto", padding: "12px" });
+		companyHost.style.maxWidth = "360px";
+		shell.append(companyHost, body); host.appendChild(shell);
+		let disposed = false, visible = true, current = null, company = "", control;
+		const validCompany = () => {
+			const value = control?.get_value?.(), typed = control?.get_input_value?.() ?? control?.$input?.val?.();
+			return typeof value === "string" && value && value === value.trim() &&
+				(typeof typed !== "string" || typed === value) ? value : "";
+		};
+		const clear = () => { current?.destroy(); current = null; company = ""; body.replaceChildren(); };
+		const update = () => {
+			if (disposed) return;
+			const selected = validCompany();
+			if (current && selected === company) return;
+			clear();
+			if (!selected) { body.textContent = __("请选择单一公司后读取正式单据。"); return; }
+			if (!visible) return;
+			company = selected;
+			let mounted;
+			const isCurrent = () => !disposed && visible && current === mounted && validCompany() === selected;
+			mounted = Component.mount(body, { company: selected, title: spec.title, kind: spec.subcontractingReversal, bridge: this,
+				openForm: (doctype, name) => isCurrent() ? this.openCompanySource(spec, selected, doctype, name) : Promise.resolve(false),
+				newForm: (doctype, defaults = {}) => isCurrent() ? this.openCreate({ title: "新增" + spec.title,
+					module: spec.module, kind: "create", doctype, values: { ...defaults, company: selected } }) : Promise.resolve(false) });
+			current = mounted;
+			current.setVisible?.(visible);
+		};
+		control = frappe.ui.form.make_control({ parent: companyHost, render_input: true,
+			df: { fieldname: "company", fieldtype: "Link", label: __("公司"), options: "Company", reqd: 1, onchange: update } });
+		control.$input?.on?.("input.jifeng-formal-company change.jifeng-formal-company", update);
+		const workbench = {
+			isDirty: () => false, getCloseBlock: () => "",
+			refresh: () => { if (!disposed && visible && current && validCompany() === company) return current.refresh(); },
+			setVisible: value => {
+				const returning = !visible && !!value; visible = !!value; current?.setVisible?.(visible);
+				if (visible && !current) update();
+				else if (returning) workbench.refresh();
+			},
+			destroy: () => {
+				if (disposed) return; disposed = true;
+				control.$input?.off?.(".jifeng-formal-company"); clear(); shell.remove();
+			},
+		};
+		const ready = (async () => {
+			const initial = frappe.defaults?.get_user_default?.("Company");
+			if (typeof initial === "string" && initial && initial === initial.trim()) await control.set_value(initial);
+			update();
+			await current?.ready;
+			return !disposed;
+		})();
+		return { workbench, ready, readOnly: true, refreshOnCreate: true, stop: workbench.destroy };
+	}
+
 	mount(host, spec) {
+		if (spec.productionInstructionList || spec.subcontractingReversal) {
+			const Component = spec.productionInstructionList ? window.JifengProductionInstructionList : window.JifengSubcontractingReversal;
+			return this.mountCompanyWorkbench(host, spec, Component);
+		}
+		if (spec.subcontractingReconciliation) {
+			const workbench = new window.JifengSubcontractingReconciliation(host, this, spec.subcontractingReconciliation);
+			return { workbench, ready: workbench.ready, readOnly: true, stop: () => workbench.destroy() };
+		}
 		if (spec.temporaryWorkers) {
 			const workbench = new window.JifengTemporaryWorkers(host, this, spec.temporaryWorkers);
 			return { workbench, ready: workbench.ready, stop: () => workbench.destroy() };
@@ -647,6 +734,20 @@ window.JifengClassicBridge = class JifengClassicBridge {
 							return;
 						}
 						await child.frappe.new_doc(spec.doctype, { ...spec.values });
+						if (spec.values?.company) {
+							const draftReady = await new Promise((resolve, reject) => {
+								let tries = 0;
+								const finish = value => { clearInterval(timer); cancelWait = null; resolve(value); };
+								cancelWait = () => finish(false);
+								const check = () => {
+									if (stopped) finish(false);
+									else if (this.nativeDraft(iframe, spec)) finish(true);
+									else if (++tries >= 300) { clearInterval(timer); cancelWait = null; reject(new Error("Native company draft not ready")); }
+								};
+								timer = setInterval(check, 50); check();
+							});
+							if (!draftReady || stopped) return;
+						}
 					}
 					else {
 						this.guardFinancialReportInitialization(child, spec);
