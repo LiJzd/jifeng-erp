@@ -1,0 +1,18 @@
+.jfe-subcontract-reconciliation { padding: 18px 22px; color: var(--text-color, #263244); }
+.jfe-subcontract-reconciliation-heading h2 { margin: 0 0 5px; font-size: 20px; }
+.jfe-subcontract-reconciliation-heading p,
+.jfe-subcontract-reconciliation-note,
+.jfe-subcontract-reconciliation-status { color: var(--text-muted, #687589); line-height: 1.55; }
+.jfe-subcontract-reconciliation-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 10px; align-items: end; margin: 14px 0; }
+.jfe-subcontract-reconciliation-filter { min-width: 0; }
+.jfe-subcontract-reconciliation-results { display: grid; gap: 16px; }
+.jfe-subcontract-reconciliation-section { border: 1px solid var(--border-color, #dce2e9); border-radius: 8px; overflow: hidden; background: var(--card-bg, #fff); }
+.jfe-subcontract-reconciliation-section h3 { margin: 0; padding: 12px 14px; font-size: 15px; border-bottom: 1px solid var(--border-color, #dce2e9); }
+.jfe-subcontract-reconciliation-scroll { overflow: auto; max-height: 380px; }
+.jfe-subcontract-reconciliation table { border-collapse: collapse; min-width: 100%; white-space: nowrap; }
+.jfe-subcontract-reconciliation th, .jfe-subcontract-reconciliation td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border-color, #e8ebef); }
+.jfe-subcontract-reconciliation th { position: sticky; top: 0; background: var(--control-bg, #f7f8fa); z-index: 1; }
+.jfe-subcontract-reconciliation-link { border: 0; background: transparent; color: var(--blue-600, #2877c7); padding: 0; cursor: pointer; }
+.jfe-subcontract-reconciliation-empty { padding: 12px 14px; color: var(--text-muted, #687589); }
+.jfe-subcontract-reconciliation-note { margin-top: 12px; font-size: 12px; }
+@media (max-width: 700px) { .jfe-subcontract-reconciliation { padding: 12px; } .jfe-subcontract-reconciliation-filters { grid-template-columns: 1fr; } }
