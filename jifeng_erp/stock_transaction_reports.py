@@ -23,8 +23,18 @@ def _can_read_fields(doctype, fields, parenttype=None):
     meta = frappe.get_meta(doctype)
     permitted = set(get_permitted_fields(doctype, user=user, permission_type="read",
                                          parenttype=parenttype, ignore_virtual=True))
-    if not set(fields).issubset(permitted):
-        return False
+    read_levels = set(meta.get_permlevel_access(permission_type="read", parenttype=parenttype, user=user))
+    for name in fields:
+        field = meta.get_field(name)
+        if not field:
+            return False
+        # Native get_permitted_fields returns database columns and excludes
+        # child tables. Check the table's actual read level separately.
+        if field.fieldtype in {"Table", "Table MultiSelect"}:
+            if (field.permlevel or 0) not in read_levels:
+                return False
+        elif name not in permitted:
+            return False
     masked_levels = set(meta.get_permlevel_access(permission_type="mask", parenttype=parenttype, user=user))
     if user != "Administrator" and any(
             (field := meta.get_field(name)) and field.get("mask")

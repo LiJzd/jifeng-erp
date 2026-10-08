@@ -18,12 +18,14 @@ class Meta:
         self.doctype = "DocType"
         self.name = name
         self.fields = fields
+        self.read_levels = {0}
+        self.mask_levels = set()
 
     def get_field(self, name):
         return self.fields.get(name)
 
     def get_permlevel_access(self, permission_type=None, parenttype=None, user=None):
-        return {0}
+        return self.mask_levels if permission_type == "mask" else self.read_levels
 
 
 class TestStockTransactionReports(unittest.TestCase):
@@ -42,7 +44,7 @@ class TestStockTransactionReports(unittest.TestCase):
             }),
         }
         self.permitted_fields = {
-            ("Stock Entry", None): {"items", "jf_material_return_against"},
+            ("Stock Entry", None): {"jf_material_return_against"},
             ("Stock Entry Detail", "Stock Entry"): {"jf_material_return_against_detail"},
         }
         self.frappe.get_meta = lambda doctype: self.metas[doctype]
@@ -183,12 +185,23 @@ class TestStockTransactionReports(unittest.TestCase):
             self.movements()
 
         self.permitted_fields[("Stock Entry", None)].add("jf_material_return_against")
-        self.permitted_fields[("Stock Entry", None)].remove("items")
+        self.metas["Stock Entry"].get_field("items")["permlevel"] = 1
         with self.assertRaisesRegex(PermissionError, "没有读取领料退库来源字段的权限"):
             self.movements()
 
-        self.permitted_fields[("Stock Entry", None)].add("items")
+        self.metas["Stock Entry"].get_field("items")["permlevel"] = 0
         self.permitted_fields[("Stock Entry Detail", "Stock Entry")].clear()
+        with self.assertRaisesRegex(PermissionError, "没有读取领料退库来源字段的权限"):
+            self.movements()
+
+    def test_native_table_is_not_a_database_column_but_permitted_return_is_readable(self):
+        self.prepare_return()
+        self.assertNotIn("items", self.permitted_fields[("Stock Entry", None)])
+        self.assertEqual(self.movements()[0]["material_return_against"], "ORIGINAL")
+
+    def test_masked_parent_table_refuses_linked_return_without_source_disclosure(self):
+        self.prepare_return()
+        self.metas["Stock Entry"].get_field("items")["mask"] = 1
         with self.assertRaisesRegex(PermissionError, "没有读取领料退库来源字段的权限"):
             self.movements()
 
