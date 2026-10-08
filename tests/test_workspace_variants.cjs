@@ -10,7 +10,7 @@ class Element {
 }
 let route = "jifeng-legacy";
 const messages = [], confirmations = [];
-const window = { addEventListener() {}, removeEventListener() {}, JifengSalaryHistory: class {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {}, JifengCustomerArchive: class {}, JifengOrderDictionary: class {}, JifengPlatingColor: class {}, JifengOrderOperations: class {} };
+const window = { addEventListener() {}, removeEventListener() {}, JifengSalaryHistory: class {}, JifengSalaryAnalysis: class {}, JifengInventoryCatalog: class {}, JifengPartnerArchive: class {}, JifengCustomerType: class {}, JifengCustomerArchive: class {}, JifengOrderDictionary: class {}, JifengPlatingColor: class {}, JifengOrderOperations: class {} };
 window.JifengProcurementFulfillment = class {};
 window.JifengSalesFulfillment = class {};
 window.JifengSupplierPayables = class {};
@@ -117,7 +117,7 @@ for (const [name, mode] of [["临工档案", "archive"], ["临工浏览", "brows
 	assert.equal(modern.availability, "partial");
 }
 assert.equal(dispatch(Modern, find("工资", "历史"))[0].spec.salaryHistory, true);
-assert.equal(shared.availability("工资", "历史分析"), "preview", "old departmental/group/operation charts cannot be the wage report");
+assert.equal(shared.availability("工资", "历史分析"), "partial", "salary analysis uses saved payroll sources, not the wage-entry report");
 for (const [module, name, flag] of [["物料", "采购履行核对", "procurementFulfillment"], ["材料", "采购履行核对", "procurementFulfillment"], ["销售", "销售履行核对", "salesFulfillment"], ["财务", "供应商应付核对", "supplierPayables"], ["物料", "跟踪", "inventoryTracking"], ["材料", "跟踪", "inventoryTracking"]]) {
 	assert.equal(shared.availability(module, name), "partial");
 	assert.equal(dispatch(Modern, find(module, name))[0].spec[flag], true);
@@ -135,6 +135,7 @@ for (const name of ["样品制作单", "样品单反审"]) {
 }
 assert.deepEqual(dispatch(Modern, find("产品", "样品单反审"))[0].spec.filters, { docstatus: 1 });
 assert.equal(dispatch(Modern, find("工资", "历史分析"))[0].action, "tab");
+assert.deepEqual(dispatch(Modern, find("工资", "历史分析"))[0].tab, { key: "salary-analysis", title: "历史分析", kind: "salary-analysis", module: "工资" });
 
 const navigation = Workspace => {
 	const workspace = Object.create(Workspace.prototype); workspace.activeTab = () => ({ kind: "home" });
