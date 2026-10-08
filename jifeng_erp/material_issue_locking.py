@@ -17,6 +17,8 @@ import frappe
 
 _SOURCE_CONFLICT = "流程领料来源已发生变化，请刷新凭证后重新核对。"
 _HEADER_CHANGED = "已有库存凭证的领料流程来源不可更改，请恢复原来源后重新核对。"
+_RETURN_SOURCE = "领料退库来源已发生变化，请刷新凭证后重新核对。"
+_RETURN_SOURCE_FIELD = "jf_material_return_against"
 
 
 def _flow_id(value):
@@ -51,6 +53,25 @@ def _persisted_flow_ids(name):
     return flows
 
 
+def _persisted_return_source(name):
+    return frappe.db.get_value("Stock Entry", name, _RETURN_SOURCE_FIELD)
+
+
+def _lock_issue_sources(source_names):
+    """Lock source issues after all Flow rows and before the current entry."""
+    try:
+        for name in sorted({value for value in source_names if value}):
+            parent = frappe.db.sql("""SELECT name FROM `tabStock Entry`
+                WHERE name=%s FOR UPDATE NOWAIT""", (name,))
+            if not parent:
+                frappe.throw(_RETURN_SOURCE, frappe.ValidationError)
+            frappe.db.sql("""SELECT name FROM `tabStock Entry Detail`
+                WHERE parent=%s AND parenttype='Stock Entry' AND parentfield='items'
+                ORDER BY name FOR UPDATE NOWAIT""", (name,))
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
+        frappe.throw("原领料凭证正在被处理，请稍后刷新再试", frappe.ValidationError)
+
+
 def _lock_flows(flow_ids):
     """Hold sorted scalar Flow locks until the caller's transaction ends."""
     for name in sorted(flow_ids):
@@ -63,9 +84,22 @@ def _lock_flows(flow_ids):
 class MaterialIssueLockingMixin:
     def check_if_latest(self):
         locked_flows = _flow_ids(self)
+        current_return_source = self.get(_RETURN_SOURCE_FIELD)
+        previous_return_source = None
         if not self.is_new():
             locked_flows.update(_persisted_flow_ids(self.name))
+            previous_return_source = _persisted_return_source(self.name)
+        return_sources = {current_return_source, previous_return_source}
+        return_sources.discard(None)
+        return_sources.discard("")
+        for source_name in return_sources:
+            locked_flows.update(_persisted_flow_ids(source_name))
         _lock_flows(locked_flows)
+
+        # A return must serialize against the original issue, including the
+        # submit/cancel path. The source lock is always taken before the native
+        # lock on this return Stock Entry.
+        _lock_issue_sources(return_sources)
 
         # Preserve native timestamp, state transition, and submit/cancel gates.
         result = super().check_if_latest()
@@ -80,4 +114,15 @@ class MaterialIssueLockingMixin:
             # Read-only UI fields are still writable through native APIs.
             # Removing this tag would otherwise bypass the tagged issue cap.
             frappe.throw(_HEADER_CHANGED, frappe.ValidationError)
+        if previous and previous.get(_RETURN_SOURCE_FIELD) != self.get(_RETURN_SOURCE_FIELD):
+            frappe.throw(_RETURN_SOURCE, frappe.ValidationError)
+        if previous and previous.get(_RETURN_SOURCE_FIELD) and previous.get(_RETURN_SOURCE_FIELD) not in return_sources:
+            # A stale pre-lock snapshot did not include the current persisted
+            # source. Abort instead of taking the source lock after the native
+            # return document lock.
+            frappe.throw(_RETURN_SOURCE, frappe.TimestampMismatchError)
+        if (self.get("docstatus") == 2 and previous and previous.get("docstatus") == 1
+                and self.get("stock_entry_type") == "Material Issue"):
+            from jifeng_erp.material_returns import assert_no_material_returns
+            assert_no_material_returns(self.name)
         return result

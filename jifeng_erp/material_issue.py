@@ -161,3 +161,9 @@ def validate_material_issue(doc):
     for item_code, qty in current.items():
         if qty + issued[item_code] > required[item_code] + TOLERANCE:
             frappe.throw(f"物料 {item_code} 的累计领料数量超过流程单物料分析数量")
+    if getattr(doc, "docstatus", 0) == 2:
+        # Cancelling an issue while an active physical return remains would
+        # reverse the same outbound stock twice. Keep returns native and
+        # require users to cancel/delete them first.
+        from jifeng_erp.material_returns import assert_no_material_returns
+        assert_no_material_returns(doc.name)

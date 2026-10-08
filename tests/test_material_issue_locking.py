@@ -87,6 +87,9 @@ class TestMaterialIssueLocking(unittest.TestCase):
         return [Record(flow=flow) for flow in self.snapshot_flows]
 
     def get_value(self, doctype, name, field, for_update=False):
+        if doctype == "Stock Entry":
+            self.assertEqual(field, "jf_material_return_against")
+            return None
         self.assertEqual((doctype, field), ("Jifeng Flow Order", "name"))
         self.assertTrue(for_update)
         self.events.append(("flow_lock", name))
@@ -203,6 +206,33 @@ class TestMaterialIssueLocking(unittest.TestCase):
         entry = self.entry(new=True)
         self.assertEqual(entry.check_if_latest(), "native-result")
         self.assertEqual(self.events, [("native_stock_lock",)])
+
+    def test_return_locks_flow_and_source_issue_before_native_return(self):
+        entry = self.entry(new=True)
+        entry.data["jf_material_return_against"] = "MI-SOURCE"
+        events = self.events
+        with patch.object(self.locking, "_persisted_flow_ids", side_effect=lambda name: {"FLOW-A"} if name == "MI-SOURCE" else set()), \
+             patch.object(self.locking, "_lock_flows", side_effect=lambda names: events.append(("flow_locks", tuple(sorted(names))))), \
+             patch.object(self.locking, "_lock_issue_sources", side_effect=lambda names: events.append(("issue_locks", tuple(sorted(names))))):
+            self.assertEqual(entry.check_if_latest(), "native-result")
+        self.assertEqual(events, [
+            ("flow_locks", ("FLOW-A",)), ("issue_locks", ("MI-SOURCE",)), ("native_stock_lock",),
+        ])
+
+    def test_cancelling_issue_checks_for_linked_return_after_native_lock(self):
+        entry = self.entry()
+        entry.data.update(docstatus=2, stock_entry_type="Material Issue")
+        previous = self.previous()
+        previous["docstatus"] = 1
+        entry.previous = previous
+        returns = types.ModuleType("jifeng_erp.material_returns")
+        returns.assert_no_material_returns = lambda name: self.events.append(("return_guard", name))
+        with patch.dict(sys.modules, {"jifeng_erp.material_returns": returns}), \
+             patch.object(self.locking, "_persisted_flow_ids", return_value=set()), \
+             patch.object(self.locking, "_persisted_return_source", return_value=None), \
+             patch.object(self.locking, "_lock_flows"), patch.object(self.locking, "_lock_issue_sources"):
+            self.assertEqual(entry.check_if_latest(), "native-result")
+        self.assertEqual(self.events, [("native_stock_lock",), ("return_guard", "SE-CURRENT")])
 
     def test_hook_extends_native_stock_entry_with_the_locking_mixin(self):
         path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "hooks.py"
