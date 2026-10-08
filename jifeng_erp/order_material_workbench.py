@@ -265,6 +265,22 @@ def _issues(flow):
             if doc.docstatus == 1:
                 quantities[row.item_code] += decimal_number(row.transfer_qty)
         vouchers.append({"name": doc.name, "docstatus": doc.docstatus})
+    submitted_issue_names = {
+        voucher["name"] for voucher in vouchers
+        if voucher["docstatus"] == 1
+    }
+    if submitted_issue_names:
+        # Keep the workbench's balance consistent with the issue validator:
+        # only source-bound, submitted returns reduce the net issued quantity.
+        # The helper rechecks exact source rows, permissions, valuation, and
+        # locks; drafts and cancelled returns are intentionally excluded there.
+        from jifeng_erp.material_returns import submitted_return_quantities_for_flow
+
+        returned = submitted_return_quantities_for_flow(flow.name, submitted_issue_names)
+        for item_code, quantity in returned.items():
+            quantities[item_code] -= quantity
+            if quantities[item_code] < 0:
+                frappe.throw("已提交领料退库数量超过流程单有效领料数量，不能显示剩余用料", frappe.ValidationError)
     return quantities, vouchers
 
 
