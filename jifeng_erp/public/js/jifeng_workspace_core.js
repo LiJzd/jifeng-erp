@@ -573,7 +573,7 @@ class JifengLegacyWorkspace {
 	}
 
 	openFinishedIntakeSources() {
-		let dialog, revision = 0, closed = false;
+		let dialog, revision = 0, closed = false, scope = ["", ""];
 		const results = () => dialog?.fields_dict.results.$wrapper.get(0);
 		const element = (tag, value, className) => {
 			const node = document.createElement(tag);
@@ -582,8 +582,16 @@ class JifengLegacyWorkspace {
 			return node;
 		};
 		const changed = () => {
+			if (!dialog) return;
+			const next = [dialog.get_value("company") || "", dialog.get_value("flow_order") || ""];
+			// Link validation can notify again for the same accepted selection.
+			// That notification must not discard an in-flight read or its result.
+			if (next[0] === scope[0] && next[1] === scope[1]) return;
+			const companyChanged = next[0] !== scope[0];
+			scope = next;
 			revision++;
 			results()?.replaceChildren(element("p", __("请选择公司和流程单，点击查询核对已提交的成品来源。")));
+			if (companyChanged && next[1]) dialog.set_value("flow_order", "");
 		};
 		const validName = value => typeof value === "string" && value.trim() === value && value.length > 0 && value.length <= 140;
 		const validQuantity = value => typeof value === "string" && /^[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value) && Number.isFinite(Number(value));
@@ -592,13 +600,14 @@ class JifengLegacyWorkspace {
 			fields: [
 				{ fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), reqd: 1,
 					default: this.dashboard?.company || frappe.defaults.get_user_default("Company"),
-					onchange: () => { if (dialog) { dialog.set_value("flow_order", ""); changed(); } } },
+					onchange: changed },
 				{ fieldname: "flow_order", fieldtype: "Link", options: "Jifeng Flow Order", label: __("流程单"), reqd: 1, onchange: changed },
 				{ fieldname: "results", fieldtype: "HTML" },
 			],
 			primary_action_label: __("查询"),
 			primary_action: async values => {
 				const request = ++revision, company = values.company, flow = values.flow_order, host = results();
+				scope = [company, flow];
 				host.replaceChildren(element("p", __("正在核对成品凭证及库存流水…")));
 				dialog.get_primary_btn().prop("disabled", true);
 				try {
