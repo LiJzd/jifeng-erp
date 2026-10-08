@@ -526,6 +526,12 @@ def validate_flow_links(doc, method=None):
         from jifeng_erp.production_instruction import validate_work_order
 
         validate_work_order(doc)
+        if doc.docstatus != 2 and doc.get("jf_flow_order"):
+            flow = frappe.get_doc("Jifeng Flow Order", doc.jf_flow_order, for_update=True)
+            flow.check_permission("read")
+            from jifeng_erp.material_issue import assert_no_net_issue_for_manufacturing
+
+            assert_no_net_issue_for_manufacturing(flow)
         return
     work_flow = None
     if doc.doctype == "Stock Entry" and doc.get("work_order"):
@@ -565,6 +571,22 @@ def validate_flow_links(doc, method=None):
         linked_flows.add(work_flow.name)
     locked_flows = {name: frappe.get_doc("Jifeng Flow Order", name, for_update=True)
                     for name in sorted(linked_flows)}
+    if (doc.doctype == "Stock Entry" and doc.docstatus != 2
+            and doc.get("stock_entry_type") == "Material Issue" and doc.get("purpose") == "Material Issue"):
+        # Row-linked manual Stock Entries must obey the same production boundary
+        # as Workbench-created issues. This check runs only after acquiring the
+        # shared Flow lock; cancellations remain available for normal rollback.
+        from jifeng_erp.material_issue import assert_no_active_work_order
+
+        for flow_name in sorted(linked_flows):
+            assert_no_active_work_order(locked_flows[flow_name])
+    if (doc.doctype == "Stock Entry" and doc.docstatus != 2
+            and doc.get("work_order") and doc.get("purpose") in (
+                "Material Transfer for Manufacture", "Manufacture", "Material Consumption for Manufacture")):
+        from jifeng_erp.material_issue import assert_no_net_issue_for_manufacturing
+
+        for flow_name in sorted(linked_flows):
+            assert_no_net_issue_for_manufacturing(locked_flows[flow_name])
     for row in doc.get("items") or []:
         if not row.get("jf_flow_order"):
             continue

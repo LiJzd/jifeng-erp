@@ -198,16 +198,60 @@ class JifengOrderMaterialWorkbench {
         open.textContent = "打开本单分析";
         open.addEventListener("click", () => this.openNative("Jifeng Flow Order", flow));
         host.appendChild(open);
+        host.insertAdjacentHTML("beforeend", this.productionMarkup(result.production, result.materials, esc));
         for (const voucher of result.vouchers) {
             const button = document.createElement("button");
             button.className = "btn btn-default btn-sm";
             button.style.margin = "6px";
-            button.textContent = `${voucher.name}（${["草稿", "已提交", "已取消"][voucher.docstatus]}）`;
+            button.textContent = `领料 ${voucher.name}（${["草稿", "已提交", "已取消"][voucher.docstatus]}）`;
             button.addEventListener("click", () => this.openNative("Stock Entry", voucher.name));
             host.appendChild(button);
         }
+        if (result.production?.has_active_work_order) {
+            for (const work of result.production.work_orders.filter(row => row.docstatus < 2)) {
+                const button = document.createElement("button");
+                button.className = "btn btn-primary btn-sm";
+                button.style.margin = "6px";
+                button.textContent = `打开工单 ${work.name}（${work.skip_transfer ? "直接制造" : "转入在制仓"}）`;
+                button.addEventListener("click", () => this.openNative("Work Order", work.name));
+                host.appendChild(button);
+                for (const source of work.sources) {
+                    const sourceButton = document.createElement("button");
+                    sourceButton.className = "btn btn-default btn-sm";
+                    sourceButton.style.margin = "6px";
+                    const kind = source.purpose === "Material Transfer for Manufacture" ? "转入WIP" :
+                        source.purpose === "Manufacture" ? "制造" : "制造耗用";
+                    sourceButton.textContent = `${kind} ${source.name}（${["草稿", "已提交", "已取消"][source.docstatus]}${source.is_return ? "，退回" : ""}）`;
+                    sourceButton.addEventListener("click", () => this.openNative("Stock Entry", source.name));
+                    host.appendChild(sourceButton);
+                }
+            }
+        }
         dialog.fields_dict.warehouse.get_query = () => ({ filters: { company, is_group: 0, disabled: 0 } });
-        if (result.can_create_issue) dialog.set_primary_action("生成领料出库草稿", () => this.guard(() => this.createIssue(dialog, result, company)));
+        if (result.can_create_work_order) {
+            const netIssued = result.materials.some(row => Number(row.issued) > 0);
+            const createWork = document.createElement("button");
+            createWork.className = "btn btn-primary btn-sm";
+            createWork.style.margin = "6px";
+            createWork.textContent = "生成并打开生产工单";
+            createWork.disabled = netIssued;
+            createWork.title = netIssued ? "有净领料时，先逐张打开原领料单；仅退回确认尚未耗用的实物后才能创建工单。" : "按已提交BOM和流程计划创建工单。";
+            createWork.addEventListener("click", () => this.guard(() => this.createWorkOrder(dialog, result, company, createWork)));
+            host.appendChild(createWork);
+        }
+        if (result.can_create_issue) {
+            const issueButton = document.createElement("button");
+            issueButton.className = "btn btn-default btn-sm";
+            issueButton.style.margin = "6px";
+            issueButton.textContent = result.production?.bom ? "手工领料出库（费用路径）" : "生成领料出库草稿";
+            issueButton.addEventListener("click", () => this.guard(async () => {
+                if (result.production?.bom && !await new Promise(resolve => frappe.confirm(
+                    "手工领料会按费用耗用记录。若之后要用同一流程的工单制造，只能将确认尚未耗用的实物按原领料单退回；已耗用材料不能再次转入工单。继续生成手工领料草稿？",
+                    () => resolve(true), () => resolve(false)))) return;
+                await this.createIssue(dialog, result, company, issueButton);
+            }));
+            host.appendChild(issueButton);
+        }
         dialog.set_secondary_action(() => dialog.hide());
         dialog.set_secondary_action_label("关闭");
         const hide = dialog.hide.bind(dialog);
@@ -219,12 +263,62 @@ class JifengOrderMaterialWorkbench {
         dialog.show();
         this.issueDialog = dialog;
     }
-    async createIssue(dialog, source, company) {
+    productionMarkup(production, flowMaterials, esc) {
+        if (!production?.bom) return `<h4>生产工单</h4><p>本流程未配置BOM；仅显示本单用料分析和手工领料，不提供工单制造入口。</p>`;
+        const flowByItem = new Map(flowMaterials.map(row => [row.item_code, row]));
+        const workOrders = production.work_orders.map(work => {
+            const rows = work.items.map(row => {
+                const flowRow = flowByItem.get(row.item_code);
+                const flowRequired = flowRow ? `${flowRow.required} ${flowRow.stock_uom}` : "配方未列出";
+                return `<tr>${[row.item_code, row.stock_uom, flowRequired, row.required_qty, row.transferred_qty,
+                    row.consumed_qty, row.pending_transfer, row.source_warehouse || "未指定", row.net_issue_qty].map(value => `<td>${esc(value)}</td>`).join("")}</tr>`;
+            }).join("");
+            const state = ["草稿", "已提交", "已取消"][work.docstatus] || "未知";
+            const movement = work.skip_transfer ? "直接从工单来源仓取料制造" : "先转入在制仓，再进行制造";
+            return `<h5>工单 ${esc(work.name)}（${state}，${esc(work.status)}）</h5>
+                <p>BOM ${esc(work.bom_no)}；流程计划 ${esc(work.flow_planned_qty)}，工单计划 ${esc(work.planned_qty)}；已制造 ${esc(work.produced_qty)}；净转入WIP ${esc(work.transferred_qty)}；${movement}；源仓 ${esc(work.source_warehouse || "未指定")}；WIP仓 ${esc(work.wip_warehouse || "未指定")}</p>
+                <table class="table table-bordered"><thead><tr><th>材料</th><th>单位</th><th>本单用料分析需求</th><th>工单BOM需求</th><th>净转入WIP</th><th>实际耗用</th><th>待转入</th><th>来源仓</th><th>费用路径净领料</th></tr></thead><tbody>${rows}</tbody></table>`;
+        }).join("");
+        return `<h4>生产工单（实际来源）</h4><p>BOM：${esc(production.bom)}。流程分析需求与工单BOM需求分列显示；本单预算/分析不代表实际投料。转入、耗用和产量取自工单记录；转入在制仓不作为制造消耗成本。</p>${workOrders || "<p>尚无有效工单。创建工单前，已提交净领料必须为零；仅将确认未耗用的实物逐张退回原领料单。</p>"}`;
+    }
+    async createWorkOrder(dialog, source, company, actionButton) {
+        if (this.busy || this.unknown) return;
+        this.busy = true;
+        actionButton.disabled = true;
+        try {
+            const response = await frappe.call({ method: "jifeng_erp.order_material_workbench.create_work_order", type: "POST",
+                args: { flow_order: source.flow_order, flow_modified: source.flow_modified, company } });
+            this.busy = false;
+            dialog.hide();
+            this.openNative("Work Order", response.message.name);
+        } catch (error) {
+            this.busy = false;
+            this.unknown = true;
+            actionButton.disabled = false;
+            actionButton.textContent = "核对工单结果";
+            actionButton.onclick = () => this.guard(() => this.checkWorkOrder(dialog, source.flow_order, company));
+            frappe.msgprint("工单创建结果尚未确认。请先核对本流程现有工单，避免重复创建。");
+        }
+    }
+    async checkWorkOrder(dialog, flow, company) {
+        if (this.busy) return;
+        this.busy = true;
+        try {
+            const response = await frappe.call({ method: "jifeng_erp.order_material_workbench.detail", args: { flow_order: flow, company } });
+            this.unknown = false;
+            this.busy = false;
+            dialog.hide();
+            const works = response.message.production.work_orders.filter(row => row.docstatus < 2);
+            if (works.length === 1) this.openNative("Work Order", works[0].name);
+            else { frappe.msgprint("已核对现有工单，请重新打开本单用料/生产明细。没有唯一有效工单时不会自动重试创建。"); await this.detail(flow); }
+        } finally { this.busy = false; }
+    }
+    async createIssue(dialog, source, company, actionButton) {
         if (this.busy || this.unknown) return;
         const warehouse = dialog.get_value("warehouse");
         if (!warehouse) throw new Error("请选择领料来源仓库。");
         this.busy = true;
-        dialog.disable_primary_action();
+        actionButton.disabled = true;
         try {
             const response = await frappe.call({ method: "jifeng_erp.order_material_workbench.create_issue", type: "POST",
                 args: { flow_order: source.flow_order, flow_modified: source.flow_modified, company, warehouse } });
@@ -234,8 +328,9 @@ class JifengOrderMaterialWorkbench {
         } catch (error) {
             this.busy = false;
             this.unknown = true;
-            dialog.set_primary_action("核对领料草稿", () => this.guard(() => this.checkIssue(dialog, source.flow_order, company)));
-            dialog.enable_primary_action();
+            actionButton.disabled = false;
+            actionButton.textContent = "核对领料草稿";
+            actionButton.onclick = () => this.guard(() => this.checkIssue(dialog, source.flow_order, company));
             frappe.msgprint("领料操作未确认完成。请核对现有凭证后继续，避免重复生成。");
         }
     }

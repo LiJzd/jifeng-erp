@@ -36,16 +36,30 @@ class TestMaterialIssue(unittest.TestCase):
         self.warehouse = Record(company="JF", is_group=0, disabled=0)
         self.history = []
         self.returned = {}
+        self.work_orders = []
         frappe = types.ModuleType("frappe")
         frappe.QueryTimeoutError = type("QueryTimeoutError", (Exception,), {})
         frappe.QueryDeadlockError = type("QueryDeadlockError", (Exception,), {})
-        frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
-        frappe.get_doc = lambda doctype, name, **kwargs: {
-            ("Jifeng Flow Order", "FLOW-1"): (self.current_flow or self.flow) if kwargs.get("for_update") else self.flow,
-            ("Warehouse", "MAIN - JF"): self.warehouse,
-        }[(doctype, name)]
-        frappe.get_all = lambda doctype, **kwargs: self.history if doctype == "Stock Entry Detail" else []
+        frappe.ValidationError = type("ValidationError", (Exception,), {})
+        frappe.PermissionError = PermissionError
+        frappe.session = types.SimpleNamespace(user="qa@example.com")
+        frappe.throw = lambda message, *args: (_ for _ in ()).throw(ValueError(message))
+        frappe.get_list = lambda doctype, **kwargs: self.work_orders if doctype == "Work Order" else []
+        def get_doc(doctype, name, **kwargs):
+            if doctype == "Jifeng Flow Order":
+                return (self.current_flow or self.flow) if kwargs.get("for_update") else self.flow
+            if doctype == "Warehouse":
+                return self.warehouse
+            if doctype == "Work Order":
+                return self.work_orders[0]
+            raise AssertionError(doctype)
+        frappe.get_doc = get_doc
+        frappe.get_all = lambda doctype, **kwargs: (
+            self.history if doctype == "Stock Entry Detail" else self.work_orders if doctype == "Work Order" else [])
         frappe.db = types.SimpleNamespace(get_value=self.db_value, sql=self.db_sql)
+        model = types.ModuleType("frappe.model")
+        self.work_order_read_fields = {"name", "company", "jf_flow_order", "docstatus"}
+        model.get_permitted_fields = lambda doctype, **kwargs: self.work_order_read_fields
         erpnext = types.ModuleType("erpnext")
         stock = types.ModuleType("erpnext.stock")
         stock_doctype = types.ModuleType("erpnext.stock.doctype")
@@ -59,7 +73,7 @@ class TestMaterialIssue(unittest.TestCase):
         returns.submitted_return_quantities_for_flow = lambda flow_name, issue_names: self.returned
         self.returns_module = returns
         modules = {
-            "frappe": frappe, "erpnext": erpnext, "erpnext.stock": stock,
+            "frappe": frappe, "frappe.model": model, "erpnext": erpnext, "erpnext.stock": stock,
             "erpnext.stock.doctype": stock_doctype,
             "erpnext.stock.doctype.item": item_package,
             "erpnext.stock.doctype.item.item": item_module,
@@ -84,6 +98,8 @@ class TestMaterialIssue(unittest.TestCase):
         raise AssertionError((doctype, name, fields))
 
     def db_sql(self, sql, values, as_dict=False):
+        if "FROM `tabWork Order`" in sql:
+            return [(row.name,) for row in self.work_orders]
         if "JOIN `tabStock Entry`" in sql:
             self.assertIn("FOR UPDATE", sql)
             self.assertIn("entry.docstatus=1", sql)
@@ -149,6 +165,40 @@ class TestMaterialIssue(unittest.TestCase):
             self.issue.frappe.QueryTimeoutError("native lock conflict"))
         with self.assertRaisesRegex(ValueError, "正在被核对"):
             self.validate(self.entry(100))
+
+    def test_active_work_order_blocks_expense_issue_path(self):
+        self.work_orders.append(Record(name="WO-1", company="JF", jf_flow_order="FLOW-1", docstatus=1,
+            meta=types.SimpleNamespace(get_permlevel_access=lambda **kwargs: {0},
+                                       get_field=lambda name: Record(mask=0, permlevel=0))))
+        with self.assertRaisesRegex(ValueError, "已有有效生产工单"):
+            self.issue.assert_no_active_work_order(self.flow)
+
+    def test_standard_work_order_fields_use_authoritative_permitted_field_projection(self):
+        self.work_orders.append(Record(name="WO-1", company="JF", jf_flow_order="FLOW-1", docstatus=1,
+            meta=types.SimpleNamespace(get_permlevel_access=lambda **kwargs: {0},
+                                       get_field=lambda name: Record(mask=0, permlevel=0))))
+        # The fixture deliberately models the authoritative projection that
+        # includes framework fields name/docstatus even when Meta's scalar
+        # permitted-fieldname projection would omit them.
+        with self.assertRaisesRegex(ValueError, "已有有效生产工单"):
+            self.issue.assert_no_active_work_order(self.flow)
+
+    def test_masked_work_order_source_field_is_rejected(self):
+        self.work_orders.append(Record(name="WO-1", company="JF", jf_flow_order="FLOW-1", docstatus=1,
+            meta=types.SimpleNamespace(get_permlevel_access=lambda **kwargs: set(),
+                                       get_field=lambda name: Record(mask=1, permlevel=0))))
+        with self.assertRaisesRegex(ValueError, "无法读取本流程生产工单的来源字段"):
+            self.issue.assert_no_active_work_order(self.flow)
+
+    def test_no_work_order_does_not_require_work_order_read_permission(self):
+        self.issue.frappe.get_list = lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError("denied"))
+        self.issue.assert_no_active_work_order(self.flow)
+
+    def test_hidden_existing_work_order_fails_closed(self):
+        self.work_orders.append(Record(name="WO-1", company="JF", jf_flow_order="FLOW-1", docstatus=1))
+        self.issue.frappe.get_list = lambda *args, **kwargs: []
+        with self.assertRaisesRegex(ValueError, "无法完整核对本流程的生产工单"):
+            self.issue.assert_no_active_work_order(self.flow)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import frappe
 from erpnext.stock.doctype.item.item import get_uom_conv_factor
+from frappe.model import get_permitted_fields
 
 from jifeng_erp.costing import CostingError, number
 from jifeng_erp.workflow import stock_plan_quantity, validate_flow_source
@@ -139,6 +140,56 @@ def make_material_issue(flow, warehouse):
     })
     entry.insert()
     return entry.name
+
+
+def assert_no_active_work_order(flow):
+    """Fail closed when a direct-expense issue would overlap native production.
+
+    Callers hold the shared Flow lock. The current locking read prevents a
+    stale repeatable-read snapshot from missing a just-created Work Order.
+    """
+    filters = {"jf_flow_order": flow.name, "docstatus": ["<", 2]}
+    try:
+        rows = frappe.db.sql("""SELECT name FROM `tabWork Order`
+            WHERE jf_flow_order=%s AND docstatus<2 ORDER BY name LIMIT 2 FOR UPDATE NOWAIT""",
+                             (flow.name,))
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
+        frappe.throw("本流程生产工单正在核对，请稍后刷新再试。", frappe.ValidationError)
+    except (frappe.PermissionError, frappe.ValidationError):
+        frappe.throw("无法核对本流程的生产工单，不能新建直接领料。", frappe.PermissionError)
+    raw_names = {row[0] for row in rows}
+    if not raw_names:
+        return
+    try:
+        visible = frappe.get_list("Work Order", filters=filters, fields=["name"], limit_page_length=2)
+    except (frappe.PermissionError, frappe.ValidationError):
+        frappe.throw("无法完整核对本流程的生产工单，不能新建直接领料。", frappe.PermissionError)
+    visible_names = {row.name for row in visible}
+    if raw_names != visible_names or len(raw_names) > 1:
+        frappe.throw("无法完整核对本流程的生产工单，不能新建直接领料。", frappe.PermissionError)
+    if raw_names:
+        work = frappe.get_doc("Work Order", next(iter(raw_names)))
+        work.check_permission("read")
+        allowed = set(get_permitted_fields("Work Order", permission_type="read", ignore_virtual=True))
+        if not {"name", "company", "jf_flow_order", "docstatus"}.issubset(allowed):
+            frappe.throw("无法读取本流程生产工单的来源字段，不能新建直接领料。", frappe.PermissionError)
+        mask_levels = set(work.meta.get_permlevel_access(permission_type="mask", user=frappe.session.user))
+        if any((field := work.meta.get_field(name)) and field.get("mask")
+               and (field.permlevel or 0) not in mask_levels
+               for name in ("name", "company", "jf_flow_order", "docstatus")):
+            frappe.throw("无法读取本流程生产工单的来源字段，不能新建直接领料。", frappe.PermissionError)
+        if (work.company != flow.company or work.jf_flow_order != flow.name or work.docstatus == 2):
+            frappe.throw("本流程关联的生产工单来源不一致，不能新建直接领料。")
+        frappe.throw("本流程已有有效生产工单。请从工单办理转料和制造，不要再生成费用型直接领料。")
+
+
+def assert_no_net_issue_for_manufacturing(flow):
+    """Require all direct-expense issues to be source-returned before WO consumption."""
+    from jifeng_erp.order_material_workbench import _issues
+
+    issued, _vouchers = _issues(flow)
+    if any(quantity > 0 for quantity in issued.values()):
+        frappe.throw("本流程仍有净领料。仅将确认尚未耗用的实物按原领料单退回后，再创建工单或转料制造；已耗用材料不能退回或重复投产。")
 
 
 def validate_material_issue(doc):

@@ -70,6 +70,21 @@ class TestFlowStockEntry(unittest.TestCase):
         frappe.db = types.SimpleNamespace(get_value=lambda doctype, name, fields, as_dict=False:
                                           sources.get((doctype, name)))
         self.sources = sources
+        self.material_issue_calls = []
+        self.manufacturing_guard_calls = []
+        material_issue = types.ModuleType("jifeng_erp.material_issue")
+        def assert_no_active_work_order(flow):
+            self.material_issue_calls.append(flow.name)
+            if flow.name in getattr(self, "blocked_work_order_flows", set()):
+                raise ValueError("本流程已有有效生产工单")
+        material_issue.assert_no_active_work_order = assert_no_active_work_order
+        def assert_no_net_issue_for_manufacturing(flow):
+            self.manufacturing_guard_calls.append(flow.name)
+            if flow.name in getattr(self, "blocked_manufacturing_flows", set()):
+                raise ValueError("本流程仍有净领料")
+        material_issue.assert_no_net_issue_for_manufacturing = assert_no_net_issue_for_manufacturing
+        production = types.ModuleType("jifeng_erp.production_instruction")
+        production.validate_work_order = lambda doc: None
         custom = types.ModuleType("frappe.custom.doctype.custom_field.custom_field")
         custom.create_custom_fields = lambda *args, **kwargs: None
         modules = {
@@ -78,6 +93,8 @@ class TestFlowStockEntry(unittest.TestCase):
             "frappe.custom.doctype": types.ModuleType("frappe.custom.doctype"),
             "frappe.custom.doctype.custom_field": types.ModuleType("frappe.custom.doctype.custom_field"),
             "frappe.custom.doctype.custom_field.custom_field": custom,
+            "jifeng_erp.material_issue": material_issue,
+            "jifeng_erp.production_instruction": production,
         }
         modules_patch = patch.dict(sys.modules, modules)
         modules_patch.start()
@@ -111,6 +128,39 @@ class TestFlowStockEntry(unittest.TestCase):
         self.entry["items"] = [Record(item_code="SCRAP", jf_flow_order=None)]
         self.setup.validate_flow_links(self.entry)
         self.assertIsNone(self.entry["items"][0].jf_flow_order)
+
+    def test_row_linked_manual_issue_checks_active_work_order_after_flow_lock(self):
+        entry = Record(doctype="Stock Entry", docstatus=0, company="JF", purpose="Material Issue",
+                       stock_entry_type="Material Issue", items=[
+                           Record(item_code="SILVER", jf_flow_order="FLOW-1")])
+        self.setup.validate_flow_links(entry)
+        self.assertEqual(self.material_issue_calls, ["FLOW-1"])
+
+    def test_row_linked_manual_issue_is_rejected_when_work_order_is_active(self):
+        self.blocked_work_order_flows = {"FLOW-1"}
+        entry = Record(doctype="Stock Entry", docstatus=0, company="JF", purpose="Material Issue",
+                       stock_entry_type="Material Issue", items=[
+                           Record(item_code="SILVER", jf_flow_order="FLOW-1")])
+        with self.assertRaisesRegex(ValueError, "已有有效生产工单"):
+            self.setup.validate_flow_links(entry)
+
+    def test_native_work_order_save_checks_net_issues(self):
+        self.blocked_manufacturing_flows = {"FLOW-1"}
+        work = Record(doctype="Work Order", docstatus=0, jf_flow_order="FLOW-1", company="JF")
+        with self.assertRaisesRegex(ValueError, "仍有净领料"):
+            self.setup.validate_flow_links(work)
+        self.assertEqual(self.manufacturing_guard_calls, ["FLOW-1"])
+
+    def test_work_order_transfer_or_manufacture_checks_net_issues(self):
+        self.blocked_manufacturing_flows = {"FLOW-1"}
+        entry = Record(doctype="Stock Entry", docstatus=0, company="JF", work_order="WO-1",
+                       purpose="Material Transfer for Manufacture",
+                       stock_entry_type="Material Transfer for Manufacture", items=[
+                           Record(item_code="SILVER", jf_flow_order=None),
+                           Record(item_code="RING", jf_flow_order=None)])
+        with self.assertRaisesRegex(ValueError, "仍有净领料"):
+            self.setup.validate_flow_links(entry)
+        self.assertEqual(self.manufacturing_guard_calls, ["FLOW-1"])
 
     def test_procurement_documents_accept_only_materials_from_matching_flow(self):
         for doctype in ("Purchase Order", "Purchase Receipt", "Purchase Invoice"):

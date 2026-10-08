@@ -317,6 +317,14 @@ def make_work_order(flow):
             flow.save()
         return work_order.name
 
+    # Material Issue is a separate expense-consumption path. The native Work
+    # Order transfers BOM materials into WIP and later consumes them again.
+    # Do not create a new Work Order while any linked issue remains net-issued;
+    # the user must first return only material that is physically unconsumed.
+    from jifeng_erp.material_issue import assert_no_net_issue_for_manufacturing
+
+    assert_no_net_issue_for_manufacturing(flow)
+
     work_order = frappe.get_doc({
         "doctype": "Work Order", "company": flow.company,
         "production_item": flow.item_code, "bom_no": flow.bom,

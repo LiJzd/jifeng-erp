@@ -44,11 +44,12 @@ async function main() {
     object.busy = false;
     const dialog = { get_value: () => "WH", disable_primary_action: () => {}, enable_primary_action: () => {},
         set_primary_action: () => {}, hide: () => {} };
+    const actionButton = { disabled: false, textContent: "生成领料出库草稿", onclick: null };
     let writes = 0;
     frappe.call = async options => { if (options.type === "POST") writes++; throw new Error("synthetic lost response"); };
-    await object.createIssue(dialog, { flow_order: "FLOW", flow_modified: "VERSION" }, "COMPANY");
+    await object.createIssue(dialog, { flow_order: "FLOW", flow_modified: "VERSION" }, "COMPANY", actionButton);
     check(writes === 1 && object.unknown && object.is_dirty(), "unknown native draft request freezes");
-    await object.createIssue(dialog, { flow_order: "FLOW", flow_modified: "VERSION" }, "COMPANY");
+    await object.createIssue(dialog, { flow_order: "FLOW", flow_modified: "VERSION" }, "COMPANY", actionButton);
     check(writes === 1, "unknown request never blindly repeats POST");
     try { await object.checkIssue(dialog, "FLOW", "COMPANY"); } catch {}
     check(object.unknown && !object.busy, "failed status read retains unknown state");

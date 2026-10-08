@@ -4,6 +4,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 import frappe
+from frappe.model import get_permitted_fields
 from frappe.utils import cint, getdate
 
 from jifeng_erp.inventory_scope import decimal_number
@@ -13,16 +14,26 @@ from jifeng_erp.material_issue import _required_stock, make_material_issue
 FLOW = "Jifeng Flow Order"
 FLOW_FIELDS = ("company", "item_code", "planned_qty", "sales_order", "sales_order_item", "external_line_id",
                "external_order", "online_order_id", "source_status", "source_changed",
-               "requirements", "specification")
+               "requirements", "specification", "bom")
 MATERIAL_FIELDS = ("item_code", "uom", "qty_per_unit", "unit_price", "note")
 LIMIT = 1000
+WORK_ORDER_FIELDS = ("name", "company", "production_item", "bom_no", "qty", "docstatus",
+                     "status", "source_warehouse", "wip_warehouse", "material_transferred_for_manufacturing",
+                     "produced_qty", "skip_transfer", "from_wip_warehouse", "jf_flow_order")
+WORK_ORDER_ITEM_FIELDS = ("item_code", "stock_uom", "required_qty", "transferred_qty", "consumed_qty",
+                          "source_warehouse", "operation")
+WORK_ORDER_PURPOSES = ("Material Transfer for Manufacture", "Manufacture", "Material Consumption for Manufacture")
 
 
 def _fields(doc, fields, permission="read"):
     if frappe.session.user == "Administrator":
         return
-    allowed = set(doc.meta.get_permitted_fieldnames(permission_type=permission))
+    allowed = set(get_permitted_fields(doc.doctype, permission_type=permission, ignore_virtual=True))
     if not set(fields).issubset(allowed):
+        frappe.throw("没有读取或填写订单用料所需字段的权限", frappe.PermissionError)
+    mask_levels = set(doc.meta.get_permlevel_access(permission_type="mask", user=frappe.session.user))
+    if any((field := doc.meta.get_field(name)) and field.get("mask")
+           and (field.permlevel or 0) not in mask_levels for name in fields):
         frappe.throw("没有读取或填写订单用料所需字段的权限", frappe.PermissionError)
 
 
@@ -37,9 +48,15 @@ def _table(doc, fieldname, childtype, fields, permission="read"):
     if not (field and field.fieldtype == "Table" and field.options == childtype
             and (field.permlevel or 0) in levels):
         frappe.throw("没有读取或填写订单用料明细的权限", frappe.PermissionError)
-    allowed = set(frappe.get_meta(childtype).get_permitted_fieldnames(
-        parenttype=doc.doctype, permission_type=permission))
+    child_meta = frappe.get_meta(childtype)
+    allowed = set(get_permitted_fields(childtype, parenttype=doc.doctype,
+                                       permission_type=permission, ignore_virtual=True))
     if not set(fields).issubset(allowed):
+        frappe.throw("没有读取或填写订单用料明细的权限", frappe.PermissionError)
+    mask_levels = set(child_meta.get_permlevel_access(permission_type="mask", parenttype=doc.doctype,
+                                                       user=frappe.session.user))
+    if any((child_field := child_meta.get_field(name)) and child_field.get("mask")
+           and (child_field.permlevel or 0) not in mask_levels for name in fields):
         frappe.throw("没有读取或填写订单用料明细的权限", frappe.PermissionError)
 
 
@@ -284,6 +301,70 @@ def _issues(flow):
     return quantities, vouchers
 
 
+def _production(flow, issued):
+    """Read native Work Order requirements and their current material movement totals."""
+    filters = {"jf_flow_order": flow.name, "docstatus": ["<", 2]}
+    raw = frappe.get_all("Work Order", filters=filters, fields=["name"], limit_page_length=LIMIT + 1)
+    raw_names = {row.name for row in raw}
+    if not raw_names:
+        return {"bom": flow.bom or "", "work_orders": [], "has_active_work_order": False}
+    visible = frappe.get_list("Work Order", filters=filters, fields=["name"], limit_page_length=LIMIT + 1)
+    visible_names = {row.name for row in visible}
+    if len(raw_names) > LIMIT or raw_names != visible_names:
+        frappe.throw("无法完整读取本流程生产工单，请核对来源读取权限", frappe.PermissionError)
+
+    result = []
+    for name in sorted(visible_names):
+        work = frappe.get_doc("Work Order", name)
+        work.check_permission("read")
+        _fields(work, WORK_ORDER_FIELDS)
+        if (work.company != flow.company or work.production_item != flow.item_code
+                or work.bom_no != flow.bom or work.jf_flow_order != flow.name or work.docstatus == 2):
+            frappe.throw("生产工单与当前流程单的公司、商品、BOM或来源不一致")
+        _table(work, "required_items", "Work Order Item", WORK_ORDER_ITEM_FIELDS)
+
+        entries_filter = {"work_order": name, "purpose": ["in", WORK_ORDER_PURPOSES], "docstatus": ["<", 2]}
+        raw_entries = frappe.get_all("Stock Entry", filters=entries_filter, fields=["name"], limit_page_length=LIMIT + 1)
+        visible_entries = frappe.get_list("Stock Entry", filters=entries_filter, fields=["name"], limit_page_length=LIMIT + 1)
+        raw_entry_names = {row.name for row in raw_entries}
+        visible_entry_names = {row.name for row in visible_entries}
+        if len(raw_entry_names) > LIMIT or raw_entry_names != visible_entry_names:
+            frappe.throw("无法完整读取工单库存凭证，请核对来源读取权限", frappe.PermissionError)
+        sources = []
+        for entry_name in sorted(visible_entry_names):
+            entry = frappe.get_doc("Stock Entry", entry_name)
+            entry.check_permission("read")
+            _fields(entry, ("company", "work_order", "purpose", "docstatus", "is_return"))
+            if entry.company != flow.company or entry.work_order != work.name or entry.purpose not in WORK_ORDER_PURPOSES:
+                frappe.throw("工单库存凭证与当前工单不一致")
+            sources.append({"name": entry.name, "purpose": entry.purpose, "docstatus": entry.docstatus,
+                            "is_return": int(entry.get("is_return") or 0)})
+
+        items = []
+        for row in work.required_items or []:
+            _read("Item", row.item_code, ("stock_uom",))
+            required = decimal_number(row.required_qty)
+            transferred = decimal_number(row.transferred_qty)
+            consumed = decimal_number(row.consumed_qty)
+            items.append({"item_code": row.item_code, "stock_uom": row.stock_uom,
+                          "required_qty": required, "transferred_qty": transferred,
+                          "consumed_qty": consumed,
+                          "pending_transfer": Decimal(0) if work.skip_transfer else required - transferred,
+                          "source_warehouse": row.source_warehouse or "",
+                          "net_issue_qty": issued.get(row.item_code, Decimal(0))})
+        result.append({"name": work.name, "docstatus": work.docstatus, "status": work.status or "",
+                       "bom_no": work.bom_no, "planned_qty": decimal_number(work.qty),
+                       "produced_qty": decimal_number(work.produced_qty),
+                       "transferred_qty": decimal_number(work.material_transferred_for_manufacturing),
+                       "flow_planned_qty": decimal_number(flow.planned_qty),
+                       "skip_transfer": int(work.skip_transfer or 0),
+                       "from_wip_warehouse": int(work.from_wip_warehouse or 0),
+                       "source_warehouse": work.source_warehouse or "", "wip_warehouse": work.wip_warehouse or "",
+                       "items": items, "sources": sources})
+    return {"bom": flow.bom or "", "work_orders": result,
+            "has_active_work_order": any(row["docstatus"] < 2 for row in result)}
+
+
 @frappe.whitelist()
 def detail(flow_order, company):
     _company(company)
@@ -297,11 +378,36 @@ def detail(flow_order, company):
     for code in set(issued) - set(required):
         required[code] = Decimal(0)
         units[code] = _read("Item", code, ("stock_uom",)).stock_uom
+    production = _production(flow, issued)
+    can_write_flow = flow.has_permission("write")
     return {"flow_order": flow.name, "flow_modified": str(flow.modified), "vouchers": vouchers,
             "materials": [{"item_code": code, "stock_uom": units[code], "required": qty,
                            "issued": issued[code], "remaining": qty - issued[code]}
                           for code, qty in sorted(required.items())],
-            "can_create_issue": flow.has_permission("write") and frappe.has_permission("Stock Entry", "create")}
+            "production": production,
+            "can_create_issue": can_write_flow and not production["has_active_work_order"]
+                and frappe.has_permission("Stock Entry", "create"),
+            "can_create_work_order": bool(flow.bom) and not production["has_active_work_order"]
+                and can_write_flow and frappe.has_permission("Work Order", "create"),
+            "can_open_work_order": bool(production["work_orders"])}
+
+
+@frappe.whitelist(methods=["POST"])
+def create_work_order(flow_order, company, flow_modified):
+    """Create or reuse the native Work Order; actual stock moves remain native UI actions."""
+    _company(company)
+    flow = _flow(flow_order, company, lock=True)
+    flow.check_permission("write")
+    if str(flow.modified) != str(flow_modified):
+        frappe.throw("流程单或BOM已变化，请重新查询并核对")
+    if not flow.bom:
+        frappe.throw("本流程未配置生产BOM，不能创建生产工单")
+    name = flow.make_work_order()
+    work = _read("Work Order", name, WORK_ORDER_FIELDS)
+    if (work.company != company or work.jf_flow_order != flow.name
+            or work.production_item != flow.item_code or work.bom_no != flow.bom):
+        frappe.throw("生成的生产工单与当前流程单来源不一致")
+    return {"name": name, "docstatus": work.docstatus}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -315,9 +421,12 @@ def create_issue(flow_order, company, flow_modified, warehouse):
     if str(flow.modified) != str(flow_modified):
         frappe.throw("流程单用料分析已变化，请重新查询并核对")
     _source(flow)
+    issued, _ = _issues(flow)
+    production = _production(flow, issued)
+    if production["has_active_work_order"]:
+        frappe.throw("本流程已有有效生产工单。请从工单办理物料转入在制仓，不要再创建费用型直接领料。")
     _material_rows(flow, {}, "")
     _conversion_sources(flow)
-    _issues(flow)
     _fields(flow, ("company", "item_code", "planned_qty"))
     draft = frappe.get_doc({"doctype": "Stock Entry", "company": company,
                             "stock_entry_type": "Material Issue", "purpose": "Material Issue"})

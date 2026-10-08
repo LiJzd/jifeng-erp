@@ -88,6 +88,7 @@ class TestSalesOrderFlow(unittest.TestCase):
         self.work_orders = {}
         self.requests = {}
         self.profiles = {}
+        self.net_issues = {}
         self.bom = Record(name="BOM-1", item="RING", company="JF", docstatus=1, is_active=1)
         self.order = Record(
             doctype="Sales Order", name="SO-0001", docstatus=1,
@@ -148,7 +149,15 @@ class TestSalesOrderFlow(unittest.TestCase):
         utils.add_days = lambda date, days: date
         utils.cint = lambda value: int(value or 0)
         utils.today = lambda: "2026-09-30"
-        native_patch = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils, "frappe.model": model})
+        material_workbench = types.ModuleType("jifeng_erp.order_material_workbench")
+        material_issue = types.ModuleType("jifeng_erp.material_issue")
+        def assert_no_net_issue(flow):
+            if any(value > 0 for value in self.net_issues.values()):
+                raise ValueError("本流程仍有净领料。仅将确认尚未耗用的实物按原领料单退回后，再创建工单或转料制造")
+        material_issue.assert_no_net_issue_for_manufacturing = assert_no_net_issue
+        native_patch = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils, "frappe.model": model,
+                                                "jifeng_erp.order_material_workbench": material_workbench,
+                                                "jifeng_erp.material_issue": material_issue})
         native_patch.start()
         self.addCleanup(native_patch.stop)
         with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils}):
@@ -263,6 +272,15 @@ class TestSalesOrderFlow(unittest.TestCase):
                          (name, "SO-0001", "ROW-1"))
         self.assertEqual((work_order.bom_no, work_order.production_item, work_order.qty), ("BOM-1", "RING", 10))
         self.assertTrue(work_order.bom_loaded)
+
+    def test_net_expense_issue_must_be_returned_before_creating_native_work_order(self):
+        name = self.workflow.create_sales_order_flows(self.order.name)[0]
+        flow = self.flows[name]
+        flow.bom, flow.source_changed = "BOM-1", 0
+        self.net_issues["RAW"] = Decimal("1")
+        with self.assertRaisesRegex(ValueError, "净领料.*确认尚未耗用的实物"):
+            self.workflow.make_work_order(flow)
+        self.assertFalse(self.work_orders)
 
     def test_wrong_company_bom_cannot_create_work_order(self):
         name = self.workflow.create_sales_order_flows(self.order.name)[0]

@@ -41,6 +41,14 @@ class TestOrderMaterialWorkbenchIssues(unittest.TestCase):
         frappe.whitelist = lambda *args, **kwargs: lambda function: function
         frappe.session = types.SimpleNamespace(user="qa@example.com")
         frappe.db = types.SimpleNamespace(sql=self.sql, get_value=self.get_value)
+        model = types.ModuleType("frappe.model")
+        model.get_permitted_fields = lambda doctype, parenttype=None, permission_type="read", ignore_virtual=False: {
+            "name", "docstatus", "company", "production_item", "bom_no", "qty", "status",
+            "source_warehouse", "wip_warehouse", "material_transferred_for_manufacturing",
+            "produced_qty", "skip_transfer", "from_wip_warehouse", "jf_flow_order",
+            "item_code", "stock_uom", "required_qty", "transferred_qty", "consumed_qty",
+            "operation", "materials", "uom", "qty_per_unit", "unit_price", "note",
+        }
         frappe.get_doc = lambda doctype, name, **kwargs: self.issue_docs[name]
         utils = types.ModuleType("frappe.utils")
         utils.cint = int
@@ -59,7 +67,7 @@ class TestOrderMaterialWorkbenchIssues(unittest.TestCase):
 
         returns.submitted_return_quantities_for_flow = returned_for_flow
         self.returns_module = returns
-        modules = {"frappe": frappe, "frappe.utils": utils,
+        modules = {"frappe": frappe, "frappe.model": model, "frappe.utils": utils,
                    "jifeng_erp.inventory_scope": scope,
                    "jifeng_erp.material_issue": material_issue,
                    "jifeng_erp.material_returns": returns}
@@ -109,6 +117,66 @@ class TestOrderMaterialWorkbenchIssues(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "超过流程单有效领料数量"):
             with patch.dict(sys.modules, {"jifeng_erp.material_returns": self.returns_module}):
                 self.module._issues(flow)
+
+    def test_production_detail_uses_native_work_order_net_transfer_and_consumption(self):
+        flow = Record(name="FLOW-1", company="JF", item_code="FG", bom="BOM-1", planned_qty=2)
+        work = Record(name="WO-1", company="JF", production_item="FG", bom_no="BOM-1",
+                      qty=2, docstatus=1, status="In Process", source_warehouse="Stores - JF",
+                      wip_warehouse="WIP - JF", material_transferred_for_manufacturing=2,
+                      produced_qty=1, skip_transfer=0, from_wip_warehouse=0,
+                      jf_flow_order="FLOW-1", required_items=[Record(
+                          item_code="RAW", stock_uom="Nos", required_qty=2, transferred_qty=2,
+                          consumed_qty=1, source_warehouse="Stores - JF", operation=None)])
+        transfer = Record(name="STE-TRANSFER", company="JF", work_order="WO-1",
+                          purpose="Material Transfer for Manufacture", docstatus=1, is_return=0)
+        self.frappe.get_all = lambda doctype, **kwargs: (
+            [Record(name="WO-1")] if doctype == "Work Order" else
+            [Record(name="STE-TRANSFER")] if doctype == "Stock Entry" else [])
+        self.frappe.get_list = self.frappe.get_all
+        self.frappe.get_doc = lambda doctype, name, **kwargs: work if doctype == "Work Order" else transfer
+
+        result = self.module._production(flow, {"RAW": Decimal("2")})
+
+        self.assertTrue(result["has_active_work_order"])
+        self.assertEqual(result["work_orders"][0]["items"][0], {
+            "item_code": "RAW", "stock_uom": "Nos", "required_qty": Decimal("2"),
+            "transferred_qty": Decimal("2"), "consumed_qty": Decimal("1"),
+            "pending_transfer": Decimal("0"), "source_warehouse": "Stores - JF",
+            "net_issue_qty": Decimal("2"),
+        })
+        self.assertEqual(result["work_orders"][0]["sources"][0]["name"], "STE-TRANSFER")
+
+    def test_skip_transfer_work_order_has_no_pending_transfer_even_before_direct_manufacture(self):
+        flow = Record(name="FLOW-1", company="JF", item_code="FG", bom="BOM-1", planned_qty=2)
+        work = Record(name="WO-1", company="JF", production_item="FG", bom_no="BOM-1",
+                      qty=2, docstatus=1, status="In Process", source_warehouse="Stores - JF",
+                      wip_warehouse="WIP - JF", material_transferred_for_manufacturing=0,
+                      produced_qty=0, skip_transfer=1, from_wip_warehouse=0,
+                      jf_flow_order="FLOW-1", required_items=[Record(
+                          item_code="RAW", stock_uom="Nos", required_qty=2, transferred_qty=0,
+                          consumed_qty=0, source_warehouse="Stores - JF", operation=None)])
+        self.frappe.get_all = lambda doctype, **kwargs: [Record(name="WO-1")] if doctype == "Work Order" else []
+        self.frappe.get_list = self.frappe.get_all
+        self.frappe.get_doc = lambda doctype, name, **kwargs: work
+
+        result = self.module._production(flow, {})
+
+        row = result["work_orders"][0]["items"][0]
+        self.assertEqual(row["required_qty"], Decimal("2"))
+        self.assertEqual(row["transferred_qty"], Decimal("0"))
+        self.assertEqual(row["consumed_qty"], Decimal("0"))
+        self.assertEqual(row["pending_transfer"], Decimal("0"))
+        self.assertEqual(result["work_orders"][0]["skip_transfer"], 1)
+
+    def test_no_work_order_does_not_require_manufacturing_read_permission(self):
+        flow = Record(name="FLOW-1", company="JF", item_code="FG", bom="BOM-1", planned_qty=2)
+        self.frappe.get_all = lambda doctype, **kwargs: []
+        self.frappe.get_list = lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError("denied"))
+
+        result = self.module._production(flow, {})
+
+        self.assertFalse(result["has_active_work_order"])
+        self.assertEqual(result["work_orders"], [])
 
 
 if __name__ == "__main__":
