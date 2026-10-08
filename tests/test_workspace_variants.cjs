@@ -118,6 +118,9 @@ for (const [name, mode] of [["临工档案", "archive"], ["临工浏览", "brows
 }
 assert.equal(dispatch(Modern, find("工资", "历史"))[0].spec.salaryHistory, true);
 assert.equal(shared.availability("工资", "历史分析"), "partial", "salary analysis uses saved payroll sources, not the wage-entry report");
+assert.equal(find("工资", "工资发放").group, "工资操作", "monthly payroll is visible in the wage operations group");
+assert.deepEqual(dispatch(Modern, find("工资", "工资发放"))[0].spec.route, ["List", "Payroll Entry"], "monthly payroll opens the native Payroll Entry list");
+assert.deepEqual(dispatch(Classic, find("工资", "工资发放"))[0].spec.route, ["List", "Payroll Entry"]);
 for (const [module, name, flag] of [["物料", "采购履行核对", "procurementFulfillment"], ["材料", "采购履行核对", "procurementFulfillment"], ["销售", "销售履行核对", "salesFulfillment"], ["财务", "供应商应付核对", "supplierPayables"], ["物料", "跟踪", "inventoryTracking"], ["材料", "跟踪", "inventoryTracking"]]) {
 	assert.equal(shared.availability(module, name), "partial");
 	assert.equal(dispatch(Modern, find(module, name))[0].spec[flag], true);
@@ -176,6 +179,8 @@ assert.equal(searchCalls.length, 0, "search only filters navigation and never op
 assert.equal(results.hidden, false); assert.equal(searchInput.attributes["aria-expanded"], "true");
 assert.deepEqual(plain(searchWorkspace.searchEntries(searchInput.value)), entries.filter(entry =>
 	["外发", "基础", "工厂"].every(token => [entry.module, entry.group, entry.name].join(" ").includes(token))));
+assert.ok(searchWorkspace.searchEntries("工资发放").some(entry => entry.module === "工资" && entry.group === "工资操作" && entry.name === "工资发放"),
+	"global navigation search indexes the visible monthly payroll entry");
 assert.match(results.innerHTML, /data-module="外发" data-page="外发工厂"/);
 const resultButton = { dataset: { action: "open-page", module: "外发", page: "外发工厂" }, matches: () => false,
 	closest: selector => selector === "[data-action]" ? resultButton : null };
