@@ -23,7 +23,7 @@
 			this.renderShell();
 			this.onClick = (event) => this.handleClick(event);
 			this.root.addEventListener("click", this.onClick);
-			this.refresh();
+			this.ready = this.refresh();
 		}
 
 		renderShell() {
@@ -155,9 +155,16 @@
 			if (action === "query") { this.page = 1; await this.refresh(); return; }
 			if (action === "prev" && this.page > 1) { this.page -= 1; await this.refresh(); return; }
 			if (action === "next" && this.hasMore) { this.page += 1; await this.refresh(); return; }
-			if (action === "new") { frappe.new_doc(DOCTYPE, { company: this.options.company }); return; }
+			if (action === "new") {
+				if (!this.options.company) { this.message("请先选择公司。", "error"); return; }
+				if (this.options.newForm) this.options.newForm(DOCTYPE, { company: this.options.company });
+				else frappe.new_doc(DOCTYPE, { company: this.options.company });
+				return;
+			}
 			if (["open", "edit", "delete"].includes(action)) {
-				frappe.set_route("Form", DOCTYPE, button.dataset.name); return;
+				if (this.options.openForm) this.options.openForm(DOCTYPE, button.dataset.name);
+				else frappe.set_route("Form", DOCTYPE, button.dataset.name);
+				return;
 			}
 			if (action === "format") {
 				if (this.rows.length !== 1) { frappe.msgprint(__("请将查询范围缩小到一张生产指令后使用格式1。")); return; }
@@ -180,6 +187,10 @@
 			const url = URL.createObjectURL(new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" }));
 			const link = document.createElement("a"); link.href = url; link.download = "生产指令单.csv"; link.click(); URL.revokeObjectURL(url);
 		}
+
+		isDirty() { return false; }
+		getCloseBlock() { return null; }
+		setVisible(visible) { this.visible = Boolean(visible); }
 
 		destroy() {
 			if (this.disposed) return;

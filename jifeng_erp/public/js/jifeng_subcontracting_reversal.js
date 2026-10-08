@@ -27,7 +27,7 @@
 			this.renderShell();
 			this.onClick = event => this.handleClick(event);
 			this.root.addEventListener("click", this.onClick);
-			this.refresh();
+			this.ready = this.refresh();
 		}
 
 		renderShell() {
@@ -138,9 +138,14 @@
 			else if (button.dataset.action === "prev" && this.page > 1) { this.page -= 1; await this.refresh(); }
 			else if (button.dataset.action === "next" && this.hasMore) { this.page += 1; await this.refresh(); }
 			else if (button.dataset.action === "open" && button.dataset.doctype && button.dataset.name) {
-				frappe.set_route("Form", button.dataset.doctype, button.dataset.name);
+				if (this.options.openForm) this.options.openForm(button.dataset.doctype, button.dataset.name);
+				else frappe.set_route("Form", button.dataset.doctype, button.dataset.name);
 			}
 		}
+
+		isDirty() { return false; }
+		getCloseBlock() { return null; }
+		setVisible(visible) { this.visible = Boolean(visible); }
 
 		destroy() {
 			if (this.disposed) return;
