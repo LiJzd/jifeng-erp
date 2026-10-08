@@ -38,13 +38,11 @@ def _fields(doctype, names, parenttype=None):
 def _table(parent, fieldname, childtype, child_fields):
     meta = frappe.get_meta(parent.doctype)
     field = meta.get_field(fieldname)
-    permitted = set(get_permitted_fields(
-        parent.doctype, permission_type="read", ignore_virtual=True))
     levels = set(meta.get_permlevel_access(
         permission_type="read", user=frappe.session.user))
     masks = set(meta.get_permlevel_access(
         permission_type="mask", user=frappe.session.user))
-    if (fieldname not in permitted or not field or field.fieldtype != "Table" or field.options != childtype
+    if (not field or field.fieldtype != "Table" or field.options != childtype
             or (field.permlevel or 0) not in levels
             or (field.mask and (field.permlevel or 0) not in masks)):
         _deny()

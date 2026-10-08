@@ -20,9 +20,10 @@ class Field:
 
 
 class Meta:
-    def __init__(self, fields, mask_levels=(0,)):
+    def __init__(self, fields, mask_levels=(0,), read_levels=(0,)):
         self.fields = fields
         self.mask_levels = mask_levels
+        self.read_levels = read_levels
 
     def get_field(self, name):
         return self.fields.get(name)
@@ -31,7 +32,9 @@ class Meta:
         return name in self.fields
 
     def get_permlevel_access(self, **kwargs):
-        return self.mask_levels if kwargs.get("permission_type") == "mask" else [0]
+        if kwargs.get("permission_type") == "mask":
+            return self.mask_levels
+        return self.read_levels
 
 
 class Doc(Record):
@@ -78,6 +81,7 @@ class TestPayrollCompletion(unittest.TestCase):
         self.mask_access = {"Payroll Entry": [0], "Salary Slip": [0], "Employee": [0],
                             "Company": [0], "Journal Entry": [0],
                             "Payroll Employee Detail": [0], "Journal Entry Account": [0]}
+        self.read_access = {doctype: [0] for doctype in self.mask_access}
         self.masked_fields = set()
         self.parent = Doc(name="PR-1", doctype="Payroll Entry", docstatus=1,
                           company="QA Co", start_date="2026-10-01", end_date="2026-10-31",
@@ -94,7 +98,8 @@ class TestPayrollCompletion(unittest.TestCase):
         utils = types.ModuleType("frappe.utils")
         utils.getdate = lambda value: str(value)[:10]
         model = types.ModuleType("frappe.model")
-        model.get_permitted_fields = lambda doctype, **kwargs: list(self.get_meta(doctype).fields)
+        model.get_permitted_fields = lambda doctype, **kwargs: [
+            name for name, field in self.get_meta(doctype).fields.items() if field.fieldtype != "Table"]
         modules = {"frappe": self.frappe, "frappe.utils": utils, "frappe.model": model}
         self.modules_patch = patch.dict(sys.modules, modules)
         self.modules_patch.start()
@@ -118,25 +123,29 @@ class TestPayrollCompletion(unittest.TestCase):
 
     def get_meta(self, doctype):
         if doctype == "Payroll Entry":
-            return Meta({"company": Field(), "start_date": Field(), "end_date": Field(),
-                         "currency": Field(), "salary_slips_submitted": Field(), "status": Field(),
-                         "employees": Field("Table", "Payroll Employee Detail")}, self.mask_access[doctype])
+            fields = {"company": Field(), "start_date": Field(), "end_date": Field(),
+                      "currency": Field(), "salary_slips_submitted": Field(), "status": Field(),
+                      "employees": Field("Table", "Payroll Employee Detail",
+                                         mask=(doctype, "employees") in self.masked_fields)}
+            return Meta(fields, self.mask_access[doctype], self.read_access[doctype])
         if doctype == "Payroll Employee Detail":
-            return Meta({"employee": Field()}, self.mask_access[doctype])
+            return Meta({"employee": Field()}, self.mask_access[doctype], self.read_access[doctype])
         if doctype == "Salary Slip":
             fields = {key: Field(mask=(doctype, key) in self.masked_fields) for key in
                       ("company", "employee", "currency", "start_date", "end_date",
                        "payroll_entry", "net_pay", "journal_entry")}
-            return Meta(fields, self.mask_access[doctype])
+            return Meta(fields, self.mask_access[doctype], self.read_access[doctype])
         if doctype == "Company":
-            return Meta({"default_currency": Field()}, self.mask_access[doctype])
+            return Meta({"default_currency": Field()}, self.mask_access[doctype], self.read_access[doctype])
         if doctype == "Employee":
-            return Meta({"company": Field()}, self.mask_access[doctype])
+            return Meta({"company": Field()}, self.mask_access[doctype], self.read_access[doctype])
         if doctype == "Journal Entry":
-            return Meta({"company": Field(), "accounts": Field("Table", "Journal Entry Account")},
-                        self.mask_access[doctype])
+            return Meta({"company": Field(), "accounts": Field("Table", "Journal Entry Account",
+                        mask=(doctype, "accounts") in self.masked_fields)}, self.mask_access[doctype],
+                        self.read_access[doctype])
         if doctype == "Journal Entry Account":
-            return Meta({"reference_type": Field(), "reference_name": Field()}, self.mask_access[doctype])
+            return Meta({"reference_type": Field(), "reference_name": Field()}, self.mask_access[doctype],
+                        self.read_access[doctype])
         return Meta({})
 
     def get_doc(self, doctype, name, **kwargs):
@@ -234,6 +243,23 @@ class TestPayrollCompletion(unittest.TestCase):
         result = self.run_endpoint()
         self.assertEqual(self.accrual_calls, 1)
         self.assertEqual(result["journal_entry"], "JE-1")
+
+    def test_table_fields_use_parent_levels_not_scalar_projection(self):
+        # The Frappe scalar projection deliberately omits employees/accounts Table fields.
+        self.assertNotIn("employees", self.module.get_permitted_fields(
+            "Payroll Entry", permission_type="read", ignore_virtual=True))
+        self.assertNotIn("accounts", self.module.get_permitted_fields(
+            "Journal Entry", permission_type="read", ignore_virtual=True))
+        self.module._table(self.parent, "employees", "Payroll Employee Detail", {"employee"})
+
+        self.read_access["Payroll Entry"] = []
+        with self.assertRaises(PermissionError):
+            self.module._table(self.parent, "employees", "Payroll Employee Detail", {"employee"})
+        self.read_access["Payroll Entry"] = [0]
+        self.masked_fields.add(("Payroll Entry", "employees"))
+        self.mask_access["Payroll Entry"] = []
+        with self.assertRaises(PermissionError):
+            self.module._table(self.parent, "employees", "Payroll Employee Detail", {"employee"})
 
     def test_submit_failure_restores_via_flag_and_does_not_accrue(self):
         self.docs[("Salary Slip", "SS-2")].submit_error = True
