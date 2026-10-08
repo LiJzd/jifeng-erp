@@ -73,7 +73,8 @@ before_request = "jifeng_erp.session_init.initialize_csrf"
 after_request = "jifeng_erp.sample_source_report_files.after_report_file_request"
 before_job = "jifeng_erp.sample_source_report_output.before_job"
 doctype_js = {
-    "Stock Entry": "public/js/jifeng_material_returns.js",
+	"Payroll Entry": "public/js/jifeng_payroll_entry.js",
+	"Stock Entry": "public/js/jifeng_material_returns.js",
     "Jifeng Sample Order": "public/js/jifeng_sample_order.js",
     "Quotation": "public/js/jifeng_quotation_sources.js",
     "Sales Order": "public/js/jifeng_sales_order.js",
@@ -176,7 +177,8 @@ doc_events = {
     },
     "Jifeng Sample Order": {"before_validate": "jifeng_erp.sample_source_permissions.before_validate_source_binding"},
     "Additional Salary": {"validate": "jifeng_erp.payroll.validate_wage_additional_salary"},
-    "Salary Slip": {"validate": "jifeng_erp.payroll.validate_salary_slip_wage_sources"},
+    "Salary Slip": {"validate": "jifeng_erp.payroll.validate_salary_slip_wage_sources",
+                    "before_submit": "jifeng_erp.payroll_completion.guard_salary_slip_submit"},
     "Journal Entry": {
         "before_validate": "jifeng_erp.accounting.lock_expense_settlement_references",
         "validate": "jifeng_erp.accounting.validate_expense_journal_entry",
