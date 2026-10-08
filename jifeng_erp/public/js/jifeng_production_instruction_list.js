@@ -90,7 +90,7 @@
 				page: this.page, page_size: this.pageSize,
 			};
 			if (!args.company) { this.message("请先选择公司。", "error"); return; }
-			if (!args.from_date || !args.to_date || args.from_date > args.to_date) {
+			if (!args.exact_date && (!args.from_date || !args.to_date || args.from_date > args.to_date)) {
 				this.message("请核对开始日期和结束日期。", "error"); return;
 			}
 			this.setBusy(true);

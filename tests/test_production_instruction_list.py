@@ -123,8 +123,13 @@ class ProductionInstructionListTests(unittest.TestCase):
 
     def test_exact_date_overrides_the_date_range(self):
         self.setup_document()
-        self.call(exact_date="2026-11-01")
+        self.call(exact_date="2026-11-01", from_date="2026-11-05", to_date="2026-11-01")
         self.assertEqual(self.list_calls[-1][1]["filters"]["posting_date"], ["=", "2026-11-01"])
+
+    def test_exact_date_does_not_require_start_or_end(self):
+        self.setup_document()
+        self.call(exact_date="2026-10-08", from_date=None, to_date=None)
+        self.assertEqual(self.list_calls[-1][1]["filters"]["posting_date"], ["=", "2026-10-08"])
 
 
 if __name__ == "__main__":

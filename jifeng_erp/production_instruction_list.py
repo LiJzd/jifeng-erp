@@ -92,7 +92,7 @@ def _quantity_groups(items):
 
 
 @frappe.whitelist(methods=["GET"])
-def list_production_instructions(company, from_date, to_date, exact_date=None,
+def list_production_instructions(company, from_date=None, to_date=None, exact_date=None,
                                  search="", page=1, page_size=50):
     """List readable native plans; the amount is explicitly only a reference amount."""
     if frappe.session.user == "Guest":
@@ -104,10 +104,15 @@ def list_production_instructions(company, from_date, to_date, exact_date=None,
     ):
         _fail("没有查看该公司的生产计划权限", frappe.PermissionError)
 
-    start, end = _date(from_date, "开始日期"), _date(to_date, "结束日期")
-    if start > end or (end - start).days > MAX_DAYS:
-        _fail("日期范围无效或超过 366 天")
     exact = _date(exact_date, "指定日期") if exact_date else None
+    if exact:
+        start = end = exact
+    else:
+        if not from_date or not to_date:
+            _fail("请填写开始日期和结束日期")
+        start, end = _date(from_date, "开始日期"), _date(to_date, "结束日期")
+        if start > end or (end - start).days > MAX_DAYS:
+            _fail("日期范围无效或超过 366 天")
     if not isinstance(search, str) or len(search) > 140 or any(ord(char) < 32 for char in search):
         _fail("关键词无效")
     page = _page_int(page, "页码", 100000)
