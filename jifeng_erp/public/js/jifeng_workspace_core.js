@@ -3,7 +3,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "物料",
 		groups: [
 			{ name: "基础资料", items: ["物料类别", "物料档案", "仓库", "采购员", "出库方式", "领用人", "浏览"] },
-			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证", "采购履行核对"] },
+			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证", "领料退库", "采购履行核对"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
 			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
@@ -13,7 +13,7 @@ const JIFENG_LEGACY_MODULES = [
 		name: "材料",
 		groups: [
 			{ name: "基础资料", items: ["材料类别", "形状", "颜色", "材料档案", "仓库", "供应商", "采购员", "出库方式", "领用人", "浏览"] },
-			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证", "采购履行核对"] },
+			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证", "领料退库", "采购履行核对"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
 			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
@@ -133,8 +133,8 @@ const JIFENG_LEGACY_MODULES = [
 ];
 
 const JIFENG_LIVE_ROUTES = {
-	物料: { 物料类别: "Jifeng Inventory Dictionary", 物料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
-	材料: { 材料类别: "Jifeng Inventory Dictionary", 形状: "Jifeng Inventory Dictionary", 颜色: "Jifeng Inventory Dictionary", 材料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
+	物料: { 物料类别: "Jifeng Inventory Dictionary", 物料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 领料退库: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
+	材料: { 材料类别: "Jifeng Inventory Dictionary", 形状: "Jifeng Inventory Dictionary", 颜色: "Jifeng Inventory Dictionary", 材料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 供应商: "Supplier", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 领料退库: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
 	产品: { 类别: "Jifeng Product Category", 风格: "Jifeng Product Dictionary", 来源: "Jifeng Product Dictionary", 品牌: "Jifeng Product Dictionary", 镀色: "Jifeng Plating Color",
 		产品风格: "Jifeng Product Dictionary", 产品来源: "Jifeng Product Dictionary", 产品品牌: "Jifeng Product Dictionary",
 		产品档案: "Jifeng Product Profile", 商品映射: "Jifeng SKU Mapping", 商品工艺档案: "Jifeng Product Profile", 产品报价单: "Quotation", 报价查询: "Quotation",
@@ -157,7 +157,7 @@ const JIFENG_LIVE_ROUTES = {
 
 // Server-backed entry whose available operations remain explicitly limited.
 const JIFENG_PARTIAL_ROUTES = { 产品: { 镀色: true, 样品制作单: true, 样品单反审: true }, 工资: { 历史: true, 历史分析: true, 临工档案: true, 临工浏览: true, 临工: true, 临工明细: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
-	物料: { 采购履行核对: true, 跟踪: true }, 材料: { 采购履行核对: true, 跟踪: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true },
+	物料: { 采购履行核对: true, 跟踪: true, 领料退库: true }, 材料: { 采购履行核对: true, 跟踪: true, 领料退库: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true },
 	销售: { 销售履行核对: true, 成品入库来源核对: true, 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true },
 	日志: { 操作日志: true } };
 
@@ -235,8 +235,8 @@ const JIFENG_LIVE_LIST_FILTERS = {
 	产品: { 样品单反审: { docstatus: 1 } },
 	生产: { 完成: { docstatus: 1, status: "Completed" }, 刷单: { docstatus: ["<", 2] },
 		入库单: { stock_entry_type: "Manufacture" }, 反审: { docstatus: 1 } },
-	物料: { 采购订单: { is_subcontracted: 0 }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },
-	材料: { 采购订单: { is_subcontracted: 0 }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },
+	物料: { 采购订单: { is_subcontracted: 0 }, 领料退库: { stock_entry_type: "Material Receipt", jf_material_return_against: ["is", "set"] }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },
+	材料: { 采购订单: { is_subcontracted: 0 }, 领料退库: { stock_entry_type: "Material Receipt", jf_material_return_against: ["is", "set"] }, 退回: { docstatus: 1, is_return: 0 }, 退回报表: { is_return: 1 } },
 	发镀: { 委外采购单: { is_subcontracted: 1 } },
 	外发: { 委外采购单: { is_subcontracted: 1 } },
 	财务: { 收款凭证查询: { payment_type: "Receive" }, 付款凭证查询: { payment_type: "Pay" } },
@@ -572,7 +572,8 @@ class JifengLegacyWorkspace {
 						moduleName === "版种" && ["版种建模", "建模"].includes(name) && liveDoctype === "Jifeng Plate Modeling" ? "modeling" : null,
 					dictionaryArchive: liveDoctype === "Jifeng Inventory Dictionary",
 					personnelArchive: moduleName === "人事" && name === "人事档案",
-					hideCreate: moduleName === "人事" && name === "人事浏览" });
+					hideCreate: moduleName === "人事" && name === "人事浏览" ||
+						["物料", "材料"].includes(moduleName) && name === "领料退库" });
 				return;
 			}
 			frappe.set_route("List", liveDoctype);

@@ -32,7 +32,9 @@ def _columns():
         column("currency", "公司本币", "Link", "Currency", 100),
         column("transfer_stage", "调拨阶段", width=140), column("add_to_transit", "调入在途", "Check", width=95),
         column("outgoing_stock_entry", "来源调拨凭证", "Link", "Stock Entry", 175),
-        column("source_read_state", "调拨来源核对", width=160), column("source_detail", "来源调拨明细", width=165),
+        column("material_return_against", "原领料凭证", "Link", "Stock Entry", 175),
+        column("material_return_against_detail", "原领料明细", width=165),
+        column("source_read_state", "来源核对", width=160), column("source_detail", "来源调拨明细", width=165),
         column("document_qty", "凭证数量", "Float"), column("document_uom", "凭证单位", "Link", "UOM", 100),
         column("stock_entry_detail", "本行明细", width=165),
     ]
@@ -135,6 +137,28 @@ def _outgoing_source(doc, row, origins):
     return origin.name, source.name, "已核对"
 
 
+def _material_return_source(doc, row, origins):
+    name = doc.get("jf_material_return_against")
+    if not name:
+        if row.get("jf_material_return_against_detail"):
+            frappe.throw("退库明细有来源关联但凭证缺少原领料单，请核对")
+        return "", "", ""
+    origin = origins.get(name)
+    if not origin:
+        return "", "", "原领料不可读"
+    source = next((detail for detail in origin.get("items")
+                   if detail.name == row.get("jf_material_return_against_detail")), None)
+    if (doc.purpose != "Material Receipt" or origin.purpose != "Material Issue"
+            or origin.docstatus != 1 or origin.company != doc.company or not source
+            or source.parent != origin.name or source.parenttype != "Stock Entry"
+            or source.item_code != row.item_code or source.stock_uom != row.stock_uom
+            or source.s_warehouse != row.t_warehouse or row.s_warehouse
+            or source.get("jf_flow_order") != row.get("jf_flow_order")
+            or decimal_number(row.transfer_qty) > decimal_number(source.transfer_qty)):
+        frappe.throw("领料退库的原单、明细、物料、单位或仓库不一致，请核对")
+    return origin.name, source.name, "原领料已核对"
+
+
 def stock_entry_movements(selected, ledgers, items, warehouses, origins, currency):
     """Normalize permitted movements and check protected output references; never post."""
     grouped = {}
@@ -147,6 +171,7 @@ def stock_entry_movements(selected, ledgers, items, warehouses, origins, currenc
             frappe.throw("无法读取库存条目对应的商品档案，请核对", frappe.PermissionError)
         quantities = _ledger_quantities(doc, row, item, warehouses, grouped.get(row.name, []))
         outgoing, source_detail, source_read_state = _outgoing_source(doc, row, origins)
+        return_against, return_detail, return_state = _material_return_source(doc, row, origins)
         mode = next(key for key, purpose in PURPOSES.items() if purpose == doc.purpose)
         stage = "接收来源调拨" if doc.get("outgoing_stock_entry") else "调入在途" if doc.get("add_to_transit") else "直接调拨"
         check_protected_reference("Jifeng Flow Order", row.get("jf_flow_order"), company=doc.company)
@@ -154,7 +179,8 @@ def stock_entry_movements(selected, ledgers, items, warehouses, origins, currenc
         result.append({
             "company": doc.company, "posting_date": doc.posting_date, "posting_time": doc.posting_time,
             "stock_entry": doc.name, "stock_entry_detail": row.name, "idx": row.idx,
-            "entry_type": LABELS[mode], "item_code": row.item_code, "item_name": row.item_name,
+            "entry_type": "领料退库" if doc.get("jf_material_return_against") else LABELS[mode],
+            "item_code": row.item_code, "item_name": row.item_name,
             "flow_order": row.get("jf_flow_order"), "work_order": doc.get("work_order"),
             "stock_state": "库存台账已核对" if item.is_stock_item else "非库存条目（无库存变动）",
             "stock_uom": row.stock_uom, **quantities, "s_warehouse": row.s_warehouse,
@@ -162,7 +188,8 @@ def stock_entry_movements(selected, ledgers, items, warehouses, origins, currenc
             "transfer_stage": stage if mode == "transfer" else "",
             "add_to_transit": int(bool(doc.get("add_to_transit"))),
             "outgoing_stock_entry": outgoing, "source_detail": source_detail,
-            "source_read_state": source_read_state if mode == "transfer" else "",
+            "material_return_against": return_against, "material_return_against_detail": return_detail,
+            "source_read_state": return_state or (source_read_state if mode == "transfer" else ""),
             "document_qty": decimal_number(row.qty), "document_uom": row.uom,
         })
     return sorted(result, key=lambda row: (str(row["posting_date"]), str(row["posting_time"] or ""),
@@ -197,6 +224,7 @@ def stock_entry_ledger(filters=None):
         "voucher_detail_no": ["in", [row.name for _, row in selected]],
     }, complete=True)
     names = {doc.outgoing_stock_entry for doc, _ in selected if doc.get("outgoing_stock_entry")}
+    names.update(doc.get("jf_material_return_against") for doc, _ in selected if doc.get("jf_material_return_against"))
     origins = readable_documents("Stock Entry", {"name": ["in", list(names)]}) if names else {}
     currency = frappe.get_cached_value("Company", filters.company, "default_currency")
     return _columns(), stock_entry_movements(selected, ledgers, items, warehouses, origins, currency)

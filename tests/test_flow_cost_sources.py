@@ -273,6 +273,21 @@ class TestFlowCostSources(unittest.TestCase):
         self.ledger(name + "-SLE", self.module.SE, name, row.name, "RM", "RM-WH", -row.transfer_qty, -row.transfer_qty * 4)
         return doc, row
 
+    def issue_return(self, name="ISSUE-RETURN", qty=5, source="ISSUE", status=1, value=None):
+        original = self.documents[self.module.SE, source]
+        source_row = self.get_doc(self.module.SE, source).get("items")[0]
+        doc = self.add(self.module.SE, name, company="JF", purpose="Material Receipt", stock_entry_type="Material Receipt",
+            jf_material_return_against=source, jf_material_issue_flow=original.get("jf_material_issue_flow") or source_row.jf_flow_order,
+            posting_date=date(2026, 10, 4), posting_time=timedelta(hours=10), docstatus=status)
+        row = self.child(self.module.SE, name, "items", name + "-RM", item_code="RM", jf_flow_order=source_row.jf_flow_order,
+            jf_material_return_against_detail=source_row.name, qty=qty, uom="Kg", stock_uom="Kg",
+            conversion_factor=1, transfer_qty=qty, s_warehouse=None, t_warehouse="RM-WH")
+        self.ledger(name + "-SLE", self.module.SE, name, row.name, "RM", "RM-WH", qty,
+                    qty * 4 if value is None else value)
+        self.documents[self.module.SLE, name + "-SLE"].is_cancelled = status != 1
+        self.documents[self.module.SLE, name + "-SLE"].posting_date = doc.posting_date
+        return doc, row
+
     def manufacture(self, name="MAKE", material=40, other=0, qty=5, raw_qty=4, work="WO", flow="FLOW"):
         if (self.module.WO, work) not in self.documents:
             self.add(self.module.WO, work, company="JF", production_item="FG", jf_flow_order=flow, track_semi_finished_goods=0)
@@ -526,6 +541,60 @@ class TestFlowCostSources(unittest.TestCase):
         doc.jf_material_issue_flow = "OTHER-FLOW"
         with self.assertRaises(ValueError):
             self.module.material_issue_costs("FLOW")
+
+    def test_partial_material_return_reduces_exact_flow_quantity_and_actual_cost(self):
+        self.issue(jf_material_issue_flow="FLOW")
+        self.issue_return(qty=5)
+        result = self.module.material_issue_costs("FLOW")
+        self.assertEqual(result["totals"]["material"], 60)
+        rows = {row["issue"]: row for row in result["rows"]}
+        self.assertEqual((rows["ISSUE"]["qty"], rows["ISSUE"]["material"]), (20, 80))
+        self.assertEqual((rows["ISSUE-RETURN"]["qty"], rows["ISSUE-RETURN"]["material"],
+                          rows["ISSUE-RETURN"]["source_material_issue"]), (-5, -20, "ISSUE"))
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 60)
+
+    def test_cancelled_or_draft_material_return_does_not_reduce_posted_cost(self):
+        self.issue()
+        self.issue_return(status=2)
+        self.assertEqual(self.module.material_issue_costs("FLOW")["totals"]["material"], 80)
+        self.issue_return(name="DRAFT", status=0)
+        self.assertEqual(self.module.material_issue_costs("FLOW")["totals"]["material"], 80)
+
+    def test_manual_issue_child_flow_can_be_returned_with_derived_header_flow(self):
+        self.issue()
+        self.issue_return(qty=5)
+        self.assertEqual(self.module.material_issue_costs("FLOW")["totals"]["material"], 60)
+
+    def test_material_return_requires_precise_source_unit_warehouse_quantity_and_value(self):
+        self.issue()
+        doc, row = self.issue_return()
+        cases = ((row, "jf_material_return_against_detail", "UNKNOWN"), (row, "jf_flow_order", None),
+                 (row, "t_warehouse", "FG-WH"), (row, "s_warehouse", "FG-WH"),
+                 (row, "stock_uom", "Nos"), (row, "item_code", "FG"),
+                 (doc, "jf_material_issue_flow", "OTHER-FLOW"), (doc, "company", "OTHER"),
+                 (self.documents[self.module.SLE, "ISSUE-RETURN-SLE"], "stock_value_difference", 21))
+        for target, field, value in cases:
+            old = target.get(field)
+            target[field] = value
+            with self.subTest(field=field), self.assertRaises((ValueError, PermissionError)):
+                self.module.material_issue_costs("FLOW")
+            target[field] = old
+
+    def test_total_material_returns_cannot_exceed_original_issue_row(self):
+        self.issue()
+        self.issue_return(qty=15)
+        self.issue_return(name="SECOND", qty=6)
+        with self.assertRaises(ValueError):
+            self.module.material_issue_costs("FLOW")
+
+    def test_hidden_return_source_or_ledger_refuses_partial_net_cost(self):
+        self.issue()
+        self.issue_return()
+        for doctype, name in ((self.module.SE, "ISSUE-RETURN"), (self.module.SLE, "ISSUE-RETURN-SLE")):
+            self.list_denied.add((doctype, name))
+            with self.subTest(doctype=doctype), self.assertRaises(PermissionError):
+                self.module.material_issue_costs("FLOW")
+            self.list_denied.clear()
 
     def test_native_precision_tolerance_not_fixed_six_decimal(self):
         self.issue(qty=1, factor=1)

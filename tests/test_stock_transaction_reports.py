@@ -117,6 +117,23 @@ class TestStockTransactionReports(unittest.TestCase):
         self.ledgers = {"SLE-S": self.sle("SLE-S", "A", -3, -30)}
         self.assertEqual(self.movements()[0]["net_qty"], Decimal(-3))
 
+    def test_material_return_exposes_precise_origin_and_actual_positive_stock_movement(self):
+        source_row = Record(self.row, name="ORIGINAL-DETAIL", parent="ORIGINAL", parenttype="Stock Entry",
+                            s_warehouse="B", t_warehouse=None)
+        self.origins["ORIGINAL"] = Record(name="ORIGINAL", company="公司", docstatus=1,
+                                          purpose="Material Issue", items=[source_row])
+        self.doc.update(purpose="Material Receipt", jf_material_return_against="ORIGINAL")
+        self.row.update(s_warehouse=None, jf_material_return_against_detail="ORIGINAL-DETAIL")
+        self.ledgers.pop("SLE-S")
+        result = self.movements()[0]
+        self.assertEqual((result["entry_type"], result["net_qty"], result["net_value"]),
+                         ("领料退库", Decimal(3), Decimal(32)))
+        self.assertEqual((result["material_return_against"], result["material_return_against_detail"], result["source_read_state"]),
+                         ("ORIGINAL", "ORIGINAL-DETAIL", "原领料已核对"))
+        source_row["stock_uom"] = "Nos"
+        with self.assertRaisesRegex(ValueError, "领料退库的原单"):
+            self.movements()
+
     def test_same_warehouse_opposite_dimensions_are_not_collapsed(self):
         self.row["t_warehouse"] = "A"
         self.ledgers["SLE-T"]["warehouse"] = "A"

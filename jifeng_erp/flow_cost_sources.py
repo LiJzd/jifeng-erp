@@ -43,6 +43,7 @@ PARENTS = {
     "Currency": {"name", "modified"},
     WO: IDENTITY | {"company", "production_item", "jf_flow_order", "track_semi_finished_goods"},
 }
+PARENTS[SE] |= {"jf_material_return_against"}
 # These native sources are read only when an actual Job Card stage is present.
 PARENTS.update({kind: fields for kind, fields in subcontract_stage.PARENTS.items() if kind not in PARENTS})
 
@@ -67,7 +68,7 @@ TABLES = {
     ),
     SE: (("items", "Stock Entry Detail", CHILD | {
         "item_code", "jf_flow_order", "qty", "uom", "stock_uom", "conversion_factor", "transfer_qty",
-        "s_warehouse", "t_warehouse"}),),
+        "s_warehouse", "t_warehouse", "jf_material_return_against_detail"}),),
 }
 TABLES.update({kind: (table,) for kind, table in subcontract_stage.TABLES.items() if kind not in TABLES and kind != WO})
 MANUFACTURE_CHARGES = TABLES[SCR][2]
@@ -720,8 +721,15 @@ class _Session:
                 ["Stock Entry Detail", "jf_flow_order", "=", self.flow.name]], PARENTS[SE], distinct=True)
             parents.update((row["name"], row) for row in found)
         header_linked = self.records(SE, {"docstatus": 1, "jf_material_issue_flow": self.flow.name}, PARENTS[SE])
-        parents.update((row["name"], row) for row in header_linked)
+        tagged_returns = {}
+        for row in header_linked:
+            if row.get("jf_material_return_against"):
+                tagged_returns[row["name"]] = row
+            else:
+                parents[row["name"]] = row
         selected = []
+        issue_sources = {}
+        self.material_return_sources = {}
         for row in parents.values():
             doc = self.source(SE, row["name"])
             self._posted(SE, doc)
@@ -751,6 +759,74 @@ class _Session:
                     targets.add(detail["name"])
             self._ledger(doc, SE, expected)
             selected.extend(row for row in self.ledger[SE, doc.name] if row.get("voucher_detail_no") in targets)
+            issue_sources[doc.name] = (doc, {row["name"]: row for row in self.table(SE, doc.name, "items")}, targets)
+        return_parents = dict(tagged_returns)
+        if issue_sources:
+            query = {"jf_material_return_against": ["in", sorted(issue_sources)]}
+            self.raw(SE, query)
+            return_parents.update((row["name"], row) for row in self.records(
+                SE, {**query, "docstatus": 1}, PARENTS[SE]))
+        returned = {}
+        for row in return_parents.values():
+            doc = self.source(SE, row["name"])
+            self._posted(SE, doc)
+            origin = issue_sources.get(doc.get("jf_material_return_against"))
+            if not origin:
+                _invalid()
+            source, source_rows, targets = origin
+            source_flows = {detail.get("jf_flow_order") for detail in source_rows.values()}
+            source_flows.discard(None)
+            source_flows.discard("")
+            source_header_flow = source.get("jf_material_issue_flow")
+            if not source_header_flow and len(source_flows) == 1:
+                source_header_flow = next(iter(source_flows))
+            if (doc.get("purpose") != "Material Receipt" or doc.get("stock_entry_type") != "Material Receipt"
+                    or doc.get("jf_material_issue_flow") != source_header_flow):
+                _invalid()
+            expected, return_targets, links = {}, set(), {}
+            for detail in self.table(SE, doc.name, "items"):
+                source_row = source_rows.get(detail.get("jf_material_return_against_detail"))
+                if (not source_row or any(detail.get(field) != source_row.get(field)
+                        for field in ("item_code", "stock_uom", "jf_flow_order"))
+                        or detail.get("s_warehouse") or detail.get("t_warehouse") != source_row.get("s_warehouse")
+                        or not detail.get("uom") or _number(detail.get("qty")) <= 0
+                        or _number(detail.get("conversion_factor")) <= 0
+                        or (detail.get("uom") == detail.get("stock_uom") and _number(detail.get("conversion_factor")) != 1)
+                        or _number(detail.get("transfer_qty")) <= 0):
+                    _invalid()
+                native = next(item for item in doc.get("items") if item.name == detail["name"])
+                quantity = _number(detail["transfer_qty"])
+                if not _same_quantity(quantity, _number(detail["qty"]) * _number(detail["conversion_factor"]), native, "transfer_qty"):
+                    _invalid()
+                key = (source.name, source_row["name"])
+                returned[key] = returned.get(key, Decimal(0)) + quantity
+                source_qty = _number(source_row["transfer_qty"])
+                if returned[key] > source_qty and not _same_quantity(returned[key], source_qty, native, "transfer_qty"):
+                    _invalid()
+                item = self.source("Item", detail["item_code"])
+                self._warehouse(detail["t_warehouse"])
+                expected[detail["name"], item.name, detail["t_warehouse"]] = quantity
+                links[detail["name"]] = source_row
+                if source_row["name"] in targets:
+                    return_targets.add(detail["name"])
+            self._ledger(doc, SE, expected)
+            # Use the return's actual positive inventory value only when it
+            # reconciles to its exact issue row, including valuation adjustments.
+            for detail_name, source_row in links.items():
+                origin_ledger = [entry for entry in self.ledger[SE, source.name]
+                                 if entry.get("voucher_detail_no") == source_row["name"]]
+                return_ledger = [entry for entry in self.ledger[SE, doc.name]
+                                 if entry.get("voucher_detail_no") == detail_name]
+                source_value = -sum((_number(entry["stock_value_difference"]) for entry in origin_ledger), Decimal(0))
+                source_qty = -sum((_number(entry["actual_qty"]) for entry in origin_ledger), Decimal(0))
+                value = sum((_number(entry["stock_value_difference"]) for entry in return_ledger), Decimal(0))
+                quantity = sum((_number(entry["actual_qty"]) for entry in return_ledger), Decimal(0))
+                ledger_doc = self.documents[SLE, return_ledger[0]["name"]][0]
+                if (source_qty <= 0 or source_value < 0 or value < 0
+                        or not _same_quantity(value, source_value * quantity / source_qty, ledger_doc, "stock_value_difference")):
+                    _invalid()
+            self.material_return_sources[doc.name] = source.name
+            selected.extend(entry for entry in self.ledger[SE, doc.name] if entry.get("voucher_detail_no") in return_targets)
         self.issues = selected
         return self.issues
 
@@ -1024,7 +1100,8 @@ def _receipt_dto(session):
 
 def _issue_dto(session):
     rows = [{"issue": row["voucher_no"], "item_code": row["item_code"],
-             "qty": -_number(row.get("actual_qty")), "material": -_number(row.get("stock_value_difference"))}
+             "qty": -_number(row.get("actual_qty")), "material": -_number(row.get("stock_value_difference")),
+             "source_material_issue": session.material_return_sources.get(row["voucher_no"], "")}
             for row in session.load_issues()]
     return {"rows": rows, "totals": {"material": sum((row["material"] for row in rows), Decimal(0))},
             "currency": session.currency}

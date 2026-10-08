@@ -73,6 +73,7 @@ before_request = "jifeng_erp.session_init.initialize_csrf"
 after_request = "jifeng_erp.sample_source_report_files.after_report_file_request"
 before_job = "jifeng_erp.sample_source_report_output.before_job"
 doctype_js = {
+    "Stock Entry": "public/js/jifeng_material_returns.js",
     "Jifeng Sample Order": "public/js/jifeng_sample_order.js",
     "Quotation": "public/js/jifeng_quotation_sources.js",
     "Sales Order": "public/js/jifeng_sales_order.js",

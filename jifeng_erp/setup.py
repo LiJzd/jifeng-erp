@@ -79,7 +79,16 @@ def install():
         "fieldname": "jf_material_issue_flow", "fieldtype": "Link", "label": "按单配料流程单",
         "options": "Jifeng Flow Order", "insert_after": "work_order", "read_only": 1,
         "no_copy": 1, "search_index": 1,
+    }, {
+        "fieldname": "jf_material_return_against", "fieldtype": "Link", "label": "原领料凭证",
+        "options": "Stock Entry", "insert_after": "jf_material_issue_flow", "read_only": 1,
+        "no_copy": 1, "search_index": 1,
     }]
+    fields["Stock Entry Detail"].append({
+        "fieldname": "jf_material_return_against_detail", "fieldtype": "Data",
+        "label": "原领料明细", "insert_after": "jf_flow_order", "hidden": 1,
+        "read_only": 1, "no_copy": 1,
+    })
     fields["Journal Entry"] = [{
         "fieldname": "jf_expense_voucher", "fieldtype": "Link", "label": "集沣费用登记",
         "options": "Jifeng Expense Voucher", "insert_after": "user_remark",
@@ -457,7 +466,11 @@ def validate_flow_links(doc, method=None):
     if doc.doctype in _PROCUREMENT_SOURCES:
         _propagate_procurement_flow(doc)
     if doc.doctype == "Stock Entry":
-        if doc.get("jf_material_issue_flow"):
+        if doc.get("jf_material_return_against"):
+            from jifeng_erp.material_returns import validate_material_return
+
+            validate_material_return(doc)
+        elif doc.get("jf_material_issue_flow"):
             from jifeng_erp.material_issue import validate_material_issue
 
             validate_material_issue(doc)
