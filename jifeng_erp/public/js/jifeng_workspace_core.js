@@ -500,6 +500,35 @@ class JifengLegacyWorkspace {
 		}
 		const liveDoctype = JIFENG_LIVE_ROUTES[moduleName]?.[name];
 		if (liveDoctype) {
+			if (moduleName === "销售" && name === "零售单记录") {
+				const openRetailRecords = (invoiceType) => {
+					if (!["Sales Invoice", "POS Invoice"].includes(invoiceType)) {
+						frappe.msgprint(__("POS 设置中的单据类型为空或不受支持，无法打开零售单记录。"));
+						return;
+					}
+					const doctype = invoiceType;
+					const filters = { is_pos: 1 };
+					frappe.route_options = filters;
+					if (this.formalBridge) {
+						frappe.route_options = null;
+						this.formalBridge.open({ title: name, module: moduleName, kind: "list",
+							doctype, route: ["List", doctype], filters });
+						return;
+					}
+					frappe.set_route("List", doctype);
+				};
+				let settingsRequest;
+				try {
+					settingsRequest = frappe.db.get_single_value("POS Settings", "invoice_type");
+				} catch (error) {
+					frappe.msgprint(__("无法读取 POS 单据类型设置，暂时不能打开零售单记录。请联系管理员检查 POS 设置读取权限。"));
+					return;
+				}
+				Promise.resolve(settingsRequest).then(openRetailRecords, () => {
+					frappe.msgprint(__("无法读取 POS 单据类型设置，暂时不能打开零售单记录。请联系管理员检查 POS 设置读取权限。"));
+				});
+				return;
+			}
 			if (liveDoctype === "Jifeng Order Operation") {
 				if (!this.formalBridge || !window.JifengOrderOperations) {
 					frappe.msgprint(__("工序页面未能加载，请刷新后重试。")); return;
