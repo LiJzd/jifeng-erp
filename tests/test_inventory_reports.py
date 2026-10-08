@@ -18,6 +18,11 @@ class InventoryReportsTest(unittest.TestCase):
         frappe = types.ModuleType("frappe")
         frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         frappe.PermissionError = PermissionError
+        frappe.session = types.SimpleNamespace(user="stock.manager@example.test")
+        model = types.ModuleType("frappe.model")
+        model.get_permitted_fields = lambda *args, **kwargs: {
+            "actual_qty", "qty_after_transaction", "valuation_rate", "stock_value", "stock_value_difference",
+        }
         utils = types.ModuleType("frappe.utils")
         utils.cint = lambda value: int(value or 0)
         utils.getdate = lambda value: value
@@ -26,7 +31,8 @@ class InventoryReportsTest(unittest.TestCase):
             setattr(scope, name, lambda *args, **kwargs: None)
         from decimal import Decimal
         scope.decimal_number = lambda value: Decimal(str(value or 0))
-        with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils, "jifeng_erp.inventory_scope": scope}):
+        with patch.dict(sys.modules, {"frappe": frappe, "frappe.model": model, "frappe.utils": utils,
+                                      "jifeng_erp.inventory_scope": scope}):
             spec = importlib.util.spec_from_file_location(
                 "inventory_test_subject", pathlib.Path(__file__).parents[1] / "jifeng_erp/inventory_reports.py")
             self.report = importlib.util.module_from_spec(spec)
@@ -118,10 +124,43 @@ class InventoryReportsTest(unittest.TestCase):
     def test_full_document_permission_is_checked_even_after_list_access(self):
         self.report.frappe.get_all = lambda *args, **kwargs: [self.entry]
         self.report.frappe.get_list = lambda *args, **kwargs: ["SLE"]
-        self.report.frappe.get_meta = lambda *args: types.SimpleNamespace(get_table_fields=lambda: [])
+        self.report.frappe.get_meta = lambda *args: self.meta()
         self.report.frappe.get_doc = lambda *args: types.SimpleNamespace(has_permission=lambda mode: False)
         with self.assertRaisesRegex(PermissionError, "部分库存余额"):
             self.report._complete_ledger({})
+
+    @staticmethod
+    def meta(masked=(), permlevel=0):
+        fields = {name: types.SimpleNamespace(mask=name in masked, permlevel=permlevel)
+                  for name in ("actual_qty", "qty_after_transaction", "valuation_rate", "stock_value",
+                               "stock_value_difference")}
+        return types.SimpleNamespace(get_table_fields=lambda: [], get_field=lambda name: fields.get(name),
+                                     get_permlevel_access=lambda **kwargs: {permlevel})
+
+    def _configure_complete_ledger(self, meta=None, permitted=None):
+        self.report.frappe.get_all = lambda *args, **kwargs: [self.entry]
+        self.report.frappe.get_list = lambda *args, **kwargs: ["SLE"]
+        self.report.frappe.get_meta = lambda *args: meta or self.meta()
+        self.report.frappe.get_doc = lambda *args: types.SimpleNamespace(has_permission=lambda mode: True)
+        if permitted is not None:
+            self.report.get_permitted_fields = lambda *args, **kwargs: permitted
+
+    def test_masked_numeric_sle_field_denies_complete_balance(self):
+        self._configure_complete_ledger(meta=self.meta(masked={"stock_value_difference"}))
+        with self.assertRaisesRegex(PermissionError, "数量或估价字段"):
+            self.report._complete_ledger({})
+
+    def test_unreadable_numeric_sle_field_denies_complete_balance(self):
+        all_fields = {"actual_qty", "qty_after_transaction", "valuation_rate", "stock_value",
+                      "stock_value_difference"}
+        self._configure_complete_ledger(permitted=all_fields - {"stock_value"})
+        with self.assertRaisesRegex(PermissionError, "数量或估价字段"):
+            self.report._complete_ledger({})
+
+    def test_stock_manager_with_unmasked_numeric_fields_reads_complete_balance(self):
+        self._configure_complete_ledger()
+        records = self.report._complete_ledger({})
+        self.assertEqual([record.name for record in records], ["SLE"])
 
     def test_native_filter_currency_corruption_is_repaired_for_nonzero_and_historic_zero_pairs(self):
         self.report.frappe._dict = Row

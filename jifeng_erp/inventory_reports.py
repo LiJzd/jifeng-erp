@@ -3,6 +3,7 @@
 from collections import defaultdict
 
 import frappe
+from frappe.model import get_permitted_fields
 from frappe.utils import cint, getdate
 
 from jifeng_erp.inventory_scope import (
@@ -28,13 +29,26 @@ def _complete_ledger(query):
     visible = set(frappe.get_list("Stock Ledger Entry", filters=query, pluck="name", limit_page_length=0))
     if {row.name for row in records} != visible:
         frappe.throw("无法完整读取所选范围的库存流水，不能计算部分库存余额", frappe.PermissionError)
-    tables = frappe.get_meta("Stock Ledger Entry").get_table_fields()
+    meta = frappe.get_meta("Stock Ledger Entry")
+    # The report derives every balance and valuation from these native numeric
+    # fields. Document-level read access alone does not authorize masked fields.
+    numeric_fields = ("actual_qty", "qty_after_transaction", "valuation_rate", "stock_value",
+                      "stock_value_difference")
+    readable_fields = set(get_permitted_fields(
+        "Stock Ledger Entry", permission_type="read", ignore_virtual=True))
+    mask_levels = set(meta.get_permlevel_access(permission_type="mask", user=frappe.session.user))
+    for fieldname in numeric_fields:
+        field = meta.get_field(fieldname)
+        if (fieldname not in readable_fields or field is None or
+                (field.mask and (field.permlevel or 0) in mask_levels)):
+            frappe.throw("无权读取库存流水数量或估价字段，不能计算库存余额", frappe.PermissionError)
+    tables = meta.get_table_fields()
     for record in records:
         doc = (frappe.get_doc("Stock Ledger Entry", record.name) if tables else
                frappe.get_doc({**record, "doctype": "Stock Ledger Entry"}))
         if not doc.has_permission("read"):
             frappe.throw("无法完整读取所选范围的库存流水，不能计算部分库存余额", frappe.PermissionError)
-        for field in ("actual_qty", "qty_after_transaction", "valuation_rate", "stock_value", "stock_value_difference"):
+        for field in numeric_fields:
             decimal_number(record.get(field))
     return records
 
