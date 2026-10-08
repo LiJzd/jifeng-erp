@@ -103,7 +103,7 @@ const JIFENG_LEGACY_MODULES = [
 	{
 		name: "销售",
 		groups: [
-			{ name: "基础资料", items: ["客户类型", "客户等级", "客户分类", "客户档案", "入库部门", "入库类型", "商品信息", "条码打印", "销售员", "条码标题", "收款方式", "快递公司", "销售页脚", "零售倍率", "库位模式"] },
+			{ name: "基础资料", items: ["客户类型", "客户等级", "客户分类", "客户档案", "入库部门", "入库类型", "商品信息", "条码打印", "销售员", "条码标题", "收款方式", "快递公司", "销售页脚", "零售倍率", "库位模式", "收银配置"] },
 			{ name: "正式业务", items: ["销售订单", "销售履行核对", "成品入库来源核对", "零售开单", "零售单记录", "零售开班", "零售结班", "发货单", "销售发票", "已过账销售台账", "分批回货成本试算"] },
 			{ name: "销售操作", items: ["销售入库", "前台开单", "销售调拨", "库位下架", "销售反审", "销售跟踪", "成品出库", "客户返修"] },
 			{ name: "仓库管理", items: ["销售盘点", "差异处理", "库存", "盘点明细", "PDA数据", "库存明细", "库位库存", "库位修改", "库存排行", "历史库存", "库存预警"] },
@@ -149,7 +149,7 @@ const JIFENG_LIVE_ROUTES = {
 	版种: { 版种档案: "Jifeng Plate", 版种录入: "Jifeng Plate", 版种查询: "Jifeng Plate", 版种建模: "Jifeng Plate Modeling", 建模: "Jifeng Plate Modeling" },
 	发镀: { 电镀厂: "Jifeng Partner Profile", 委外采购单: "Purchase Order", 电镀委外单: "Subcontracting Order", 电镀收货单: "Subcontracting Receipt", 品检单: "Quality Inspection", 电镀单查询: "Subcontracting Order" },
 	外发: { 外发工厂: "Jifeng Partner Profile", 委外采购单: "Purchase Order", 委外订单: "Subcontracting Order", 委外收货: "Subcontracting Receipt", 外发查询: "Subcontracting Order", 收回查询: "Subcontracting Receipt" },
-	销售: { 客户类型: "Jifeng Customer Type", 客户等级: "Jifeng Customer Type", 客户分类: "Jifeng Customer Type", 客户档案: "Jifeng Customer Profile", 销售订单: "Sales Order", 零售单记录: "POS Invoice", 零售开班: "POS Opening Entry", 零售结班: "POS Closing Entry", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
+	销售: { 客户类型: "Jifeng Customer Type", 客户等级: "Jifeng Customer Type", 客户分类: "Jifeng Customer Type", 客户档案: "Jifeng Customer Profile", 收银配置: "POS Profile", 销售订单: "Sales Order", 零售单记录: "POS Invoice", 零售开班: "POS Opening Entry", 零售结班: "POS Closing Entry", 发货单: "Delivery Note", 销售发票: "Sales Invoice", 分批回货成本试算: "Jifeng Cost Preview" },
 	财务: { 收付款单: "Payment Entry", 总账凭证: "Journal Entry", 费用登记单: "Jifeng Expense Voucher", 收款凭证查询: "Payment Entry", 付款凭证查询: "Payment Entry", 费用登记查询: "Jifeng Expense Voucher" },
 	权限: { 用户管理: "User", 角色管理: "Role" },
 	日志: { 服务器操作日志: "Activity Log" },
