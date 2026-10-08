@@ -3,6 +3,7 @@
 from decimal import Decimal
 
 import frappe
+from frappe.model import get_permitted_fields
 
 from jifeng_erp.inventory_scope import (
     column, decimal_number, readable_documents, report_scope, selected_warehouses,
@@ -12,6 +13,38 @@ from jifeng_erp.sample_source_queries import check_protected_reference
 
 PURPOSES = {"receipt": "Material Receipt", "issue": "Material Issue", "transfer": "Material Transfer"}
 LABELS = {"receipt": "库存收货", "issue": "物料出库", "transfer": "仓库调拨"}
+MATERIAL_RETURN_FIELD = "jf_material_return_against"
+MATERIAL_RETURN_DETAIL_FIELD = "jf_material_return_against_detail"
+
+
+def _can_read_fields(doctype, fields, parenttype=None):
+    """Check native field-read and mask access for a parent or child DocType."""
+    user = frappe.session.user
+    meta = frappe.get_meta(doctype)
+    permitted = set(get_permitted_fields(doctype, user=user, permission_type="read",
+                                         parenttype=parenttype, ignore_virtual=True))
+    if not set(fields).issubset(permitted):
+        return False
+    masked_levels = set(meta.get_permlevel_access(permission_type="mask", parenttype=parenttype, user=user))
+    if user != "Administrator" and any(
+            (field := meta.get_field(name)) and field.get("mask")
+            and (field.permlevel or 0) not in masked_levels for name in fields):
+        return False
+    return True
+
+
+def _require_return_source_read(doc, row):
+    """Reject a linked return if its header/child links or table are masked."""
+    parent_allowed = _can_read_fields("Stock Entry", (MATERIAL_RETURN_FIELD, "items"))
+    child_allowed = _can_read_fields("Stock Entry Detail", (MATERIAL_RETURN_DETAIL_FIELD,),
+                                     parenttype="Stock Entry")
+    if parent_allowed and child_allowed:
+        return True
+    # The links are consulted only to decide whether an unauthorized source
+    # value would be emitted. They are never returned or included in errors.
+    if doc.get(MATERIAL_RETURN_FIELD) or row.get(MATERIAL_RETURN_DETAIL_FIELD):
+        frappe.throw("没有读取领料退库来源字段的权限", frappe.PermissionError)
+    return False
 
 
 def _columns():
@@ -138,16 +171,16 @@ def _outgoing_source(doc, row, origins):
 
 
 def _material_return_source(doc, row, origins):
-    name = doc.get("jf_material_return_against")
+    name = doc.get(MATERIAL_RETURN_FIELD)
     if not name:
-        if row.get("jf_material_return_against_detail"):
+        if row.get(MATERIAL_RETURN_DETAIL_FIELD):
             frappe.throw("退库明细有来源关联但凭证缺少原领料单，请核对")
         return "", "", ""
     origin = origins.get(name)
     if not origin:
         return "", "", "原领料不可读"
     source = next((detail for detail in origin.get("items")
-                   if detail.name == row.get("jf_material_return_against_detail")), None)
+                   if detail.name == row.get(MATERIAL_RETURN_DETAIL_FIELD)), None)
     if (doc.purpose != "Material Receipt" or origin.purpose != "Material Issue"
             or origin.docstatus != 1 or origin.company != doc.company or not source
             or source.parent != origin.name or source.parenttype != "Stock Entry"
@@ -171,7 +204,10 @@ def stock_entry_movements(selected, ledgers, items, warehouses, origins, currenc
             frappe.throw("无法读取库存条目对应的商品档案，请核对", frappe.PermissionError)
         quantities = _ledger_quantities(doc, row, item, warehouses, grouped.get(row.name, []))
         outgoing, source_detail, source_read_state = _outgoing_source(doc, row, origins)
-        return_against, return_detail, return_state = _material_return_source(doc, row, origins)
+        if _require_return_source_read(doc, row):
+            return_against, return_detail, return_state = _material_return_source(doc, row, origins)
+        else:
+            return_against, return_detail, return_state = "", "", ""
         mode = next(key for key, purpose in PURPOSES.items() if purpose == doc.purpose)
         stage = "接收来源调拨" if doc.get("outgoing_stock_entry") else "调入在途" if doc.get("add_to_transit") else "直接调拨"
         check_protected_reference("Jifeng Flow Order", row.get("jf_flow_order"), company=doc.company)

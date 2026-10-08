@@ -13,10 +13,42 @@ class Record(dict):
     __getattr__ = dict.get
 
 
+class Meta:
+    def __init__(self, name, fields):
+        self.doctype = "DocType"
+        self.name = name
+        self.fields = fields
+
+    def get_field(self, name):
+        return self.fields.get(name)
+
+    def get_permlevel_access(self, permission_type=None, parenttype=None, user=None):
+        return {0}
+
+
 class TestStockTransactionReports(unittest.TestCase):
     def setUp(self):
         self.frappe = types.ModuleType("frappe")
         self.frappe.PermissionError = PermissionError
+        self.frappe.session = Record(user="qa@example.test")
+
+        self.metas = {
+            "Stock Entry": Meta("Stock Entry", {
+                "items": Record(fieldtype="Table", options="Stock Entry Detail", permlevel=0, mask=0),
+                "jf_material_return_against": Record(fieldtype="Link", options="Stock Entry", permlevel=0, mask=0),
+            }),
+            "Stock Entry Detail": Meta("Stock Entry Detail", {
+                "jf_material_return_against_detail": Record(fieldtype="Data", permlevel=0, mask=0),
+            }),
+        }
+        self.permitted_fields = {
+            ("Stock Entry", None): {"items", "jf_material_return_against"},
+            ("Stock Entry Detail", "Stock Entry"): {"jf_material_return_against_detail"},
+        }
+        self.frappe.get_meta = lambda doctype: self.metas[doctype]
+        model = types.ModuleType("frappe.model")
+        model.get_permitted_fields = lambda doctype, **kwargs: self.permitted_fields[
+            (doctype, kwargs.get("parenttype"))]
 
         def throw(message, error=ValueError):
             raise error(message)
@@ -39,6 +71,7 @@ class TestStockTransactionReports(unittest.TestCase):
         references.check_protected_reference = Mock(return_value=False)
         path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "stock_transaction_reports.py"
         with patch.dict(sys.modules, {"frappe": self.frappe, "jifeng_erp.inventory_scope": scope,
+                                      "frappe.model": model,
                                       "jifeng_erp.sample_source_queries": references}):
             spec = importlib.util.spec_from_file_location("stock_transaction_reports_under_test", path)
             self.module = importlib.util.module_from_spec(spec)
@@ -133,6 +166,65 @@ class TestStockTransactionReports(unittest.TestCase):
         source_row["stock_uom"] = "Nos"
         with self.assertRaisesRegex(ValueError, "领料退库的原单"):
             self.movements()
+
+    def prepare_return(self):
+        source_row = Record(self.row, name="ORIGINAL-DETAIL", parent="ORIGINAL", parenttype="Stock Entry",
+                            s_warehouse="B", t_warehouse=None)
+        self.origins["ORIGINAL"] = Record(name="ORIGINAL", company="公司", docstatus=1,
+                                          purpose="Material Issue", items=[source_row])
+        self.doc.update(purpose="Material Receipt", jf_material_return_against="ORIGINAL")
+        self.row.update(s_warehouse=None, jf_material_return_against_detail="ORIGINAL-DETAIL")
+        self.ledgers.pop("SLE-S")
+
+    def test_linked_return_requires_native_parent_child_and_table_read_fields(self):
+        self.prepare_return()
+        self.permitted_fields[("Stock Entry", None)].remove("jf_material_return_against")
+        with self.assertRaisesRegex(PermissionError, "没有读取领料退库来源字段的权限"):
+            self.movements()
+
+        self.permitted_fields[("Stock Entry", None)].add("jf_material_return_against")
+        self.permitted_fields[("Stock Entry", None)].remove("items")
+        with self.assertRaisesRegex(PermissionError, "没有读取领料退库来源字段的权限"):
+            self.movements()
+
+        self.permitted_fields[("Stock Entry", None)].add("items")
+        self.permitted_fields[("Stock Entry Detail", "Stock Entry")].clear()
+        with self.assertRaisesRegex(PermissionError, "没有读取领料退库来源字段的权限"):
+            self.movements()
+
+    def test_masked_child_source_link_is_denied_with_real_meta_shape(self):
+        self.prepare_return()
+        child_meta = self.metas["Stock Entry Detail"]
+        field = child_meta.get_field("jf_material_return_against_detail")
+        field["mask"] = 1
+        field["permlevel"] = 1
+        with self.assertRaisesRegex(PermissionError, "没有读取领料退库来源字段的权限"):
+            self.movements()
+        self.assertEqual(child_meta.doctype, "DocType")
+        self.assertEqual(child_meta.name, "Stock Entry Detail")
+
+    def test_unlinked_receipt_and_transfer_keep_working_when_return_fields_are_hidden(self):
+        self.permitted_fields[("Stock Entry", None)].clear()
+        self.permitted_fields[("Stock Entry Detail", "Stock Entry")].clear()
+        self.doc["purpose"] = "Material Receipt"
+        self.row["s_warehouse"] = None
+        self.ledgers.pop("SLE-S")
+        self.assertEqual(self.movements()[0]["net_qty"], Decimal(3))
+
+        self.doc["purpose"] = "Material Transfer"
+        self.row["s_warehouse"] = "A"
+        self.ledgers = {"SLE-S": self.sle("SLE-S", "A", -3, -30),
+                        "SLE-T": self.sle("SLE-T", "B", 3, 32)}
+        self.assertEqual(self.movements()[0]["net_qty"], Decimal(0))
+
+    def test_unreadable_origin_still_hides_source_names_after_field_authorization(self):
+        self.prepare_return()
+        self.origins.clear()
+        row = self.movements()[0]
+        self.assertEqual((row["material_return_against"], row["material_return_against_detail"],
+                          row["source_read_state"]), ("", "", "原领料不可读"))
+        self.assertNotIn("ORIGINAL", repr(row))
+        self.assertNotIn("ORIGINAL-DETAIL", repr(row))
 
     def test_same_warehouse_opposite_dimensions_are_not_collapsed(self):
         self.row["t_warehouse"] = "A"
