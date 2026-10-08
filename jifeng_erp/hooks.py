@@ -108,6 +108,7 @@ permission_query_conditions = {
     "Employee Separation": "jifeng_erp.personnel_separation.separation_query_conditions",
 }
 extend_doctype_class = {
+    "HR Telemetry Milestone": ["jifeng_erp.hr_telemetry_compat.HRTelemetryMilestoneMixin"],
     "Prepared Report": ["jifeng_erp.sample_source_prepared_reports.SampleSourcePreparedReportMixin"],
     "File": ["jifeng_erp.sample_source_report_files.SampleSourceReportFileMixin"],
     "Report": ["jifeng_erp.sample_source_reports.SampleSourceReportMixin"],
