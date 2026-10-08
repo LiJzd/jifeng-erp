@@ -156,7 +156,7 @@ const JIFENG_LIVE_ROUTES = {
 };
 
 // Server-backed entry whose available operations remain explicitly limited.
-const JIFENG_PARTIAL_ROUTES = { 产品: { 镀色: true, 样品制作单: true, 样品单反审: true }, 工资: { 历史: true, 临工档案: true, 临工浏览: true, 临工: true, 临工明细: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
+const JIFENG_PARTIAL_ROUTES = { 产品: { 镀色: true, 样品制作单: true, 样品单反审: true }, 工资: { 历史: true, 历史分析: true, 临工档案: true, 临工浏览: true, 临工: true, 临工明细: true }, 发镀: { 电镀厂: true }, 外发: { 外发工厂: true },
 	物料: { 采购履行核对: true, 跟踪: true }, 材料: { 采购履行核对: true, 跟踪: true }, 财务: { 供应商应付核对: true, 收款银行: true, 付款银行: true, 费用科目: true },
 	销售: { 销售履行核对: true, 成品入库来源核对: true, 客户类型: true, 客户等级: true, 客户分类: true, 客户档案: true }, 订单: { 订单客户分类: true, 订单客户级别: true, 客户: true, 类型: true, 要求: true, 镀色: true, 工序: true },
 	日志: { 操作日志: true } };
@@ -171,7 +171,7 @@ const JIFENG_LIVE_PAGES = {
 	材料: { 采购履行核对: { procurementFulfillment: true }, 跟踪: { inventoryTracking: true } },
 	财务: { 供应商应付核对: { supplierPayables: true }, 收款银行: { financeDictionary: "收款银行" },
 		付款银行: { financeDictionary: "付款银行" }, 费用科目: { financeDictionary: "费用科目" } },
-	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers", 历史: { salaryHistory: true },
+	工资: { 工资录入: "jifeng-wage-workbench", 计件人员: "jifeng-piece-workers", 历史: { salaryHistory: true }, 历史分析: { salaryAnalysis: true },
 		临工档案: { temporaryWorkers: "archive" }, 临工浏览: { temporaryWorkers: "browse" }, 临工: { temporaryWorkers: "wage" }, 临工明细: { temporaryWorkers: "details" } },
 	订单: { 算料: { name: "jifeng-order-material-workbench", mode: "analysis" },
 		算料汇总: { name: "jifeng-order-material-workbench", mode: "summary" } },
@@ -419,6 +419,10 @@ class JifengLegacyWorkspace {
 		}
 		const livePage = JIFENG_LIVE_PAGES[moduleName]?.[name];
 		if (livePage) {
+			if (livePage.salaryAnalysis) {
+				if (!window.JifengSalaryAnalysis) { frappe.msgprint(__("工资历史分析页面未能加载，请刷新页面后重试。")); return; }
+				this.addTab({ key: "salary-analysis", title: name, kind: "salary-analysis", module: moduleName }); return;
+			}
 			if (livePage.systemInformation) {
 				this.systemInformationSection = livePage.systemInformation;
 				this.openModule("关于");
@@ -710,6 +714,7 @@ class JifengLegacyWorkspace {
 	render() {
 		const active = this.activeTab();
 		this.disposeBusinessOperationLog();
+		this.disposeSalaryAnalysis();
 		this.host.innerHTML =
 			'<div class="jfe-shell">' +
 			'<header class="jfe-topbar"><div class="jfe-brand">集沣贸易企业ERP管理系统</div>' +
@@ -722,11 +727,25 @@ class JifengLegacyWorkspace {
 		this.bindEvents();
 		this.mountSystemInformation();
 		this.mountBusinessOperationLog();
+		this.mountSalaryAnalysis();
 		this.formalBridge?.sync();
 		this.updateClock();
 		if (active.kind === "module" && active.module === "总经理") this.loadDashboard();
 		clearInterval(this.clockTimer);
 		this.clockTimer = setInterval(() => this.updateClock(), 30000);
+	}
+
+	disposeSalaryAnalysis() {
+		const view = this.salaryAnalysisView; this.salaryAnalysisView = null;
+		view?.handle?.destroy?.();
+	}
+
+	mountSalaryAnalysis() {
+		const container = this.host.querySelector("[data-jifeng-salary-analysis]");
+		if (!container || this.salaryAnalysisView?.container === container) return;
+		this.disposeSalaryAnalysis();
+		if (!window.JifengSalaryAnalysis) { container.textContent = "工资历史分析页面未能加载，请刷新页面后重试。"; return; }
+		this.salaryAnalysisView = { container, handle: window.JifengSalaryAnalysis.mount(container) };
 	}
 
 	mountSystemInformation() {
@@ -776,6 +795,7 @@ class JifengLegacyWorkspace {
 	renderActive(tab) {
 		if (tab.kind === "formal") return this.formalBridge.content(tab);
 		if (tab.kind === "business-operation-log") return '<div class="jfe-business-operation-log" data-jifeng-business-operation-log></div>';
+		if (tab.kind === "salary-analysis") return '<div class="jfe-salary-analysis" data-jifeng-salary-analysis></div>';
 		if (tab.kind === "home") return this.renderHome();
 		if (tab.kind === "module") return this.renderModule(tab.module);
 		if (tab.kind === "list" && tab.module === "工资" && tab.page === "工资录入") return this.renderPayrollEntry();

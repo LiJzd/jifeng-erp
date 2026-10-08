@@ -1,0 +1,25 @@
+.jfe-salary-analysis { padding: 16px; color: var(--text-color, #263238); }
+.jfe-salary-analysis-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 12px; }
+.jfe-salary-analysis-toolbar input[type="date"], .jfe-salary-analysis-toolbar input[type="search"], .jfe-salary-analysis-toolbar select { min-height: 34px; padding: 5px 8px; border: 1px solid var(--border-color, #d8dee4); border-radius: 5px; background: var(--control-bg, #fff); }
+.jfe-salary-analysis-toolbar .frappe-control { min-width: 180px; margin: 0; }
+.jfe-salary-analysis-toolbar .form-group { margin: 0; }
+.jfe-salary-analysis-status { min-height: 1.5em; margin: 8px 0; }
+.jfe-salary-analysis-note { color: var(--text-muted, #65727d); font-size: 12px; }
+.jfe-salary-analysis-totals, .jfe-salary-analysis-sources { margin: 18px 0; }
+.jfe-salary-analysis-totals h2, .jfe-salary-analysis-sources h2, .jfe-salary-analysis-chart h2 { font-size: 16px; margin: 8px 0; }
+.jfe-salary-analysis-total-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 8px 16px; margin: 0; }
+.jfe-salary-analysis-total-grid dt { color: var(--text-muted, #65727d); font-weight: 500; }
+.jfe-salary-analysis-total-grid dd { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+.jfe-salary-analysis-charts { display: grid; grid-template-columns: repeat(3, minmax(230px, 1fr)); gap: 14px; }
+.jfe-salary-analysis-chart { min-width: 0; padding: 12px; border: 1px solid var(--border-color, #e3e8ed); border-radius: 8px; background: var(--card-bg, #fff); }
+.jfe-salary-analysis-chart ol { margin: 0; padding-left: 24px; }
+.jfe-salary-analysis-chart li { padding: 6px 0; }
+.jfe-salary-analysis-chart-label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.jfe-salary-analysis-chart-label span { overflow-wrap: anywhere; }
+.jfe-salary-analysis-chart-label b { white-space: nowrap; }
+.jfe-salary-analysis-chart-track { height: 7px; margin-top: 5px; overflow: hidden; border-radius: 5px; background: var(--subtle-accent, #edf1f5); }
+.jfe-salary-analysis-chart-track span { display: block; height: 100%; border-radius: inherit; background: var(--primary, #4c78a8); }
+.jfe-salary-analysis-source-table { width: 100%; border-collapse: collapse; }
+.jfe-salary-analysis-source-table th, .jfe-salary-analysis-source-table td { padding: 7px; border-bottom: 1px solid var(--border-color, #e3e8ed); text-align: left; }
+@media (max-width: 950px) { .jfe-salary-analysis-charts { grid-template-columns: 1fr; } }
+@media (max-width: 650px) { .jfe-salary-analysis-total-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); } }
