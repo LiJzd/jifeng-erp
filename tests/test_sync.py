@@ -29,6 +29,7 @@ class TestSyncCheckpoints(unittest.TestCase):
             spec = importlib.util.spec_from_file_location("sync_under_test", pathlib.Path(__file__).parents[1] / "jifeng_erp" / "sync.py")
             self.sync = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.sync)
+        self.upsert_sku = self.sync.upsert_sku
         self.sync.upsert_order = Mock()
         self.sync.upsert_sku = Mock()
         self.log = Mock(order_count=0, sku_count=0)
@@ -87,3 +88,70 @@ class TestSyncCheckpoints(unittest.TestCase):
         self.assertEqual(first["begin"], str(begin))
         self.assertEqual(first["end"], str(end))
         self.assertLessEqual((end - begin).days, 7)
+
+    def test_new_sku_keeps_remote_image_out_of_public_item_until_archived(self):
+        class Doc:
+            def __init__(self, values=None):
+                self.__dict__.update(values or {})
+                self.flags = types.SimpleNamespace()
+                self.name = getattr(self, "item_code", None) or getattr(self, "uom_name", None) or "mapping"
+
+            def update(self, values):
+                self.__dict__.update(values)
+
+            def insert(self, **kwargs):
+                inserted.append(self)
+                return self
+
+            def save(self, **kwargs):
+                return self
+
+        inserted = []
+        mapping = Doc({"source_image": None, "archived_image": None, "managed_item": 0,
+                       "supplier_sku_id": None, "supplier_name": None, "source_modified": None})
+        settings = self.settings(item_group="Products", stock_uom="Nos", company="QA",
+                                 image_hosts="cdn.example.com")
+        self.frappe.db.exists.side_effect = lambda doctype, value=None: doctype == "UOM"
+        self.frappe.new_doc = Mock(return_value=mapping)
+        self.frappe.get_doc = Mock(side_effect=lambda values: Doc(values) if isinstance(values, dict) else None)
+        self.frappe.utils = types.SimpleNamespace(escape_html=lambda value: value)
+        self.frappe.enqueue = Mock()
+
+        item_code = self.upsert_sku(settings, {
+            "sku_id": "SKU-1", "name": "商品1", "unit": "Nos", "pic": "https://cdn.example.com/1.jpg",
+        })
+
+        item = next(doc for doc in inserted if getattr(doc, "doctype", None) == "Item")
+        self.assertEqual(item_code, "SKU-1")
+        self.assertEqual(item.image, "")
+        self.assertEqual(mapping.source_image, "https://cdn.example.com/1.jpg")
+        self.assertIsNone(mapping.archived_image)
+        self.frappe.enqueue.assert_called_once_with(
+            "jifeng_erp.images.archive_image", mapping_name="mapping", queue="long", timeout=120,
+            enqueue_after_commit=True)
+
+    def test_changed_sku_image_clears_previous_file_until_new_archive_finishes(self):
+        class Doc:
+            def __init__(self, **values):
+                self.__dict__.update(values)
+                self.flags = types.SimpleNamespace()
+
+            def save(self, **kwargs):
+                return self
+
+        mapping = Doc(name="mapping", managed_item=1, item_code="SKU-1", source_image="https://cdn.example.com/old.jpg",
+                      archived_image="/files/old.jpg", supplier_sku_id="SUP-1", supplier_name="Vendor",
+                      source_modified=None)
+        item = Doc(name="SKU-1", item_name="旧名称", image="/files/old.jpg")
+        settings = self.settings(image_hosts="cdn.example.com")
+        self.frappe.db.exists.return_value = True
+        self.frappe.get_doc = Mock(side_effect=[mapping, item])
+        self.frappe.enqueue = Mock()
+
+        self.upsert_sku(settings, {"sku_id": "SKU-1", "name": "新名称", "pic_big": "https://cdn.example.com/new.jpg"})
+
+        self.assertEqual(item.item_name, "新名称")
+        self.assertEqual(item.image, "")
+        self.assertEqual(mapping.source_image, "https://cdn.example.com/new.jpg")
+        self.assertIsNone(mapping.archived_image)
+        self.frappe.enqueue.assert_called_once()

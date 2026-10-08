@@ -173,6 +173,7 @@ def upsert_sku(settings, raw):
     existing = frappe.db.exists("Jifeng SKU Mapping", key)
     mapping = frappe.get_doc("Jifeng SKU Mapping", key) if existing else frappe.new_doc("Jifeng SKU Mapping")
     image = safe_image_url(raw.get("pic_big") or raw.get("pic"))
+    image_changed = bool(image and image != mapping.source_image)
     if not existing:
         # Never silently take over an existing manually maintained Item.
         item_code = sku_id if not frappe.db.exists("Item", sku_id) else "JST-" + key[:20]
@@ -183,20 +184,24 @@ def upsert_sku(settings, raw):
             "doctype": "Item", "item_code": item_code, "item_name": raw.get("name") or sku_id,
             "item_group": settings.item_group, "stock_uom": source_uom,
             "description": frappe.utils.escape_html(str(raw.get("properties_value") or raw.get("name") or sku_id)),
-            "image": image, "is_stock_item": 1,
+            # External URLs are only source metadata. The Item image is set by
+            # archive_image after host, format, size, and content checks pass.
+            "image": "", "is_stock_item": 1,
         }).insert(ignore_permissions=True)
         mapping.update({"sync_key": key, "scope": settings.sync_scope, "sku_id": sku_id,
                         "item_code": item.name, "managed_item": 1})
     elif mapping.managed_item:
         item = frappe.get_doc("Item", mapping.item_code)
         item.item_name = raw.get("name") or item.item_name
-        if image and image != mapping.source_image:
-            item.image = image
+        if image_changed:
+            # Do not serve the new remote URL while the validated archive job
+            # is pending. A successful job will set Item.image to the File URL.
+            item.image = ""
         item.save(ignore_permissions=True)
     mapping.supplier_sku_id = raw.get("supplier_sku_id") or mapping.supplier_sku_id
     mapping.supplier_name = raw.get("supplier_name") or mapping.supplier_name
     mapping.source_modified = raw.get("modified") or mapping.source_modified
-    if image and image != mapping.source_image:
+    if image_changed:
         mapping.source_image, mapping.archived_image = image, None
     mapping.flags.from_sync = True
     mapping.save(ignore_permissions=True)
