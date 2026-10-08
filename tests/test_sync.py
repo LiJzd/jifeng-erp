@@ -130,7 +130,7 @@ class TestSyncCheckpoints(unittest.TestCase):
             "jifeng_erp.images.archive_image", mapping_name="mapping", queue="long", timeout=120,
             enqueue_after_commit=True)
 
-    def test_changed_sku_image_clears_previous_file_until_new_archive_finishes(self):
+    def test_changed_sku_image_keeps_attached_file_until_new_archive_finishes(self):
         class Doc:
             def __init__(self, **values):
                 self.__dict__.update(values)
@@ -151,7 +151,17 @@ class TestSyncCheckpoints(unittest.TestCase):
         self.upsert_sku(settings, {"sku_id": "SKU-1", "name": "新名称", "pic_big": "https://cdn.example.com/new.jpg"})
 
         self.assertEqual(item.item_name, "新名称")
-        self.assertEqual(item.image, "")
+        self.assertEqual(item.image, "/files/old.jpg")
+        self.frappe.db.exists.assert_any_call("File", {"file_url": "/files/old.jpg",
+            "attached_to_doctype": "Item", "attached_to_name": "SKU-1"})
         self.assertEqual(mapping.source_image, "https://cdn.example.com/new.jpg")
         self.assertIsNone(mapping.archived_image)
+        self.frappe.enqueue.assert_called_once()
+
+        # Legacy remote URLs must never be retained as the visible image.
+        item.image = "https://cdn.example.com/unarchived.jpg"
+        self.frappe.get_doc.side_effect = [mapping, item]
+        self.frappe.enqueue.reset_mock()
+        self.upsert_sku(settings, {"sku_id": "SKU-1", "pic_big": "https://cdn.example.com/next.jpg"})
+        self.assertEqual(item.image, "")
         self.frappe.enqueue.assert_called_once()

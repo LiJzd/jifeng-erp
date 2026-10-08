@@ -194,9 +194,16 @@ def upsert_sku(settings, raw):
         item = frappe.get_doc("Item", mapping.item_code)
         item.item_name = raw.get("name") or item.item_name
         if image_changed:
-            # Do not serve the new remote URL while the validated archive job
-            # is pending. A successful job will set Item.image to the File URL.
-            item.image = ""
+            # Keep the last attached File until its replacement is archived.
+            # An old remote URL still needs removing before the job runs.
+            attached_file = bool(
+                isinstance(item.image, str)
+                and item.image.startswith(("/files/", "/private/files/"))
+                and frappe.db.exists("File", {"file_url": item.image,
+                    "attached_to_doctype": "Item", "attached_to_name": item.name})
+            )
+            if not attached_file:
+                item.image = ""
         item.save(ignore_permissions=True)
     mapping.supplier_sku_id = raw.get("supplier_sku_id") or mapping.supplier_sku_id
     mapping.supplier_name = raw.get("supplier_name") or mapping.supplier_name
