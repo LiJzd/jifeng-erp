@@ -6,7 +6,7 @@
 	function validResult(result, frm) {
 		return !!result && result.status === "completed" && result.payroll_entry === frm.doc.name &&
 			typeof result.journal_entry === "string" && result.journal_entry.trim() !== "" &&
-			typeof result.already_complete === "boolean" && Array.isArray(result.salary_slips) &&
+			typeof result.already_completed === "boolean" && Array.isArray(result.salary_slips) &&
 			result.salary_slips.length > 0 && result.salary_slips.every(name => typeof name === "string" && name.trim() !== "");
 	}
 
@@ -46,7 +46,7 @@
 							frm.add_custom_button(__("查看月度计提凭证"), () =>
 								frappe.set_route("Form", "Journal Entry", result.journal_entry), __("工资处理"));
 							frappe.show_alert({
-								message: result.already_complete ? __("月度工资计提已完成。") : __("工资条已提交，月度工资计提已生成。"),
+								message: result.already_completed ? __("月度工资计提已完成。") : __("工资条已提交，月度工资计提已生成。"),
 								indicator: "green",
 							});
 						} finally {

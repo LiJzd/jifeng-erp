@@ -4,7 +4,7 @@ const assert = require("node:assert/strict"), fs = require("node:fs"), vm = requ
 function fixture(doc = { name: "PAY-1", docstatus: 1, status: "Submitted", salary_slips_submitted: 1 }) {
 	const handlers = {}, buttons = [], confirmations = [], calls = [], alerts = [], messages = [], routes = [];
 	let reloads = 0, response = { message: { status: "completed", payroll_entry: "PAY-1", journal_entry: "ACC-JV-1",
-		salary_slips: ["SAL-1", "SAL-2"], already_complete: false } };
+		salary_slips: ["SAL-1", "SAL-2"], already_completed: false } };
 	const frappe = {
 		ui: { form: { on(doctype, events) { assert.equal(doctype, "Payroll Entry"); Object.assign(handlers, events); } } },
 		confirm(message, yes, no) { confirmations.push({ message, yes, no }); },
