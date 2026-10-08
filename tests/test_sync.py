@@ -415,6 +415,7 @@ class TestSyncCheckpoints(unittest.TestCase):
                 self.flags = types.SimpleNamespace()
                 self.items = []
                 self.source_cursor = 0
+                self.company = "QA"
 
             def update(self, values):
                 self.__dict__.update(values)
@@ -457,9 +458,12 @@ class TestSyncCheckpoints(unittest.TestCase):
 
         class Order:
             def __init__(self):
+                self.company = "QA"
                 self.source_cursor = 1
                 self.items = [Child(external_line_id="LINE-1", jf_requirements="手工定制",
-                                    jf_packaging="手工包装")]
+                                    jf_packaging="手工包装"),
+                              Child(external_line_id="LINE-2", jf_requirements="第二行定制",
+                                    jf_packaging="第二行包装")]
                 self.flags = types.SimpleNamespace()
 
             def update(self, values):
@@ -477,20 +481,62 @@ class TestSyncCheckpoints(unittest.TestCase):
         order = Order()
         self.frappe.db.exists.return_value = True
         self.frappe.get_doc = Mock(return_value=order)
-        self.frappe.db.get_value.side_effect = ["SKU-ITEM", None]
+        self.frappe.db.get_value.side_effect = ["SKU-ITEM", None, "SKU-ITEM", None]
         self.frappe.get_all = Mock(return_value=[])
         self.sync.upsert_sku = Mock()
 
         self.upsert_order_impl(self.settings(company="QA", auto_create_flows=False, flow_statuses=""), {
             "external_order_id": "ORDER-1", "source_cursor": 2, "source_status": "待处理",
-            "items": [{"sku_id": "SKU-1", "item_name": "源商品", "image_url": "", "qty": 1,
+            "items": [{"sku_id": "SKU-1", "item_name": "同SKU另一行", "image_url": "", "qty": 2,
+                       "external_line_id": "LINE-2", "source_status": "待处理"},
+                      {"sku_id": "SKU-1", "item_name": "源商品", "image_url": "", "qty": 1,
                        "external_line_id": "LINE-1", "source_status": "待处理",
                        "jf_requirements": "平台不应覆盖", "jf_packaging": "平台不应覆盖"}],
         })
 
-        self.assertEqual(len(order.items), 1)
-        self.assertEqual(order.items[0].jf_requirements, "手工定制")
-        self.assertEqual(order.items[0].jf_packaging, "手工包装")
+        self.assertEqual(len(order.items), 2)
+        self.assertEqual(order.items[0].jf_requirements, "第二行定制")
+        self.assertEqual(order.items[0].jf_packaging, "第二行包装")
+        self.assertEqual(order.items[1].jf_requirements, "手工定制")
+        self.assertEqual(order.items[1].jf_packaging, "手工包装")
+        self.frappe.get_doc.assert_called_once_with("Jifeng External Order", self.sync.record_key("scope", "ORDER-1"), for_update=True)
+
+    def test_order_refresh_rejects_wrong_company_or_ambiguous_manual_line_ownership(self):
+        row = {"external_line_id": "LINE-1", "jf_requirements": "人工要求"}
+        snapshot = {"external_order_id": "ORDER-1", "source_cursor": 2, "items": []}
+        for company, rows, message in (("OTHER", [row], "公司"), ("QA", [row, row], "唯一来源行号"),
+                                       ("QA", [{"jf_requirements": "人工要求"}], "唯一来源行号")):
+            order = types.SimpleNamespace(company=company, source_cursor=1, items=rows, update=Mock())
+            self.frappe.get_doc = Mock(return_value=order)
+            with self.subTest(company=company, rows=rows), self.assertRaisesRegex(self.sync.JushuitanError, message):
+                self.upsert_order_impl(self.settings(company="QA"), snapshot)
+            order.update.assert_not_called()
+
+    def test_auto_flow_creation_calls_line_requirement_initializer(self):
+        class Order:
+            company, source_cursor = "QA", 1
+            def __init__(self):
+                self.items = []
+                self.flags = types.SimpleNamespace()
+                self.make_flows = Mock()
+            def update(self, values):
+                self.__dict__.update(values)
+            def set(self, fieldname, value):
+                setattr(self, fieldname, value)
+            def append(self, fieldname, values):
+                getattr(self, fieldname).append(types.SimpleNamespace(**values))
+            def save(self, **kwargs):
+                return self
+        order = Order()
+        self.frappe.get_doc = Mock(return_value=order)
+        self.frappe.get_all = Mock(return_value=[])
+        self.frappe.db.get_value.side_effect = ["SKU-ITEM", None]
+        self.upsert_order_impl(self.settings(company="QA", auto_create_flows=True, flow_statuses="Confirmed"), {
+            "external_order_id": "ORDER-1", "source_cursor": 2, "source_status": "Confirmed",
+            "items": [{"sku_id": "SKU-1", "item_name": "源商品", "image_url": "", "qty": 1,
+                       "external_line_id": "LINE-1", "source_status": "Confirmed"}],
+        })
+        order.make_flows.assert_called_once_with()
 
     def test_sku_sync_refuses_profile_owned_by_another_company(self):
         class Doc:

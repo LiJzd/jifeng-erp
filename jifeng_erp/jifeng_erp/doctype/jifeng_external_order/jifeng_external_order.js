@@ -8,7 +8,7 @@ frappe.ui.form.on("Jifeng External Order", {
             if (r.message && r.message.length === 1) frappe.set_route("Form", "Jifeng Flow Order", r.message[0]);
         });
         frm.add_custom_button("显式更新流程单要求", () => frappe.confirm(
-            "将按商品行的定制/工艺要求和包装要求更新已关联流程单；行内留空时使用订单抬头要求。已有流程单的要求会被覆盖，请先核对每一行。",
+            "将按商品行的定制/工艺要求和包装要求更新准确关联的流程单；行内留空时使用订单抬头要求。已有有效下游业务单据的流程单需先处理原单据。请先核对每一行。",
             async () => {
                 if (frm.is_dirty()) await frm.save();
                 const r = await frm.call("apply_requirements");

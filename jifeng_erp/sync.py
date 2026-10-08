@@ -6,7 +6,7 @@ import frappe
 from frappe.utils import get_datetime, now_datetime
 
 from jifeng_erp.jushuitan import Client, JushuitanError, order_snapshot, record_key, safe_image_url
-from jifeng_erp.workflow import BLOCKED_STATUSES, create_flows
+from jifeng_erp.workflow import BLOCKED_STATUSES
 
 
 def client(settings):
@@ -323,17 +323,21 @@ def _sync_profile_source_value(profile, fieldname, previous_source, incoming_sou
 def upsert_order(settings, snapshot):
     key = record_key(settings.sync_scope, snapshot["external_order_id"])
     exists = frappe.db.exists("Jifeng External Order", key)
-    order = frappe.get_doc("Jifeng External Order", key) if exists else frappe.new_doc("Jifeng External Order")
+    order = frappe.get_doc("Jifeng External Order", key, for_update=True) if exists else frappe.new_doc("Jifeng External Order")
+    if exists and order.company != settings.company:
+        raise JushuitanError("已有来源订单公司与当前同步公司不一致，停止更新")
     if exists and int(order.source_cursor or 0) > int(snapshot["source_cursor"]):
         return
-    order.update({"sync_key": key, "scope": settings.sync_scope, "company": settings.company})
-    manual_requirements = {
-        str(row.get("external_line_id")): {
+    manual_requirements = {}
+    for row in (getattr(order, "items", None) or []):
+        line_id = str(row.get("external_line_id") or "")
+        if not line_id or line_id in manual_requirements:
+            raise JushuitanError("已有订单明细缺少唯一来源行号，停止同步以保留人工要求")
+        manual_requirements[line_id] = {
             "jf_requirements": row.get("jf_requirements"),
             "jf_packaging": row.get("jf_packaging"),
         }
-        for row in (getattr(order, "items", None) or []) if row.get("external_line_id")
-    }
+    order.update({"sync_key": key, "scope": settings.sync_scope, "company": settings.company})
     for field, value in snapshot.items():
         if field != "items":
             order.set(field, value)
@@ -368,4 +372,4 @@ def upsert_order(settings, snapshot):
     statuses = {s.strip() for s in (settings.flow_statuses or "").splitlines() if s.strip()}
     positive = all(float(r.qty or 0) > 0 for r in order.items if r.source_status != "Cancelled")
     if settings.auto_create_flows and positive and order.source_status in statuses and order.source_status not in BLOCKED_STATUSES:
-        create_flows(order)
+        order.make_flows()

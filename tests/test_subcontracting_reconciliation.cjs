@@ -88,8 +88,41 @@ async function testFilterChangeAbortsOutstandingRead() {
 	assert.equal(view.result, null); view.destroy();
 }
 
+async function testCurrentInvoiceBalanceIsLabelledAndMixedInvoiceHasNoAttributedAmount() {
+	const h = harness(), host = new Element("div"), view = new h.windows.JifengSubcontractingReconciliation(host, h.bridge, "all");
+	await view.ready; await view.controls.supplier.set_value("SUP-PLATING");
+	const pending = view.query(), request = h.calls.at(-1);
+	request.resolve(emptyResponse({ business_kind: "all", payables: [
+		{ voucher_type: "Purchase Invoice", voucher_no: "PI-CLEARED", source_scope: "发票原生余额（当前；AP截至日未列示）",
+			currency: "CNY", invoiced: "4", outstanding: "0", paid: null, credit_note: null },
+		{ voucher_type: "Purchase Invoice", voucher_no: "PI-MIX", source_scope: "混合或缺失采购来源，无法归入本委外范围",
+			invoiced: null, outstanding: null, paid: null, credit_note: null },
+	] })); await pending;
+	assert.match(host.textContent, /发票原生余额（当前；AP截至日未列示）/);
+	assert.match(host.textContent, /混合或缺失采购来源/);
+	assert.equal(host.textContent.includes("84"), false);
+	assert.match(host.textContent, /金额及余额依据/);
+	view.destroy();
+}
+
+async function testPendingPaymentNavigationDoesNotOverwriteChangedFilterStatus() {
+	const h = harness(), host = new Element("div"), view = new h.windows.JifengSubcontractingReconciliation(host, h.bridge, "all");
+	await view.ready; await view.controls.supplier.set_value("SUP-PLATING");
+	const pending = view.query(), request = h.calls.at(-1);
+	request.resolve(emptyResponse({ business_kind: "all" })); await pending;
+	let finish;
+	h.bridge.openSupplierPayment = () => new Promise(resolve => { finish = resolve; });
+	const opening = view.openPayment({ voucher_type: "Purchase Invoice", voucher_no: "PI-1" });
+	await view.controls.supplier.set_value("SUP-OTHER");
+	finish(); await opening;
+	assert.equal(view.status.textContent, "筛选已变化，请重新查询。");
+	view.destroy();
+}
+
 (async () => {
 	for (const test of [testNativeQueryCarriesExplicitSourceScopeAndDoesNotPersistDrafts,
-		testSourceLinksOpenNativeVoucherAndMixedPaymentDoesNotInventAmount, testFilterChangeAbortsOutstandingRead]) await test();
-	console.log("3 subcontracting reconciliation component tests passed");
+		testSourceLinksOpenNativeVoucherAndMixedPaymentDoesNotInventAmount, testFilterChangeAbortsOutstandingRead,
+		testCurrentInvoiceBalanceIsLabelledAndMixedInvoiceHasNoAttributedAmount,
+		testPendingPaymentNavigationDoesNotOverwriteChangedFilterStatus]) await test();
+	console.log("5 subcontracting reconciliation component tests passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

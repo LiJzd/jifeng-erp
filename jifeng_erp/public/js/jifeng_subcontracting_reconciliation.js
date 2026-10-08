@@ -3,7 +3,7 @@ window.JifengSubcontractingReconciliation = class JifengSubcontractingReconcilia
 	constructor(host, bridge, businessKind = "all") {
 		this.host = host; this.bridge = bridge; this.businessKind = businessKind;
 		this.disposed = false; this.visible = true; this.revision = 0; this.loading = false;
-	this.result = null; this.request = null; this.controls = {};
+		this.result = null; this.request = null; this.controls = {};
 		this.build(); this.ready = this.initialize();
 	}
 	element(tag, text, className) {
@@ -172,7 +172,7 @@ window.JifengSubcontractingReconciliation = class JifengSubcontractingReconcilia
 			["委外进度", data.progress, [["subcontracting_order", "委外订单"], ["supplier_name", "供应商"], ["flow_order", "流程单"], ["item_code", "商品"], ["stock_uom", "单位"], ["planned_qty", "计划量"], ["accepted_qty", "净接收"], ["rejected_qty", "净拒收"], ["loss_qty", "确认损耗"], ["pending_qty", "待收" ]], { links: { subcontracting_order: "Subcontracting Order", flow_order: "Jifeng Flow Order" } }],
 			["收回与库存价值（" + data.company_currency + "）", data.receipts, [["receipt", "收回/退回单"], ["entry_type", "业务类型"], ["subcontracting_order", "委外订单"], ["flow_order", "流程单"], ["item_code", "商品"], ["stock_uom", "单位"], ["accepted_qty", "接收变动"], ["rejected_qty", "拒收变动"], ["loss_qty", "损耗变动"], ["inventory_qty_change", "库存数量变动"], ["inventory_value_change", "库存价值变动"], ["inventory_value_status", "估价状态" ]], { links: { receipt: "Subcontracting Receipt", subcontracting_order: "Subcontracting Order", flow_order: "Jifeng Flow Order" } }],
 			["委外原料发退（库存单位分行展示）", data.materials, [["stock_entry", "发退料凭证"], ["entry_type", "业务类型"], ["subcontracting_order", "委外订单"], ["flow_order", "流程单"], ["rm_item_code", "原料"], ["stock_uom", "库存单位"], ["issued_qty", "发出"], ["returned_qty", "退回"], ["net_qty", "净发出" ]], { links: { stock_entry: "Stock Entry", subcontracting_order: "Subcontracting Order", flow_order: "Jifeng Flow Order" } }],
-			["应付与未核销（公司本币 " + data.company_currency + "；截至结束日期）", data.payables, [["voucher_no", "采购发票/贷项凭证"], ["posting_date", "记账日期"], ["payable_account", "应付科目"], ["currency", "账簿币种"], ["invoiced", "应付来源金额"], ["paid", "原生账簿已核销"], ["credit_note", "贷项"], ["outstanding", "未付余额"], ["payment_action", "付款入口" ]], { links: { voucher_no: "Purchase Invoice" } }],
+			["应付与未核销（币种和余额依据逐行展示）", data.payables, [["voucher_no", "采购发票/贷项凭证"], ["posting_date", "记账日期"], ["source_scope", "金额及余额依据"], ["payable_account", "应付科目"], ["currency", "金额币种"], ["invoiced", "应付来源金额"], ["paid", "原生账簿已核销"], ["credit_note", "贷项"], ["outstanding", "原生余额"], ["payment_action", "付款入口" ]], { links: { voucher_no: "Purchase Invoice" } }],
 			["正式付款（不含混合来源金额）", data.payments, [["voucher_no", "付款凭证"], ["posting_date", "记账日期"], ["payment_scope", "来源关系"], ["paid_amount", "付款金额"], ["currency", "付款账户币种" ]], { links: { voucher_no: "Payment Entry" } }],
 			["已取消凭证（仅历史链接，不进入有效数量或金额）", data.history, [["doctype", "凭证类型"], ["voucher_no", "凭证编号"], ["posting_date", "日期"], ["status", "状态"]], { historyLinks: true }],
 		];
@@ -181,9 +181,13 @@ window.JifengSubcontractingReconciliation = class JifengSubcontractingReconcilia
 	}
 	async openPayment(row) {
 		if (!this.result || !this.visible || this.loading || row.voucher_type !== "Purchase Invoice" || !this.bridge?.openSupplierPayment) return;
+		const result = this.result, revision = this.revision;
 		const identity = { company: this.result.company, supplier: this.result.supplier, name: row.voucher_no };
-		try { await this.bridge.openSupplierPayment(identity); this.status.textContent = __("已打开原生收付款草稿入口；返回后请重新查询。"); }
-		catch { this.status.textContent = __("原生付款入口未能打开，请查看来源发票与权限。"); }
+		try { await this.bridge.openSupplierPayment(identity);
+			if (!this.disposed && this.visible && result === this.result && revision === this.revision)
+				this.status.textContent = __("已打开原生收付款草稿入口；返回后请重新查询。"); }
+		catch { if (!this.disposed && this.visible && result === this.result && revision === this.revision)
+			this.status.textContent = __("原生付款入口未能打开，请查看来源发票与权限。"); }
 	}
 	destroy() {
 		if (this.disposed) return;

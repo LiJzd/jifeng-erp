@@ -16,7 +16,16 @@ class Row:
 
 
 class Flow:
-    def __init__(self):
+    def __init__(self, name="FLOW-NEW", line="LINE-1"):
+        from jifeng_erp.jushuitan import record_key
+
+        self.name = name
+        self.external_order = "JST-ORDER-1"
+        self.external_line_id = line
+        self.source_key = record_key(self.external_order, line)
+        self.sales_order = None
+        self.company = "QA"
+        self.item_code = "ITEM"
         self.flags = types.SimpleNamespace()
         self.save = Mock()
         self.check_permission = Mock()
@@ -25,7 +34,8 @@ class Flow:
 class TestExternalOrderRequirements(unittest.TestCase):
     def setUp(self):
         self.frappe = types.ModuleType("frappe")
-        self.frappe.whitelist = lambda: lambda fn: fn
+        self.frappe.whitelist = lambda **kwargs: lambda fn: fn
+        self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         self.frappe.db = Mock()
         self.workflow = types.ModuleType("jifeng_erp.workflow")
         self.workflow.create_flows = Mock()
@@ -47,10 +57,18 @@ class TestExternalOrderRequirements(unittest.TestCase):
             )
             self.module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.module)
+        self.module.check_quantity_fields = Mock()
+        self.module.assert_no_quantity_downstream = Mock()
 
     def order(self, row):
         order = object.__new__(self.module.JifengExternalOrder)
         order.name = "JST-ORDER-1"
+        order.doctype = "Jifeng External Order"
+        order.flags = types.SimpleNamespace()
+        order.company = "QA"
+        order.source_status = "Confirmed"
+        row.item_code = "ITEM"
+        row.source_status = "Confirmed"
         order.items = [row]
         order.requirements = "订单通用定制"
         order.packaging = "订单通用包装"
@@ -82,7 +100,7 @@ class TestExternalOrderRequirements(unittest.TestCase):
         flow = Flow()
         flow.requirements = "模板定制"
         flow.packaging = "模板包装"
-        self.frappe.db.get_value.return_value = None
+        self.frappe.db.get_value.side_effect = [order.name, None]
         self.frappe.get_doc = Mock(return_value=flow)
 
         def create_flows(current):
@@ -104,6 +122,7 @@ class TestExternalOrderRequirements(unittest.TestCase):
         existing = Row(external_line_id="LINE-1", flow_order="FLOW-OLD",
                        jf_requirements="已修改定制", jf_packaging="已修改包装")
         existing_order = self.order(existing)
+        self.frappe.db.get_value.side_effect = None
         self.frappe.db.get_value.return_value = "FLOW-OLD"
         self.workflow.create_flows.side_effect = lambda current: ["FLOW-OLD"]
         self.frappe.get_doc.reset_mock()
@@ -112,13 +131,15 @@ class TestExternalOrderRequirements(unittest.TestCase):
 
     def test_explicit_apply_updates_each_flow_from_its_line_with_header_fallback(self):
         rows = [
-            Row(flow_order="FLOW-1", jf_requirements="行1定制", jf_packaging="行1包装"),
-            Row(flow_order="FLOW-2", jf_requirements="", jf_packaging="行2包装"),
+            Row(flow_order="FLOW-1", external_line_id="LINE-1", item_code="ITEM", source_status="Confirmed",
+                jf_requirements="行1定制", jf_packaging="行1包装"),
+            Row(flow_order="FLOW-2", external_line_id="LINE-2", item_code="ITEM", source_status="Confirmed",
+                jf_requirements="", jf_packaging="行2包装"),
         ]
         order = self.order(rows[0])
         order.items = rows
-        flows = {name: Flow() for name in ("FLOW-1", "FLOW-2")}
-        self.frappe.get_doc = Mock(side_effect=lambda doctype, name: flows[name])
+        flows = {name: Flow(name, line) for name, line in (("FLOW-1", "LINE-1"), ("FLOW-2", "LINE-2"))}
+        self.frappe.get_doc = Mock(side_effect=lambda doctype, name, **kwargs: flows[name])
 
         self.assertEqual(order.apply_requirements(), 2)
 
@@ -129,5 +150,39 @@ class TestExternalOrderRequirements(unittest.TestCase):
         for flow in flows.values():
             self.assertEqual(flow.source_requirements_attachment, "/files/order-guide.pdf")
             self.assertTrue(flow.flags.from_sync)
-            flow.check_permission.assert_called_once_with("write")
+            self.assertEqual([call.args[0] for call in flow.check_permission.call_args_list], ["read", "write"])
             flow.save.assert_called_once_with()
+
+    def test_explicit_apply_rejects_cross_company_or_unrelated_source_before_overwriting(self):
+        row = Row(external_line_id="LINE-1", flow_order="FLOW-1", jf_requirements="新要求", jf_packaging="")
+        order = self.order(row)
+        for field, wrong in (("company", "OTHER"), ("external_order", "OTHER"),
+                             ("external_line_id", "OTHER"), ("source_key", "OTHER"),
+                             ("item_code", "OTHER"), ("sales_order", "SO-OTHER")):
+            flow = Flow("FLOW-1")
+            setattr(flow, field, wrong)
+            self.frappe.get_doc = Mock(return_value=flow)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "准确来源行"):
+                order.apply_requirements()
+            flow.save.assert_not_called()
+
+    def test_existing_downstream_blocks_all_requirement_writes(self):
+        rows = [Row(external_line_id=f"LINE-{i}", flow_order=f"FLOW-{i}", jf_requirements="新要求",
+                    item_code="ITEM", source_status="Confirmed") for i in (1, 2)]
+        order = self.order(rows[0])
+        order.items = rows
+        flows = {f"FLOW-{i}": Flow(f"FLOW-{i}", f"LINE-{i}") for i in (1, 2)}
+        self.frappe.get_doc = Mock(side_effect=lambda doctype, name, **kwargs: flows[name])
+        self.module.assert_no_quantity_downstream.side_effect = [None, self.module.FlowQuantityError("下游")]
+        with self.assertRaisesRegex(ValueError, "有效下游"):
+            order.apply_requirements()
+        for flow in flows.values():
+            flow.save.assert_not_called()
+
+    def test_duplicate_or_missing_line_identity_cannot_guess_requirement_ownership(self):
+        row = Row(external_line_id="LINE-1", flow_order=None)
+        order = self.order(row)
+        order.items = [row, row]
+        with self.assertRaisesRegex(ValueError, "唯一行标识"):
+            order.make_flows()
+        self.workflow.create_flows.assert_not_called()
