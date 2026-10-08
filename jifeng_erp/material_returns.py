@@ -78,6 +78,10 @@ def _permitted_table(doc, fieldname, childtype, fields, permission="read"):
     if not (field and field.fieldtype == "Table" and field.options == childtype
             and (field.permlevel or 0) in levels):
         frappe.throw("没有读取或填写领料退库明细的权限", frappe.PermissionError)
+    mask_levels = set(doc.meta.get_permlevel_access(
+        permission_type="mask", user=frappe.session.user))
+    if field.get("mask") and (field.permlevel or 0) not in mask_levels:
+        frappe.throw("没有读取或填写领料退库明细的权限", frappe.PermissionError)
     _permitted_fields(frappe.get_meta(childtype), fields, permission, parenttype=doc.doctype)
 
 

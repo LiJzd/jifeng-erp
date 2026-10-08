@@ -54,6 +54,9 @@ class Meta:
         return set() if kwargs.get("permission_type") == "mask" else {0}
 
     def get_field(self, name):
+        if name == "items":
+            return Record(fieldtype="Table", options="Stock Entry Detail", permlevel=0,
+                          mask=int(name in self.masked))
         if name == "additional_costs":
             return Record(fieldtype="Table", options="Landed Cost Taxes and Charges", permlevel=0, mask=0)
         return Record(mask=int(name in self.masked), permlevel=0)
@@ -183,6 +186,17 @@ class TestMaterialReturns(unittest.TestCase):
         self.module._permitted_fields(child_meta, ("item_code",), parenttype="Stock Entry")
         self.assertEqual(child_meta.name, "Stock Entry Detail")
         self.assertEqual(child_meta.last_parenttype, "Stock Entry")
+
+    def test_parent_items_table_mask_denies_source_rows_but_unmasked_normal_source_is_allowed(self):
+        parent_meta = Meta("Stock Entry")
+        parent = Record(doctype="Stock Entry", meta=parent_meta)
+        child_meta = Meta("Stock Entry Detail")
+        self.metas["Stock Entry Detail"] = child_meta
+
+        self.module._permitted_table(parent, "items", "Stock Entry Detail", ("item_code",))
+        parent_meta.masked.add("items")
+        with self.assertRaisesRegex(PermissionError, "没有读取或填写领料退库明细的权限"):
+            self.module._permitted_table(parent, "items", "Stock Entry Detail", ("item_code",))
 
     def test_return_cannot_add_header_or_row_additional_costs(self):
         header_meta = Meta("Stock Entry")
