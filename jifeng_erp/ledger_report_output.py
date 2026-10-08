@@ -34,7 +34,7 @@ _MODULE_SHAS = {
 }
 _DEPENDENCY_SHAS = {
     "procurement_reports": "6141c7980ee648bb6b25d534bb4306ec08779c78fe3799fcea1bb3bdea4e0c7c",
-    "subcontracting": "7bf5cebd4594c7e329c43729b2167eb06e59eb6c506dee22110a58d96ac179c5",
+    "subcontracting": "6e7818890ba540ca30d89bd935a77e1d34ffdf2a873c0568e2e7968a00008ab0",
     "subcontracting_material": "90b798c6e712f82b7db4a618ef1631624466374d1f4c5bee85a1bd78fb734e2a",
     "ledger_source_guard": "be5dc67e3914babc7c24042d10f84e3c20f40cf656bf1f596e1e364bed3080ef",
     "inventory_scope": "832a3f8612bac647c5f9a9f807fc82e9555f852b9fe46ba902891d2aec48a4b7"

@@ -367,7 +367,6 @@ def _receipt_stock_valuation(rows, receipts, currency, company, guard):
         if not source:
             frappe.throw("委外收回库存估价缺少原始明细，请先核对", frappe.PermissionError)
         key = (movement["receipt"], movement["receipt_item"])
-        detail_names.setdefault(movement["receipt"], set()).add(movement["receipt_item"])
         item = guard.document(frappe.get_doc("Item", source.item_code), extra={"stock_uom", "is_stock_item"})
         if item.stock_uom != source.stock_uom:
             frappe.throw("委外收回库存单位与商品库存单位不一致，不能读取库存价值", frappe.ValidationError)
@@ -390,6 +389,8 @@ def _receipt_stock_valuation(rows, receipts, currency, company, guard):
             pair = (source.item_code, warehouse_name)
             quantities[pair] = quantities.get(pair, Decimal(0)) + quantity
         expected[key] = quantities
+        if quantities:
+            detail_names.setdefault(movement["receipt"], set()).add(movement["receipt_item"])
         result[key] = {"inventory_qty_change": sum(quantities.values(), Decimal(0)),
                        "inventory_value_change": Decimal(0) if not quantities else None,
                        "currency": currency,
@@ -456,7 +457,8 @@ def _receipt_stock_valuation(rows, receipts, currency, company, guard):
         result[key]["inventory_value_change"] = bucket["value"]
         result[key]["inventory_value_status"] = "有效库存账"
 
-    pending = _receipt_reposting_rows(rows, expected, actual, receipts, company, guard)
+    pending = (_receipt_reposting_rows(rows, expected, receipts, company, guard)
+               if any(expected.values()) else set())
     for key in pending:
         if key in result:
             result[key]["inventory_value_change"] = None
@@ -464,11 +466,18 @@ def _receipt_stock_valuation(rows, receipts, currency, company, guard):
     return result
 
 
-def _receipt_reposting_rows(rows, expected, actual, receipts, company, guard):
+def _receipt_reposting_rows(rows, expected, receipts, company, guard):
     """Identify only active native revaluation jobs that can change these rows."""
+    if not any(expected.values()):
+        return set()
     guard.include_doctypes({"Repost Item Valuation"})
     try:
-        jobs = guard.query("get_all", "Repost Item Valuation", filters={"company": company}, fields=["*"],
+        jobs = guard.query("get_all", "Repost Item Valuation",
+                           filters={"company": company, "docstatus": 1,
+                                    "status": ["not in", ["Completed", "Skipped", "Cancelled"]]},
+                           fields=["name", "company", "docstatus", "status", "based_on", "reposting_data_file",
+                                   "items_to_be_repost", "voucher_type", "voucher_no", "posting_date", "item_code",
+                                   "warehouse"],
                            order_by="name asc", limit_page_length=0)
     except (frappe.DoesNotExistError, frappe.ValidationError, frappe.PermissionError):
         frappe.throw("无法确认库存重估状态，不能显示部分库存价值", frappe.ValidationError)
@@ -481,8 +490,6 @@ def _receipt_reposting_rows(rows, expected, actual, receipts, company, guard):
             keys_by_pair.setdefault(pair, set()).add(key)
     pending = set()
     for job in jobs:
-        if job.get("docstatus") != 1 or job.get("status") in {"Completed", "Skipped", "Cancelled"}:
-            continue
         if job.get("status") not in {"Queued", "In Progress", "Failed"}:
             frappe.throw("存在未完成且状态无法核实的库存重估，不能显示部分库存价值", frappe.ValidationError)
         if job.get("voucher_type") == "Subcontracting Receipt" and job.get("voucher_no") in receipt_names:

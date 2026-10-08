@@ -7,7 +7,7 @@ import types
 import unittest
 from copy import deepcopy
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 ROOT = pathlib.Path(__file__).parents[1]
@@ -109,6 +109,7 @@ class Environment:
             operator, expected = rule
             if operator == "=": return value == expected
             if operator == "in": return value in expected
+            if operator == "not in": return value not in expected
             if operator == "between": return value is not None and expected[0] <= str(value) <= expected[1]
             if operator == "is": return bool(value) == (expected == "set")
         return value == rule
@@ -386,7 +387,8 @@ class CandidateModels(unittest.TestCase):
 
     def test_pending_native_revaluation_hides_affected_value(self):
         self.env.meta["Repost Item Valuation"] = Meta(self.env, "Repost Item Valuation", {
-            "name", "company", "docstatus", "status", "based_on", "item_code", "warehouse", "posting_date"})
+            "name", "company", "docstatus", "status", "based_on", "item_code", "warehouse", "posting_date",
+            "reposting_data_file", "items_to_be_repost", "voucher_type", "voucher_no"})
         self.env.doc("Repost Item Valuation", "RIV-1", company="CO", docstatus=1, status="Queued",
                      based_on="Item and Warehouse", item_code="FG", warehouse="MAIN", posting_date="2026-10-01")
 
@@ -395,6 +397,25 @@ class CandidateModels(unittest.TestCase):
         self.assertEqual(row["inventory_qty_change"], Decimal(8))
         self.assertIsNone(row["inventory_value_change"])
         self.assertEqual(row["inventory_value_status"], "库存重估未完成")
+
+    def test_empty_inventory_rows_do_not_query_reposting(self):
+        guard = Mock()
+        self.assertEqual(self.sub._receipt_reposting_rows([], {}, {}, "CO", guard), set())
+        self.assertEqual(self.sub._receipt_reposting_rows(
+            [{"receipt": "SCR", "receipt_item": "LOSS-ONLY"}], {("SCR", "LOSS-ONLY"): {}}, {}, "CO", guard), set())
+        guard.include_doctypes.assert_not_called()
+        guard.query.assert_not_called()
+
+    def test_completed_unrelated_revaluation_is_not_loaded_or_blocking(self):
+        self.env.meta["Repost Item Valuation"] = Meta(self.env, "Repost Item Valuation", {
+            "name", "company", "docstatus", "status", "based_on", "item_code", "warehouse", "posting_date",
+            "reposting_data_file", "items_to_be_repost", "voucher_type", "voucher_no"})
+        self.env.doc("Repost Item Valuation", "RIV-DONE", company="CO", docstatus=1, status="Completed",
+                     based_on="Item and Warehouse", item_code="RAW", warehouse="MAIN", posting_date="2026-10-01")
+
+        row = self.sub.subcontracting_receipt_ledger(self.filters)[1][0]
+
+        self.assertEqual(row["inventory_value_change"], Decimal(20))
 
     def test_subcontract_child_loss_mask_is_not_hidden_by_derived_column(self):
         self.env.meta["Subcontracting Receipt Item"].fields["process_loss_qty"]["mask"] = 1
