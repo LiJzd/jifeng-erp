@@ -108,8 +108,6 @@ def list_production_instructions(company, from_date, to_date, exact_date=None,
     if start > end or (end - start).days > MAX_DAYS:
         _fail("日期范围无效或超过 366 天")
     exact = _date(exact_date, "指定日期") if exact_date else None
-    if exact and not start <= exact <= end:
-        _fail("指定日期必须位于起止日期范围内")
     if not isinstance(search, str) or len(search) > 140 or any(ord(char) < 32 for char in search):
         _fail("关键词无效")
     page = _page_int(page, "页码", 100000)

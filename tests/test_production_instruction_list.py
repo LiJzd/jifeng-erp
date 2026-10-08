@@ -121,9 +121,10 @@ class ProductionInstructionListTests(unittest.TestCase):
             self.call()
         self.assertFalse(any(doctype == "Production Plan" for doctype, _ in self.list_calls))
 
-    def test_exact_date_outside_range_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "指定日期"):
-            self.call(exact_date="2026-11-01")
+    def test_exact_date_overrides_the_date_range(self):
+        self.setup_document()
+        self.call(exact_date="2026-11-01")
+        self.assertEqual(self.list_calls[-1][1]["filters"]["posting_date"], ["=", "2026-11-01"])
 
 
 if __name__ == "__main__":
