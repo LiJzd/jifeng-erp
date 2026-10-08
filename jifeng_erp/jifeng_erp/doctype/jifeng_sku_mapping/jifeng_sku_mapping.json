@@ -89,9 +89,37 @@
    "read_only": 1
   },
   {
+   "fieldname": "source_specification",
+   "fieldtype": "Small Text",
+   "label": "源规格快照",
+   "read_only": 1,
+   "description": "用于判断同步规格是否仍由平台来源管理；不覆盖已人工修改的档案值。"
+  },
+  {
    "fieldname": "source_image",
    "fieldtype": "Data",
    "label": "源图片地址",
+   "read_only": 1
+  },
+  {
+   "fieldname": "image_sync_status",
+   "fieldtype": "Select",
+   "label": "图片同步状态",
+   "options": "未配置\n待处理\n已完成\n失败",
+   "default": "未配置",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "image_sync_error",
+   "fieldtype": "Small Text",
+   "label": "图片同步说明",
+   "read_only": 1
+  },
+  {
+   "fieldname": "image_sync_attempted_at",
+   "fieldtype": "Datetime",
+   "label": "最近图片同步时间",
    "read_only": 1
   },
   {
@@ -110,7 +138,11 @@
   "supplier_sku_id",
   "supplier_name",
   "source_modified",
+  "source_specification",
   "source_image",
+  "image_sync_status",
+  "image_sync_error",
+  "image_sync_attempted_at",
   "archived_image"
  ]
 }

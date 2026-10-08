@@ -172,8 +172,14 @@ def upsert_sku(settings, raw):
     key = record_key(settings.sync_scope, sku_id)
     existing = frappe.db.exists("Jifeng SKU Mapping", key)
     mapping = frappe.get_doc("Jifeng SKU Mapping", key) if existing else frappe.new_doc("Jifeng SKU Mapping")
-    image = safe_image_url(raw.get("pic_big") or raw.get("pic"))
-    image_changed = bool(image and image != mapping.source_image)
+    old_supplier_sku_id = mapping.supplier_sku_id
+    old_source_specification = mapping.source_specification
+    raw_image_present = "pic_big" in raw or "pic" in raw
+    raw_image = raw.get("pic_big") or raw.get("pic")
+    image = safe_image_url(raw_image)
+    image_changed = raw_image_present and (
+        image != (mapping.source_image or "") or bool(raw_image and not image)
+    )
     if not existing:
         # Never silently take over an existing manually maintained Item.
         item_code = sku_id if not frappe.db.exists("Item", sku_id) else "JST-" + key[:20]
@@ -193,33 +199,101 @@ def upsert_sku(settings, raw):
     elif mapping.managed_item:
         item = frappe.get_doc("Item", mapping.item_code)
         item.item_name = raw.get("name") or item.item_name
-        if image_changed:
-            # Keep the last attached File until its replacement is archived.
-            # An old remote URL still needs removing before the job runs.
-            attached_file = bool(
-                isinstance(item.image, str)
-                and item.image.startswith(("/files/", "/private/files/"))
-                and frappe.db.exists("File", {"file_url": item.image,
-                    "attached_to_doctype": "Item", "attached_to_name": item.name})
-            )
-            if not attached_file:
-                item.image = ""
+        if image_changed and isinstance(item.image, str) and item.image.startswith(("http://", "https://")):
+            # Never leave a remote URL on Item; retain validated local images
+            # until a replacement has been downloaded and checked.
+            item.image = ""
         item.save(ignore_permissions=True)
-    mapping.supplier_sku_id = raw.get("supplier_sku_id") or mapping.supplier_sku_id
+    incoming_supplier_sku_id = raw.get("supplier_sku_id")
+    incoming_specification = raw.get("properties_value")
+    if incoming_supplier_sku_id not in (None, ""):
+        mapping.supplier_sku_id = str(incoming_supplier_sku_id)
     mapping.supplier_name = raw.get("supplier_name") or mapping.supplier_name
     mapping.source_modified = raw.get("modified") or mapping.source_modified
     if image_changed:
-        mapping.source_image, mapping.archived_image = image, None
+        mapping.source_image = image or None
+        # Keep the last successful attachment as the ownership baseline while
+        # a replacement is pending or fails. The worker replaces it only if
+        # the Item still points at that attachment.
+        if image:
+            mapping.image_sync_status = "待处理"
+        elif raw_image:
+            mapping.image_sync_status = "失败"
+        else:
+            mapping.image_sync_status = "未配置"
+        mapping.image_sync_error = "" if image or not raw_image else "源图片链接无效，未下载。"
+        mapping.image_sync_attempted_at = now_datetime() if image else None
+    elif not mapping.source_image:
+        mapping.image_sync_status = "未配置"
+        mapping.image_sync_error = ""
+    elif mapping.archived_image:
+        if mapping.image_sync_status in (None, "", "未配置"):
+            # Backfill legacy state only when it was never recorded. A
+            # pending/failed current source must keep that state even if an
+            # older archived image is retained as the ownership baseline.
+            mapping.image_sync_status = "已完成"
+            mapping.image_sync_error = ""
+        elif mapping.image_sync_status == "已完成":
+            mapping.image_sync_error = ""
+    elif mapping.image_sync_status in (None, "", "未配置"):
+        # Legacy mappings have no image state yet; let the worker process them once.
+        mapping.image_sync_status = "待处理"
+        mapping.image_sync_attempted_at = mapping.image_sync_attempted_at or now_datetime()
+
+    # Existing mappings use their previous source values as baselines. On old
+    # records without a specification baseline, only fill blank profile fields.
+    old_supplier_baseline = old_supplier_sku_id
+    old_specification_baseline = old_source_specification
+    profile_name = frappe.db.exists("Jifeng Product Profile", {"item_code": mapping.item_code})
+    if profile_name:
+        profile = frappe.get_doc("Jifeng Product Profile", profile_name)
+        if profile.company != settings.company:
+            raise JushuitanError("商品档案公司与当前同步公司不一致，已停止更新。")
+        profile_changed = False
+        if incoming_supplier_sku_id not in (None, ""):
+            profile_changed |= _sync_profile_source_value(profile, "supplier_product_code", old_supplier_baseline,
+                                                          incoming_supplier_sku_id)
+        if incoming_specification not in (None, ""):
+            profile_changed |= _sync_profile_source_value(profile, "specification", old_specification_baseline,
+                                                          incoming_specification)
+        if profile_changed:
+            profile.save(ignore_permissions=True)
+    else:
+        frappe.get_doc({"doctype": "Jifeng Product Profile", "item_code": mapping.item_code,
+                        "company": settings.company, "supplier_product_code": incoming_supplier_sku_id,
+                        "specification": str(incoming_specification or "")}).insert(ignore_permissions=True)
+    # Empty/omitted source values are not authoritative. In particular, the
+    # order fallback only has a partial SKU payload, and platform snapshots can
+    # also temporarily omit a specification. Keep the last known baseline so
+    # a later complete SKU sync can safely distinguish source-owned from
+    # manually edited profile values.
+    if incoming_specification not in (None, ""):
+        mapping.source_specification = str(incoming_specification)
     mapping.flags.from_sync = True
     mapping.save(ignore_permissions=True)
-    if not frappe.db.exists("Jifeng Product Profile", {"item_code": mapping.item_code}):
-        frappe.get_doc({"doctype": "Jifeng Product Profile", "item_code": mapping.item_code,
-                        "company": settings.company, "supplier_product_code": raw.get("supplier_sku_id"),
-                        "specification": str(raw.get("properties_value") or "")}).insert(ignore_permissions=True)
-    if settings.image_hosts and mapping.source_image and not mapping.archived_image:
+    if image_changed and not image:
+        return mapping.item_code
+    if mapping.source_image and mapping.image_sync_status == "待处理":
+        if not settings.image_hosts:
+            mapping.image_sync_status = "失败"
+            mapping.image_sync_error = "未配置图片允许域名，未下载。"
+            mapping.save(ignore_permissions=True)
+            return mapping.item_code
         frappe.enqueue("jifeng_erp.images.archive_image", mapping_name=mapping.name,
                        queue="long", timeout=120, enqueue_after_commit=True)
     return mapping.item_code
+
+
+def _sync_profile_source_value(profile, fieldname, previous_source, incoming_source):
+    """Update only blank or still source-owned profile values."""
+    current = profile.get(fieldname)
+    previous_source = str(previous_source or "")
+    incoming_source = str(incoming_source or "")
+    if not current or (previous_source and current == previous_source):
+        if current != incoming_source:
+            profile.set(fieldname, incoming_source)
+            return True
+    return False
 
 
 def upsert_order(settings, snapshot):
