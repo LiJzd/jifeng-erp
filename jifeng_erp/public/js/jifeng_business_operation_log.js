@@ -14,6 +14,7 @@
 			this.options = options;
 			this.page = 1;
 			this.pageSize = 25;
+			this.requestId = 0;
 			this.destroyed = false;
 			this.root = document.createElement("section");
 			this.root.className = "jifeng-business-operation-log";
@@ -40,9 +41,11 @@
 			const filters = document.createElement("div");
 			filters.className = "jol-filters";
 			filters.append(
-				this.label("开始日期", this.input("date", "from-date", today())),
-				this.label("结束日期", this.input("date", "to-date", today())),
+				this.label("开始时间", this.input("datetime-local", "from-date", `${today()}T00:00`)),
+				this.label("结束时间", this.input("datetime-local", "to-date", `${today()}T23:59`)),
 				this.label("业务模块", this.moduleSelect()),
+				this.label("操作人", this.input("search", "operator", "", "用户账号")),
+				this.label("操作内容", this.actionSelect()),
 				this.label("单号", this.input("search", "document-name", "", "单据编号")),
 				this.button("查询", "query", true),
 				this.button("更新日志", "refresh")
@@ -111,6 +114,18 @@
 			return select;
 		}
 
+		actionSelect() {
+			const select = document.createElement("select");
+			select.dataset.jolFilter = "action";
+			for (const [value, label] of [["", "全部操作"], ["创建", "创建"], ["修改", "修改"], ["提交", "提交"], ["取消", "取消"]]) {
+				const option = document.createElement("option");
+				option.value = value;
+				option.textContent = label;
+				select.append(option);
+			}
+			return select;
+		}
+
 		button(text, action, primary = false) {
 			const button = document.createElement("button");
 			button.type = "button";
@@ -122,11 +137,14 @@
 
 		async refresh() {
 			if (this.destroyed) return;
+			const requestId = ++this.requestId;
 			const args = {
 				from_date: this.value("from-date"),
 				to_date: this.value("to-date"),
 				module: this.value("module"),
 				document_name: this.value("document-name").trim(),
+				operator: this.value("operator").trim(),
+				action: this.value("action"),
 				company: this.options.company || undefined,
 				page: this.page,
 				page_size: this.pageSize,
@@ -134,28 +152,35 @@
 			if (!args.module) {
 				this.showMessage("请选择业务模块后查询。", "info");
 				this.renderRows([]);
+				this.hasMore = false;
+				this.updatePagerState();
 				return;
 			}
 			this.showMessage("正在读取可访问的业务记录…", "loading");
-			this.setButtonsDisabled(true);
+			this.setControlsDisabled(true);
 			try {
 				const response = await frappe.call({ method: METHOD, type: "GET", args });
-				if (this.destroyed) return;
+				if (this.destroyed || requestId !== this.requestId) return;
 				const result = response.message || {};
 				this.renderRows(Array.isArray(result.rows) ? result.rows : []);
 				this.hasMore = Boolean(result.has_more);
+				this.truncated = Boolean(result.truncated);
 				this.pageLabel.textContent = `第 ${result.page || this.page} 页`;
-				this.root.querySelector('[data-jol-action="prev"]').disabled = this.page <= 1;
-				this.root.querySelector('[data-jol-action="next"]').disabled = !this.hasMore;
 				const historyNote = result.history_available === false ? "部分版本历史不可读取；当前只显示可证明的原生记录。" : "";
+				const truncationNote = this.truncated ? "达到单来源读取上限，结果可能不完整；请缩短时间范围或填写单号。" : "";
 				const rowNote = result.rows?.length ? `共显示 ${result.rows.length} 条可读取记录。` : "所选范围内没有可读取的原生业务操作记录。";
-				this.showMessage([rowNote, historyNote].filter(Boolean).join(" "), "info");
+				this.showMessage([rowNote, historyNote, truncationNote].filter(Boolean).join(" "), this.truncated ? "warning" : "info");
 			} catch (error) {
-				if (this.destroyed) return;
+				if (this.destroyed || requestId !== this.requestId) return;
 				this.renderRows([]);
+				this.hasMore = false;
+				this.truncated = false;
 				this.showMessage(error?.message || "日志读取失败，请核对日期、模块和业务权限。", "error");
 			} finally {
-				this.setButtonsDisabled(false);
+				if (!this.destroyed && requestId === this.requestId) {
+					this.setControlsDisabled(false);
+					this.updatePagerState();
+				}
 			}
 		}
 
@@ -168,8 +193,15 @@
 			this.status.dataset.kind = kind;
 		}
 
-		setButtonsDisabled(disabled) {
-			this.root.querySelectorAll("button").forEach((button) => { button.disabled = disabled; });
+		setControlsDisabled(disabled) {
+			this.root.querySelectorAll("button, input, select").forEach((control) => { control.disabled = disabled; });
+		}
+
+		updatePagerState() {
+			const prev = this.root.querySelector('[data-jol-action="prev"]');
+			const next = this.root.querySelector('[data-jol-action="next"]');
+			if (prev) prev.disabled = this.page <= 1;
+			if (next) next.disabled = !this.hasMore;
 		}
 
 		renderRows(rows) {

@@ -1,10 +1,10 @@
 """Permission-scoped business operation history from persisted ERP facts."""
 
-from datetime import datetime, time
 import json
 
 import frappe
-from frappe.utils import getdate
+from frappe.model import get_permitted_fields
+from frappe.utils import get_datetime
 
 
 # Deliberately limited to company-owned business documents. Sensitive account,
@@ -33,7 +33,20 @@ MAX_DAYS = 366
 MAX_PAGE = 20
 MAX_PAGE_SIZE = 50
 CHUNK_SIZE = 100
-MAX_ROWS_PER_SOURCE = 1000
+MAX_ROWS_PER_SOURCE = 2000
+ALLOWED_ACTIONS = {"创建", "修改", "提交", "取消"}
+
+
+def _parse_datetime(value, label, *, end=False):
+    if not isinstance(value, str) or len(value.strip()) < 16:
+        frappe.throw(f"{label}必须包含日期和时间", frappe.ValidationError)
+    try:
+        parsed = get_datetime(value.strip())
+    except (TypeError, ValueError):
+        frappe.throw(f"{label}不是有效的日期时间", frappe.ValidationError)
+    if end and len(value.strip()) == 16:
+        parsed = parsed.replace(second=59, microsecond=999999)
+    return parsed
 
 
 def _scope(from_date, to_date, module, company):
@@ -41,31 +54,27 @@ def _scope(from_date, to_date, module, company):
         frappe.throw("请先登录后查看业务操作日志", frappe.PermissionError)
     if module not in MODULE_SOURCES:
         frappe.throw("请选择有业务来源的模块", frappe.ValidationError)
-    try:
-        start, end = getdate(from_date), getdate(to_date)
-    except (TypeError, ValueError):
-        frappe.throw("请选择有效的开始和结束日期", frappe.ValidationError)
+    start = _parse_datetime(from_date, "开始时间")
+    end = _parse_datetime(to_date, "结束时间", end=True)
     if start > end:
-        frappe.throw("开始日期不能晚于结束日期", frappe.ValidationError)
-    if (end - start).days >= MAX_DAYS:
+        frappe.throw("开始时间不能晚于结束时间", frappe.ValidationError)
+    if (end - start).total_seconds() > MAX_DAYS * 86400:
         frappe.throw("查询跨度不能超过 366 天", frappe.ValidationError)
     if not frappe.has_permission("Company", "read"):
         frappe.throw("没有读取公司范围的权限", frappe.PermissionError)
 
     companies = frappe.get_list("Company", fields=["name"], order_by="name", limit_page_length=0)
-    allowed = {row.name for row in companies}
+    allowed = set()
+    for row in companies:
+        company_doc = frappe.get_doc("Company", row.name)
+        if frappe.has_permission("Company", "select", doc=company_doc, throw=False):
+            allowed.add(row.name)
     if company:
         if company not in allowed:
             frappe.throw("没有查看该公司业务日志的权限", frappe.PermissionError)
         selected = {company}
     else:
         selected = allowed
-    if not selected:
-        return start, end, set()
-    # Company user-permission scope is checked explicitly, not inferred from a
-    # submitted filter or from a Version/Comment row.
-    for name in selected:
-        frappe.get_doc("Company", name).check_permission("select")
     return start, end, selected
 
 
@@ -79,19 +88,50 @@ def _page_number(value, label, maximum):
     return number
 
 
-def _source_document(doctype, name, companies):
-    """Revalidate the full source read and company scope before emitting a row."""
+def _readable_fields(doctype, cache):
+    """Return the native read-permitted, unmasked field projection."""
+    if doctype not in cache:
+        permitted = set(get_permitted_fields(doctype, permission_type="read", ignore_virtual=True))
+        meta = frappe.get_meta(doctype)
+        if frappe.session.user != "Administrator":
+            mask_levels = set(meta.get_permlevel_access(permission_type="mask", user=frappe.session.user))
+            permitted -= {
+                field.fieldname for field in meta.fields
+                if field.get("mask") and (field.permlevel or 0) not in mask_levels
+            }
+        cache[doctype] = permitted
+    return cache[doctype]
+
+
+def _source_document(doctype, name, companies, fields_cache):
+    """Revalidate source read and field-level access before emitting a row."""
+    try:
+        readable = _readable_fields(doctype, fields_cache)
+    except (frappe.PermissionError, frappe.DoesNotExistError, frappe.ValidationError):
+        return None
+    if not frappe.get_meta(doctype).has_field("company") or not {"name", "company"}.issubset(readable):
+        return None
+    try:
+        # Company is filtered before loading/checking the source document so
+        # foreign-company identities cannot enter permission error messages.
+        rows = frappe.get_list(doctype, filters={"name": name, "company": ["in", sorted(companies)]},
+                               fields=["name", "company"], limit_page_length=1)
+    except (frappe.PermissionError, frappe.DoesNotExistError, frappe.ValidationError):
+        return None
+    if len(rows) != 1 or rows[0].company not in companies:
+        return None
     try:
         doc = frappe.get_doc(doctype, name)
-        doc.check_permission("read")
-    except (frappe.PermissionError, frappe.DoesNotExistError):
+    except (frappe.DoesNotExistError, frappe.ValidationError):
         return None
-    if not doc.meta.has_field("company") or doc.get("company") not in companies:
+    # check_permission() logs hidden identifiers in _server_messages on some
+    # Frappe versions. A quiet native check avoids exposing denied Version refs.
+    if not frappe.has_permission(doctype, "read", doc=doc, throw=False):
         return None
-    return doc
+    return rows[0]
 
 
-def _version_action(data):
+def _version_action(data, allow_status_change=True):
     """Return only actions proven by the native Version payload, never field values."""
     try:
         payload = json.loads(data or "{}") if isinstance(data, str) else data or {}
@@ -111,6 +151,11 @@ def _version_action(data):
         if field != "docstatus":
             continue
         old, new = str(old), str(new)
+        if not allow_status_change:
+            # Do not mislabel a hidden status transition as a generic edit.
+            if len(changed) == 1:
+                return None, None
+            continue
         if old == "0" and new == "1":
             return "提交", "原生版本记录确认状态从草稿变为已提交"
         if old == "1" and new == "2":
@@ -121,7 +166,7 @@ def _version_action(data):
 
 
 def _date_filter(start, end):
-    return ["between", [datetime.combine(start, time.min), datetime.combine(end, time.max)]]
+    return ["between", [start, end]]
 
 
 def _event(event_id, doctype, doc, happened_at, actor, action, note, module):
@@ -137,39 +182,60 @@ def _event(event_id, doctype, doc, happened_at, actor, action, note, module):
     }
 
 
-def _read_created(module, doctypes, companies, start, end, document_name, target_count):
+def _matches_actor(actor, operator):
+    return not operator or operator.casefold() in str(actor or "").casefold()
+
+
+def _read_created(module, doctypes, companies, start, end, document_name, operator, action,
+                  target_count, fields_cache):
     events = []
+    if action and action != "创建":
+        return events
     for doctype in doctypes:
         try:
             meta = frappe.get_meta(doctype)
-            if not meta.has_field("company") or not frappe.has_permission(doctype, "read"):
+            required = {"name", "company", "owner", "creation"}
+            readable = _readable_fields(doctype, fields_cache)
+            if (not meta.has_field("company") or not required.issubset(readable)
+                    or not frappe.has_permission(doctype, "read", throw=False)):
                 continue
             filters = {"company": ["in", sorted(companies)], "creation": _date_filter(start, end)}
             if document_name:
                 filters["name"] = document_name
-            rows = frappe.get_list(doctype, filters=filters, fields=["name", "owner", "creation", "company"],
+            if operator:
+                filters["owner"] = ["like", f"%{operator}%"]
+            rows = frappe.get_list(doctype, filters=filters, fields=sorted(required),
                                    order_by="creation desc, name desc", limit_page_length=target_count)
         except (frappe.PermissionError, frappe.DoesNotExistError, frappe.ValidationError):
             continue
         for row in rows:
-            doc = _source_document(doctype, row.name, companies)
-            if not doc:
+            if not _matches_actor(row.owner, operator):
                 continue
-            events.append(_event("create:" + doctype + ":" + row.name, doctype, doc,
+            source = _source_document(doctype, row.name, companies, fields_cache)
+            if not source:
+                continue
+            events.append(_event("create:" + doctype + ":" + row.name, doctype, source,
                                  row.creation, row.owner, "创建", "单据创建时间及创建人来自原生记录", module))
     return events
 
 
-def _read_versions(module, doctypes, companies, start, end, document_name, target_count):
-    """Read bounded native Version facts, then expose only readable company sources.
+def _read_versions(module, doctypes, companies, start, end, document_name, operator, action,
+                   target_count, fields_cache):
+    """Read bounded timeline facts only through readable parent documents.
 
-    Version is a system timeline doctype and may not itself be readable by a
-    business role. This bounded lookup is constrained to the requested module,
-    date and optional exact voucher number; no Version fields are returned until
-    its source document's native read permission and Company scope are rechecked.
+    Frappe's native document timeline is scoped by permission to its parent; it
+    does not require a business user to have global Version read permission.
+    Version payload fields are used only internally to classify an event. Each
+    referenced parent is rechecked for read permission and company scope before
+    any event is returned, and source docstatus must be readable before status
+    transitions are named.
     """
     events = []
+    action_filter = action
+    if action_filter == "创建":
+        return events, True, False
     available = True
+    truncated = False
     for doctype in doctypes:
         checked = {}
         source_events = 0
@@ -190,23 +256,29 @@ def _read_versions(module, doctypes, companies, start, end, document_name, targe
                 break
             for version in versions:
                 if version.docname not in checked:
-                    checked[version.docname] = _source_document(doctype, version.docname, companies)
-                doc = checked[version.docname]
-                if not doc:
+                    source = _source_document(doctype, version.docname, companies, fields_cache)
+                    checked[version.docname] = (source, source is not None and
+                                                "docstatus" in _readable_fields(doctype, fields_cache))
+                source, status_readable = checked[version.docname]
+                if not source:
                     continue
-                action, note = _version_action(version.data)
-                if action:
-                    events.append(_event("version:" + version.name, doctype, doc,
-                                         version.creation, version.owner, action, note, module))
+                event_action, note = _version_action(version.data, allow_status_change=status_readable)
+                if (event_action and (not action_filter or event_action == action_filter)
+                        and _matches_actor(version.owner, operator)):
+                    events.append(_event("version:" + version.name, doctype, source,
+                                         version.creation, version.owner, event_action, note, module))
                     source_events += 1
             offset += len(versions)
             if len(versions) < chunk_size:
                 break
-    return events, available
+            if offset >= MAX_ROWS_PER_SOURCE and len(versions) == chunk_size and source_events < target_count:
+                truncated = True
+    return events, available, truncated
 
 
 @frappe.whitelist(methods=["GET"])
-def query_operation_log(from_date, to_date, module, document_name="", company=None, page=1, page_size=25):
+def query_operation_log(from_date, to_date, module, document_name="", operator="", action="",
+                       company=None, page=1, page_size=25):
     """Return a bounded, read-only timeline from permitted source documents."""
     start, end, companies = _scope(from_date, to_date, module, company)
     page = _page_number(page, "页码", MAX_PAGE)
@@ -214,19 +286,27 @@ def query_operation_log(from_date, to_date, module, document_name="", company=No
     document_name = str(document_name or "").strip()
     if len(document_name) > 140:
         frappe.throw("单号不能超过 140 个字符", frappe.ValidationError)
+    operator = str(operator or "").strip()
+    if len(operator) > 140:
+        frappe.throw("操作人筛选不能超过 140 个字符", frappe.ValidationError)
+    action = str(action or "").strip()
+    if action and action not in ALLOWED_ACTIONS:
+        frappe.throw("请选择有效的操作内容", frappe.ValidationError)
     if not companies:
         return {"rows": [], "page": page, "page_size": page_size, "has_more": False,
-                "module": module, "history_available": True}
+                "module": module, "history_available": True, "truncated": False}
 
     doctypes = MODULE_SOURCES[module]
     target_count = min(page * page_size + 1, MAX_ROWS_PER_SOURCE)
-    rows = _read_created(module, doctypes, companies, start, end, document_name, target_count)
-    version_rows, history_available = _read_versions(
-        module, doctypes, companies, start, end, document_name, target_count)
+    fields_cache = {}
+    rows = _read_created(module, doctypes, companies, start, end, document_name, operator, action,
+                         target_count, fields_cache)
+    version_rows, history_available, truncated = _read_versions(
+        module, doctypes, companies, start, end, document_name, operator, action, target_count, fields_cache)
     rows.extend(version_rows)
     rows.sort(key=lambda row: (row["happened_at"], row["event_id"]), reverse=True)
     offset = (page - 1) * page_size
     page_rows = rows[offset:offset + page_size]
     return {"rows": page_rows, "page": page, "page_size": page_size,
             "has_more": len(rows) > offset + page_size, "module": module,
-            "history_available": history_available}
+            "history_available": history_available, "truncated": truncated}
