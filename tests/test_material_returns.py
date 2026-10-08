@@ -82,6 +82,7 @@ class TestMaterialReturns(unittest.TestCase):
 
         self.frappe.throw = throw
         self.frappe.whitelist = lambda **kwargs: (lambda function: function)
+        self.frappe.has_permission = lambda *args, **kwargs: True
         self.frappe.get_all = lambda doctype, **kwargs: (
             list(self.ledger) if doctype == "Stock Ledger Entry" else
             list(self.reposts) if doctype == "Repost Item Valuation" else [])
@@ -209,6 +210,44 @@ class TestMaterialReturns(unittest.TestCase):
             with self.assertRaisesRegex(PermissionError, "没有读取或填写领料退库所需字段的权限"):
                 self.module._permitted_fields(child_meta, ("name", "docstatus", "item_code"),
                                               parenttype="Stock Entry")
+
+    def test_make_return_freezes_child_permission_fields_before_frappe_injects_doctype(self):
+        source_row = Record(name="ROW-1", item_code="RAW", item_name="原料", s_warehouse="Stores - JF",
+                            expense_account="Stock Adj - JF", cost_center=None, project=None,
+                            jf_flow_order="FLOW-1")
+        source = Record(name="MI-1", company="JF", items=[source_row], jf_material_issue_flow="FLOW-1")
+        evidence = {"ROW-1": {"row": source_row, "item": Record(), "warehouse": Record(),
+                               "qty": Decimal("2"), "uom": "Nos", "flow": "FLOW-1"}}
+        captured = {}
+        original_items = {}
+        draft = Record(name="MR-DRAFT", doctype="Stock Entry", meta=Meta("Stock Entry"), docstatus=0)
+        draft.insert = lambda: draft
+
+        def construct(values):
+            original_items["row"] = values["items"][0]
+            values["items"][0]["doctype"] = "Stock Entry Detail"
+            return draft
+
+        def capture_table(doc, fieldname, childtype, fields, permission="read"):
+            captured["fields"] = tuple(fields)
+            captured["permission"] = permission
+
+        with patch.object(self.module, "_source", return_value=source), \
+             patch.object(self.module, "_source_rows", return_value=evidence), \
+             patch.object(self.module, "_source_rates", return_value={"ROW-1": Decimal("8")}), \
+             patch.object(self.module, "_related", return_value={}), \
+             patch.object(self.module, "_submitted_by_detail", return_value={"ROW-1": Decimal("0")}), \
+             patch.object(self.module, "_permitted_fields"), \
+             patch.object(self.module, "_permitted_table", side_effect=capture_table), \
+             patch.object(self.module, "validate_material_return", return_value=True), \
+             patch.object(self.frappe, "get_doc", side_effect=construct, create=True):
+            result = self.module.make_material_return("MI-1")
+
+        self.assertEqual(result, {"name": "MR-DRAFT", "docstatus": 0, "reused": False})
+        self.assertIn("doctype", original_items["row"], "Frappe fixture should reproduce child mutation")
+        self.assertNotIn("doctype", captured["fields"])
+        self.assertIn("jf_material_return_against_detail", captured["fields"])
+        self.assertEqual(captured["permission"], "write")
 
     def test_parent_items_table_mask_denies_source_rows_but_unmasked_normal_source_is_allowed(self):
         parent_meta = Meta("Stock Entry")

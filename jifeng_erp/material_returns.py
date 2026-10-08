@@ -542,6 +542,10 @@ def make_material_return(source_name):
         items.append(row)
     if not items:
         frappe.throw("原领料明细均已退回，没有可生成的剩余数量。", frappe.ValidationError)
+    # Frappe may mutate child dictionaries passed to get_doc by injecting
+    # framework fields such as `doctype`; permission checks must cover only the
+    # business fields selected above, not that construction metadata.
+    item_write_fields = tuple(items[0].keys())
     flow_values = {source.get(FLOW_FIELD)} | {row.get(FLOW_ROW_FIELD) for row in source.items}
     flow_values.discard(None)
     flow_values.discard("")
@@ -553,7 +557,7 @@ def make_material_return(source_name):
     })
     draft.check_permission("create")
     _permitted_fields(draft, ("company", "stock_entry_type", "purpose", SOURCE_FIELD, FLOW_FIELD), "write")
-    _permitted_table(draft, "items", "Stock Entry Detail", tuple(items[0].keys()), "write")
+    _permitted_table(draft, "items", "Stock Entry Detail", item_write_fields, "write")
     draft.insert()
     validate_material_return(draft)
     return {"name": draft.name, "docstatus": 0, "reused": False}
