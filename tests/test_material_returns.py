@@ -43,11 +43,12 @@ class Meta:
         self.name = name
         self.masked = set()
         self.last_parenttype = None
-        self.allowed = {"name", "item_code", "qty", "transfer_qty", "jf_material_return_against_detail",
+        self.allowed = {"item_code", "qty", "transfer_qty", "jf_material_return_against_detail",
                         "amount", "total_additional_costs", "additional_costs"}
 
     def get_permitted_fieldnames(self, parenttype=None, permission_type="read"):
         self.last_parenttype = parenttype
+        self.last_permission_type = permission_type
         return self.allowed
 
     def get_permlevel_access(self, **kwargs):
@@ -89,11 +90,21 @@ class TestMaterialReturns(unittest.TestCase):
         locking._lock_flows = lambda names: None
         locking._persisted_flow_ids = lambda name: set()
         model = types.ModuleType("frappe.model")
-        model.get_permitted_fields = lambda doctype, **kwargs: {
-            "name", "company", "docstatus", "voucher_type", "voucher_no", "voucher_detail_no",
-            "item_code", "warehouse", "stock_uom", "actual_qty", "stock_value_difference",
-            "is_cancelled", "is_adjustment_entry",
-        }
+        self.permission_calls = []
+
+        def get_permitted_fields(doctype, **kwargs):
+            self.permission_calls.append((doctype, kwargs.get("parenttype"),
+                                          kwargs.get("permission_type"), kwargs.get("ignore_virtual")))
+            if doctype == "Stock Ledger Entry":
+                return {"name", "company", "docstatus", "voucher_type", "voucher_no", "voucher_detail_no",
+                        "item_code", "warehouse", "stock_uom", "actual_qty", "stock_value_difference",
+                        "is_cancelled", "is_adjustment_entry"}
+            meta = self.frappe.get_meta(doctype)
+            # Frappe's permission helper includes standard scalar fields omitted
+            # by Meta.get_permitted_fieldnames().
+            return set(meta.allowed) | {"name", "docstatus"}
+
+        model.get_permitted_fields = get_permitted_fields
         path = pathlib.Path(__file__).parents[1] / "jifeng_erp" / "material_returns.py"
         self.module = None
         with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model,
@@ -183,9 +194,21 @@ class TestMaterialReturns(unittest.TestCase):
 
     def test_child_meta_uses_actual_meta_name_not_doc_type_label(self):
         child_meta = Meta("Stock Entry Detail")
-        self.module._permitted_fields(child_meta, ("item_code",), parenttype="Stock Entry")
+        self.module._permitted_fields(child_meta, ("name", "docstatus", "item_code"), parenttype="Stock Entry")
         self.assertEqual(child_meta.name, "Stock Entry Detail")
-        self.assertEqual(child_meta.last_parenttype, "Stock Entry")
+        self.assertEqual(self.permission_calls[-1], ("Stock Entry Detail", "Stock Entry", "read", True))
+
+    def test_scalar_standard_fields_use_native_permission_model_but_business_fields_stay_authorized(self):
+        child_meta = Meta("Stock Entry Detail")
+        meta_projection = set(child_meta.get_permitted_fieldnames(
+            parenttype="Stock Entry", permission_type="read"))
+        self.assertNotIn("name", meta_projection)
+        self.assertNotIn("docstatus", meta_projection)
+        self.module._permitted_fields(child_meta, ("name", "docstatus"), parenttype="Stock Entry")
+        with patch.object(self.module, "get_permitted_fields", return_value={"name", "docstatus"}):
+            with self.assertRaisesRegex(PermissionError, "没有读取或填写领料退库所需字段的权限"):
+                self.module._permitted_fields(child_meta, ("name", "docstatus", "item_code"),
+                                              parenttype="Stock Entry")
 
     def test_parent_items_table_mask_denies_source_rows_but_unmasked_normal_source_is_allowed(self):
         parent_meta = Meta("Stock Entry")

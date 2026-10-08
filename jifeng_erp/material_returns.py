@@ -40,11 +40,11 @@ def _permitted_fields(doc, fields, permission="read", parenttype=None):
         meta = doc
     else:
         meta = doc.meta
-    if parenttype:
-        permitted = set(meta.get_permitted_fieldnames(
-            parenttype=parenttype, permission_type=permission))
-    else:
-        permitted = set(meta.get_permitted_fieldnames(permission_type=permission))
+    # get_permitted_fieldnames is the Meta scalar projection and omits standard
+    # fields such as docstatus/name. Use Frappe's authoritative permission model
+    # for scalar fields, while retaining this Meta object for field masks.
+    permitted = set(get_permitted_fields(
+        meta.name, parenttype=parenttype, permission_type=permission, ignore_virtual=True))
     if not set(fields).issubset(permitted):
         frappe.throw("没有读取或填写领料退库所需字段的权限", frappe.PermissionError)
     mask_levels = set(meta.get_permlevel_access(permission_type="mask", parenttype=parenttype,
