@@ -156,6 +156,7 @@ def install():
     _install_separation_permissions()
     _install_receipt_export_permission()
     _install_subcontracting_bom_permission()
+    _install_pos_settings_read_permission()
     from jifeng_erp.desktop_entry import repair_legacy_desktop_entry
 
     repair_legacy_desktop_entry()
@@ -229,6 +230,48 @@ def _install_subcontracting_bom_permission():
     if not same_permission_rules(current, desired, fields=fields) or not same_permission_rules(unchanged, native, fields=fields):
         frappe.throw("委外映射权限安装结果不一致，请回滚本次权限安装后检查。")
     return {"status": "installed", "doctype": doctype, "role": role, "permissions": ["read", "create", "write"]}
+
+
+def _install_pos_settings_read_permission():
+    """Add native POS client settings reads to default manager roles only."""
+    from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
+    from frappe.permissions import setup_custom_perms
+    from jifeng_erp.pos_settings_permissions import pos_settings_read_policy, same_permission_rules
+
+    doctype = "POS Settings"
+    native_meta = frappe.get_meta("DocPerm")
+    custom_meta = frappe.get_meta("Custom DocPerm")
+    native_flags = {df.fieldname for df in native_meta.fields if df.fieldtype == "Check"}
+    custom_flags = {df.fieldname for df in custom_meta.fields if df.fieldtype == "Check"}
+    if native_flags != custom_flags:
+        return {"status": "permission_schema_requires_review", "doctype": doctype}
+    fields = ("role", "permlevel", *sorted(native_flags))
+    native = frappe.get_all("DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    custom = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    status, desired = pos_settings_read_policy(native, custom, fields=fields)
+    if status != "install_default":
+        return {"status": status, "doctype": doctype}
+
+    # Keep all native rules intact. Clone through Frappe, then add only
+    # permlevel-0 read for Sales Manager and Accounts Manager.
+    setup_custom_perms(doctype)
+    cloned = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    if not same_permission_rules(cloned, native, fields=fields):
+        frappe.throw("POS Settings权限原生克隆不一致，请回滚本次权限安装后检查。")
+
+    for role in ("Sales Manager", "Accounts Manager"):
+        addition = {flag: 0 for flag in native_flags}
+        addition.update(role=role, permlevel=0, read=1)
+        frappe.get_doc({"doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
+                        "parentfield": "permissions", **addition}).insert(ignore_permissions=True)
+    validate_permissions_for_doctype(doctype)
+
+    current = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    unchanged = frappe.get_all("DocPerm", filters={"parent": doctype}, fields=list(fields), limit_page_length=0)
+    if not same_permission_rules(current, desired, fields=fields) or not same_permission_rules(unchanged, native, fields=fields):
+        frappe.throw("POS Settings权限安装结果不一致，请回滚本次权限安装后检查。")
+    return {"status": "installed", "doctype": doctype, "roles": ["Sales Manager", "Accounts Manager"],
+            "permission": "read"}
 
 
 def _install_wage_source_permissions():
