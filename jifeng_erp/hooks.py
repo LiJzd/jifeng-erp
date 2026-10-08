@@ -5,7 +5,9 @@ app_description = "订单、委外回货与成本试算"
 app_email = "erp@example.invalid"
 app_license = "GPL-3.0-or-later"
 required_apps = ["erpnext", "hrms"]
-app_include_css = ["/assets/jifeng_erp/css/jifeng_legacy.css",
+app_include_css = ["/assets/jifeng_erp/css/jifeng_business_operation_log.css",
+                   "/assets/jifeng_erp/css/jifeng_system_information.css",
+                   "/assets/jifeng_erp/css/jifeng_legacy.css",
                    "/assets/jifeng_erp/css/jifeng_salary_history.css",
                    "/assets/jifeng_erp/css/jifeng_order_operations.css",
                    "/assets/jifeng_erp/css/jifeng_product_dictionary.css",
@@ -47,6 +49,8 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_sales_fulfillment.js",
                   "/assets/jifeng_erp/js/jifeng_supplier_payables.js",
                   "/assets/jifeng_erp/js/jifeng_finance_dictionary.js",
+                  "/assets/jifeng_erp/js/jifeng_system_information.js",
+                  "/assets/jifeng_erp/js/jifeng_business_operation_log.js",
                   "/assets/jifeng_erp/js/jifeng_workspace_core.js",
                   "/assets/jifeng_erp/js/jifeng_modern_workspace.js"]
 

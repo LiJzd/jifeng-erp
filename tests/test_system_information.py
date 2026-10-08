@@ -44,7 +44,9 @@ class TestSystemInformation(unittest.TestCase):
 		self.assertEqual(result["release"], "公网业务测试版")
 		self.assertEqual([row["version"] for row in result["versions"]], ["16.1.0", "16.2.0", "16.3.0", "0.2.0"])
 		self.assertEqual(len(result["modules"]), 19)
+		self.assertTrue(all({"name", "path", "verified", "pending"} <= set(row) for row in result["modules"]))
 		self.assertIn("同一业务数据", result["shared_data_note"])
+		self.assertIn("续费合同", next(row["pending"] for row in result["modules"] if row["name"] == "关于"))
 		self.assertNotIn("commit", str(result).lower())
 		self.assertFalse({"path", "config", "database", "user", "password", "remote"} & set(result))
 

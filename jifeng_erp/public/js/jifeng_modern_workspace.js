@@ -12,6 +12,7 @@ window.JifengModernWorkspace = class JifengModernWorkspace extends window.Jifeng
 
 	render() {
 		const active = this.activeTab();
+		this.disposeBusinessOperationLog();
 		this.host.innerHTML = '<div class="jfe-shell jfm-shell">' +
 			'<aside class="jfm-sidebar"><button class="jfm-brand" data-action="classic-home"><span class="jfm-logo">集</span><span>集沣 ERP<small>业务协作工作台</small></span></button>' +
 			'<nav aria-label="业务模块">' + this.renderSidebar() + '</nav><div class="jfm-sidebar-foot"><span class="jfm-version">A · 开源优化版</span><a href="/desk/jifeng-legacy" target="_blank" rel="noopener">打开 B · 旧界面复刻版 ↗</a></div></aside>' +
@@ -23,6 +24,8 @@ window.JifengModernWorkspace = class JifengModernWorkspace extends window.Jifeng
 			'<footer class="jfm-footer"><span>集沣业务协作</span><span data-clock></span></footer></section>' +
 			'<div class="jfe-toast" data-toast></div><div class="jfe-modal-root" data-modal-root></div></div>';
 		this.bindEvents();
+		this.mountSystemInformation();
+		this.mountBusinessOperationLog();
 		this.formalBridge?.sync();
 		this.updateClock();
 		if (active.kind === "module" && active.module === "总经理") this.loadDashboard();
