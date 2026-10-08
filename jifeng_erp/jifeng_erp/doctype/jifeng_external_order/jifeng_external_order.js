@@ -7,10 +7,13 @@ frappe.ui.form.on("Jifeng External Order", {
             await frm.reload_doc();
             if (r.message && r.message.length === 1) frappe.set_route("Form", "Jifeng Flow Order", r.message[0]);
         });
-        frm.add_custom_button("将要求更新到流程单", async () => {
-            if (frm.is_dirty()) await frm.save();
-            await frm.call("apply_requirements");
-            frappe.msgprint("定制要求、包装要求和附件已更新到关联流程单");
-        });
+        frm.add_custom_button("显式更新流程单要求", () => frappe.confirm(
+            "将按商品行的定制/工艺要求和包装要求更新已关联流程单；行内留空时使用订单抬头要求。已有流程单的要求会被覆盖，请先核对每一行。",
+            async () => {
+                if (frm.is_dirty()) await frm.save();
+                const r = await frm.call("apply_requirements");
+                frappe.msgprint(`已将各商品行要求更新到 ${r.message || 0} 张关联流程单`);
+            }
+        ));
     }
 });

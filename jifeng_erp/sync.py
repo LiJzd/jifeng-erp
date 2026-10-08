@@ -327,6 +327,13 @@ def upsert_order(settings, snapshot):
     if exists and int(order.source_cursor or 0) > int(snapshot["source_cursor"]):
         return
     order.update({"sync_key": key, "scope": settings.sync_scope, "company": settings.company})
+    manual_requirements = {
+        str(row.get("external_line_id")): {
+            "jf_requirements": row.get("jf_requirements"),
+            "jf_packaging": row.get("jf_packaging"),
+        }
+        for row in (getattr(order, "items", None) or []) if row.get("external_line_id")
+    }
     for field, value in snapshot.items():
         if field != "items":
             order.set(field, value)
@@ -349,7 +356,10 @@ def upsert_order(settings, snapshot):
             flow.source_status = "Cancelled" if row["source_status"] == "Cancelled" else order.source_status
             flow.flags.from_sync = True
             flow.save(ignore_permissions=True)
-        order.append("items", {**row, "item_code": item_code, "flow_order": flow_name})
+        order.append("items", {
+            **row, **manual_requirements.get(str(row["external_line_id"]), {}),
+            "item_code": item_code, "flow_order": flow_name,
+        })
     order.flags.from_sync = True
     order.save(ignore_permissions=True)
     for flow in frappe.get_all("Jifeng Flow Order", filters={"external_order": key}, fields=["name", "external_line_id"]):

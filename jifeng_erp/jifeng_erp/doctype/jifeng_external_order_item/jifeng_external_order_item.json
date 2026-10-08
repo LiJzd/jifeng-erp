@@ -68,6 +68,20 @@
    "read_only": 1
   },
   {
+   "fieldname": "jf_requirements",
+   "fieldtype": "Small Text",
+   "label": "集沣定制/工艺要求",
+   "in_list_view": 1,
+   "description": "按商品行单独填写；生成流程单时优先于订单抬头要求。"
+  },
+  {
+   "fieldname": "jf_packaging",
+   "fieldtype": "Small Text",
+   "label": "集沣包装要求",
+   "in_list_view": 1,
+   "description": "按商品行单独填写；生成流程单时优先于订单抬头要求。"
+  },
+  {
    "fieldname": "flow_order",
    "fieldtype": "Link",
    "label": "流程单",
@@ -86,6 +100,8 @@
   "specification",
   "source_status",
   "image_url",
+  "jf_requirements",
+  "jf_packaging",
   "flow_order"
  ]
 }

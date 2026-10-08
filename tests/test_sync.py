@@ -447,6 +447,51 @@ class TestSyncCheckpoints(unittest.TestCase):
             "sku_id": "SKU-1", "name": "订单商品", "pic": "",
         })
 
+    def test_order_refresh_preserves_manual_line_requirements_and_packaging(self):
+        class Child:
+            def __init__(self, **values):
+                self.__dict__.update(values)
+
+            def get(self, fieldname):
+                return getattr(self, fieldname, None)
+
+        class Order:
+            def __init__(self):
+                self.source_cursor = 1
+                self.items = [Child(external_line_id="LINE-1", jf_requirements="手工定制",
+                                    jf_packaging="手工包装")]
+                self.flags = types.SimpleNamespace()
+
+            def update(self, values):
+                self.__dict__.update(values)
+
+            def set(self, fieldname, value):
+                setattr(self, fieldname, value)
+
+            def append(self, fieldname, values):
+                getattr(self, fieldname).append(Child(**values))
+
+            def save(self, **kwargs):
+                return self
+
+        order = Order()
+        self.frappe.db.exists.return_value = True
+        self.frappe.get_doc = Mock(return_value=order)
+        self.frappe.db.get_value.side_effect = ["SKU-ITEM", None]
+        self.frappe.get_all = Mock(return_value=[])
+        self.sync.upsert_sku = Mock()
+
+        self.upsert_order_impl(self.settings(company="QA", auto_create_flows=False, flow_statuses=""), {
+            "external_order_id": "ORDER-1", "source_cursor": 2, "source_status": "待处理",
+            "items": [{"sku_id": "SKU-1", "item_name": "源商品", "image_url": "", "qty": 1,
+                       "external_line_id": "LINE-1", "source_status": "待处理",
+                       "jf_requirements": "平台不应覆盖", "jf_packaging": "平台不应覆盖"}],
+        })
+
+        self.assertEqual(len(order.items), 1)
+        self.assertEqual(order.items[0].jf_requirements, "手工定制")
+        self.assertEqual(order.items[0].jf_packaging, "手工包装")
+
     def test_sku_sync_refuses_profile_owned_by_another_company(self):
         class Doc:
             def __init__(self, **values):

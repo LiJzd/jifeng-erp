@@ -1,6 +1,7 @@
 import frappe
 from frappe.model.document import Document
 from jifeng_erp.workflow import create_flows
+from jifeng_erp.jushuitan import record_key
 
 
 class JifengExternalOrder(Document):
@@ -19,16 +20,48 @@ class JifengExternalOrder(Document):
 
     @frappe.whitelist()
     def make_flows(self):
-        return create_flows(self)
+        # Existing flows are deliberately left alone. Updating their source
+        # requirements remains an explicit action in apply_requirements().
+        existing = set()
+        for row in self.items:
+            source_key = record_key(self.name, row.external_line_id)
+            flow_name = frappe.db.get_value("Jifeng Flow Order", {"source_key": source_key}, "name")
+            if flow_name:
+                existing.add(flow_name)
+        created = create_flows(self)
+        for row in self.items:
+            if not row.flow_order or row.flow_order in existing:
+                continue
+            flow = frappe.get_doc("Jifeng Flow Order", row.flow_order)
+            requirements = row.get("jf_requirements") or self.requirements or ""
+            packaging = row.get("jf_packaging") or self.packaging or ""
+            flow.source_requirements = requirements
+            flow.source_packaging = packaging
+            flow.source_requirements_attachment = self.requirements_attachment
+            if requirements:
+                flow.requirements = requirements
+            if packaging:
+                flow.packaging = packaging
+            flow.flags.from_sync = True
+            flow.save()
+        return created
 
     @frappe.whitelist()
     def apply_requirements(self):
         self.check_permission("write")
         self.reload()
+        updated = 0
         for row in self.items:
             if row.flow_order:
                 flow = frappe.get_doc("Jifeng Flow Order", row.flow_order)
                 flow.check_permission("write")
-                flow.requirements, flow.packaging = self.requirements, self.packaging
-                flow.requirements_attachment = self.requirements_attachment
+                flow.source_requirements = row.get("jf_requirements") or self.requirements or ""
+                flow.source_packaging = row.get("jf_packaging") or self.packaging or ""
+                flow.source_requirements_attachment = self.requirements_attachment
+                flow.requirements = flow.source_requirements
+                flow.packaging = flow.source_packaging
+                flow.requirements_attachment = flow.source_requirements_attachment
+                flow.flags.from_sync = True
                 flow.save()
+                updated += 1
+        return updated
