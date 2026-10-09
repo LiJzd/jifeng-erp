@@ -4,9 +4,10 @@ Raw reads are internal completeness guards, never a replacement for native
 document/field access. A missing source rejects the whole result. Two serial
 passes detect request-local changes; they do not promise a concurrent snapshot.
 This service writes nothing. Primary receipt fees include the signed received
-quantity (accepted, rejected and loss). Persisted amounts must support that exact
-split; secondary items, LCV and ambiguous allocation reject the simplified load.
-The three fee categories are not a claim of native stock valuation or GL totals.
+quantity (accepted, rejected and loss). Returns preserve exact original physical
+stock value separately from restored material and unit fees. Secondary items,
+LCV and unproved allocation still reject the simplified fee load. The three fee
+categories are not a claim of native stock valuation or GL totals.
 """
 
 from datetime import timedelta, time
@@ -620,7 +621,9 @@ class _Session:
         if any(rate < 0 for rate in rates) or (material > 0) != (received > 0) and material:
             _invalid()
         processing, other = rates[1] * received, rates[2] * received
-        if not _same_quantity(row["amount"], material + processing + other, actual, "amount"):
+        if doc.get("is_return"):
+            self._receipt_return_values(doc, row, supplied, actual)
+        elif not _same_quantity(row["amount"], material + processing + other, actual, "amount"):
             frappe.throw("回货已过账金额包含无法准确拆分的分摊或费用，不能简化为三项流程成本")
         # Rates are persisted in Company currency. A foreign account amount in
         # additional_costs is not silently treated as company currency.
@@ -628,6 +631,12 @@ class _Session:
             if _number(charge.get("amount")) and (charge.get("account_currency") != self.currency
                     or _number(charge.get("exchange_rate")) != 1):
                 frappe.throw("回货附加费用币种不能明确拆分为公司本币，请核对原生来源")
+        output = [entry for entry in self.ledger[SCR, doc.name] if entry["voucher_detail_no"] == row["name"]]
+        inventory_qty = sum((_number(entry["actual_qty"]) for entry in output), Decimal(0))
+        inventory_value = sum((_number(entry["stock_value_difference"]) for entry in output), Decimal(0))
+        if (inventory_qty > 0 and inventory_value < 0) or (inventory_qty < 0 and inventory_value > 0):
+            frappe.throw("回货成品有效库存净价值方向与实物数量不一致，请核对原生估价调整")
+        valuation_basis = material + processing + other
         stage = self.receipt_stages.get(row["name"])
         if stage:
             actual_material, external_material = Decimal(0), Decimal(0)
@@ -636,13 +645,90 @@ class _Session:
                 actual_material -= sum((_number(entry["stock_value_difference"]) for entry in ledger), Decimal(0))
                 if _number(item.get("consumed_qty")):
                     external_material += self._stage_event(stage, doc, item["name"], item["rm_item_code"], ledger)
-            output = [entry for entry in self.ledger[SCR, doc.name] if entry["voucher_detail_no"] == row["name"]]
-            output_value = self._stage_event(stage, doc, row["name"], row["item_code"], output, output=True)
-            if (not _same_quantity(actual_material, material, actual, "rm_supp_cost")
-                    or not _same_quantity(output_value, material + processing + other, actual, "amount")):
-                frappe.throw("阶段回货库存净价值与精确耗料、委外及附加费用不一致，不能简化成本")
+            self._stage_event(stage, doc, row["name"], row["item_code"], output, output=True)
+            if not _same_quantity(actual_material, material, actual, "rm_supp_cost"):
+                frappe.throw("阶段回货材料库存净价值与精确耗料不一致，不能提供部分成本")
             material = external_material
-        return {"material": material, "processing": processing, "other": other}
+        return {"material": material, "processing": processing, "other": other,
+                "inventory_qty_change": inventory_qty, "inventory_value_change": inventory_value,
+                # Keep the original gross supplied cost here. The fee category
+                # may exclude same-WO semi products to prevent double counting.
+                "valuation_cost_basis": valuation_basis,
+                "valuation_difference": inventory_value - valuation_basis}
+
+    def _receipt_return_values(self, doc, row, supplied, actual):
+        """Prove a physical return from original facts; never today's BOM.
+
+        Accepted loss/rejection cost is already allocated into the original FG
+        SLE unit value. Material returns and unit fees instead use covered
+        received_qty. They can differ without inventing an extra cost category.
+        """
+        original_doc = self.source(SCR, doc.get("return_against"))
+        original = next((item for item in self.table(SCR, original_doc.name, "items")
+                         if item["name"] == row.get("subcontracting_receipt_item")), None)
+        if not original or original.get("item_code") != row.get("item_code"):
+            _invalid()
+        covered = _number(original.get("received_qty"))
+        if covered <= 0:
+            _invalid()
+        physical = -_number(row.get("qty")) - _number(row.get("rejected_qty"))
+        ratio = physical / covered
+        for field in ("service_cost_per_qty", "additional_cost_per_qty"):
+            if (original.get(field) in (None, "")
+                    or not _same_quantity(row[field], original[field], actual, field)
+                    or not _same_quantity(_number(row[field]) * _number(row["received_qty"]),
+                                          _number(original[field]) * _number(row["received_qty"]), actual, "amount")):
+                frappe.throw("委外退回的原单位工费或附加费用与原收回不一致，不能改写历史成本")
+
+        def materials(rows):
+            values = {}
+            for item in rows:
+                if not _number(item.get("consumed_qty")):
+                    continue
+                key = (item.get("rm_item_code"), item.get("stock_uom"))
+                totals = values.setdefault(key, [Decimal(0), Decimal(0)])
+                totals[0] += _number(item.get("consumed_qty"))
+                totals[1] += _number(item.get("amount"))
+            return values
+
+        original_materials = materials([item for item in self.table(SCR, original_doc.name, "supplied_items")
+                                        if item.get("reference_name") == original["name"]])
+        returned_materials = materials(supplied)
+        if set(original_materials) != set(returned_materials):
+            frappe.throw("委外退回材料种类或库存单位与准确原耗料不同，不能提供部分成本")
+        for key, (quantity, value) in original_materials.items():
+            returned_qty, returned_value = returned_materials[key]
+            native = next(item for item in doc.get("supplied_items")
+                          if (item.rm_item_code, item.stock_uom) == key and item.reference_name == row["name"])
+            if (not _same_quantity(returned_qty, -quantity * ratio, native, "consumed_qty")
+                    or not _same_quantity(returned_value, -value * ratio, native, "amount")):
+                frappe.throw("委外退回材料数量或金额与准确原耗料份额不一致，不能猜测历史成本")
+
+        # Original accepted/rejected pools require distinct persisted warehouses
+        # when both have physical stock; a temporary mapper flag proves neither.
+        if (_number(original.get("qty")) and _number(original.get("rejected_qty"))
+                and original.get("warehouse") == original.get("rejected_warehouse")):
+            frappe.throw("原收回接收和拒收仓相同，无法唯一核对退回的原入库单价")
+        original_ledger = self.ledger[SCR, original_doc.name]
+        expected_value = Decimal(0)
+        for field, warehouse in (("qty", row.get("warehouse")),
+                                 ("rejected_qty", row.get("rejected_warehouse"))):
+            quantity = -_number(row.get(field))
+            if not quantity:
+                continue
+            entries = [entry for entry in original_ledger
+                       if entry["voucher_detail_no"] == original["name"] and entry["warehouse"] == warehouse]
+            source_qty = sum((_number(entry["actual_qty"]) for entry in entries), Decimal(0))
+            source_value = sum((_number(entry["stock_value_difference"]) for entry in entries), Decimal(0))
+            if source_qty <= 0 or source_value < 0:
+                _invalid()
+            expected_value -= source_value * quantity / source_qty
+        returned_value = sum((_number(entry["stock_value_difference"])
+                              for entry in self.ledger[SCR, doc.name]
+                              if entry["voucher_detail_no"] == row["name"]), Decimal(0))
+        if (not _same_quantity(row["amount"], expected_value, actual, "amount")
+                or not _same_quantity(returned_value, expected_value, actual, "amount")):
+            frappe.throw("委外实物退回金额或库存价值与准确原入库单价不一致，不能重新分摊损耗或拒收成本")
 
     def _receipt_ledger(self, doc):
         expected = {}
@@ -1093,9 +1179,13 @@ def _receipt_dto(session):
     rows = []
     for row in selected:
         rows.append({"receipt": row["parent"], "qty": row.get("qty"),
+                     "receipt_item": row["name"], "item_code": row["item_code"], "stock_uom": row["stock_uom"],
                      **session.receipt_fees[row["name"]]})
     return {"rows": rows, "totals": {field: sum((row[field] for row in rows), Decimal(0))
-        for field in ("material", "processing", "other")}, "currency": session.currency}
+        for field in ("material", "processing", "other")},
+        "receipt_valuation": {field: sum((row[field] for row in rows), Decimal(0))
+            for field in ("inventory_value_change", "valuation_cost_basis", "valuation_difference")},
+        "currency": session.currency}
 
 
 def _issue_dto(session):
@@ -1167,5 +1257,6 @@ def posted_flow_costs(flow_order):
         "manufacture_material": manufacture_material, "manufacture_other": manufacture_other,
         "material": issues["totals"]["material"] + receipts["totals"]["material"] + manufacture_material,
         "processing": receipts["totals"]["processing"] + wages["total"], "other": receipts["totals"]["other"] + manufacture_other},
+        "receipt_valuation": receipts["receipt_valuation"],
         "wages": wages["rows"],
         "currency": session.currency}
