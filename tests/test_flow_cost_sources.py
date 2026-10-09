@@ -154,6 +154,7 @@ class TestFlowCostSources(unittest.TestCase):
         spec.loader.exec_module(self.module)
         money = {"rate", "amount", "base_amount", "rm_supp_cost", "stock_value_difference",
                  "rm_cost_per_qty", "service_cost_per_qty", "additional_cost_per_qty",
+                 "jf_processing_reversal_amount", "jf_additional_reversal_amount",
                  "total_additional_costs", "additional_cost", "landed_cost_voucher_amount"}
         for doctype, fields in self.module.PARENTS.items():
             self.schema(doctype, fields, money)
@@ -207,6 +208,10 @@ class TestFlowCostSources(unittest.TestCase):
         # dimensions. Model actual metadata, rather than silently projecting
         # only the old account/cost-center subset.
         self.proof_schema()
+        item_tracking = {"has_serial_no", "has_batch_no", "use_serial_no_wise_valuation"}
+        self.permitted["Item"].update(item_tracking)
+        self.metas["Item"].update({field: Record(fieldname=field, fieldtype="Check", permlevel=0)
+                                    for field in item_tracking})
         self.add("Company", "JF", default_currency="CNY")
         self.add("Currency", "CNY")
         self.add("Item", "FG", stock_uom="Nos", is_stock_item=1)
@@ -384,6 +389,9 @@ class TestFlowCostSources(unittest.TestCase):
                     posting_date=doc.posting_date,
                     voucher_detail_no=detail, account=account, cost_center=center, project=project, finance_book=book,
                     debit=max(value,0), credit=max(-value,0), is_cancelled=0)
+                entry.update(account_currency="CNY", transaction_currency="CNY", transaction_exchange_rate=1,
+                    debit_in_account_currency=max(value,0), credit_in_account_currency=max(-value,0),
+                    debit_in_transaction_currency=max(value,0), credit_in_transaction_currency=max(-value,0))
                 entry.update(dimensions)
                 generated.append(Record(entry))
         generated = self.native_gl["process_gl_map"](generated, from_repost=True)

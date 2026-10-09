@@ -36,7 +36,7 @@ CHILD = {"name", "modified", "parent", "parenttype", "parentfield", "idx"}
 PARENTS = {
     FLOW: IDENTITY | {"company", "item_code"},
     SCR: IDENTITY | {"company", "posting_date", "posting_time", "is_return", "return_against",
-                     "status", "supplier_warehouse", "cost_center"},
+                     "status", "supplier_warehouse", "cost_center", "jf_return_allocation_version"},
     SE: IDENTITY | {"company", "posting_date", "posting_time", "purpose", "stock_entry_type", "jf_material_issue_flow"},
     SLE: IDENTITY | {"creation", "company", "item_code", "warehouse", "stock_uom", "posting_date", "posting_time",
                      "voucher_type", "voucher_no", "voucher_detail_no", "actual_qty",
@@ -72,12 +72,13 @@ TABLES = {
             "rm_cost_per_qty", "service_cost_per_qty", "additional_cost_per_qty", "rm_supp_cost",
             "received_qty", "bom", "secondary_item_type", "valuation_type", "reference_name",
             "secondary_items_cost_per_qty", "landed_cost_voucher_amount", "rate", "amount",
+            "jf_processing_reversal_amount", "jf_additional_reversal_amount",
             "expense_account", "service_expense_account", "cost_center", "project"}),
         ("supplied_items", "Subcontracting Receipt Supplied Item", CHILD | {
             "main_item_code", "rm_item_code", "reference_name", "consumed_qty", "stock_uom", "rate", "amount",
             "expense_account", "cost_center"}),
         ("additional_costs", "Landed Cost Taxes and Charges", CHILD | {
-            "amount", "account_currency", "exchange_rate", "base_amount", "expense_account"}),
+            "amount", "account_currency", "exchange_rate", "base_amount", "expense_account", "jf_return_source_charge"}),
     ),
     SE: (("items", "Stock Entry Detail", CHILD | {
         "item_code", "jf_flow_order", "qty", "uom", "stock_uom", "conversion_factor", "transfer_qty",
@@ -1020,7 +1021,17 @@ class _Session:
         """Freeze the loss proof's exact native documents and all child sets."""
         from jifeng_erp import production_loss
 
-        configured = production_loss.TABLES.get(doctype, ())
+        return self._contract_reader(doctype, name, production_loss.PARENTS, production_loss.TABLES)
+
+    def _material_return_reader(self, doctype, name):
+        from jifeng_erp import material_returns as issue_returns
+
+        return self._contract_reader(doctype, name, issue_returns.MATERIAL_RETURN_READ_PARENTS,
+                                     issue_returns.MATERIAL_RETURN_READ_TABLES)
+
+    def _contract_reader(self, doctype, name, parents, contracts):
+        """Close each source graph over its exact fields and native child sets."""
+        configured = contracts.get(doctype, ())
         if configured and isinstance(configured[0], str):
             configured = (configured,)
         # A plan or sales source may be read only by the dynamic loss graph.
@@ -1031,7 +1042,7 @@ class _Session:
                              - _authorization_doctypes()))
         if scope and scope not in self.loss_authorization:
             self.loss_authorization[scope] = _authorization(scope)
-        fields = set(PARENTS.get(doctype, set())) | set(production_loss.PARENTS.get(doctype, set()))
+        fields = set(PARENTS.get(doctype, set())) | set(parents.get(doctype, set()))
         if not fields or not isinstance(name, str) or not name:
             _invalid()
         key = doctype, name
@@ -1067,6 +1078,9 @@ class _Session:
         self.documents[key] = doc, _freeze(doc), permission, fields
         tables = {field: (childtype, set(child_fields))
                   for field, childtype, child_fields in TABLES.get(doctype, ())}
+        for (kind, parent, field), (childtype, child_fields) in self.loss_tables.items():
+            if (kind, parent) == key:
+                tables[field] = childtype, set(child_fields) | tables.get(field, (None, set()))[1]
         for field, childtype, child_fields in configured:
             if field in tables and tables[field][0] != childtype:
                 _invalid()
@@ -1228,7 +1242,7 @@ class _Session:
             self.raw(SE, query)
             return_parents.update((row["name"], row) for row in self.records(
                 SE, {**query, "docstatus": 1}, PARENTS[SE]))
-        returned = {}
+        returned, tracked_evidence, tracked_usage = {}, {}, {}
         for row in return_parents.values():
             doc = self.source(SE, row["name"])
             self._posted(SE, doc)
@@ -1279,6 +1293,26 @@ class _Session:
                                  if entry.get("voucher_detail_no") == source_row["name"]]
                 return_ledger = [entry for entry in self.ledger[SE, doc.name]
                                  if entry.get("voucher_detail_no") == detail_name]
+                item = self._contract_reader("Item", source_row["item_code"],
+                    {"Item": {"has_batch_no", "has_serial_no"}}, {})
+                if item.get("has_batch_no") or item.get("has_serial_no"):
+                    from jifeng_erp import material_returns as issue_returns
+
+                    item = self._material_return_reader("Item", item.name)
+                    source = self._material_return_reader(SE, source.name)
+                    doc = self._material_return_reader(SE, doc.name)
+                    key = source.name, source_row["name"]
+                    if key not in tracked_evidence:
+                        original = next(row for row in source.items if row.name == source_row["name"])
+                        tracked_evidence[key] = issue_returns.material_issue_evidence(source, original, item,
+                            [self.documents[SLE, entry["name"]][0] for entry in origin_ledger],
+                            read=self._material_return_reader, records=self._loss_records)
+                        tracked_usage[key] = issue_returns.MaterialReturnUsage()
+                    native = next(row for row in doc.items if row.name == detail_name)
+                    issue_returns.material_return_value(tracked_evidence[key], source, doc, native,
+                        [self.documents[SLE, entry["name"]][0] for entry in return_ledger],
+                        read=self._material_return_reader, records=self._loss_records, used=tracked_usage[key])
+                    continue
                 source_value = -sum((_number(entry["stock_value_difference"]) for entry in origin_ledger), Decimal(0))
                 source_qty = -sum((_number(entry["actual_qty"]) for entry in origin_ledger), Decimal(0))
                 value = sum((_number(entry["stock_value_difference"]) for entry in return_ledger), Decimal(0))
