@@ -5,7 +5,7 @@ tests do not claim remote, browser, printer, or positive ledger acceptance.
 """
 
 from copy import deepcopy
-from datetime import date
+from datetime import date, timedelta
 from io import BytesIO
 import importlib.util
 import json
@@ -198,6 +198,40 @@ class TestFactoryStatementOutput(unittest.TestCase):
             self.E._text("a" * 32768)
         with self.assertRaises(ValueError):
             self.E._text(float("nan"))
+
+    def test_native_stock_entry_time_and_nested_child_times_keep_exact_query_and_fresh_output(self):
+        document = self.env.records["Stock Entry", "STE"]
+        document.posting_time = timedelta(hours=8, minutes=23, seconds=17, microseconds=123456)
+        document["items"] = [{"doctype": "Stock Entry Detail", "name": "STE-ROW", "time": timedelta(microseconds=-1)}]
+        first = self.query()
+        self.assertEqual(first["result_version"], self.query()["result_version"])
+        self.assertTrue(self.output("print", first["result_version"]).startswith("<!doctype html>"))
+        self.assertEqual(self.fixture.events[-2:], [("rollback", None), ("close", None)])
+        document["items"][0]["time"] = timedelta(0)
+        self.assertNotEqual(first["result_version"], self.query()["result_version"])
+
+    def test_one_microsecond_native_time_change_rejects_stale_and_fresh_outputs(self):
+        document = self.env.records["Stock Entry", "STE"]
+        document.posting_time = timedelta(hours=12, microseconds=1)
+        version = self.query()["result_version"]
+        document.posting_time += timedelta(microseconds=1)
+        with self.assertRaisesRegex(ValueError, "重新查询"):
+            self.output(version=version)
+        self.assertNotIn("filecontent", self.frappe.response)
+        self.fixture.on_begin = lambda: document.update(posting_time=document.posting_time + timedelta(microseconds=1))
+        with self.assertRaisesRegex(ValueError, "重新查询"):
+            self.output("print")
+        self.assertNotIn("filecontent", self.frappe.response)
+
+    def test_native_time_is_not_a_lookalike_json_value_and_unknown_types_are_rejected(self):
+        freeze = self.fixture.tools._freeze
+        actual = self.R._fingerprint_json(freeze({"posting_time": timedelta(days=-1, seconds=86399, microseconds=999999)}))
+        literal = self.R._fingerprint_json(freeze({"posting_time": {"native_time_delta": [-1, 86399, 999999]}}))
+        self.assertNotEqual(actual, literal)
+        self.assertEqual(self.R._fingerprint_json(timedelta(microseconds=-1)),
+                         {"native_time_delta": [-1, 86399, 999999]})
+        with self.assertRaisesRegex(ValueError, "未支持"):
+            self.R._fingerprint_json(object())
 
 
 if __name__ == "__main__":

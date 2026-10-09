@@ -7,8 +7,10 @@ Purchase Invoices whose rows link to the exact subcontracting Purchase Orders.
 
 from decimal import Decimal, InvalidOperation
 from contextvars import ContextVar
+from datetime import timedelta
 import hashlib
 import json
+import math
 
 import frappe
 from frappe.model import get_permitted_fields
@@ -28,6 +30,25 @@ READ_DEPENDENCIES = {PROFILE, "Company", "Supplier", "Currency", "Account", "Ite
     "Subcontracting Order Item", "Subcontracting Order Supplied Item", "Subcontracting Receipt Item",
     "Subcontracting Receipt Supplied Item", "Stock Entry Detail", "Purchase Order Item", "Purchase Invoice Item",
     "Payment Entry Reference", "Stock Ledger Entry"}
+
+
+def _fingerprint_json(value):
+    """Encode a frozen native source, including MariaDB TIME, without guessing.
+
+    The shared freeze has already turned source dictionaries into tuples, so
+    this tagged object cannot collide with a source JSON dict/list. Integer
+    components retain signed TIME values and every microsecond without float
+    total_seconds() or string-format/locale differences.
+    """
+    if isinstance(value, timedelta):
+        return {"native_time_delta": [value.days, value.seconds, value.microseconds]}
+    if isinstance(value, (tuple, list)):
+        return [_fingerprint_json(item) for item in value]
+    if value is None or type(value) in (str, int, bool):
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    frappe.throw("委外对账来源包含未支持或无效的原生字段类型，不能完整核实，请核对来源")
 
 
 def _remember(document):
@@ -590,7 +611,7 @@ def _capture_statement(company, supplier, from_date, to_date, business_kind="all
                                     for doctype in READ_DEPENDENCIES)
         permissions = payable._permission_state(permission_documents)
         state = _freeze((capture["states"], capture["children"], financial_state, permissions))
-        result["result_version"] = hashlib.sha256(json.dumps(_freeze((result, state)), sort_keys=True,
+        result["result_version"] = hashlib.sha256(json.dumps(_fingerprint_json(_freeze((result, state))), sort_keys=True,
             ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
         return result, capture["documents"], state
     finally:
