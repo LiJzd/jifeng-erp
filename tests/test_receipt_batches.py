@@ -605,6 +605,43 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
             preview.load_posted_costs(preserve_input=True)
         self.assert_no_posting()
 
+    def test_confirmed_loss_then_replacement_and_reverse_recompute_without_expanding_flow_target(self):
+        preview, _first, _batch = self.manufacture_loss_preview()
+        preview.validate()
+        replacement = self.native.manufacture("REPLACE", material=8, qty=1, raw_qty=1)
+        second = type(preview.batches[0])(source_manufacture=replacement.name,
+            receipt_type="首次回货", received_qty=1, good_qty=1, lost_qty=0)
+        preview.batches.append(second)
+        preview.validate()
+        self.assertEqual((preview.planned_qty, preview.good_qty, preview.lost_qty,
+            preview.unreceived_qty, preview.total_cost, preview.estimated_unit_cost), (5, "5", "1", "0", "48", "9.6"))
+        self.assertEqual([row.estimated_cost for row in preview.batches], ["38.4", "9.6"])
+        replacement.docstatus = 2
+        with self.assertRaisesRegex(ValueError, "已撤销"):
+            preview.validate()
+        preview.batches.pop()
+        preview.validate()
+        self.assertEqual((preview.planned_qty, preview.good_qty, preview.lost_qty,
+            preview.total_cost, preview.estimated_unit_cost), (5, "4", "1", "40", "10"))
+        self.assert_no_posting()
+
+    def test_replacement_allowance_requires_all_sources_and_cannot_expand_unbound_manual_batches(self):
+        preview, _source, _batch = self.manufacture_loss_preview()
+        self.native.manufacture("REPLACE", material=8, qty=1, raw_qty=1)
+        with self.assertRaisesRegex(ValueError, "存在确认损耗"):
+            preview.validate()
+        second = type(preview.batches[0])(source_manufacture="REPLACE",
+            receipt_type="首次回货", received_qty=1, good_qty=1)
+        preview.batches.append(second)
+        preview.batches.append(type(second)(receipt_type="首次回货", received_qty=Decimal("0.1"), good_qty=Decimal("0.1")))
+        with self.assertRaisesRegex(ValueError, "不能供未绑定"):
+            preview.validate()
+        preview.batches.pop()
+        self.native.manufacture("EXCESS", material=8, qty=1, raw_qty=1)
+        with self.assertRaisesRegex(ValueError, "超过流程目标库存量"):
+            preview.validate()
+        self.assert_no_posting()
+
     def test_wage_accrual_changes_cost_not_quantity_and_reverse_retains_inventory_sources(self):
         preview = self.saving_preview()
         self.native.manufacture(material=40, other=0)

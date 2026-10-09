@@ -31,9 +31,10 @@ class JifengCostPreview(Document):
             # replace that denominator. Standalone manual trials remain manual.
             self.planned_qty = planned_qty
         self._refresh_actual_costs()
+        additional_input_qty = self._validate_batch_sources()
         try:
             result = calculate(
-                self.planned_qty,
+                Decimal(str(self.planned_qty)) + additional_input_qty if additional_input_qty else self.planned_qty,
                 self.material_amount,
                 self.processing_amount,
                 self.other_amount,
@@ -49,8 +50,6 @@ class JifengCostPreview(Document):
             setattr(self, field, result[field])
         for row, allocation in zip(self.batches, result["allocations"], strict=True):
             row.estimated_cost = allocation["estimated_cost"]
-
-        self._validate_batch_sources()
 
         if self.flow_order:
             flow = frappe.get_doc("Jifeng Flow Order", self.flow_order)
@@ -150,10 +149,10 @@ class JifengCostPreview(Document):
             del self._cost_basis_selection
 
     def _validate_batch_sources(self):
-        self._validate_manufacture_batches()
+        additional_input_qty = self._validate_manufacture_batches()
         linked = [row for row in self.batches if row.source_receipt or row.source_receipt_item]
         if not linked:
-            return
+            return additional_input_qty
         if not self.flow_order:
             frappe.throw("已关联的回货批次必须包含流程单、委外收货单和明细行")
         from jifeng_erp.workflow import receipt_batch_candidates
@@ -177,12 +176,13 @@ class JifengCostPreview(Document):
                 frappe.throw("来源净回货数量已变化，请读取来源并核对批次分类后保存")
             if Decimal(str(row.lost_qty or 0)) < source["lost_qty"]:
                 frappe.throw("试算批次损耗不能少于来源凭证已确认的工艺损耗")
+        return additional_input_qty
 
     def _validate_manufacture_batches(self):
         linked = [row for row in self.batches if row.get("source_manufacture")]
         actual_basis = self.get("cost_basis") == POSTED_ACTUAL
         if not linked and not actual_basis:
-            return
+            return Decimal(0)
         if not self.flow_order:
             frappe.throw("制造入库批次必须关联流程单")
         if actual_basis:
@@ -214,10 +214,27 @@ class JifengCostPreview(Document):
             if Decimal(str(row.lost_qty or 0)) < source["lost_qty"]:
                 frappe.throw("试算批次损耗不能少于制造入库单已确认的工艺损耗")
         if actual_basis:
+            # A replacement manufacturing entry consumes new input while the
+            # Flow's deliverable stock target stays fixed. Permit only the
+            # additional input already proven by final-product ledger sources,
+            # with their confirmed losses; never extend a manual trial's plan.
+            coverage = sum((source["qty"] for source in candidates), Decimal(0))
+            inventory = sum((source["inventory_qty"] for source in candidates), Decimal(0))
+            loss = sum((source["lost_qty"] for source in candidates), Decimal(0))
+            plan = Decimal(str(self.planned_qty))
+            additional = max(Decimal(0), coverage - plan) if loss else Decimal(0)
+            if additional and (inventory > plan or additional > loss):
+                frappe.throw("制造入库已超过流程目标库存量，不能按损耗补产扩大试算数量，请核对流程计划和生产来源")
             missing = [source["manufacture"] for source in candidates
-                       if source["lost_qty"] and source["manufacture"] not in seen]
+                       if (source["lost_qty"] or additional) and source["manufacture"] not in seen]
             if missing:
                 frappe.throw("已过账制造单存在确认损耗，请读取制造入库批次并核对分类后再核算：" + "、".join(missing))
+            if additional and any(not row.get("source_manufacture")
+                    and row.receipt_type == "首次回货" and Decimal(str(row.received_qty or 0))
+                    for row in self.batches):
+                frappe.throw("损耗补产的新增投入须全部关联准确制造来源，不能供未绑定的首次回货批次扩量")
+            return additional
+        return Decimal(0)
 
     @frappe.whitelist()
     def load_flow_costs(self, preserve_input=False):
