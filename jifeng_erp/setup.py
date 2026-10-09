@@ -26,6 +26,8 @@ def production_loss_custom_fields():
             row["search_index"] = 1
         if name in ("jf_production_loss_source_signature", "jf_production_loss_request"):
             row["hidden"] = 1
+        if name == "jf_production_loss_request":
+            row["unique"] = 1
         result.append(row)
         previous = name
     return {"Stock Entry": result, "Work Order": [{
