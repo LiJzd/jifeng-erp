@@ -137,6 +137,7 @@ extend_doctype_class = {
     "Purchase Receipt": ["jifeng_erp.purchase_returns.PurchaseReceiptMixin"],
     "Purchase Order": ["jifeng_erp.subcontract_stage.PurchaseOrderStageMixin"],
     "Subcontracting Receipt": ["jifeng_erp.subcontracting_returns.SubcontractingReceiptReturnMixin"],
+    "Serial and Batch Bundle": ["jifeng_erp.subcontracting_returns.SubcontractingReceiptMaterialReturnBundleMixin"],
     "Employee Promotion": ["jifeng_erp.personnel_changes.EmployeePromotionMixin"],
     "Employee Transfer": ["jifeng_erp.personnel_changes.EmployeeTransferMixin"],
     "Employee Separation": ["jifeng_erp.personnel_separation.EmployeeSeparationMixin"],
