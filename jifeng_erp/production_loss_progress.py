@@ -6,7 +6,7 @@ from frappe.utils import flt
 
 from jifeng_erp.production_loss import (
     _lock_work_scope, _loss_documents, _qty, get_booked_loss_for_job_card, get_booked_loss_for_work_order,
-    is_loss_entry, prepare_loss_stock_reservations,
+    _internal_read, is_loss_entry, prepare_loss_stock_reservations, update_batch_loss_reservations,
 )
 
 
@@ -43,7 +43,11 @@ class ProductionLossWorkOrderMixin:
             consumed = flt(item.consumed_qty) + additional[item.item_code]
             item.db_set("consumed_qty", consumed, update_modified=False)
             if self.get("reserve_stock"):
-                self.update_consumed_qty_in_stock_reservation(item, consumed, warehouse or item.source_warehouse)
+                target = warehouse or item.source_warehouse
+                if _internal_read("Item", item.item_code).get("has_batch_no"):
+                    update_batch_loss_reservations(self, item, _qty(consumed), target)
+                else:
+                    self.update_consumed_qty_in_stock_reservation(item, consumed, target)
 
 
 class ProductionLossJobCardMixin:

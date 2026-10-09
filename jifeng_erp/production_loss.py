@@ -12,6 +12,7 @@ from uuid import UUID
 
 import frappe
 from frappe.utils import flt, get_datetime
+from jifeng_erp import production_loss_batches as batch_sources
 
 LOSS_TYPE = "制造损耗出库"
 PREFIX = "jf_production_loss_"
@@ -54,7 +55,25 @@ TABLES = {
     "Sales Order": (("items", "Sales Order Item", CHILD | {
         "item_code", "qty", "uom", "stock_uom", "conversion_factor", "stock_qty"}),),
 }
+for _kind, _fields in batch_sources.PARENTS.items():
+    PARENTS.setdefault(_kind, set()).update(_fields)
+for _kind, _tables in batch_sources.TABLES.items():
+    _merged = {field: (child, set(fields)) for field, child, fields in TABLES.get(_kind, ())}
+    for _field, _child, _fields in _tables:
+        if _field in _merged and _merged[_field][0] != _child:
+            raise RuntimeError("Manufacturing loss source table contract mismatch")
+        _merged[_field] = _child, set(_fields) | _merged.get(_field, (None, set()))[1]
+    TABLES[_kind] = tuple((field, child, fields) for field, (child, fields) in _merged.items())
 ZERO = Decimal(0)
+# These are private controller reads, not a costing DTO permission contract.
+# Native WO stock callbacks already update only their own reservations without
+# exposing the reservation ledger to the stock operator.
+RESERVATION_FIELDS = {"name", "docstatus", "company", "item_code", "stock_uom", "warehouse", "voucher_type",
+    "voucher_no", "voucher_detail_no", "from_voucher_type", "from_voucher_no", "from_voucher_detail_no",
+    "reserved_qty", "consumed_qty", "delivered_qty", "transferred_qty", "reservation_based_on",
+    "has_batch_no", "has_serial_no", "creation"}
+RESERVATION_ROW_FIELDS = {"name", "parent", "parenttype", "parentfield", "docstatus", "batch_no", "serial_no",
+    "qty", "delivered_qty"}
 
 
 def _qty(value, label="损耗数量"):
@@ -224,7 +243,7 @@ def _source_context(card, work, flow, read):
     return loss
 
 
-def read_loss_source(doc, *, read):
+def read_loss_source(doc, *, read, records=None, posted=False):
     """Read-only source proof. All documents come from the caller's closed reader."""
     if doc.get("stock_entry_type") != LOSS_TYPE or doc.get("purpose") != "Material Issue":
         frappe.throw("制造损耗标记和专用库存出库类型必须同时存在")
@@ -256,10 +275,14 @@ def read_loss_source(doc, *, read):
     flow_items = {row.item_code for row in flow.get("materials") or []}
     if not doc.get("items"):
         frappe.throw("制造损耗缺少实际材料出库明细")
+    tracked = False
     for row in doc.items:
         item = read("Item", row.get("item_code"))
-        if item.get("has_serial_no") or item.get("has_batch_no"):
-            frappe.throw("批号或序号材料必须按原转料逐批核对损耗，当前专用全损耗入口暂不支持")
+        if item.get("has_serial_no") or row.get("serial_no"):
+            frappe.throw("序号材料必须按原转料逐号核对损耗，当前专用全损耗入口暂不支持")
+        tracked |= bool(item.get("has_batch_no"))
+        if not item.get("has_batch_no") and (row.get("batch_no") or row.get("serial_and_batch_bundle")):
+            frappe.throw("未启用批号的材料不能混入批号损耗来源")
         if (row.item_code not in required or row.item_code not in flow_items or row.jf_flow_order != flow.name
                 or row.stock_uom != units[row.item_code] or item.stock_uom != row.stock_uom
                 or not item.get("is_stock_item") or row.s_warehouse != work.wip_warehouse or row.get("t_warehouse")
@@ -272,6 +295,10 @@ def read_loss_source(doc, *, read):
                 or _qty(row.get("qty")) <= 0
                 or not _equal(row.qty, _qty(row.get("transfer_qty")), row, "transfer_qty")):
             frappe.throw("制造损耗材料出库数量必须使用准确库存单位、换算系数为一")
+    if tracked:
+        if not callable(records):
+            frappe.throw("批号损耗必须按原转料逐批核对，并使用完整库存来源读取接口")
+        batch_sources.prove_loss_batches(doc, work, read=read, records=records, posted=posted)
     return {"loss_entry": doc.name, "work_order": work.name, "job_card": card.name, "flow_order": flow.name,
             "company": work.company, "item_code": work.production_item, "stock_uom": work.stock_uom,
             "qty": qty, "lost_qty": qty, "inventory_qty": ZERO}
@@ -344,6 +371,74 @@ def _authorized_read(doctype, name):
     return doc
 
 
+def _record_fields(doctype, parenttype=None):
+    if not parenttype:
+        return PARENTS.get(doctype, set())
+    return set().union(*(fields for _table, child, fields in TABLES.get(parenttype, ()) if child == doctype))
+
+
+def _current_records(doctype, filters, fields, parenttype=None):
+    """Exact batch-helper queries, as current NOWAIT reads inside the transaction.
+
+    Table/column names come only from the fixed source contract. Values and
+    every IN member remain bound. The helper receives this adapter explicitly;
+    cost readers instead supply their own permission/change-closed Session.
+    """
+    allowed = _record_fields(doctype, parenttype)
+    fields = set(fields)
+    if (not fields or "name" not in fields or not fields.issubset(allowed)
+            or not isinstance(filters, dict) or not filters or not set(filters).issubset(allowed)):
+        frappe.throw("批号损耗缺少准确范围或完整字段来源")
+    predicates, values = [], []
+    for field, value in sorted(filters.items()):
+        operator = "="
+        if isinstance(value, (tuple, list)):
+            if len(value) != 2 or not isinstance(value[0], str):
+                frappe.throw("批号损耗查询范围不正确")
+            operator, value = value[0].lower(), value[1]
+        if operator in ("in", "not in"):
+            if not isinstance(value, (tuple, list)) or not value:
+                frappe.throw("批号损耗查询范围不正确")
+            predicates.append(f"`{field}` {operator.upper()} ({','.join(['%s'] * len(value))})")
+            values.extend(value)
+        elif operator == "is" and value in ("set", "not set"):
+            predicates.append(f"`{field}` IS {'NOT ' if value == 'set' else ''}NULL")
+        elif operator in ("=", "!=", ">", "<", ">=", "<="):
+            if value is None:
+                if operator not in ("=", "!="):
+                    frappe.throw("批号损耗查询范围不正确")
+                predicates.append(f"`{field}` IS {'NOT ' if operator == '!=' else ''}NULL")
+            else:
+                predicates.append(f"`{field}` {operator} %s")
+                values.append(value)
+        else:
+            frappe.throw("批号损耗查询范围不正确")
+    return _sql(f"SELECT {','.join('`' + field + '`' for field in sorted(fields))} FROM `tab{doctype}` "
+                f"WHERE {' AND '.join(predicates)} ORDER BY name FOR UPDATE NOWAIT", tuple(values))
+
+
+def _authorized_records(doctype, filters, fields, parenttype=None):
+    from jifeng_erp.flow_cost_scoped_query import record_list
+    from jifeng_erp.flow_quantity import check_quantity_fields
+
+    check_quantity_fields(doctype, fields, parenttype=parenttype)
+    raw = _current_records(doctype, filters, fields, parenttype)
+    try:
+        visible = record_list(doctype, filters=filters, fields=sorted(fields), parenttype=parenttype, for_update=True)
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError) as exc:
+        frappe.throw("本工单批号损耗来源正在更新，请重新读取后再操作", type(exc))
+    names = [row.get("name") for row in raw]
+    visible_names = [row.get("name") for row in visible]
+    if (len(set(names)) != len(names) or len(set(visible_names)) != len(visible_names)
+            or None in names + visible_names or set(names) != set(visible_names)):
+        frappe.throw("没有完整核对本工单批号损耗来源的权限", frappe.PermissionError)
+    current = {row["name"]: row for row in raw}
+    if any(not set(fields).issubset(row) or any(row.get(field) != current[row["name"]].get(field) for field in fields)
+           for row in visible):
+        frappe.throw("批号损耗来源字段已变化或被遮蔽，请重新核对", frappe.PermissionError)
+    return raw
+
+
 def _loss_documents(*, work_order=None, job_card=None, include_drafts=False, exclude=None):
     # Internal quantities cannot omit hidden submitted vouchers. Identities are
     # never exposed by the progress aggregate. Locking reads avoid old snapshots.
@@ -354,7 +449,7 @@ def _loss_documents(*, work_order=None, job_card=None, include_drafts=False, exc
     for row in rows:
         if row.name != exclude:
             doc = _lock_source("Stock Entry", row.name)
-            source = read_loss_source(doc, read=_internal_read)
+            source = read_loss_source(doc, read=_internal_read, records=_current_records, posted=doc.docstatus == 1)
             if doc.docstatus == 1:
                 _entry_wip_quantities(doc, _internal_read("Work Order", source["work_order"]))
             docs.append(doc)
@@ -434,7 +529,7 @@ def _own_wip_pool(work, exclude=None):
         if doc.company != work.company:
             frappe.throw("原工单材料出入库公司不一致")
         if is_loss_entry(doc):
-            read_loss_source(doc, read=_internal_read)
+            read_loss_source(doc, read=_internal_read, records=_current_records, posted=True)
         elif doc.work_order != work.name or doc.purpose not in (
                 "Material Transfer for Manufacture", "Manufacture", "Material Consumption for Manufacture"):
             frappe.throw("原工单在制材料来源不一致")
@@ -497,7 +592,7 @@ def validate_loss_entry(doc, method=None):
                 check_quantity_fields(child, fields, parenttype=kind)
         return cache[key]
 
-    source = read_loss_source(doc, read=reader)
+    source = read_loss_source(doc, read=reader, records=_authorized_records)
     if doc.is_new() and get_datetime(doc.get(PREFIX + "source_version")) != get_datetime(card.modified):
         frappe.throw("首次保存的损耗来源版本必须是当前准确报工版本", frappe.TimestampMismatchError)
     if doc.docstatus != 2:
@@ -521,7 +616,7 @@ def before_cancel_loss_entry(doc, method=None):
                         frappe.throw("原制造与工单公司不一致")
                     _cancel_flow_capacity(doc, work, work.jf_flow_order)
         return
-    source = read_loss_source(doc, read=_authorized_read)
+    source = read_loss_source(doc, read=_authorized_read, records=_authorized_records, posted=True)
     _cancel_flow_capacity(doc, _internal_read("Work Order", source["work_order"]), source["flow_order"])
 
 
@@ -611,12 +706,20 @@ def validate_loss_source(doc, method=None):
 def update_loss_progress(doc, method=None):
     if not is_loss_entry(doc):
         return
-    source = read_loss_source(doc, read=_internal_read)
+    source = read_loss_source(doc, read=_internal_read, records=_current_records, posted=doc.docstatus == 1)
     _lock_source("Jifeng Flow Order", source["flow_order"])
     work = _lock_work_scope(source["work_order"])
     # Native methods retain plan/SO updates, stock reservations, and status.
     work.update_work_order_qty()
     work.update_consumed_qty_for_required_items()
+    # After cancellation there may be no active special loss left, so the WO
+    # extension intentionally retains its native path. Restore the original
+    # batch reservation net explicitly using this historical, proved voucher.
+    if work.get("reserve_stock") and doc.docstatus == 2:
+        for item in work.required_items:
+            if _internal_read("Item", item.item_code).get("has_batch_no"):
+                update_batch_loss_reservations(work, item, _qty(item.get("consumed_qty")),
+                                               work.wip_warehouse, current_doc=doc)
     work.update_status()
     work.update_planned_qty()
     card = _internal_read("Job Card", source["job_card"])
@@ -630,7 +733,7 @@ def prepare_loss_stock_reservations(doc):
     the same native submit transaction. Cancellation restores the remaining
     effective quantity; no flags or client-supplied override can skip proof.
     """
-    source = read_loss_source(doc, read=_internal_read)
+    source = read_loss_source(doc, read=_internal_read, records=_current_records)
     _lock_source("Jifeng Flow Order", source["flow_order"])
     work = _lock_work_scope(source["work_order"])
     if not work.get("reserve_stock"):
@@ -655,7 +758,122 @@ def prepare_loss_stock_reservations(doc):
         consumed = (Decimal(str(get_consumed_qty(work.name, item.item_code) or 0))
                     + _qty(item.get("returned_qty")) + additional[item.item_code])
         item.db_set("consumed_qty", float(consumed), update_modified=False)
-        work.update_consumed_qty_in_stock_reservation(item, float(consumed), warehouse or item.source_warehouse)
+        target = warehouse or item.source_warehouse
+        if _internal_read("Item", item.item_code).get("has_batch_no"):
+            update_batch_loss_reservations(work, item, consumed, target, current_doc=doc)
+        else:
+            work.update_consumed_qty_in_stock_reservation(item, float(consumed), target)
+
+
+def _reservation_documents(work, item, warehouse):
+    fields = ",".join("`" + field + "`" for field in sorted(RESERVATION_FIELDS))
+    rows = _sql(f"SELECT {fields} FROM `tabStock Reservation Entry` WHERE voucher_type='Work Order' "
+                "AND voucher_no=%s AND item_code=%s AND warehouse=%s AND docstatus=1 "
+                "ORDER BY creation,name FOR UPDATE NOWAIT", (work.name, item.item_code, warehouse))
+    result = []
+    for raw in rows:
+        children = _sql("SELECT " + ",".join("`" + field + "`" for field in sorted(RESERVATION_ROW_FIELDS)) +
+            " FROM `tabSerial and Batch Entry` WHERE parent=%s AND parenttype='Stock Reservation Entry' "
+            "AND parentfield='sb_entries' ORDER BY name FOR UPDATE NOWAIT", (raw.name,))
+        doc = frappe.get_doc("Stock Reservation Entry", raw.name, for_update=True)
+        if any(doc.get(field) != raw.get(field) for field in RESERVATION_FIELDS):
+            frappe.throw("原工单批次预留已变化，请重新读取", frappe.TimestampMismatchError)
+        actual = {row.name: row for row in doc.get("sb_entries") or []}
+        if (len(actual) != len(doc.get("sb_entries") or []) or len(children) != len(actual)
+                or {row.name for row in children} != set(actual)
+                or any(any(actual[row.name].get(field) != row.get(field) for field in RESERVATION_ROW_FIELDS)
+                       for row in children)):
+            frappe.throw("原工单批次预留明细不完整，不能遗漏或重复预留")
+        result.append(doc)
+    return result
+
+
+def update_batch_loss_reservations(work, item, consumed_qty, warehouse, *, current_doc=None):
+    """Set exact per-batch net consumption, scoped to a proved special loss.
+
+    Native SRE's batch setter assigns the whole WO batch quantity to every
+    matching child. Allocate that one quantity across native reservation caps
+    instead. No bundles, quantities, rates or stock ledgers are fabricated.
+    All sources/caps are proved before the first native reservation write.
+    """
+    if (not work.get("reserve_stock") or work.get("skip_transfer") or warehouse != work.wip_warehouse
+            or work.get("track_semi_finished_goods")):
+        frappe.throw("批号损耗预留必须使用原普通工单的准确转料在制仓库")
+    matches = [row for row in work.required_items if row.item_code == item.item_code]
+    if len(matches) != 1 or matches[0].name != item.name:
+        frappe.throw("同材料有多条工单预留来源，当前批号损耗不能猜测逐行消费份额")
+    pools = batch_sources.consumed_batches(work, read=_internal_read, records=_current_records,
+                                          exclude=current_doc.name if current_doc else None)
+    if current_doc and current_doc.docstatus == 1:
+        selection = batch_sources.prove_loss_batches(current_doc, work, read=_internal_read,
+                                                      records=_current_records)
+        for row in current_doc.items:
+            if row.item_code != item.item_code:
+                continue
+            chosen = selection.get(row.name)
+            if not chosen:
+                frappe.throw("损耗材料缺少原批次预留来源")
+            key = row.item_code, chosen["batch_no"]
+            if key not in pools or len(chosen["sources"]) != 1:
+                frappe.throw("损耗材料原转料来源不能唯一核对")
+            origin, selected = pools[key], chosen["sources"][0]
+            if (origin["source_entry"] != selected["stock_entry"] or origin["source_detail"] != selected["detail"]):
+                frappe.throw("损耗批次预留与原转料来源不一致")
+            origin["qty"] += chosen["qty"]
+    selected = {batch: values for (code, batch), values in pools.items() if code == item.item_code}
+    total = sum((values["qty"] for values in selected.values()), ZERO)
+    if not _equal(total, _qty(consumed_qty), item, "consumed_qty"):
+        frappe.throw("工单材料累计消费与准确批次库存账不一致，不能释放其他批次预留")
+    reservations = _reservation_documents(work, item, warehouse)
+    remaining = {batch: values["qty"] for batch, values in selected.items()}
+    caps = defaultdict(Decimal)
+    updates = []
+    for doc in reservations:
+        if (doc.docstatus != 1 or doc.company != work.company or doc.voucher_type != "Work Order"
+                or doc.voucher_no != work.name or doc.voucher_detail_no != item.name
+                or doc.item_code != item.item_code or doc.stock_uom != item.stock_uom or doc.warehouse != warehouse
+                or doc.get("has_serial_no") or not doc.get("has_batch_no")
+                or doc.reservation_based_on != "Serial and Batch" or doc.from_voucher_type != "Stock Entry"
+                or _qty(doc.get("transferred_qty")) or _qty(doc.get("delivered_qty"))):
+            frappe.throw("原工单批号预留的类型、仓库或来源不完整，当前入口不能猜测批次释放")
+        transfer = _internal_read("Stock Entry", doc.from_voucher_no)
+        source_rows = [row for row in transfer.items if row.name == doc.from_voucher_detail_no]
+        native_group = [row for row in transfer.items if row.item_code == item.item_code]
+        if (transfer.docstatus != 1 or transfer.company != work.company or transfer.work_order != work.name
+                or transfer.purpose != "Material Transfer for Manufacture" or len(source_rows) != 1
+                or not native_group or native_group[0].name != doc.from_voucher_detail_no
+                or source_rows[0].item_code != item.item_code or source_rows[0].t_warehouse != warehouse):
+            frappe.throw("批号预留不属于原工单准确转料材料来源")
+        children, reserved, used = [], ZERO, ZERO
+        for row in doc.get("sb_entries") or []:
+            batch, capacity = row.get("batch_no"), _qty(row.get("qty"), "批号预留库存数量")
+            origin = selected.get(batch)
+            if (row.get("parent") != doc.name or row.get("parenttype") != "Stock Reservation Entry"
+                    or row.get("parentfield") != "sb_entries" or row.docstatus != 1 or row.get("serial_no")
+                    # Native reservation creation groups this Transfer by
+                    # item and preserves its first row as from_detail. Later
+                    # batches may originate in another exact row of the same
+                    # group; their individual cap remains the proved origin.
+                    or not origin or origin["source_entry"] != transfer.name or capacity <= 0):
+                frappe.throw("批号预留明细与原转料批次不一致")
+            caps[batch] += capacity
+            if not _equal(min(caps[batch], origin["original_qty"]), caps[batch], row, "qty"):
+                frappe.throw("同批累计预留超过准确原转料数量")
+            delivered = min(remaining[batch], capacity)
+            remaining[batch] -= delivered
+            children.append((row, delivered))
+            reserved += capacity
+            used += delivered
+        if not children or not _equal(reserved, _qty(doc.reserved_qty), doc, "reserved_qty"):
+            frappe.throw("原工单预留总量与逐批数量不一致")
+        updates.append((doc, children, used))
+    for doc, children, used in updates:
+        doc.db_set("consumed_qty", float(used), update_modified=False)
+        for row, delivered in children:
+            row.delivered_qty = float(delivered)
+            row.db_update()
+        doc.update_status()
+        doc.update_reserved_stock_in_bin()
 
 
 def _request(value):
@@ -755,7 +973,7 @@ def _inspect(job_card, request_id=None, *, only_previous=False):
         rows = _request_records(request_id, lock=True)
         if rows:
             doc = _authorized_read("Stock Entry", rows[0].name)
-            source = read_loss_source(doc, read=_authorized_read)
+            source = read_loss_source(doc, read=_authorized_read, records=_authorized_records, posted=doc.docstatus == 1)
             if source["job_card"] != card.name or doc.docstatus not in (0, 1):
                 frappe.throw("办理标记与当前有效损耗来源不一致，请重新回读")
             return {"stock_entry": doc.name, "docstatus": doc.docstatus, "existing": True}, (flow, work, card, loss)
@@ -768,17 +986,29 @@ def _inspect(job_card, request_id=None, *, only_previous=False):
     required, units = _required(work)
     pool = _own_wip_pool(work)
     items = []
+    requested_batches = {}
     for item, qty in required.items():
         material = _authorized_read("Item", item)
         if (material.stock_uom != units[item] or not material.get("is_stock_item")
-                or material.get("has_serial_no") or material.get("has_batch_no")):
-            frappe.throw("损耗材料单位不一致，或带批号序号需逐批核对，当前入口暂不能办理")
+                or material.get("has_serial_no")):
+            frappe.throw("损耗材料单位不一致，或带序号需逐号核对，当前入口暂不能办理")
         amount = qty * loss / _qty(work.qty)
         if amount <= 0 or amount > pool[item]:
             frappe.throw(f"材料 {item} 尚无足额的本工单在制库存，请先核对原转料")
+        if material.get("has_batch_no"):
+            requested_batches[item] = amount
+            continue
         items.append({"item_code": item, "qty": float(amount), "uom": units[item], "stock_uom": units[item],
                       "conversion_factor": 1, "transfer_qty": float(amount), "s_warehouse": work.wip_warehouse,
                       "jf_flow_order": flow.name})
+    if requested_batches:
+        for row in batch_sources.proposal(work, requested_batches, read=_authorized_read, records=_authorized_records):
+            # Proof amounts/source names stay internal. Native creates a fresh
+            # outward bundle from this explicit single-batch stock-unit row.
+            items.append({field: row[field] for field in ("item_code", "batch_no", "qty", "uom", "stock_uom",
+                                                         "conversion_factor", "use_serial_batch_fields")})
+            items[-1].update(transfer_qty=row["qty"], s_warehouse=work.wip_warehouse,
+                             jf_flow_order=flow.name, allow_zero_valuation_rate=1)
     return {"job_card": card.name, "work_order": work.name, "flow_order": flow.name,
             "source_version": str(card.modified), "source_signature": source_signature(card, work),
             "stock_uom": work.stock_uom, "loss_qty": float(loss), "warehouse": work.wip_warehouse,
