@@ -39,7 +39,8 @@ PARENTS = {
     SE: IDENTITY | {"company", "posting_date", "posting_time", "purpose", "stock_entry_type", "jf_material_issue_flow"},
     SLE: IDENTITY | {"creation", "company", "item_code", "warehouse", "stock_uom", "posting_date", "posting_time",
                      "voucher_type", "voucher_no", "voucher_detail_no", "actual_qty",
-                     "stock_value_difference", "is_cancelled", "is_adjustment_entry"},
+                     "stock_value_difference", "is_cancelled", "is_adjustment_entry", "serial_and_batch_bundle",
+                     "serial_no", "batch_no"},
     "Item": {"name", "modified", "stock_uom", "is_stock_item"},
     "Warehouse": {"name", "modified", "company", "is_group"},
     "Currency": {"name", "modified"},
@@ -233,7 +234,7 @@ class _Session:
         self.ledger = {}
         self.repost_state = None
         self.receipt_fees = {}
-        self.receipt_lot_usage, self.receipt_tracking_tables = {}, {}
+        self.receipt_lot_usage, self.receipt_fg_lot_usage, self.receipt_tracking_tables = {}, {}, {}
 
     def raw(self, doctype, filters, **options):
         rows = frappe.get_all(doctype, filters=filters, fields=["*"], order_by="name asc",
@@ -613,6 +614,12 @@ class _Session:
             _invalid()
         supplied = [item for item in self.table(SCR, doc.name, "supplied_items")
                     if item.get("reference_name") == row["name"]]
+        if not doc.get("is_return") and material_returns.has_finished_tracking(actual):
+            self._receipt_tracking_children(doc, "items")
+            for field, column in (("qty", "warehouse"), ("rejected_qty", "rejected_warehouse")):
+                if _number(actual.get(field)):
+                    material_returns.finished_source_lots(doc, actual, actual.get(column),
+                        ledger=self.ledger[SCR, doc.name], reader=self.source)
         if not doc.get("is_return") and any(material_returns._has_tracking(item)
                 for item in doc.get("supplied_items") or [] if item.get("reference_name") == row["name"]):
             self._receipt_tracking_children(doc)
@@ -774,18 +781,30 @@ class _Session:
             frappe.throw("原收回接收和拒收仓相同，无法唯一核对退回的原入库单价")
         original_ledger = self.ledger[SCR, original_doc.name]
         expected_value = Decimal(0)
-        for field, warehouse in (("qty", row.get("warehouse")),
-                                 ("rejected_qty", row.get("rejected_warehouse"))):
-            quantity = -_number(row.get(field))
-            if not quantity:
-                continue
-            entries = [entry for entry in original_ledger
-                       if entry["voucher_detail_no"] == original["name"] and entry["warehouse"] == warehouse]
-            source_qty = sum((_number(entry["actual_qty"]) for entry in entries), Decimal(0))
-            source_value = sum((_number(entry["stock_value_difference"]) for entry in entries), Decimal(0))
-            if source_qty <= 0 or source_value < 0:
+        native_original = next(item for item in original_doc.get("items") if item.name == original["name"])
+        if material_returns.has_finished_tracking(native_original) or material_returns.has_finished_tracking(actual):
+            self._receipt_tracking_children(original_doc, "items")
+            self._receipt_tracking_children(doc, "items")
+            selected_value = material_returns.finished_return_value(original_doc, native_original, actual,
+                ledger=original_ledger, reader=self.source,
+                used=self.receipt_fg_lot_usage.setdefault(original_doc.name, {}),
+                return_ledger=self.ledger[SCR, doc.name])
+            if selected_value is None:
                 _invalid()
-            expected_value -= source_value * quantity / source_qty
+            expected_value = -selected_value
+        else:
+            for field, warehouse in (("qty", row.get("warehouse")),
+                                     ("rejected_qty", row.get("rejected_warehouse"))):
+                quantity = -_number(row.get(field))
+                if not quantity:
+                    continue
+                entries = [entry for entry in original_ledger
+                           if entry["voucher_detail_no"] == original["name"] and entry["warehouse"] == warehouse]
+                source_qty = sum((_number(entry["actual_qty"]) for entry in entries), Decimal(0))
+                source_value = sum((_number(entry["stock_value_difference"]) for entry in entries), Decimal(0))
+                if source_qty <= 0 or source_value < 0:
+                    _invalid()
+                expected_value -= source_value * quantity / source_qty
         returned_value = sum((_number(entry["stock_value_difference"])
                               for entry in self.ledger[SCR, doc.name]
                               if entry["voucher_detail_no"] == row["name"]), Decimal(0))
@@ -793,19 +812,20 @@ class _Session:
                 or not _same_quantity(returned_value, expected_value, actual, "amount")):
             frappe.throw("委外实物退回金额或库存价值与准确原入库单价不一致，不能重新分摊损耗或拒收成本")
 
-    def _receipt_tracking_children(self, doc):
-        key = (SCR, doc.name, "supplied_items")
+    def _receipt_tracking_children(self, doc, table="supplied_items"):
+        key = (SCR, doc.name, table)
         if key in self.receipt_tracking_tables:
             return
-        child = "Subcontracting Receipt Supplied Item"
-        fields = TABLES[SCR][1][2] | {"serial_and_batch_bundle", "serial_no", "batch_no", "bom_detail_no"}
+        _field, child, base_fields = next(record for record in TABLES[SCR] if record[0] == table)
+        fields = base_fields | (material_returns.FG_TRACKING_FIELDS if table == "items" else
+                               {"serial_and_batch_bundle", "serial_no", "batch_no", "bom_detail_no"})
         rows = self.records(child, {"parent": doc.name}, fields, SCR)
-        actual = {row.name: row for row in doc.get("supplied_items") or []}
+        actual = {row.name: row for row in doc.get(table) or []}
         if set(actual) != {row["name"] for row in rows} or any(
-                item.get("parenttype") != SCR or item.get("parentfield") != "supplied_items"
+                item.get("parenttype") != SCR or item.get("parentfield") != table
                 or any(actual[item["name"]].get(field) != value for field, value in item.items()) for item in rows):
             _invalid()
-        self.receipt_tracking_tables[key] = fields
+        self.receipt_tracking_tables[key] = (child, fields)
 
     def _receipt_ledger(self, doc):
         expected = {}
@@ -1249,8 +1269,8 @@ class _Session:
                 fieldname, childtype, fields = self.extra_tables[doctype, name]
                 _table(doctype, fieldname, childtype)
                 _fields(childtype, fields, doctype)
-        for (doctype, _name, _table_field), fields in self.receipt_tracking_tables.items():
-            _fields("Subcontracting Receipt Supplied Item", fields, doctype)
+        for (doctype, _name, _table_field), (child, fields) in self.receipt_tracking_tables.items():
+            _fields(child, fields, doctype)
 
 
 def _receipt_dto(session):

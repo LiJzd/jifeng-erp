@@ -54,6 +54,7 @@ class SubcontractingReturnTest(unittest.TestCase):
     def setUp(self):
         self.events, self.prior, self.prior_raw, self.native_calls = [], [], [], []
         self.prior_docs = {}
+        self.extra_ledgers = {}
         self.frappe = types.ModuleType("frappe")
         self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         self.frappe.PermissionError = PermissionError
@@ -195,9 +196,12 @@ class SubcontractingReturnTest(unittest.TestCase):
 
     def stock_entries(self, doctype, **kwargs):
         self.assertEqual(doctype, "Stock Ledger Entry")
+        voucher = kwargs["filters"]["voucher_no"]
         self.assertEqual(kwargs["filters"], {"company": "JF", "voucher_type": "Subcontracting Receipt",
-                                             "voucher_no": "SOURCE", "is_cancelled": 0})
+                                             "voucher_no": voucher, "is_cancelled": 0})
         self.assertEqual(kwargs["limit_page_length"], 0)
+        if voucher != "SOURCE":
+            return self.extra_ledgers[voucher]
         rows = []
         for original in self.source.items:
             # ERPNext 16.36 accepted rate = allocated source amount / accepted
@@ -211,6 +215,7 @@ class SubcontractingReturnTest(unittest.TestCase):
                     rows.append(Row(name="SLE-" + original.name + field, company="JF", item_code="FG",
                                     warehouse=warehouse, voucher_type="Subcontracting Receipt", voucher_no="SOURCE",
                                     voucher_detail_no=original.name, actual_qty=float(qty),
+                                    serial_and_batch_bundle=original.get("serial_and_batch_bundle" if field == "qty" else "rejected_serial_and_batch_bundle"),
                                     stock_value_difference=float(qty * price), is_cancelled=0))
         for index, raw in enumerate(self.source.get("supplied_items") or []):
             raw.setdefault("name", "RAW-" + str(index))
@@ -735,10 +740,203 @@ class SubcontractingReturnTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "准确原商品或耗料"):
             self.subject._prior_raw_returns(self.source, "CURRENT")
 
-    def test_tracked_finished_goods_are_blocked_until_native_exact_return_valuation_is_connected(self):
-        self.source_row.serial_and_batch_bundle = "FG-BUNDLE"
-        with self.assertRaisesRegex(ValueError, "成品.*准确原入库估值"):
+    def finished_fixture(self, *, serial=False, rejected=False):
+        self.source_row.update(qty=4, conversion_factor=1, received_qty=6, service_cost_per_qty=4, amount=24,
+            serial_and_batch_bundle="SOURCE-FG", rejected_serial_and_batch_bundle="SOURCE-REJECT")
+        row = self.doc.items[0]
+        row.update(parent="CURRENT", service_cost_per_qty=4, serial_and_batch_bundle="CHOSEN-FG",
+                   warehouse="Rejected" if rejected else "Good")
+        accepted = ([Row(serial_no="FG-" + str(index), qty=1, incoming_rate=4 if index < 2 else 8,
+                        stock_value_difference=4 if index < 2 else 8, warehouse="Good", docstatus=1) for index in range(4)]
+                    if serial else [Row(batch_no="A", qty=2, incoming_rate=4, stock_value_difference=8, warehouse="Good", docstatus=1),
+                                    Row(batch_no="B", qty=2, incoming_rate=8, stock_value_difference=16, warehouse="Good", docstatus=1)])
+        self.bundles = {
+            "SOURCE-FG": Document(name="SOURCE-FG", docstatus=1, company="JF", item_code="FG", warehouse="Good",
+                voucher_type="Subcontracting Receipt", voucher_no="SOURCE", voucher_detail_no="SRC-ROW",
+                type_of_transaction="Inward", total_qty=4, entries=accepted),
+            "SOURCE-REJECT": Document(name="SOURCE-REJECT", docstatus=1, company="JF", item_code="FG", warehouse="Rejected",
+                voucher_type="Subcontracting Receipt", voucher_no="SOURCE", voucher_detail_no="SRC-ROW",
+                type_of_transaction="Inward", total_qty=1,
+                entries=[Row(batch_no="R", qty=1, incoming_rate=0, stock_value_difference=0, warehouse="Rejected", docstatus=1)]),
+            "CHOSEN-FG": Document(name="CHOSEN-FG", docstatus=0, company="JF", item_code="FG", warehouse=row.warehouse,
+                voucher_type="Subcontracting Receipt", voucher_no="CURRENT", voucher_detail_no="RETURN-ROW",
+                type_of_transaction="Outward", total_qty=-1,
+                entries=[Row(serial_no="FG-3", qty=-1, warehouse="Good", docstatus=0)] if serial else
+                        [Row(batch_no="R" if rejected else "B", qty=-1, warehouse=row.warehouse, docstatus=0)]),
+        }
+        fetch = self.frappe.get_doc
+        self.frappe.get_doc = lambda kind, name, **kw: self.bundles[name] if kind == "Serial and Batch Bundle" else fetch(kind, name, **kw)
+        self.doc.native_full_calculation = True
+        return row
+
+    def test_finished_return_preserves_explicit_lot_and_uses_actual_original_value_not_row_average(self):
+        row = self.finished_fixture()
+        self.doc._action = "submit"
+        self.assertEqual(self.doc.validate(), "native-result")
+        self.assertEqual((row.amount, row.rate, row.service_cost_per_qty), (-8, 8, 4))
+        self.assertEqual(row.serial_and_batch_bundle, "CHOSEN-FG")
+        self.assertEqual(self.bundles["CHOSEN-FG"].entries[0].batch_no, "B")
+
+    def test_rejected_finished_return_binds_rejected_original_bundle_with_real_zero_stock_value(self):
+        row = self.finished_fixture(rejected=True)
+        self.doc._action = "submit"
+        self.assertEqual(self.doc.validate(), "native-result")
+        self.assertEqual((row.warehouse, row.amount, row.rate, row.service_cost_per_qty), ("Rejected", 0, 0, 4))
+
+    def test_finished_accepted_and_rejected_selections_keep_distinct_original_values_on_one_row(self):
+        row = self.finished_fixture()
+        row.rejected_qty = -1
+        row.rejected_serial_and_batch_bundle = "CHOSEN-REJECT"
+        self.bundles["CHOSEN-REJECT"] = Document(name="CHOSEN-REJECT", docstatus=0, company="JF", item_code="FG",
+            warehouse="Rejected", type_of_transaction="Outward", voucher_type="Subcontracting Receipt",
+            voucher_no="CURRENT", voucher_detail_no=row.name, total_qty=-1,
+            entries=[Row(batch_no="R", qty=-1, warehouse="Rejected", docstatus=0)])
+        self.doc._action = "submit"
+        self.assertEqual(self.doc.validate(), "native-result")
+        self.assertEqual((row.amount, row.rate, row.received_qty), (-8, 4, -2))
+        self.assertEqual((row.serial_and_batch_bundle, row.rejected_serial_and_batch_bundle),
+            ("CHOSEN-FG", "CHOSEN-REJECT"))
+
+    def test_finished_original_bundle_permissions_cannot_be_bypassed_by_selected_return_bundle(self):
+        self.finished_fixture()
+        self.bundles["SOURCE-FG"].unreadable = True
+        with self.assertRaises(PermissionError):
             self.doc.validate()
+        self.bundles["SOURCE-FG"].unreadable = False
+        meta = self.frappe.get_meta
+        self.frappe.get_meta = lambda doctype: types.SimpleNamespace(
+            get_field=lambda field: Row(fieldtype="Table", options="Serial and Batch Entry", permlevel=0, mask=1)
+                if field == "entries" else None,
+            get_permlevel_access=lambda **kw: {0} if kw["permission_type"] == "read" else set()
+        ) if doctype == "Serial and Batch Bundle" else meta(doctype)
+        with self.assertRaisesRegex(PermissionError, "完整读取原耗料批次"):
+            self.doc.validate()
+
+    def test_finished_draft_does_not_choose_lots_and_submission_requires_explicit_selection(self):
+        row = self.finished_fixture()
+        row.serial_and_batch_bundle = None
+        self.assertEqual(self.doc.validate(), "native-result")
+        self.doc._action = "submit"
+        with self.assertRaisesRegex(ValueError, "原生成品.*明确选择"):
+            self.doc.validate()
+        self.doc._action = None
+        target = self.subject.make_subcontract_return("SOURCE")
+        self.assertFalse(target.items[0].serial_and_batch_bundle)
+        self.assertFalse(target.items[0].serial_no)
+
+    def test_finished_lot_capacity_checks_actual_submitted_stock_and_cancel_releases(self):
+        self.finished_fixture()
+        previous = self.row(name="PRIOR-FG", qty=-2, parent="PRIOR", docstatus=1,
+            serial_and_batch_bundle="PRIOR-FG-BUNDLE", amount=-16, rate=8, service_cost_per_qty=4)
+        self.prior = [previous]
+        self.prior_docs["PRIOR"] = self.document("PRIOR", [previous], docstatus=1, supplied_items=[])
+        self.bundles["PRIOR-FG-BUNDLE"] = Document(name="PRIOR-FG-BUNDLE", docstatus=1, company="JF", item_code="FG",
+            warehouse="Good", type_of_transaction="Outward", voucher_type="Subcontracting Receipt",
+            voucher_no="PRIOR", voucher_detail_no="PRIOR-FG", total_qty=-2,
+            entries=[Row(batch_no="B", qty=-2, incoming_rate=8, stock_value_difference=-16, warehouse="Good", docstatus=1)])
+        self.extra_ledgers["PRIOR"] = [Row(name="PRIOR-SLE", company="JF", item_code="FG", warehouse="Good",
+            voucher_type="Subcontracting Receipt", voucher_no="PRIOR", voucher_detail_no="PRIOR-FG",
+            serial_and_batch_bundle="PRIOR-FG-BUNDLE", actual_qty=-2, stock_value_difference=-16, is_cancelled=0)]
+        with self.assertRaisesRegex(ValueError, "累计退回"):
+            self.doc.validate()
+        previous.docstatus = self.prior_docs["PRIOR"].docstatus = 2
+        self.bundles["PRIOR-FG-BUNDLE"].is_cancelled = 1
+        self.assertEqual(self.doc.validate(), "native-result")
+
+    def test_finished_source_identity_quantity_prices_and_stock_binding_are_required(self):
+        for change in ("other_batch", "wrong_source_row", "wrong_quantity", "source_value", "stock_bundle", "cancelled"):
+            with self.subTest(change=change):
+                self.source._jifeng_return_stock_entries = None
+                self.finished_fixture()
+                selected, original = self.bundles["CHOSEN-FG"], self.bundles["SOURCE-FG"]
+                if change == "other_batch":
+                    selected.entries[0].batch_no = "R"
+                elif change == "wrong_source_row":
+                    original.voucher_detail_no = "OTHER-FG"
+                elif change == "wrong_quantity":
+                    selected.entries[0].qty = -2
+                elif change == "source_value":
+                    original.entries[1].stock_value_difference = 15
+                elif change == "stock_bundle":
+                    self.source._jifeng_return_stock_entries = self.stock_entries("Stock Ledger Entry", filters={
+                        "company": "JF", "voucher_type": "Subcontracting Receipt", "voucher_no": "SOURCE", "is_cancelled": 0}, limit_page_length=0)
+                    self.source._jifeng_return_stock_entries[0].serial_and_batch_bundle = "OTHER"
+                else:
+                    original.is_cancelled = 1
+                with self.assertRaises(ValueError):
+                    self.doc.validate()
+
+    def test_legacy_finished_source_uses_the_exact_sle_only_bundle_without_selecting_a_return_lot(self):
+        row = self.finished_fixture()
+        source_bundle = self.bundles["SOURCE-FG"]
+        source_bundle.entries = [Row(batch_no="B", qty=4, incoming_rate=6,
+            stock_value_difference=24, warehouse="Good", docstatus=1)]
+        self.source_row.serial_and_batch_bundle, self.source_row.batch_no = None, "B"
+        ledger = self.stock_entries("Stock Ledger Entry", filters={"company": "JF",
+            "voucher_type": "Subcontracting Receipt", "voucher_no": "SOURCE", "is_cancelled": 0}, limit_page_length=0)
+        ledger[0].serial_and_batch_bundle = "SOURCE-FG"
+        self.source._jifeng_return_stock_entries = ledger
+        self.assertEqual(self.doc.validate(), "native-result")
+        self.assertEqual((row.amount, row.rate, row.serial_and_batch_bundle), (-6, 6, "CHOSEN-FG"))
+        self.assertIsNone(self.source_row.serial_and_batch_bundle)
+        self.source_row.batch_no = "OTHER"
+        with self.assertRaisesRegex(ValueError, "旧批次.*历史凭证"):
+            self.doc.validate()
+
+    def test_genuinely_legacy_finished_batch_requires_its_actual_stock_lot_identity(self):
+        row = self.finished_fixture()
+        self.source_row.serial_and_batch_bundle, self.source_row.batch_no = None, "B"
+        ledger = self.stock_entries("Stock Ledger Entry", filters={"company": "JF",
+            "voucher_type": "Subcontracting Receipt", "voucher_no": "SOURCE", "is_cancelled": 0}, limit_page_length=0)
+        ledger[0].batch_no = "B"
+        self.source._jifeng_return_stock_entries = ledger
+        self.assertEqual(self.doc.validate(), "native-result")
+        self.assertEqual((row.amount, row.rate), (-6, 6))
+        ledger[0].batch_no = "OTHER"
+        with self.assertRaisesRegex(ValueError, "旧批次.*库存账不一致"):
+            self.doc.validate()
+
+    def test_finished_stock_binding_cannot_hide_an_inward_movement_in_a_submitted_return(self):
+        row = self.finished_fixture()
+        row.update(qty=-1, amount=-8, rate=8, docstatus=1)
+        self.bundles["CHOSEN-FG"].docstatus = 1
+        self.bundles["CHOSEN-FG"].entries[0].update(docstatus=1, incoming_rate=8, stock_value_difference=-8)
+        ledger = [Row(voucher_detail_no=row.name, warehouse="Good", item_code="FG", actual_qty=-2,
+            stock_value_difference=-16, serial_and_batch_bundle="CHOSEN-FG"),
+            Row(voucher_detail_no=row.name, warehouse="Good", item_code="FG", actual_qty=1,
+            stock_value_difference=8, serial_and_batch_bundle="CHOSEN-FG")]
+        with self.assertRaisesRegex(ValueError, "实际库存数量、金额"):
+            self.subject.finished_return_value(self.source, self.source_row, row, return_ledger=ledger)
+
+    def test_finished_native_rate_mapping_preserves_selection_and_blocks_current_batch_average_changes(self):
+        row = self.finished_fixture()
+        self.doc.validate()
+        self.frappe.db.exists = lambda kind, name: kind == "Subcontracting Receipt Item" and name == row.name
+        class NativeBundle(Document):
+            def get_batchwise_return_avg_rates(self):
+                return self.get("native_average") or {}
+        Bundle = type("ReturnBundle", (self.subject.SubcontractingReceiptMaterialReturnBundleMixin, NativeBundle), {})
+        bundle = Bundle(**vars(self.bundles["CHOSEN-FG"]))
+        rates = bundle.get_valuation_rate_for_return_entry("SOURCE")
+        self.assertEqual(rates["batches"]["B"], 8)
+        bundle.native_average = {"B": 8}
+        self.assertEqual(bundle.get_batchwise_return_avg_rates(), {"B": 8})
+        bundle.native_average = {"B": 9}
+        with self.assertRaisesRegex(ValueError, "当前原生估值.*历史金额不同"):
+            bundle.get_batchwise_return_avg_rates()
+
+    def test_finished_serial_maps_exact_selected_source_and_checks_native_valuation_setting(self):
+        row = self.finished_fixture(serial=True)
+        self.doc.validate()
+        self.frappe.db.exists = lambda kind, name: kind == "Subcontracting Receipt Item" and name == row.name
+        Bundle = type("ReturnBundle", (self.subject.SubcontractingReceiptMaterialReturnBundleMixin, Document), {})
+        bundle = Bundle(**vars(self.bundles["CHOSEN-FG"]))
+        self.source.has_serial_no, self.source.use_serial_no_wise_valuation = 1, 1
+        self.assertEqual(bundle.get_valuation_rate_for_return_entry("SOURCE")["serial_nos"]["FG-3"], 8)
+        self.assertEqual(self.doc.items[0].serial_and_batch_bundle, "CHOSEN-FG")
+        self.source.use_serial_no_wise_valuation = 0
+        with self.assertRaisesRegex(ValueError, "未启用原生逐号估值"):
+            bundle.get_valuation_rate_for_return_entry("SOURCE")
 
     def test_forward_and_cancel_keep_native_lifecycle(self):
         self.doc.is_return = 0

@@ -150,6 +150,10 @@ class TestFlowCostSources(unittest.TestCase):
         tracking = {"serial_and_batch_bundle", "serial_no", "batch_no", "bom_detail_no"}
         self.permitted[childtype].update(tracking)
         self.metas[childtype].update({field: Record(fieldname=field, fieldtype="Data", permlevel=0) for field in tracking})
+        childtype = "Subcontracting Receipt Item"
+        self.permitted[childtype].update(self.module.material_returns.FG_TRACKING_FIELDS)
+        self.metas[childtype].update({field: Record(fieldname=field, fieldtype="Data", permlevel=0)
+            for field in self.module.material_returns.FG_TRACKING_FIELDS})
         Document.environment = self
         self.add("Company", "JF", default_currency="CNY")
         self.add("Currency", "CNY")
@@ -637,6 +641,76 @@ class TestFlowCostSources(unittest.TestCase):
         self.documents[self.module.material_returns.BUNDLE_ENTRY, "SOURCE-B"].stock_value_difference = -5
         with self.assertRaisesRegex(ValueError, "估值"):
             self.module.receipt_costs("FLOW")
+
+    def finished_lot_source(self):
+        _doc, row = self.receipt(qty=4, rejected=0, loss=0)
+        row.serial_and_batch_bundle = "SOURCE-FG-LOTS"
+        self.documents[self.module.SLE, "SCR-FG-SLE"].serial_and_batch_bundle = row.serial_and_batch_bundle
+        kind = self.module.material_returns.BUNDLE
+        self.add(kind, row.serial_and_batch_bundle, company="JF", item_code="FG", warehouse="FG-WH",
+            type_of_transaction="Inward", voucher_type=self.module.SCR, voucher_no="SCR",
+            voucher_detail_no=row.name, total_qty=4, is_cancelled=0)
+        for batch, rate in (("A", 1), ("B", 5)):
+            self.child(kind, row.serial_and_batch_bundle, "entries", "FG-SOURCE-" + batch, batch_no=batch,
+                qty=2, incoming_rate=rate, stock_value_difference=2 * rate, warehouse="FG-WH")
+
+    def finished_lot_return(self, name="RETURN", batch="B", rate=5):
+        _doc, row = self.receipt(name, qty=-1, loss=0, is_return=1, original="SCR", flow=None)
+        row.update(amount=-rate, rate=rate, serial_and_batch_bundle=name + "-FG-LOTS")
+        self.documents[self.module.SLE, name + "-FG-SLE"].update(stock_value_difference=-rate,
+            serial_and_batch_bundle=row.serial_and_batch_bundle)
+        kind = self.module.material_returns.BUNDLE
+        self.add(kind, row.serial_and_batch_bundle, company="JF", item_code="FG", warehouse="FG-WH",
+            type_of_transaction="Outward", voucher_type=self.module.SCR, voucher_no=name,
+            voucher_detail_no=row.name, total_qty=-1, is_cancelled=0)
+        self.child(kind, row.serial_and_batch_bundle, "entries", name + "-FG-LOT", batch_no=batch,
+            qty=-1, incoming_rate=rate, stock_value_difference=-rate, warehouse="FG-WH")
+
+    def test_finished_selected_historical_stock_value_and_covered_material_fees_have_separate_cost_bases(self):
+        self.finished_lot_source()
+        self.finished_lot_return()
+        result = self.module.receipt_costs("FLOW")
+        self.assertEqual(result["totals"], {"material": 3, "processing": 6, "other": 0})
+        returned = next(row for row in result["rows"] if row["receipt"] == "RETURN")
+        self.assertEqual((returned["inventory_value_change"], returned["valuation_cost_basis"],
+            returned["valuation_difference"]), (-5, -3, -2))
+        self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 7,
+            "valuation_cost_basis": 9, "valuation_difference": -2})
+
+    def test_finished_cost_read_checks_per_lot_quota_and_cancel_releases_only_cancelled_return(self):
+        self.finished_lot_source()
+        for name in ("RET-1", "RET-2", "RET-3"):
+            self.finished_lot_return(name)
+        with self.assertRaisesRegex(ValueError, "累计退回"):
+            self.module.receipt_costs("FLOW")
+        self.documents[self.module.SCR, "RET-1"].docstatus = 2
+        self.documents[self.module.material_returns.BUNDLE, "RET-1-FG-LOTS"].is_cancelled = 1
+        for (kind, _), ledger in self.documents.items():
+            if kind == self.module.SLE and ledger.voucher_no == "RET-1":
+                ledger.is_cancelled = 1
+        result = self.module.receipt_costs("FLOW")
+        self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 2,
+            "valuation_cost_basis": 6, "valuation_difference": -4})
+        self.assertEqual(result["totals"]["material"], 2)
+
+    def test_finished_cost_cannot_disclose_hidden_lots_or_accept_changed_sle_value_or_bundle(self):
+        self.finished_lot_source()
+        self.finished_lot_return()
+        self.hidden["Subcontracting Receipt Item"] = {"serial_and_batch_bundle"}
+        with self.assertRaises(PermissionError):
+            self.module.receipt_costs("FLOW")
+        self.hidden.clear()
+        self.list_denied.add((self.module.material_returns.BUNDLE_ENTRY, "FG-SOURCE-B"))
+        with self.assertRaises(PermissionError):
+            self.module.receipt_costs("FLOW")
+        self.list_denied.clear()
+        ledger = self.documents[self.module.SLE, "RETURN-FG-SLE"]
+        for field, value in (("stock_value_difference", -3), ("serial_and_batch_bundle", "OTHER")):
+            previous = ledger[field]
+            ledger[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.module.receipt_costs("FLOW")
+            ledger[field] = previous
 
     def test_hidden_parent_return_child_and_ledger_reject_the_whole_cost(self):
         self.receipt()
