@@ -613,7 +613,9 @@ NATIVE_SOURCES = {'StockController.make_gl_entries': 'def make_gl_entries(self, 
 PERSISTED_GL_MERGE_FIELDS = {'account','cost_center','party','party_type','voucher_detail_no',
     'against_voucher','against_voucher_type','project','finance_book','voucher_no'}
 GL_SOURCE_FIELDS = {'name','modified','company','voucher_type','voucher_no','voucher_detail_no',
-    'account','cost_center','project','debit','credit','is_cancelled'}
+    'account','cost_center','project','debit','credit','is_cancelled','account_currency',
+    'debit_in_account_currency','credit_in_account_currency','transaction_currency','transaction_exchange_rate',
+    'debit_in_transaction_currency','credit_in_transaction_currency'}
 
 
 def install_native_gl(frappe, document_class, row_class, ledger_read):
@@ -668,6 +670,9 @@ def install_native_gl(frappe, document_class, row_class, ledger_read):
         for dim in namespace['dimensions']:
             entry[dim]=item.get(dim) if item is not None and item.get(dim) else self.get(dim)
         entry.update(value)
+        entry.update(account_currency='CNY', transaction_currency='CNY', transaction_exchange_rate=1,
+            debit_in_account_currency=entry.get('debit',0), credit_in_account_currency=entry.get('credit',0),
+            debit_in_transaction_currency=entry.get('debit',0), credit_in_transaction_currency=entry.get('credit',0))
         return entry
     document_class.get_gl_dict = gl_dict
     if not hasattr(document_class, 'precision'):
