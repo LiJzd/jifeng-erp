@@ -23,9 +23,13 @@ class JifengCostPreview(Document):
 
             flow = frappe.get_doc("Jifeng Flow Order", self.flow_order, for_update=True)
             flow.check_permission("read")
-            stock_plan_quantity(flow)
+            planned_qty = stock_plan_quantity(flow)
             if flow.company != self.company or flow.item_code != self.item_code:
                 frappe.throw("试算单与流程单的公司、商品必须一致")
+            # Linked batches and costs cover this Flow's inventory-unit plan.
+            # A copied sales-unit quantity (or a stale client input) must not
+            # replace that denominator. Standalone manual trials remain manual.
+            self.planned_qty = planned_qty
         self._refresh_actual_costs()
         try:
             result = calculate(
@@ -53,6 +57,8 @@ class JifengCostPreview(Document):
             flow.check_permission("read")
             if flow.company != self.company or flow.item_code != self.item_code:
                 frappe.throw("试算单与流程单的公司、商品必须一致")
+            if stock_plan_quantity(flow) != self.planned_qty:
+                frappe.throw("流程单计划库存数量已变化，请重新读取后核算")
             self.flow_order_no = flow.name
             if flow.sales_order:
                 if self.sales_order and self.sales_order != flow.sales_order:
@@ -183,10 +189,10 @@ class JifengCostPreview(Document):
         flow.check_permission("read")
         from jifeng_erp.workflow import stock_plan_quantity
 
-        stock_plan_quantity(flow)
+        planned_qty = stock_plan_quantity(flow)
         if self.batches:
             frappe.throw("已有回货批次，请核对费用后手动调整，避免覆盖当前试算")
-        self.company, self.item_code, self.planned_qty = flow.company, flow.item_code, flow.planned_qty
+        self.company, self.item_code, self.planned_qty = flow.company, flow.item_code, planned_qty
         self.flow_order_no, self.external_order_no = flow.name, flow.online_order_id
         self.sales_order = flow.sales_order
         self.material_amount, self.processing_amount = flow.material_amount, flow.processing_amount

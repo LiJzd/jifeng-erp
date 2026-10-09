@@ -1,11 +1,25 @@
+function jifeng_cost_preview_plan_input(frm) {
+    frm.set_df_property("planned_qty", "read_only", Boolean(frm.doc.flow_order));
+    frm.set_df_property("planned_qty", "description", frm.doc.flow_order
+        ? "按关联流程单已核对的库存数量试算，保存或核算时重新读取；回货分类也须使用库存单位。"
+        : "手工试算请填写商品库存数量；回货分类也须使用库存单位。");
+}
+
 frappe.ui.form.on("Jifeng Cost Preview", {
     async flow_order(frm) {
+        jifeng_cost_preview_plan_input(frm);
         const name = frm.doc.flow_order;
-        if (!name || (frm.doc.batches || []).length) return;
+        if (!name) return;
         const flow = await frappe.db.get_doc("Jifeng Flow Order", name);
         if (frm.doc.flow_order !== name) return;
         if (!["stock_v1", "manual_verified_v1"].includes(flow.quantity_basis) || !flow.stock_uom) {
             frappe.msgprint("所选流程单计划数量的库存单位尚未核对，请先打开流程单确认计划库存单位和数量。");
+            return;
+        }
+        // Keep existing batch classifications and fee selections when a Flow
+        // link changes, while using its inventory-unit plan for the trial.
+        if ((frm.doc.batches || []).length) {
+            await frm.set_value("planned_qty", flow.planned_qty);
             return;
         }
         const values = { company: flow.company, item_code: flow.item_code,
@@ -19,6 +33,7 @@ frappe.ui.form.on("Jifeng Cost Preview", {
         await frm.set_value(values);
     },
     refresh(frm) {
+        jifeng_cost_preview_plan_input(frm);
         const basis = frm.doc.cost_basis || (frm.doc.receipt_cost_loaded_at ? "历史实际费用口径待确认" : "流程估算");
         frm.set_intro(`费用口径：${basis}。实际口径保存或重新核算时重读当前已提交来源，撤销后净费用随之更新；无待保存修改时，请使用“重新核算当前实际费用”。估算口径保留人工费用。试算不产生库存或财务凭证。`, "blue");
         if (!frm.is_new() && frm.doc.flow_order) {

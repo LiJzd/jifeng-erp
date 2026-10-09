@@ -81,12 +81,17 @@ class TestReceiptBatches(unittest.TestCase):
         self.preview.save = Mock(side_effect=self.preview.validate)
         self.preview.is_new = lambda: False
         self.preview.flags = types.SimpleNamespace()
-        self.frappe.db.get_value = Mock(return_value="PREVIEW")
+        self.mock_preview_lock()
         # Inventory-unit qualification has its own existing Flow tests. The
         # actual source service below still checks Item/warehouse/UOM/SLE.
         self.workflow.stock_plan_quantity = Mock(return_value=Decimal(4))
         self.frappe.get_doc.side_effect = lambda doctype, name, **kwargs: self.native.get_doc(doctype, name)
         return self.preview
+
+    def mock_preview_lock(self):
+        source_value = self.frappe.db.get_value
+        self.frappe.db.get_value = Mock(side_effect=lambda doctype, *args, **kwargs:
+            "PREVIEW" if doctype == "Jifeng Cost Preview" else source_value(doctype, *args, **kwargs))
 
     def assert_no_posting(self):
         for writer in (self.frappe.db.commit, self.frappe.db.set_value, self.frappe.db.sql,
@@ -202,7 +207,7 @@ class TestReceiptBatches(unittest.TestCase):
         self.preview.check_permission = Mock()
         self.preview.reload = Mock()
         self.preview.save = Mock()
-        self.frappe.db.get_value = Mock(return_value="PREVIEW")
+        self.mock_preview_lock()
         self.native.list_denied.add((self.native.module.SLE, "SCR-RM-SLE"))
         with self.assertRaises(PermissionError):
             self.preview.load_posted_costs()
@@ -213,10 +218,10 @@ class TestReceiptBatches(unittest.TestCase):
         self.preview.doctype, self.preview.name = "Jifeng Cost Preview", "PREVIEW"
         self.preview.receipt_cost_loaded_at = None
         self.preview.check_permission, self.preview.reload, self.preview.save = Mock(), Mock(), Mock()
-        self.frappe.db.get_value = Mock(return_value="PREVIEW")
+        self.mock_preview_lock()
         result = self.preview.load_posted_costs()
         self.assertEqual(result["totals"]["material"], 4)
-        self.assertEqual((self.preview.material_amount, self.preview.processing_amount), (4, 8))
+        self.assertEqual((self.preview.material_amount, self.preview.processing_amount), (4, 4))
         self.assertEqual(self.preview.receipt_cost_sources, "SCR")
         self.preview.save.assert_called_once_with()
 
@@ -224,21 +229,21 @@ class TestReceiptBatches(unittest.TestCase):
     def test_posted_save_reprices_new_issue_and_receipt_then_cancelled_net_sources(self):
         preview = self.saving_preview()
         preview.save()
-        self.assertEqual((preview.total_cost, preview.estimated_unit_cost, preview.batches[0].estimated_cost), ("12", "4", "8"))
+        self.assertEqual((preview.total_cost, preview.estimated_unit_cost, preview.batches[0].estimated_cost), ("8", "2.6667", "5.33"))
         issue, _row = self.native.issue(qty=2, factor=1)
         preview.save()
         self.assertEqual((preview.material_amount, preview.total_cost, preview.estimated_unit_cost,
-                          preview.batches[0].estimated_cost), (12, "20", "6.6667", "13.33"))
+                          preview.batches[0].estimated_cost), (12, "16", "5.3333", "10.67"))
         second, _row = self.native.receipt("SECOND", qty=1, rejected=0, loss=0)
         preview.save()
-        self.assertEqual((preview.total_cost, preview.estimated_unit_cost), ("23", "7.6667"))
+        self.assertEqual((preview.total_cost, preview.estimated_unit_cost), ("19", "6.3333"))
         self.assertEqual(preview.receipt_cost_sources, "ISSUE\nSCR\nSECOND")
         issue.docstatus = 2
         preview.save()
-        self.assertEqual((preview.total_cost, preview.estimated_unit_cost), ("15", "5"))
+        self.assertEqual((preview.total_cost, preview.estimated_unit_cost), ("11", "3.6667"))
         second.docstatus = 2
         preview.save()
-        self.assertEqual((preview.total_cost, preview.estimated_unit_cost), ("12", "4"))
+        self.assertEqual((preview.total_cost, preview.estimated_unit_cost), ("8", "2.6667"))
         self.receipt.docstatus = 2
         preview.save()
         self.assertEqual((preview.material_amount, preview.processing_amount, preview.other_amount,
@@ -251,7 +256,7 @@ class TestReceiptBatches(unittest.TestCase):
         preview = self.saving_preview("委外回货实际")
         self.native.issue(qty=2, factor=1)
         preview.save()
-        self.assertEqual((preview.material_amount, preview.total_cost, preview.estimated_unit_cost), (4, "12", "4"))
+        self.assertEqual((preview.material_amount, preview.total_cost, preview.estimated_unit_cost), (4, "8", "2.6667"))
         self.assertEqual(preview.receipt_cost_sources, "SCR")
         self.receipt.docstatus = 2
         preview.save()
@@ -299,7 +304,7 @@ class TestReceiptBatches(unittest.TestCase):
         self.assertEqual(preview.cost_basis, "委外回货实际")
         self.assertEqual((preview.note, preview.modified), ("pending input", original_modified))
         self.assertIs(preview.batches, pending_batches)
-        self.assertEqual((result["totals"]["material"], preview.total_cost, preview.estimated_unit_cost), (4, "12", "4"))
+        self.assertEqual((result["totals"]["material"], preview.total_cost, preview.estimated_unit_cost), (4, "8", "2.6667"))
         self.assertFalse(hasattr(preview, "_cost_basis_selection"))
         preview.check_permission.assert_any_call("write")
         self.assert_no_posting()
@@ -370,14 +375,95 @@ class TestReceiptBatches(unittest.TestCase):
         self.assertFalse(hasattr(preview, "_cost_basis_selection"))
         self.assert_no_posting()
 
+    def test_linked_box_order_uses_flow_stock_plan_without_changing_batch_classification(self):
+        from jifeng_erp.flow_quantity import require_stock_plan, sales_row_snapshot
+
+        snapshot = sales_row_snapshot(Record(qty=1, uom="Box", stock_uom="Nos",
+            conversion_factor=144, stock_qty=144), "Nos")
+        stock_plan = require_stock_plan(snapshot | {"sales_order": "SO", "planned_qty": 144}, "Nos")
+        preview = self.saving_preview(None, None)
+        self.workflow.stock_plan_quantity.return_value = stock_plan
+        preview.planned_qty = 1  # A copied sales qty is not the cost denominator.
+        preview.material_amount, preview.processing_amount, preview.other_amount = 1000, 440, 0
+        batch = preview.batches[0]
+        batch.update(received_qty=72, good_qty=72, rework_qty=0, lost_qty=0)
+        preview.save()
+        self.assertEqual((preview.planned_qty, preview.total_cost, preview.estimated_unit_cost),
+                         (Decimal(144), "1440", "10"))
+        self.assertEqual((preview.good_qty, preview.unreceived_qty, batch.estimated_cost), ("72", "72", "720"))
+        self.assertIs(preview.batches[0], batch)
+        self.assertEqual((batch.received_qty, batch.good_qty), (72, 72))
+        # A later normal save with forged readonly input rereads the same plan.
+        preview.planned_qty = 999
+        preview.save()
+        self.assertEqual((preview.planned_qty, preview.estimated_unit_cost), (Decimal(144), "10"))
+        self.assert_no_posting()
+
+    def test_linked_actual_recalculation_rereads_stock_plan_and_cost_sources(self):
+        preview = self.saving_preview()
+        self.workflow.stock_plan_quantity.return_value = Decimal(12)
+        preview.planned_qty = 1
+        preview.recalculate_actual_costs()
+        self.assertEqual((preview.planned_qty, preview.total_cost, preview.estimated_unit_cost),
+                         (Decimal(12), "8", "0.7273"))  # One loss remains classified.
+        self.assertEqual((preview.batches[0].good_qty, preview.batches[0].lost_qty), (2, 1))
+        self.receipt.docstatus = 2
+        preview.recalculate_actual_costs()
+        self.assertEqual((preview.planned_qty, preview.total_cost, preview.estimated_unit_cost),
+                         (Decimal(12), "0", "0"))
+        self.assert_no_posting()
+
+    def test_standalone_manual_trial_retains_explicit_quantity(self):
+        preview = self.saving_preview(None, None)
+        preview.flow_order = None
+        preview.planned_qty = 2
+        preview.batches[0].update(received_qty=2, good_qty=2, rework_qty=0, lost_qty=0)
+        preview.save()
+        self.assertEqual((preview.planned_qty, preview.estimated_unit_cost), (2, "165"))
+        self.workflow.stock_plan_quantity.assert_not_called()
+        self.assert_no_posting()
+
+    def test_late_flow_plan_change_cannot_save_costs_using_an_earlier_denominator(self):
+        preview = self.saving_preview(None, None)
+        self.workflow.stock_plan_quantity.side_effect = [Decimal(4), Decimal(12)]
+        with self.assertRaisesRegex(ValueError, "计划库存数量已变化"):
+            preview.validate()
+        self.assert_no_posting()
+
+    def test_flow_link_syncs_inventory_quantity_without_overwriting_existing_classifications(self):
+        program = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+let handlers,resolve;const properties=[];
+const frappe={ui:{form:{on:(_,h)=>handlers=h}},db:{get_doc:()=>new Promise(r=>resolve=r)},
+ msgprint:()=>{throw Error('unexpected message');}};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe});
+(async()=>{
+ const batch={received_qty:72,good_qty:60,rework_qty:12},doc={name:'CP',flow_order:'FLOW',planned_qty:1,
+   cost_basis:'流程已过账实际',material_amount:123,batches:[batch]};
+ const frm={doc,is_new:()=>true,set_intro:()=>{},set_df_property:(...args)=>properties.push(args),
+   set_value:async(field,value)=>{assert.equal(field,'planned_qty');doc[field]=value;}};
+ handlers.refresh(frm);assert.equal(properties.find(p=>p[0]==='planned_qty'&&p[1]==='read_only')[2],true);
+ let pending=handlers.flow_order(frm);resolve({quantity_basis:'stock_v1',stock_uom:'Nos',planned_qty:144});await pending;
+ assert.equal(doc.planned_qty,144);assert.strictEqual(doc.batches[0],batch);
+ assert.equal(batch.good_qty,60);assert.equal(batch.rework_qty,12);assert.equal(doc.material_amount,123);
+ pending=handlers.flow_order(frm);doc.flow_order='OTHER';resolve({quantity_basis:'stock_v1',stock_uom:'Nos',planned_qty:288});await pending;
+ assert.equal(doc.planned_qty,144,'late reply must not overwrite another selected Flow');
+ doc.flow_order=null;properties.length=0;await handlers.flow_order(frm);
+ assert.equal(properties.find(p=>p[0]==='planned_qty'&&p[1]==='read_only')[2],false);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+        result = subprocess.run(["node", "-e", program, str(ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_cost_preview/jifeng_cost_preview.js")],
+                                capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_recalculate_unchanged_form_keeps_scope_batches_and_clears_cancelled_costs(self):
         preview = self.saving_preview()
         preview.recalculate_actual_costs()
-        self.assertEqual((preview.total_cost, preview.cost_basis), ("12", "流程已过账实际"))
+        self.assertEqual((preview.total_cost, preview.cost_basis), ("8", "流程已过账实际"))
         batches = preview.batches
         issue, _row = self.native.issue(qty=2, factor=1)
         preview.recalculate_actual_costs()
-        self.assertEqual((preview.total_cost, preview.receipt_cost_sources), ("20", "ISSUE\nSCR"))
+        self.assertEqual((preview.total_cost, preview.receipt_cost_sources), ("16", "ISSUE\nSCR"))
         self.assertIs(preview.batches, batches)
         issue.docstatus = self.receipt.docstatus = 2
         preview.recalculate_actual_costs()
@@ -397,7 +483,7 @@ const frappe={ui:{form:{on:(_,h)=>handlers=h}},utils:{escape_html:v=>v},
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_currency:v=>String(v)});
 (async()=>{
  const buttons={},doc={name:'CP',flow_order:'FLOW',cost_basis:'流程已过账实际',receipt_cost_loaded_at:'OLD',batches:[{good_qty:10}]};
- const before=JSON.stringify(doc),frm={doc,is_new:()=>false,is_dirty:()=>false,set_intro:()=>{},
+ const before=JSON.stringify(doc),frm={doc,is_new:()=>false,is_dirty:()=>false,set_intro:()=>{},set_df_property:()=>{},
  add_custom_button:(n,f)=>buttons[n]=f,dirty:()=>{throw Error('no forced dirty');},
  save:()=>{throw Error('no synthetic form save');},call:async(method,args)=>calls.push({method,args}),reload_doc:async()=>{}};
  handlers.refresh(frm);const pending=buttons['重新核算当前实际费用']();await new Promise(r=>setImmediate(r));
@@ -415,6 +501,7 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
         self.receipt.docstatus = 2
         preview = self.saving_preview("流程估算", None)
         preview.planned_qty = 5
+        self.workflow.stock_plan_quantity.return_value = Decimal(5)
         preview.batches[0].received_qty = preview.batches[0].good_qty = 5
         preview.batches[0].lost_qty = preview.batches[0].rework_qty = 0
         first = self.native.manufacture(other=6)
@@ -441,7 +528,7 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
         preview = self.saving_preview("委外回货实际")
         self.native.manufacture(material=40, other=6)
         preview.validate()
-        self.assertEqual((preview.material_amount, preview.processing_amount, preview.other_amount), (4, 8, 0))
+        self.assertEqual((preview.material_amount, preview.processing_amount, preview.other_amount), (4, 4, 0))
         self.assertEqual(preview.receipt_cost_sources, "SCR")
         self.assert_no_posting()
 
@@ -452,11 +539,11 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
             "work_order": "WO", "job_card": "CARD", "amount": Decimal(20)}], total=Decimal(20))
         preview.validate()
         self.assertEqual((preview.material_amount, preview.processing_amount, preview.total_cost,
-                          preview.receipt_cost_sources), (44, 28, "72", "MAKE\nPAYROLL-JE\nSCR"))
+                          preview.receipt_cost_sources), (44, 24, "68", "MAKE\nPAYROLL-JE\nSCR"))
         self.assertEqual((preview.batches[0].received_qty, preview.batches[0].good_qty), (4, 2))
         self.native.wage_cost_result.update(rows=[], total=Decimal(0))
         preview.recalculate_actual_costs()
-        self.assertEqual((preview.total_cost, preview.processing_amount, preview.receipt_cost_sources), ("52", 8, "MAKE\nSCR"))
+        self.assertEqual((preview.total_cost, preview.processing_amount, preview.receipt_cost_sources), ("48", 4, "MAKE\nSCR"))
         self.assertEqual((preview.batches[0].received_qty, preview.batches[0].good_qty), (4, 2))
         self.assert_no_posting()
 
@@ -481,7 +568,7 @@ const frappe={ui:{form:{on:(_,h)=>handlers=h}},utils:{escape_html:v=>v.replace(/
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_currency:v=>String(v)});
 (async()=>{
  const buttons={},doc={name:'CP',flow_order:'FLOW',cost_basis:'流程估算',receipt_cost_loaded_at:null,note:'pending',batches:[{good_qty:5}]};
- const frm={doc,is_new:()=>false,is_dirty:()=>true,set_intro:()=>{},add_custom_button:(n,f)=>buttons[n]=f,
+ const frm={doc,is_new:()=>false,is_dirty:()=>true,set_intro:()=>{},set_df_property:()=>{},add_custom_button:(n,f)=>buttons[n]=f,
  save:()=>{throw Error('no automatic pre-save');},call:async(method,args)=>calls.push({method,args,note:doc.note,batches:doc.batches}),reload_doc:async()=>{}};
  handlers.refresh(frm);const selected=buttons['带入已过账实际费用']();await new Promise(r=>setImmediate(r));
  assert.equal(messages.length,0);assert.equal(calls.length,0);assert.match(confirmation.message,/制造 MAKE&lt;1&gt;（工单 WO）/);
@@ -505,7 +592,7 @@ const frappe = { ui: { form: { on: (_, value) => handlers = value } },
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_currency:value=>String(value)});
 (async()=>{
  const buttons={}, doc={name:'CP',flow_order:'FLOW',receipt_cost_loaded_at:'OLD',cost_basis:null,material_amount:123,remark:'pending',batches:[{good_qty:2}]};
- const frm={doc,is_new:()=>false,is_dirty:()=>true,set_intro:()=>{},add_custom_button:(name,fn)=>buttons[name]=fn,
+ const frm={doc,is_new:()=>false,is_dirty:()=>true,set_intro:()=>{},set_df_property:()=>{},add_custom_button:(name,fn)=>buttons[name]=fn,
  save:()=>{throw Error('historical ambiguous input must not autosave');},
  call:async(method,args)=>{ calls.push({method,args,remark:doc.remark,batches:doc.batches}); }, reload_doc:async()=>{},
  set_value:async values=>Object.assign(doc,values)};
