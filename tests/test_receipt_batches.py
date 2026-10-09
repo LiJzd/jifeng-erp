@@ -735,7 +735,7 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
  save:()=>{throw Error('historical ambiguous input must not autosave');},
  call:async(method,args)=>{ calls.push({method,args,remark:doc.remark,batches:doc.batches}); }, reload_doc:async()=>{},
  set_value:async values=>Object.assign(doc,values)};
- handlers.refresh(frm); assert.equal(Object.keys(buttons).length,5);
+ handlers.refresh(frm); assert.equal(Object.keys(buttons).length,6);
  const flush=()=>new Promise(resolve=>setImmediate(resolve));
  const unchanged=JSON.stringify(doc), cancelled=buttons['带入委外回货实际费用'](); await flush();
  assert.equal(calls.length,0); confirmations.at(-1).no(); await cancelled; assert.equal(JSON.stringify(doc),unchanged);

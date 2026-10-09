@@ -83,10 +83,13 @@ class FakeDatabase:
             return name in self.requests
         raise AssertionError(doctype)
 
-    def sql(self, query, values):
+    def sql(self, query, values, **kwargs):
         if "FOR UPDATE NOWAIT" in query:
             if getattr(self, "busy", False):
                 raise TimeoutError("source order busy")
+            if "tabWork Order" in query:
+                return [Record(name=name) for name, doc in self.work_orders.items()
+                        if doc.get("docstatus", 0) < 2 and doc.get("jf_flow_order") == values[0]]
             return [(values[0],)]
         raise AssertionError(query)
 
@@ -148,6 +151,7 @@ class TestSalesOrderFlow(unittest.TestCase):
 
         frappe.get_meta = meta
         frappe.db = FakeDatabase(self.flows, self.requests, self.profiles)
+        frappe.db.work_orders = self.work_orders
         frappe.get_all = lambda doctype, **kwargs: list(self.work_orders if doctype == "Work Order" else self.flows)
 
         def get_doc(doctype, name=None, **kwargs):
@@ -438,6 +442,18 @@ class TestSalesOrderFlow(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "净领料.*确认尚未耗用的实物"):
             self.workflow.make_work_order(flow)
         self.assertFalse(self.work_orders)
+
+    def test_original_factory_keeps_primary_link_with_replacement_orders(self):
+        name = self.workflow.create_sales_order_flows(self.order.name)[0]
+        flow = self.flows[name]
+        flow.bom, flow.source_changed = "BOM-1", 0
+        primary = self.workflow.make_work_order(flow)
+        self.work_orders["REPLACEMENT"] = Record(
+            name="REPLACEMENT", docstatus=0, jf_flow_order=name, jf_replacement_of=primary,
+            company="JF", production_item="RING", bom_no="BOM-1", sales_order="SO-0001", sales_order_item="ROW-1")
+        self.assertEqual(self.workflow.make_work_order(flow), primary)
+        self.assertEqual(flow.work_order, primary)
+        self.assertEqual(len(self.work_orders), 2)
 
     def test_wrong_company_bom_cannot_create_work_order(self):
         name = self.workflow.create_sales_order_flows(self.order.name)[0]

@@ -2,6 +2,49 @@ import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 
+def production_loss_custom_fields():
+    """The narrow schema used by loss posting and explicit replacement orders."""
+    fields = [
+        ("jf_production_loss_work_order", "Link", "损耗生产工单", "Work Order"),
+        ("jf_production_loss_job_card", "Link", "损耗来源报工单", "Job Card"),
+        ("jf_production_loss_qty", "Float", "实际损耗库存数量", None),
+        ("jf_production_loss_reason", "Small Text", "损耗报废原因", None),
+        ("jf_production_loss_no_residual", "Check", "确认无可回收实物及残值", None),
+        ("jf_production_loss_source_signature", "Data", "损耗来源核对标记", None),
+        ("jf_production_loss_source_version", "Datetime", "损耗来源版本", None),
+        ("jf_production_loss_request", "Data", "损耗办理标记", None),
+    ]
+    result = []
+    previous = "jf_material_return_against"
+    for name, fieldtype, label, options in fields:
+        row = {"fieldname": name, "fieldtype": fieldtype, "label": label,
+               "insert_after": previous, "no_copy": 1,
+               "read_only": int(name not in ("jf_production_loss_reason", "jf_production_loss_no_residual"))}
+        if options:
+            row["options"] = options
+        if name in ("jf_production_loss_work_order", "jf_production_loss_job_card", "jf_production_loss_request"):
+            row["search_index"] = 1
+        if name in ("jf_production_loss_source_signature", "jf_production_loss_request"):
+            row["hidden"] = 1
+        result.append(row)
+        previous = name
+    return {"Stock Entry": result, "Work Order": [{
+        "fieldname": "jf_replacement_of", "fieldtype": "Link", "label": "补产原工单",
+        "options": "Work Order", "insert_after": "jf_flow_order", "read_only": 1,
+        "no_copy": 1, "search_index": 1,
+    }]}
+
+
+def install_production_loss_type():
+    name = "制造损耗出库"
+    if frappe.db.exists("Stock Entry Type", name):
+        if frappe.db.get_value("Stock Entry Type", name, "purpose") != "Material Issue":
+            frappe.throw("制造损耗出库类型已有其他用途，请核对配置")
+        return
+    frappe.get_doc({"doctype": "Stock Entry Type", "name": name,
+                    "stock_entry_type": name, "purpose": "Material Issue"}).insert(ignore_permissions=True)
+
+
 def install():
     fields = {doctype: [{
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
@@ -128,7 +171,10 @@ def install():
 
     for doctype, additions in sample_custom_fields().items():
         fields.setdefault(doctype, []).extend(additions)
+    for doctype, rows in production_loss_custom_fields().items():
+        fields.setdefault(doctype, []).extend(rows)
     create_custom_fields(fields, update=True)
+    install_production_loss_type()
     from jifeng_erp.payroll import install_salary_source_index
 
     install_salary_source_index()
@@ -524,8 +570,10 @@ def validate_flow_links(doc, method=None):
             work_stage = stock_stage(doc)
     if doc.doctype == "Work Order":
         from jifeng_erp.production_instruction import validate_work_order
+        from jifeng_erp.production_replacement import validate_replacement
 
         validate_work_order(doc)
+        validate_replacement(doc)
         if doc.docstatus != 2 and doc.get("jf_flow_order"):
             flow = frappe.get_doc("Jifeng Flow Order", doc.jf_flow_order, for_update=True)
             flow.check_permission("read")

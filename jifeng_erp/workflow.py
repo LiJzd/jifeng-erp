@@ -316,6 +316,13 @@ def manufacture_batch_candidates(flow_order):
 
 
 @frappe.whitelist()
+def production_batch_candidates(flow_order):
+    from jifeng_erp.flow_cost_sources import production_batch_candidates as read_batches
+
+    return read_batches(flow_order)
+
+
+@frappe.whitelist()
 def material_issue_costs(flow_order):
     from jifeng_erp.flow_cost_sources import material_issue_costs as read_costs
 
@@ -397,6 +404,7 @@ def _check_sample_flow(flow):
 
 def make_work_order(flow):
     flow.check_permission("write")
+    flow.flags.for_update = True
     frappe.db.get_value(flow.doctype, flow.name, "name", for_update=True)
     flow.reload()
     validate_flow_source(flow)
@@ -408,12 +416,14 @@ def make_work_order(flow):
     if bom.item != flow.item_code or bom.company != flow.company or bom.docstatus != 1 or not bom.is_active:
         frappe.throw("生产 BOM 必须属于本公司、本商品且已提交并启用")
 
-    names = frappe.get_all("Work Order", filters={"jf_flow_order": flow.name, "docstatus": ["<", 2]},
-                           pluck="name", limit=2)
-    if len(names) > 1:
-        frappe.throw("同一流程单已有多张有效生产工单，请先核对")
+    names = [row.name for row in frappe.db.sql("""SELECT name FROM `tabWork Order`
+        WHERE jf_flow_order=%s AND docstatus<2 ORDER BY name FOR UPDATE NOWAIT""",
+                                               (flow.name,), as_dict=True)]
     if names:
-        work_order = frappe.get_doc("Work Order", names[0])
+        primary = flow.get("work_order") if flow.get("work_order") in names else None
+        if not primary and len(names) > 1:
+            frappe.throw("本流程已有多张工单，请从本流程生产工单列表选择原工单或补产工单")
+        work_order = frappe.get_doc("Work Order", primary or names[0], for_update=True)
         work_order.check_permission("read")
         if (work_order.company != flow.company or work_order.production_item != flow.item_code
                 or work_order.bom_no != flow.bom or work_order.sales_order != flow.sales_order

@@ -52,6 +52,90 @@ frappe.ui.form.on("Jifeng Flow Order", {
             }, "选择领料仓库", "生成草稿");
         });
         add_generation_button("生成生产工单草稿", () => call("make_work_order", "Work Order", true));
+        add_generation_button("生成补产工单草稿", async () => {
+            if (frm.is_dirty()) return frappe.msgprint("请先保存或放弃流程单修改，再核对补产数量。");
+            const name = frm.doc.name, version = String(frm.doc.modified);
+            const pendingKey = `jifeng-replacement:${frappe.session.user}:${name}`;
+            let pending;
+            try { pending = localStorage.getItem(pendingKey); }
+            catch { return frappe.msgprint("浏览器无法记录本次办理状态，请恢复本地存储后再办理补产。"); }
+            const response = await frappe.call({
+                method: "jifeng_erp.production_replacement.inspect_replacement", type: "GET",
+                args: { flow_order: name, expected_version: version },
+            });
+            const context = response.message;
+            if (frm.is_dirty() || frm.doc.name !== name || String(frm.doc.modified) !== version ||
+                !context || context.flow_order !== name || context.version !== version) {
+                return frappe.msgprint("流程单已变化，请重新读取后核对补产。");
+            }
+            if (pending) {
+                // An unanswered POST is never retried by reopening this dialog.
+                // The current source list proves whether a draft now exists.
+                let previous;
+                try { previous = JSON.parse(pending); } catch {}
+                const existing = context.sources.find(row => row.work_order === previous?.source && row.draft);
+                if (existing) {
+                    localStorage.removeItem(pendingKey);
+                    return frappe.set_route("Form", "Work Order", existing.draft);
+                }
+                return frappe.msgprint({ title: "请核对上次补产结果",
+                    message: "上次生成请求未收到完整结果。请在‘查看本流程生产工单’中核对原工单的补产记录及取消状态，确认结果后再办理。",
+                    primary_action_label: "查看本流程生产工单",
+                    primary_action: () => frappe.set_route("List", "Work Order", { jf_flow_order: name }),
+                    secondary_action_label: "已人工核对上次结果",
+                    secondary_action: () => { localStorage.removeItem(pendingKey); frappe.msgprint("已清除待核对标记，请重新读取补产数量后办理。"); },
+                });
+            }
+            const sources = context.sources.filter(row => row.draft || row.available_qty > 0);
+            if (!sources.length) return frappe.msgprint("本流程没有已出账且未安排的补产数量，请核对损耗凭证和已有工单。");
+            let dialog;
+            const showSource = () => {
+                if (!dialog) return;
+                const source = sources.find(row => row.work_order === dialog.get_value("source"));
+                if (!source) return;
+                dialog.set_value("produced_qty", source.produced_qty);
+                dialog.set_value("loss_qty", source.loss_qty);
+                dialog.set_value("quantity", source.draft ? source.draft_qty : source.available_qty);
+                dialog.set_value("draft", source.draft || "");
+            };
+            dialog = new frappe.ui.Dialog({
+                title: "核对损耗后安排补产",
+                fields: [
+                    { fieldname: "source", fieldtype: "Select", label: "损耗原工单", reqd: 1,
+                        options: sources.map(row => row.work_order), default: sources[0].work_order,
+                        onchange: () => showSource() },
+                    { fieldname: "stock_uom", fieldtype: "Data", label: "库存单位", read_only: 1, default: context.stock_uom },
+                    { fieldname: "produced_qty", fieldtype: "Float", label: "原工单已入库数量", read_only: 1 },
+                    { fieldname: "loss_qty", fieldtype: "Float", label: "原工单已出账损耗", read_only: 1 },
+                    { fieldname: "quantity", fieldtype: "Float", label: "本次补产数量", read_only: 1 },
+                    { fieldname: "draft", fieldtype: "Link", label: "已有补产草稿", options: "Work Order", read_only: 1 },
+                    { fieldtype: "HTML", options: "<p>数量已扣除全部有效工单和草稿预留；打开已有草稿不会再建一张。生成后仍需按原有方式审核、转料和报工。</p>" },
+                ],
+                primary_action_label: "生成或打开补产草稿",
+                primary_action: async (values) => {
+                    if (dialog.confirming) return;
+                    if (frm.is_dirty() || frm.doc.name !== name || String(frm.doc.modified) !== version) {
+                        dialog.hide(); return frappe.msgprint("流程单已变化，请重新核对。");
+                    }
+                    dialog.confirming = true;
+                    dialog.get_primary_btn().prop("disabled", true);
+                    try {
+                        localStorage.setItem(pendingKey, JSON.stringify({ source: values.source, version }));
+                        const result = await frappe.call({ method: "jifeng_erp.production_replacement.make_replacement",
+                            type: "POST", args: { flow_order: name, expected_version: version,
+                                source_work_order: values.source, snapshot: context.snapshot } });
+                        if (!result.message?.work_order) throw new Error("Missing replacement result");
+                        localStorage.removeItem(pendingKey);
+                        dialog.hide();
+                        if (frm.doc.name === name) frappe.set_route("Form", "Work Order", result.message.work_order);
+                    } catch {
+                        dialog.hide();
+                        frappe.msgprint("本次生成结果未确认。请重新读取补产入口或查看本流程生产工单，核对结果；请勿重复提交。");
+                    }
+                },
+            });
+            dialog.show(); showSource();
+        });
         frm.add_custom_button("查看本流程生产工单", () =>
             frappe.set_route("List", "Work Order", { jf_flow_order: frm.doc.name }));
         frm.add_custom_button("打开成本试算", () => call("make_preview", "Jifeng Cost Preview"));
