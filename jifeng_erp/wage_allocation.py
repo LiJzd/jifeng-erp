@@ -3,7 +3,7 @@
 import hashlib
 import json
 from datetime import datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import frappe
 
@@ -13,6 +13,7 @@ from jifeng_erp.piece_workers import bind_piece_worker
 
 ALLOCATION = "Jifeng Wage Allocation"
 QUANTITY_STEP = Decimal("0.000001")
+PRODUCTION_QUANTITY_FIELDS = ("for_quantity", "total_completed_qty", "process_loss_qty", "pending_qty")
 SOURCE_FIELDS = (
     "company", "job_card", "work_order", "flow_order", "operation", "operation_id",
     "item_code", "stock_uom", "currency", "work_date", "source_completed_qty", "source_signature",
@@ -107,9 +108,30 @@ def source_snapshot(card, work):
     return identity
 
 
+def _source_fields(doctype, fields, *, parenttype=None):
+    from jifeng_erp.flow_quantity import check_quantity_fields
+
+    try:
+        check_quantity_fields(doctype, fields, parenttype=parenttype)
+    except frappe.PermissionError:
+        frappe.throw("没有完整读取报工计薪来源字段的权限", frappe.PermissionError)
+
+
 def load_source(job_card, *, lock=False):
     card = frappe.get_doc("Job Card", job_card, for_update=lock)
     card.check_permission("read")
+    _source_fields("Job Card", (
+        "company", "work_order", "operation", "operation_id", "production_item", "finished_good",
+        "stock_uom", "posting_date", "total_completed_qty", "is_corrective_job_card", "time_logs", "sub_operations",
+    ))
+    for table_name, childtype, fields in (
+        ("time_logs", "Job Card Time Log", ("employee", "from_time", "to_time", "time_in_mins", "completed_qty", "operation")),
+        ("sub_operations", "Job Card Operation", ("sub_operation", "completed_qty", "completed_time", "status")),
+    ):
+        table = frappe.get_meta("Job Card").get_field(table_name)
+        if not table or table.fieldtype != "Table" or table.options != childtype:
+            frappe.throw("报工计薪来源明细表定义不一致，请核对原生来源")
+        _source_fields(childtype, fields, parenttype="Job Card")
     if card.docstatus != 1:
         frappe.throw("工资分配需要已提交的报工单")
     if _get(card, "is_corrective_job_card"):
@@ -118,6 +140,11 @@ def load_source(job_card, *, lock=False):
         frappe.throw("工资分配需要关联生产工单的报工单")
     work = frappe.get_doc("Work Order", card.work_order)
     work.check_permission("read")
+    _source_fields("Work Order", ("company", "jf_flow_order", "operations"))
+    table = frappe.get_meta("Work Order").get_field("operations")
+    if not table or table.fieldtype != "Table" or table.options != "Work Order Operation":
+        frappe.throw("报工计薪来源工序表定义不一致，请核对原生来源")
+    _source_fields("Work Order Operation", ("operation",), parenttype="Work Order")
     if work.company != card.company or work.docstatus != 1:
         frappe.throw("报工来源必须是同公司已提交的生产工单")
     operation_row = next((row for row in work.operations
@@ -128,10 +155,15 @@ def load_source(job_card, *, lock=False):
     if flow_name:
         flow = frappe.get_doc("Jifeng Flow Order", flow_name)
         flow.check_permission("read")
+        _source_fields("Jifeng Flow Order", ("company",))
         if flow.company != card.company:
             frappe.throw("流程单公司与报工公司不一致")
     item = frappe.get_doc("Item", _get(card, "finished_good") or card.production_item)
     item.check_permission("read")
+    _source_fields("Item", ("stock_uom",))
+    company = frappe.get_doc("Company", card.company)
+    company.check_permission("read")
+    _source_fields("Company", ("default_currency",))
     if not card.stock_uom or item.stock_uom != card.stock_uom:
         frappe.throw("报工数量单位与来源商品库存单位不一致")
     if _quantity(card.total_completed_qty) <= 0:
@@ -139,19 +171,44 @@ def load_source(job_card, *, lock=False):
     return card, work, source_snapshot(card, work), employee_time_details(card.time_logs)
 
 
+def production_quantities(card):
+    """Read-only native quantities; loss and pending output are never piece shares."""
+    _source_fields("Job Card", PRODUCTION_QUANTITY_FIELDS + ("stock_uom",))
+    values = {}
+    for field in PRODUCTION_QUANTITY_FIELDS:
+        value = _get(card, field)
+        if value in (None, ""):
+            frappe.throw("报工数量来源不完整，请核对原生报工单；缺失数量不能按零计")
+        # This is a display of native quantities, not a new wage precision rule.
+        values[field] = str(_decimal(value, "报工数量"))
+    if not _get(card, "stock_uom"):
+        frappe.throw("报工数量来源缺少库存单位，请核对原生报工单")
+    return {**values, "stock_uom": card.stock_uom}
+
+
+def _locked_wage_rows(query, values):
+    try:
+        return frappe.db.sql(query, values, as_dict=True)
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError) as exc:
+        # Native allocation/wage saves may already own their parent lock before
+        # asking for the Job Card. Do not wait in the reverse direction here.
+        # Preserve DB exception types so batch operations roll the request back.
+        raise type(exc)("计薪来源正在被其他工资操作使用，本次未保存；请核实后重新操作") from None
+
+
 def _active_allocations(job_card, exclude=None):
-    return frappe.db.sql(
-        """SELECT name, docstatus FROM `tabJifeng Wage Allocation`
-           WHERE job_card = %s AND docstatus < 2 AND name != %s FOR UPDATE""",
-        (job_card, exclude or ""), as_dict=True,
+    return _locked_wage_rows(
+        """SELECT name, docstatus, source_signature FROM `tabJifeng Wage Allocation`
+           WHERE job_card = %s AND docstatus < 2 AND name != %s ORDER BY name FOR UPDATE NOWAIT""",
+        (job_card, exclude or ""),
     )
 
 
 def _active_wages(job_card, exclude=None):
-    return frappe.db.sql(
+    return _locked_wage_rows(
         """SELECT name, quantity, hours, wage_allocation, wage_allocation_employee, docstatus
            FROM `tabJifeng Wage Entry` WHERE job_card = %s AND docstatus < 2
-           AND name != %s FOR UPDATE""", (job_card, exclude or ""), as_dict=True,
+           AND name != %s ORDER BY name FOR UPDATE NOWAIT""", (job_card, exclude or ""),
     )
 
 
@@ -366,6 +423,85 @@ def validate_allocation_cancel(allocation):
         frappe.throw("请先按工资条及附加薪资的原生顺序取消计薪记录，或删除计薪草稿，再取消分配")
 
 
+def _approved_job_card_source(doc):
+    """Lock the source before native callbacks can prewrite its rows or totals."""
+    if not _get(doc, "name") or getattr(doc, "is_new", lambda: False)():
+        return None
+    original = frappe.get_doc("Job Card", doc.name, for_update=True)
+    if original.docstatus != 1:
+        return None
+    approved = [row for row in _active_allocations(doc.name) if row.docstatus == 1]
+    wages = [row for row in _active_wages(doc.name) if row.docstatus == 1]
+    if not approved and not wages:
+        return None
+    work = frappe.get_doc("Work Order", original.work_order) if original.work_order else None
+    snapshot = source_snapshot(original, work)
+    if any(_get(row, "source_signature") != snapshot["source_signature"] for row in approved):
+        frappe.throw("报工单已有审核工资或分配，不能修改计薪来源；请先取消工资及分配")
+    return _job_card_source_state(original, work), work
+
+
+def _job_card_source_state(card, work):
+    """Compare business values without changing the persisted signature format.
+
+    Native timer kwargs can hold 5 while the saved Float holds 5.0, or ISO
+    datetimes while the DB returns datetime objects. These are the same source.
+    The approved signature is still checked against the original locked DB Doc.
+    """
+    identity = source_snapshot(card, work)
+    identity.pop("source_signature")
+
+    def number(value):
+        try:
+            return Decimal(str(value or 0))
+        except (InvalidOperation, ValueError):
+            return str(value or "")
+
+    def time(value):
+        return _datetime(value) if value else None
+
+    logs = sorted(((_get(row, "name") or "", _get(row, "employee") or "",
+                    time(_get(row, "from_time")), time(_get(row, "to_time")),
+                    number(_get(row, "time_in_mins")), number(_get(row, "completed_qty")),
+                    _get(row, "operation") or "") for row in card.time_logs or []), key=lambda row: row[0])
+    operations = sorted(((_get(row, "name") or "", _get(row, "sub_operation") or "",
+                          number(_get(row, "completed_qty")), number(_get(row, "completed_time")),
+                          _get(row, "status") or "") for row in _get(card, "sub_operations", []) or []), key=lambda row: row[0])
+    return identity, logs, operations, bool(_get(card, "is_corrective_job_card")), card.docstatus
+
+
+def _assert_job_card_source(doc, before):
+    if before and _job_card_source_state(doc, before[1]) != before[0]:
+        frappe.throw("报工单已有审核工资或分配，不能修改计薪来源；请先取消工资及分配")
+
+
+class WageSourceJobCardMixin:
+    """Preserve actual hours and completion through native prewrite callbacks.
+
+    Native methods share the request transaction and do not commit. A changed
+    source raises before request success, rolling back child/totals prewrites.
+    """
+
+    def add_time_logs(self, **kwargs):
+        before = _approved_job_card_source(self)
+        result = super().add_time_logs(**kwargs)
+        _assert_job_card_source(self, before)
+        return result
+
+    def add_time_log(self, args):
+        # The older timer endpoint uses row.db_set before native doc.save too.
+        before = _approved_job_card_source(self)
+        result = super().add_time_log(args)
+        _assert_job_card_source(self, before)
+        return result
+
+    def validate_time_logs(self, save=False):
+        before = _approved_job_card_source(self) if save else None
+        result = super().validate_time_logs(save=save)
+        _assert_job_card_source(self, before)
+        return result
+
+
 def guard_job_card_allocation(doc, method=None):
     """Submitted allocations hold their source while wages may still be drafts."""
     original = frappe.get_doc("Job Card", doc.name, for_update=True)
@@ -377,19 +513,26 @@ def guard_job_card_allocation(doc, method=None):
     if method == "before_cancel":
         frappe.throw("报工单已有审核工资或分配，请先取消工资及分配")
     work = frappe.get_doc("Work Order", original.work_order)
-    if source_snapshot(doc, work) != source_snapshot(original, work):
+    original_snapshot = source_snapshot(original, work)
+    # Native add_time_logs can db_update child rows and db_set completion before
+    # save reaches this hook. The approved allocation's immutable signature is
+    # the source anchor even when a fresh DB read already contains those writes.
+    if (any(not _get(row, "source_signature") or _get(row, "source_signature") != original_snapshot["source_signature"]
+            for row in approved) or _job_card_source_state(doc, work) != _job_card_source_state(original, work)):
         frappe.throw("报工单已有审核工资或分配，不能修改计薪来源；请先取消工资及分配")
 
 
 @frappe.whitelist()
 def get_allocation_source(job_card):
     frappe.only_for(["HR User", "HR Manager", "System Manager"])
-    _, _, snapshot, people = load_source(job_card)
+    card, _, snapshot, people = load_source(job_card)
+    quantities = production_quantities(card)
     employees = []
     for name, person in people.items():
         employee = frappe.get_doc("Employee", name)
         employee.check_permission("read")
+        _source_fields("Employee", ("employee_name",))
         employees.append({"employee": name, "employee_name": employee.employee_name,
                           "hours": float(person["hours"]), "source_hours_complete": int(
                               person["complete"] and not person["overlapping"])})
-    return {**snapshot, "employees": employees}
+    return {**snapshot, "employees": employees, "production_quantities": quantities}

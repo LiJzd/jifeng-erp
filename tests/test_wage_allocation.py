@@ -14,6 +14,9 @@ ROOT = pathlib.Path(__file__).parents[1] / "jifeng_erp"
 
 
 class Doc(types.SimpleNamespace):
+    def get(self, name, default=None):
+        return getattr(self, name, default)
+
     def check_permission(self, permission):
         if getattr(self, "hidden", False):
             raise PermissionError("hidden source")
@@ -29,12 +32,14 @@ def load_module(name, path):
 class TestWageAllocation(unittest.TestCase):
     def setUp(self):
         frappe = types.ModuleType("frappe")
-        frappe.throw = lambda message, *args: (_ for _ in ()).throw(ValueError(message))
+        frappe.throw = lambda message, exc=ValueError, *args: (_ for _ in ()).throw(exc(message))
         frappe.whitelist = lambda: (lambda function: function)
         frappe.only_for = Mock()
         frappe.session = types.SimpleNamespace(user="Administrator")
         frappe.has_permission = Mock(return_value=True)
         frappe.PermissionError = PermissionError
+        frappe.QueryTimeoutError = type("QueryTimeoutError", (Exception,), {})
+        frappe.QueryDeadlockError = type("QueryDeadlockError", (Exception,), {})
         frappe.db = types.SimpleNamespace(sql=Mock(return_value=[]), get_value=Mock(return_value="CNY"))
         frappe.db.get_value.side_effect = lambda doctype, *args, **kwargs: (
             Doc(name="SUP-1", wage_method="计件", modified="2026-10-01 08:00:00")
@@ -42,7 +47,36 @@ class TestWageAllocation(unittest.TestCase):
         self.db = frappe.db
         utils = types.ModuleType("frappe.utils")
         utils.getdate = lambda value: datetime.date.fromisoformat(str(value))
-        scope = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils})
+        source_fields = {
+            "Job Card": ("company", "work_order", "operation", "operation_id", "production_item", "finished_good",
+                         "stock_uom", "posting_date", "total_completed_qty", "is_corrective_job_card", "time_logs", "sub_operations",
+                         "for_quantity", "process_loss_qty", "pending_qty"),
+            "Job Card Time Log": ("employee", "from_time", "to_time", "time_in_mins", "completed_qty", "operation"),
+            "Job Card Operation": ("sub_operation", "completed_qty", "completed_time", "status"),
+            "Work Order": ("company", "jf_flow_order", "operations"),
+            "Work Order Operation": ("operation",), "Jifeng Flow Order": ("company",),
+            "Item": ("stock_uom",), "Company": ("default_currency",), "Employee": ("employee_name",),
+        }
+        self.source_metas = {}
+        for doctype, names in source_fields.items():
+            fields = [Doc(fieldname=name, fieldtype="Data", permlevel=0, mask=0) for name in names]
+            meta = Doc(fields=fields, read_levels=[0], mask_levels=[0])
+            meta.get_field = lambda name, fields=fields: next((f for f in fields if f.fieldname == name), None)
+            meta.get_permlevel_access = Mock(side_effect=lambda permission_type="read", meta=meta, **kwargs:
+                                            meta.mask_levels if permission_type == "mask" else meta.read_levels)
+            self.source_metas[doctype] = meta
+        for table, childtype in (("time_logs", "Job Card Time Log"), ("sub_operations", "Job Card Operation")):
+            field = self.source_metas["Job Card"].get_field(table)
+            field.fieldtype, field.options = "Table", childtype
+        field = self.source_metas["Work Order"].get_field("operations")
+        field.fieldtype, field.options = "Table", "Work Order Operation"
+        frappe.get_meta = lambda doctype: self.source_metas[doctype]
+        model = types.ModuleType("frappe.model")
+        model.get_permitted_fields = Mock(side_effect=lambda doctype, **kwargs:
+                                         [f.fieldname for f in self.source_metas[doctype].fields
+                                          if f.fieldtype != "Table" and f.permlevel in self.source_metas[doctype].read_levels])
+        self.permitted_fields = model.get_permitted_fields
+        scope = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils, "frappe.model": model})
         scope.start()
         self.addCleanup(scope.stop)
         payroll = load_module("allocation_payroll", ROOT / "payroll.py")
@@ -57,6 +91,7 @@ class TestWageAllocation(unittest.TestCase):
         self.card = Doc(name="JC-1", company="C-1", work_order="WO-1", operation="OP-1",
                         operation_id="WO-OP-1", production_item="ITEM-1", stock_uom="Nos",
                         posting_date="2026-09-29", total_completed_qty=5, docstatus=1,
+                        for_quantity=5, pending_qty=0, process_loss_qty=0,
                         is_corrective_job_card=0, sub_operations=[], time_logs=[
                             Doc(name="L-1", employee="E-1", from_time="2026-09-29 09:00:00",
                                 to_time="2026-09-29 10:00:00", time_in_mins=60, completed_qty=0),
@@ -272,7 +307,8 @@ class TestWageAllocation(unittest.TestCase):
             self.module.validate_wage_source(Doc(job_card="JC-1", quantity=1))
 
     def test_source_edit_and_cancel_are_blocked_while_approved_allocation_exists(self):
-        self.db.sql.return_value = [Doc(name="A-1", docstatus=1)]
+        self.approve()
+        self.db.sql.return_value = [Doc(name="A-1", docstatus=1, source_signature=self.allocation.source_signature)]
         self.module.guard_job_card_allocation(self.card, "before_update_after_submit")
         with self.assertRaisesRegex(ValueError, "请先取消工资及分配"):
             self.module.guard_job_card_allocation(self.card, "before_cancel")
@@ -280,6 +316,198 @@ class TestWageAllocation(unittest.TestCase):
         modified.total_completed_qty = 6
         with self.assertRaisesRegex(ValueError, "不能修改计薪来源"):
             self.module.guard_job_card_allocation(modified, "before_update_after_submit")
+
+    def test_approved_snapshot_holds_source_even_after_native_db_prewrite(self):
+        self.approve()
+        self.db.sql.return_value = [Doc(name="A-1", docstatus=1, source_signature=self.allocation.source_signature)]
+        # Native JobCard.add_time_logs updates rows and completion before save.
+        # Both the caller and get_doc now see the same changed DB state.
+        self.card.total_completed_qty = 6
+        self.card.time_logs[1].completed_qty = 6
+        self.assertEqual(self.module.source_snapshot(self.card, self.work),
+                         self.module.source_snapshot(self.docs[("Job Card", "JC-1")], self.work))
+        with self.assertRaisesRegex(ValueError, "不能修改计薪来源"):
+            self.module.guard_job_card_allocation(self.card, "before_update_after_submit")
+
+    def test_loss_is_not_piece_quantity_and_does_not_reprice_an_approved_share(self):
+        self.card.for_quantity, self.card.pending_qty, self.card.process_loss_qty = 6, 0, 1
+        self.approve()
+        signature = self.allocation.source_signature
+        self.assertEqual(self.allocation.source_completed_qty, "5.000000")
+        self.assertEqual(self.allocation.allocated_qty, 5)
+        self.assertEqual(self.allocation.total_amount, Decimal("18.00"))
+        self.db.sql.return_value = [Doc(name="A-1", docstatus=1, source_signature=signature)]
+        self.card.for_quantity, self.card.process_loss_qty = 7, 2
+        self.module.guard_job_card_allocation(self.card, "before_update_after_submit")
+        self.assertEqual(self.allocation.total_amount, Decimal("18.00"))
+
+    def test_source_summary_reads_all_four_quantities_without_changing_share_signature(self):
+        self.card.for_quantity, self.card.pending_qty, self.card.process_loss_qty = 8, 2, 1
+        before = self.module.source_snapshot(self.card, self.work)
+        source = self.module.get_allocation_source("JC-1")
+        self.assertEqual(source["production_quantities"], {"for_quantity": "8",
+            "total_completed_qty": "5", "process_loss_qty": "1", "pending_qty": "2", "stock_uom": "Nos"})
+        self.assertEqual({field: source[field] for field in self.module.SOURCE_FIELDS}, before)
+        self.assertNotIn("production_quantities", self.module.SOURCE_FIELDS)
+        self.assertNotIn("process_loss_qty", self.module.SOURCE_FIELDS)
+        self.card.for_quantity = "8.000000001"
+        self.assertEqual(self.module.production_quantities(self.card)["for_quantity"], "8.000000001")
+
+    def test_source_summary_never_turns_missing_values_into_zero(self):
+        for field in self.module.PRODUCTION_QUANTITY_FIELDS:
+            original = getattr(self.card, field)
+            for missing in (None, ""):
+                with self.subTest(field=field, missing=missing):
+                    setattr(self.card, field, missing)
+                    with self.assertRaisesRegex(ValueError, "缺失数量不能按零计"):
+                        self.module.production_quantities(self.card)
+            setattr(self.card, field, original)
+
+    def test_quantity_or_time_fields_and_tables_must_not_be_hidden_or_masked(self):
+        self.frappe.session.user = "qa@jifeng.test"
+        for doctype, name in (("Job Card", "process_loss_qty"), ("Job Card", "pending_qty"),
+                              ("Job Card", "stock_uom"), ("Job Card", "time_logs"),
+                              ("Job Card", "sub_operations"), ("Job Card Time Log", "employee"),
+                              ("Job Card Time Log", "from_time"), ("Job Card Operation", "completed_qty"),
+                              ("Work Order", "jf_flow_order"), ("Work Order", "operations"),
+                              ("Work Order Operation", "operation"), ("Company", "default_currency"),
+                              ("Employee", "employee_name")):
+            meta = self.source_metas[doctype]
+            field = meta.get_field(name)
+            for mask in (False, True):
+                with self.subTest(doctype=doctype, field=name, mask=mask):
+                    field.permlevel = 1 if not mask else 0
+                    field.mask = int(mask)
+                    meta.mask_levels = [] if mask else [0]
+                    with self.assertRaises(PermissionError):
+                        self.module.get_allocation_source("JC-1")
+                field.permlevel, field.mask, meta.mask_levels = 0, 0, [0]
+        self.source_metas["Job Card Time Log"].get_permlevel_access.assert_called_with(
+            permission_type="mask", parenttype="Job Card", user="qa@jifeng.test")
+
+    def test_wrong_native_source_child_table_cannot_supply_wage_hours(self):
+        self.source_metas["Job Card"].get_field("time_logs").options = "Other Logs"
+        with self.assertRaisesRegex(ValueError, "明细表定义不一致"):
+            self.module.get_allocation_source("JC-1")
+
+    def test_reverse_salary_locks_fail_without_wait_and_preserve_db_error_types(self):
+        for lookup in (self.module._active_allocations, self.module._active_wages):
+            for error_type in (self.frappe.QueryTimeoutError, self.frappe.QueryDeadlockError):
+                with self.subTest(lookup=lookup.__name__, error=error_type.__name__):
+                    self.db.sql.side_effect = error_type("private native database detail")
+                    with self.assertRaisesRegex(error_type, "本次未保存") as raised:
+                        lookup("JC-1")
+                    self.assertNotIn("private", str(raised.exception))
+                    self.assertIn("ORDER BY name FOR UPDATE NOWAIT", self.db.sql.call_args.args[0])
+                    self.assertEqual(self.db.sql.call_count, 1)
+                    self.db.sql.reset_mock()
+        self.db.sql.side_effect = None
+
+    def native_callback_card(self, change=lambda doc: None):
+        events = []
+        original = self.card
+
+        class NativeCard(Doc):
+            def add_time_log(self, args):
+                events.append("native_old_timer_prewrite")
+                change(self)
+                original.time_logs = self.time_logs
+                return "old-native-result"
+
+            def add_time_logs(self, **kwargs):
+                events.append("native_child_prewrite")
+                change(self)
+                original.time_logs = self.time_logs
+                return self.validate_time_logs(save=True)
+
+            def validate_time_logs(self, save=False):
+                events.append(("native_totals_prewrite", save))
+                if save:
+                    original.total_completed_qty = self.total_completed_qty
+                return "native-result"
+
+        class Card(self.module.WageSourceJobCardMixin, NativeCard):
+            pass
+
+        card = Card(**vars(self.card))
+        card.time_logs = [Doc(**vars(row)) for row in self.card.time_logs]
+        return card, events
+
+    def approved_native_rows(self, *, allocated=False, hours=0):
+        if allocated:
+            self.approve()
+        allocation_rows = [Doc(name="A-1", docstatus=1, source_signature=self.allocation.source_signature)] if allocated else []
+        wage_rows = [] if allocated else [Doc(name="W-1", docstatus=1, quantity=5 if not hours else 0, hours=hours)]
+        self.db.sql.side_effect = lambda query, *args, **kwargs: (
+            allocation_rows if "tabJifeng Wage Allocation" in query else wage_rows)
+
+    def test_native_callbacks_hold_approved_legacy_and_allocated_completion(self):
+        for allocated in (False, True):
+            with self.subTest(allocated=allocated):
+                self.card.total_completed_qty = 5
+                self.card.time_logs[1].completed_qty = 5
+                self.db.sql.side_effect = None
+                self.db.sql.return_value = []
+                self.approved_native_rows(allocated=allocated)
+                card, events = self.native_callback_card(
+                    lambda doc: (setattr(doc, "total_completed_qty", 4), setattr(doc.time_logs[1], "completed_qty", 4)))
+                with self.assertRaisesRegex(ValueError, "不能修改计薪来源"):
+                    card.add_time_logs(completed_qty=4)
+                self.assertIn("native_child_prewrite", events)
+                self.assertIn(unittest.mock.call("Job Card", "JC-1", for_update=True), self.get_doc.mock_calls)
+
+    def test_native_callback_holds_legacy_hourly_time_not_only_piece_quantity(self):
+        self.approved_native_rows(hours=1)
+        card, _ = self.native_callback_card(lambda doc: setattr(doc.time_logs[0], "to_time", "2026-09-29 11:00:00"))
+        with self.assertRaisesRegex(ValueError, "不能修改计薪来源"):
+            card.add_time_logs(to_time="2026-09-29 11:00:00")
+
+    def test_old_timer_entry_holds_approved_hours_before_parent_save(self):
+        self.approved_native_rows(hours=1)
+        card, events = self.native_callback_card(lambda doc: setattr(doc.time_logs[0], "to_time", "2026-09-29 11:00:00"))
+        with self.assertRaisesRegex(ValueError, "不能修改计薪来源"):
+            card.add_time_log(Doc(complete_time="2026-09-29 11:00:00"))
+        self.assertIn("native_old_timer_prewrite", events)
+        self.db.sql.side_effect = None
+        self.db.sql.return_value = []
+        card, _ = self.native_callback_card()
+        self.assertEqual(card.add_time_log(Doc(start_time="2026-09-29 11:00:00")), "old-native-result")
+
+    def test_direct_native_total_save_is_guarded_and_pure_validation_is_not_blocked(self):
+        self.approved_native_rows()
+        card, events = self.native_callback_card()
+        card.total_completed_qty = 4
+        with self.assertRaisesRegex(ValueError, "不能修改计薪来源"):
+            card.validate_time_logs(save=True)
+        self.get_doc.reset_mock()
+        self.assertEqual(card.validate_time_logs(save=False), "native-result")
+        self.get_doc.assert_not_called()
+        self.assertIn(("native_totals_prewrite", False), events)
+
+    def test_unchanged_callbacks_and_unpaid_normal_reporting_keep_native_result(self):
+        self.approved_native_rows()
+        card, events = self.native_callback_card()
+        self.assertEqual(card.add_time_logs(completed_qty=5), "native-result")
+        self.db.sql.side_effect = None
+        self.db.sql.return_value = []
+        card, _ = self.native_callback_card(lambda doc: setattr(doc, "total_completed_qty", 4))
+        self.assertEqual(card.add_time_logs(completed_qty=4), "native-result")
+        self.assertEqual(self.card.total_completed_qty, 4)
+
+    def test_native_numeric_and_datetime_serialization_is_not_a_source_edit(self):
+        self.approved_native_rows(allocated=True)
+        original_signature = self.allocation.source_signature
+        current = Doc(**vars(self.card))
+        current.time_logs = [Doc(**vars(row)) for row in self.card.time_logs]
+        current.time_logs[0].time_in_mins = 60.0
+        current.time_logs[0].from_time = datetime.datetime(2026, 9, 29, 9)
+        current.time_logs[1].completed_qty = "5.0"
+        self.assertNotEqual(self.module.source_snapshot(current, self.work)["source_signature"], original_signature)
+        self.module.guard_job_card_allocation(current, "before_update_after_submit")
+        self.assertEqual(self.allocation.source_signature, original_signature)
+        current.time_logs[1].completed_qty = "4.999999"
+        with self.assertRaisesRegex(ValueError, "不能修改计薪来源"):
+            self.module.guard_job_card_allocation(current, "before_update_after_submit")
 
     def test_allocation_cancel_blocks_any_active_wage_and_preserves_history(self):
         self.db.sql.return_value = [("W-DRAFT",)]
