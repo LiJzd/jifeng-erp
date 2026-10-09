@@ -181,10 +181,14 @@ def _stock_time(value):
     return seconds
 
 
-def _authorization():
+def _authorization_doctypes():
+    return (set(PARENTS) | {child for tables in TABLES.values() for _, child, _ in tables}
+            | {child for _, child, _ in subcontract_stage.TABLES.values()} | {"Company", REPOST})
+
+
+def _authorization(doctypes=None):
     user = frappe.session.user
-    doctypes = sorted(set(PARENTS) | {child for tables in TABLES.values() for _, child, _ in tables}
-                      | {child for _, child, _ in subcontract_stage.TABLES.values()} | {"Company", REPOST})
+    doctypes = sorted(_authorization_doctypes() if doctypes is None else set(doctypes))
     state = []
     for doctype, filters in (
         ("Has Role", {"parenttype": "User", "parent": user}),
@@ -242,6 +246,7 @@ class _Session:
         self.manufacture_names = set()
         self.loss_batches = None
         self.loss_tables = {}
+        self.loss_authorization = {}
         self.ledger = {}
         self.repost_state = None
         self.receipt_fees = {}
@@ -1004,6 +1009,17 @@ class _Session:
         """Freeze the loss proof's exact native documents and all child sets."""
         from jifeng_erp import production_loss
 
+        configured = production_loss.TABLES.get(doctype, ())
+        if configured and isinstance(configured[0], str):
+            configured = (configured,)
+        # A plan or sales source may be read only by the dynamic loss graph.
+        # Its role/field/share metadata must remain unchanged even if native
+        # permission lookups are cached for the rest of this request. Capture
+        # only newly used types; ordinary cost reads need no extra scope.
+        scope = tuple(sorted(({doctype} | {child for _, child, _ in configured})
+                             - _authorization_doctypes()))
+        if scope and scope not in self.loss_authorization:
+            self.loss_authorization[scope] = _authorization(scope)
         fields = set(PARENTS.get(doctype, set())) | set(production_loss.PARENTS.get(doctype, set()))
         if not fields or not isinstance(name, str) or not name:
             _invalid()
@@ -1025,9 +1041,6 @@ class _Session:
         self.documents[key] = doc, _freeze(doc), permission, fields
         tables = {field: (childtype, set(child_fields))
                   for field, childtype, child_fields in TABLES.get(doctype, ())}
-        configured = production_loss.TABLES.get(doctype, ())
-        if configured and isinstance(configured[0], str):
-            configured = (configured,)
         for field, childtype, child_fields in configured:
             if field in tables and tables[field][0] != childtype:
                 _invalid()
@@ -1490,6 +1503,8 @@ class _Session:
             if _freeze(raw) != raw_state:
                 _deny()
         if self._reposting() != self.repost_state or _authorization() != self.authorization:
+            _deny()
+        if any(_authorization(scope) != state for scope, state in self.loss_authorization.items()):
             _deny()
 
     def _check_documents(self, loaded):

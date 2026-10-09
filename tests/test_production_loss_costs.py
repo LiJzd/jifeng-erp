@@ -97,6 +97,79 @@ class TestProductionLossSources(unittest.TestCase):
                        self.frappe.new_doc, self.frappe.delete_doc):
             method.assert_not_called()
 
+    def seed_plan_source(self):
+        loss, _row = self.seed_loss()
+        flow = self.base.documents[self.module.FLOW, "FLOW"]
+        work = self.base.documents[self.module.WO, "WO"]
+        flow.update(sales_order="SO", sales_order_item="SO-ROW")
+        work.update(production_plan="PLAN", production_plan_item="PLAN-ROW",
+                    production_plan_sub_assembly_item=None, sales_order="SO", sales_order_item="SO-ROW")
+        self.base.add("BOM", "FG-BOM", company="JF", item="FG", uom="Nos", is_active=1)
+        plan = self.base.add("Production Plan", "PLAN", company="JF", status="In Process")
+        row = self.child("Production Plan", "PLAN", "po_items", "PLAN-ROW", item_code="FG",
+            jf_flow_order="FLOW", bom_no="FG-BOM", planned_qty=5, stock_uom="Nos",
+            sales_order="SO", sales_order_item="SO-ROW", item_reference=None)
+        self.base.add("Sales Order", "SO", company="JF")
+        self.child("Sales Order", "SO", "items", "SO-ROW", item_code="FG", qty=5,
+                   uom="Nos", stock_uom="Nos", conversion_factor=1, stock_qty=5)
+        loss.jf_production_loss_source_signature = self.loss.source_signature(
+            self.get_doc("Job Card", "CARD"), self.get_doc(self.module.WO, "WO"))
+        return loss, work, plan, row
+
+    def test_plan_loss_then_native_plan_replacement_uses_actual_cost_once_and_keeps_source(self):
+        loss, _work, plan, _row = self.seed_plan_source()
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 40)
+        # Closing planning does not invalidate already booked loss history.
+        plan.status = "Closed"
+        self.assertEqual(self.module.production_batch_candidates("FLOW")[0]["lost_qty"], 5)
+        plan.status = "In Process"
+        replacement = self.base.manufacture("PLAN-REPLACE", work="PLAN-REPLACE-WO", material=40, qty=5)
+        self.base.documents[self.module.WO, "PLAN-REPLACE-WO"].update(
+            production_plan="PLAN", production_plan_item="PLAN-ROW", sales_order="SO", sales_order_item="SO-ROW")
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 80)
+        replacement.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 40)
+        loss.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 0)
+        self.assert_no_writes()
+
+    def test_plan_loss_exact_row_and_sales_reference_are_part_of_cost_proof(self):
+        _loss, work, plan, row = self.seed_plan_source()
+        cases = [(plan, "company", "OTHER"), (plan, "docstatus", 0),
+            (work, "production_plan_item", "MISSING"), (row, "jf_flow_order", "OTHER"),
+            (row, "bom_no", "OTHER"), (row, "sales_order_item", "OTHER"),
+            (row, "stock_uom", "Box"), (row, "parentfield", "sub_assembly_items")]
+        for target, field, value in cases:
+            old = target.get(field); target[field] = value
+            with self.subTest(field=field), self.assertRaises((ValueError, PermissionError)):
+                self.module.posted_flow_costs("FLOW")
+            target[field] = old
+        self.assert_no_writes()
+
+    def test_plan_loss_permissions_and_late_plan_row_or_role_edits_refuse_partial_cost(self):
+        self.seed_plan_source()
+        self.base.metas["Production Plan Item"]["planned_qty"].mask = 1
+        with self.assertRaises(PermissionError): self.module.posted_flow_costs("FLOW")
+        self.base.metas["Production Plan Item"]["planned_qty"].mask = 0
+        for kind in ("Production Plan", "Sales Order"):
+            self.base.denied.add((kind, "PLAN" if kind == "Production Plan" else "SO", "read"))
+            with self.subTest(kind=kind), self.assertRaises(PermissionError):
+                self.module.posted_flow_costs("FLOW")
+            self.base.denied.clear()
+        session = self.module._Session("FLOW")
+        session.load_issues()
+        self.base.documents["Production Plan Item", "PLAN-ROW"].planned_qty = 4
+        with self.assertRaises(PermissionError): session.finish()
+        self.base.documents["Production Plan Item", "PLAN-ROW"].planned_qty = 5
+        # Native permission caches may still allow this request; uncached
+        # metadata closure must detect a change in newly read plan scopes.
+        permission = self.base.add("Custom DocPerm", "PLAN-PERM", parent="Production Plan", role="QA", read=1)
+        session = self.module._Session("FLOW")
+        session.load_issues()
+        permission.read = 0
+        with self.assertRaises(PermissionError): session.finish()
+        self.assert_no_writes()
+
     def test_loss_stock_cost_is_counted_once_then_replacement_cancel_changes_exact_source_set(self):
         loss, _row = self.seed_loss()
         result = self.module.posted_flow_costs("FLOW")
