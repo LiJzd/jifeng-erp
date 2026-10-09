@@ -29,7 +29,7 @@ FIELDS = {
         "salary_slip_based_on_timesheet"},
     JE: IDENTITY | {"company", "voucher_type", "multi_currency", "total_debit", "total_credit"},
     GL: IDENTITY | {"company", "voucher_type", "voucher_no", "account", "account_currency", "debit", "credit", "is_cancelled"},
-    "Work Order": IDENTITY | {"company", "production_item", "jf_flow_order"},
+    "Work Order": IDENTITY | {"company", "production_item", "jf_flow_order", "production_plan_sub_assembly_item"},
     "Job Card": IDENTITY | {"company", "work_order", "operation", "operation_id", "stock_uom", "is_subcontracted"},
     "Employee": {"name", "modified", "company"},
     "Salary Component": {"name", "modified", "type"},
@@ -97,9 +97,10 @@ def _fields(doctype, fields, parenttype=None):
             _deny()
 
 
-def _authorization():
+def _authorization(fields=None, tables=None):
     user = frappe.session.user
-    types = sorted(set(FIELDS) | {child for tables in TABLES.values() for _, child, _ in tables})
+    fields, tables = FIELDS if fields is None else fields, TABLES if tables is None else tables
+    types = sorted(set(fields) | {child for rows in tables.values() for _, child, _ in rows})
     return user, tuple((kind, _freeze(frappe.get_all(kind, filters=filters,
         fields=["name", "enabled", "user_type"] if kind == "User" else ["*"],
         order_by="name asc", limit_page_length=0))) for kind, filters in (
@@ -111,9 +112,12 @@ def _authorization():
 
 
 class _Read:
-    def __init__(self):
+    def __init__(self, *, fields=None, tables=None, document_loader=None):
+        self.fields = FIELDS if fields is None else fields
+        self.tables = TABLES if tables is None else tables
+        self.document_loader = document_loader or frappe.get_doc
         self.queries, self.docs, self.children = [], {}, {}
-        self.authorization = _authorization()
+        self.authorization = _authorization(self.fields, self.tables)
 
     def records(self, kind, filters, fields, parent=None):
         raw = frappe.get_all(kind, filters=filters, fields=["*"], order_by="name asc", limit_page_length=0)
@@ -152,18 +156,18 @@ class _Read:
             return self.docs[kind, name][0]
         if not isinstance(name, str) or not name or name != name.strip():
             _invalid()
-        rows = self.records(kind, {"name": name}, FIELDS[kind])
+        rows = self.records(kind, {"name": name}, self.fields[kind])
         if len(rows) != 1:
             _deny()
         try:
-            doc = frappe.get_doc(kind, name)
+            doc = self.document_loader(kind, name)
             doc.check_permission("read")
         except (frappe.PermissionError, frappe.DoesNotExistError):
             _deny()
-        if any(doc.get(field) != rows[0][field] for field in FIELDS[kind]):
+        if any(doc.get(field) != rows[0][field] for field in self.fields[kind]):
             _invalid()
         self.docs[kind, name] = doc, _freeze(doc)
-        for field, childtype, fields in TABLES.get(kind, ()):
+        for field, childtype, fields in self.tables.get(kind, ()):
             self.table_access(doc, field, childtype, fields)
             children = self.records(childtype, {"parent": name, "parentfield": field}, fields, kind)
             native = {row.name: row for row in doc.get(field) or []}
@@ -190,8 +194,8 @@ class _Read:
                 doc.check_permission("read")
             except frappe.PermissionError:
                 _deny()
-            _fields(kind, FIELDS[kind])
-            for field, childtype, fields in TABLES.get(kind, ()):
+            _fields(kind, self.fields[kind])
+            for field, childtype, fields in self.tables.get(kind, ()):
                 self.table_access(doc, field, childtype, fields)
             if _freeze(doc) != self.docs[kind, doc.name][1]:
                 _deny()
@@ -210,13 +214,13 @@ class _Read:
                 doc.check_permission("read")
             except (frappe.PermissionError, frappe.DoesNotExistError):
                 _deny()
-            _fields(key[0], FIELDS[key[0]])
+            _fields(key[0], self.fields[key[0]])
             if _freeze(doc) != state:
                 _deny()
         if any(_freeze(frappe.get_all(kind, filters=filters, fields=["*"], order_by="name asc",
                 limit_page_length=0)) != raw for kind, filters, _, _, raw, _ in self.queries):
             _deny()
-        if _authorization() != self.authorization:
+        if _authorization(self.fields, self.tables) != self.authorization:
             _deny()
 
 
@@ -313,7 +317,7 @@ def posted_flow_wage_costs(flow_order):
     read = _Read()
     flow = read.source(FLOW, flow_order)
     company = read.source("Company", flow.company)
-    currency, output, checked = company.default_currency, [], set()
+    currency, output, checked, child_sources = company.default_currency, [], set(), []
     if not currency:
         _invalid()
     for row in read.records(WAGE, {"flow_order": flow.name, "docstatus": 1}, FIELDS[WAGE]):
@@ -357,13 +361,20 @@ def posted_flow_wage_costs(flow_order):
         employee = read.source("Employee", wage.employee)
         work = read.source("Work Order", wage.work_order) if wage.work_order else None
         card = read.source("Job Card", wage.job_card) if wage.job_card else None
+        work_source = None
+        if work and work.get("production_plan_sub_assembly_item"):
+            from jifeng_erp.wage_allocation import resolve_wage_work_source
+            work_source = resolve_wage_work_source(work, card=card)
+            child_sources.append(work_source)
         if (employee.company != flow.company
                 or not _same(sum((_number(wage.get(key)) for key in ("piece_amount", "time_amount", "extra_amount")), Decimal(0)),
                     _number(wage.total_amount), wage, "total_amount")):
             _invalid()
         # Existing wage entry supports explicit manual flow attribution. It
         # does not become a Job Card completion or an inventory quantity.
-        if work and (work.company != flow.company or work.jf_flow_order != flow.name or work.production_item != flow.item_code):
+        if work and (work.company != flow.company or
+                (work_source.flow_order if work_source else work.jf_flow_order) != flow.name
+                or (not work_source and work.production_item != flow.item_code)):
             _invalid()
         if card and (not work or card.company != flow.company or card.work_order != work.name or card.docstatus != 1
                 or card.operation != wage.operation or card.is_subcontracted
@@ -377,11 +388,15 @@ def posted_flow_wage_costs(flow_order):
             "payroll_entry": payroll.name, "journal_entry": entry.name, "work_order": work.name if work else None, "job_card": card.name if card else None,
             "amount": _number(detail["amount"])})
     read.finish()
+    for proof in child_sources:
+        proof.finish()
     result = {"rows": output, "total": sum((row["amount"] for row in output), Decimal(0)), "currency": currency}
     payload = _freeze(result)
 
     def finish_guard():
         read.finish()
+        for proof in child_sources:
+            proof.finish()
         if _freeze({key: result[key] for key in ("rows", "total", "currency")}) != payload:
             _deny()
 

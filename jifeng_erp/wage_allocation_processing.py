@@ -17,7 +17,7 @@ from jifeng_erp.flow_quantity import check_quantity_fields
 from jifeng_erp.payroll import nonnegative
 from jifeng_erp.wage_allocation import (
     ALLOCATION, SOURCE_FIELDS, WAGE_FIELDS, _same_wage_values,
-    load_source, production_quantities, validate_allocation, wage_values,
+    load_source, production_quantities, resolve_wage_work_source, validate_allocation, wage_values,
 )
 
 
@@ -80,7 +80,7 @@ def _version(allocation, supplied):
         _invalid("工资分配版本已变化，请刷新后重新核对")
 
 
-def _scope(name, version):
+def _scope(name, version, *, _with_work_source=False):
     if not isinstance(name, str) or not name or name != name.strip():
         _invalid("请选择准确的已审核工资分配")
     # Permission before locking, then a current read of the exact same source.
@@ -93,11 +93,17 @@ def _scope(name, version):
     if not table or table.fieldtype != "Table" or table.options != ROW_TYPE:
         _invalid("工资分配员工表定义不一致")
     card_name = first.job_card
+    # Exact child origins lock their Flow/Plan before native WO/card scopes.
+    # Existing ordinary sources retain their current scope and field checks.
+    advisory_card = frappe.get_doc("Job Card", card_name)
+    advisory_card.check_permission("read")
+    work_source = (resolve_wage_work_source(frappe.get_doc("Work Order", advisory_card.work_order),
+                  card=advisory_card, lock=True) if advisory_card.work_order else None)
     card = _doc("Job Card", card_name, children=(
         ("Job Card Time Log", "time_logs"), ("Job Card Operation", "sub_operations")))
     work = None
     if card.work_order:
-        work = _doc("Work Order", card.work_order, children=(("Work Order Operation", "operations"),))
+        work = work_source.work if work_source else _doc("Work Order", card.work_order, children=(("Work Order Operation", "operations"),))
     allocation = _doc(ALLOCATION, name, children=((ROW_TYPE, "employees"),))
     _version(allocation, version)
     if allocation.docstatus != 1 or allocation.job_card != card_name:
@@ -111,12 +117,13 @@ def _scope(name, version):
     if company.default_currency != allocation.currency:
         _invalid("分配币种与当前公司本位币不一致，请按原单核对")
     if (not work or work.company != allocation.company or work.docstatus != 1
-            or (work.get("jf_flow_order") or "") != (allocation.get("flow_order") or "")
+            or ((work_source.flow_order if work_source else work.get("jf_flow_order")) or "") != (allocation.get("flow_order") or "")
             or not any(row.name == card.operation_id and row.operation == card.operation
                        for row in work.operations or [])):
         _invalid("分配的当前工单、流程或工序来源已变化，请按原单核对")
-    if work.get("jf_flow_order"):
-        flow = _doc("Jifeng Flow Order", work.jf_flow_order)
+    flow_name = work_source.flow_order if work_source else work.get("jf_flow_order")
+    if flow_name:
+        flow = _doc("Jifeng Flow Order", flow_name)
         if flow.company != allocation.company:
             _invalid("分配的当前流程公司已变化，请按原单核对")
     item = _doc("Item", card.get("finished_good") or card.production_item)
@@ -139,7 +146,10 @@ def _scope(name, version):
         expected = wage_values(allocation, row)
         _same_wage_values(frappe._dict(expected), wage_values(checked, checked_rows[row.name]))
     _, _, source, _ = load_source(card_name, lock=True)
-    return allocation, production_quantities(card), source
+    if work_source:
+        work_source.finish()
+    result = allocation, production_quantities(card), source
+    return (*result, work_source) if _with_work_source else result
 
 
 def _salaries(wage, currency):
@@ -193,7 +203,7 @@ def _salary_candidate(wage, currency):
 
 
 def _collect(name, version, *, processing=False):
-    allocation, quantities, source = _scope(name, version)
+    allocation, quantities, source, work_source = _scope(name, version, _with_work_source=True)
     wages = _sql("""SELECT name FROM `tabJifeng Wage Entry` WHERE wage_allocation=%s
                     ORDER BY name FOR UPDATE NOWAIT""", (allocation.name,))
     rows = {row.name: row for row in allocation.employees}
@@ -276,6 +286,8 @@ def _collect(name, version, *, processing=False):
         if blocked:
             _invalid(result["blocked_reason"])
         frappe.throw("没有完整审核本分配计薪或新增工资附加项的权限", frappe.PermissionError)
+    if work_source:
+        work_source.finish()
     return result, allocation, documents, candidates
 
 

@@ -4,7 +4,7 @@ from frappe.utils import getdate
 
 from jifeng_erp.payroll import active_additional_salary, wage_amounts
 from jifeng_erp.piece_workers import bind_piece_worker
-from jifeng_erp.wage_allocation import validate_wage_source
+from jifeng_erp.wage_allocation import resolve_wage_work_source, validate_wage_source
 from jifeng_erp.wage_rate_references import guard_cancelled_wage_snapshot, validate_wage_reference
 from jifeng_erp.wage_workbench import authorize_native_restore, guard_request_identity, prepare_wage_amendment
 from jifeng_erp.wage_personnel_classification import (
@@ -46,15 +46,20 @@ class JifengWageEntry(Document):
             if getattr(self, "stock_uom", None) and self.stock_uom != card.stock_uom:
                 frappe.throw("计件单位必须与报工单库存单位一致")
             self.stock_uom = card.stock_uom
+        work_source = None
         if self.work_order:
             work = frappe.get_doc("Work Order", self.work_order)
+            work_source = resolve_wage_work_source(work, card=card if self.job_card else None, lock=True)
+            if work_source:
+                work = work_source.work
             work.check_permission("read")
             if work.company != self.company:
                 frappe.throw("生产工单公司与计薪公司不一致")
-            if self.flow_order and work.jf_flow_order != self.flow_order:
+            source_flow = work_source.flow_order if work_source else work.jf_flow_order
+            if self.flow_order and source_flow != self.flow_order:
                 frappe.throw("生产工单与流程单不一致")
-            if self.job_card and work.jf_flow_order and not self.flow_order:
-                self.flow_order = work.jf_flow_order
+            if self.job_card and source_flow and not self.flow_order:
+                self.flow_order = source_flow
         if self.salary_component:
             component = frappe.get_doc("Salary Component", self.salary_component)
             component.check_permission("read")
@@ -79,6 +84,8 @@ class JifengWageEntry(Document):
                                 and before.quantity == self.quantity and before.piece_rate == self.piece_rate) else None
         bind_piece_worker(self, historical=historical)
         bind_classification(self)
+        if work_source:
+            work_source.finish()
 
     def before_submit(self):
         if not self.job_card:

@@ -83,11 +83,18 @@ def employee_time_details(logs):
     return details
 
 
-def source_snapshot(card, work):
+def source_snapshot(card, work, *, _work_source=None):
     """Stable identity and time snapshots also detect edits after source approval."""
+    # A source-edit guard signs an unsaved intent. Authorize and close the
+    # saved Card graph separately rather than treating that intent as DB fact.
+    proof = _work_source or resolve_wage_work_source(work)
+    if proof:
+        if not isinstance(proof, _ChildWageSource):
+            frappe.throw("子装配计薪需要服务器完整来源证明")
+        proof.reader.source("Job Card", card.name)
     identity = {
         "company": card.company, "job_card": card.name, "work_order": card.work_order,
-        "flow_order": _get(work, "jf_flow_order") or None, "operation": card.operation,
+        "flow_order": proof.flow_order if proof else _get(work, "jf_flow_order") or None, "operation": card.operation,
         "operation_id": _get(card, "operation_id") or None,
         "item_code": _get(card, "finished_good") or card.production_item,
         "stock_uom": card.stock_uom, "work_date": str(card.posting_date),
@@ -103,6 +110,11 @@ def source_snapshot(card, work):
     payload = {"identity": identity, "logs": sorted(logs, key=lambda row: row["name"]),
                "sub_operations": sorted(sub_operations, key=lambda row: row["name"]),
                "corrective": bool(_get(card, "is_corrective_job_card")), "docstatus": card.docstatus}
+    if proof:
+        payload["plan_subassembly"] = proof.signature
+        payload["child_quantities"] = {field: str(_decimal(_get(card, field), "子报工数量"))
+                                       for field in PRODUCTION_QUANTITY_FIELDS}
+        proof.finish()
     identity["source_signature"] = hashlib.sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return identity
@@ -117,7 +129,129 @@ def _source_fields(doctype, fields, *, parenttype=None):
         frappe.throw("没有完整读取报工计薪来源字段的权限", frappe.PermissionError)
 
 
-def load_source(job_card, *, lock=False):
+def child_wage_source_contract():
+    """Exact pure subassembly helper inputs, without stock-ledger permission."""
+    from jifeng_erp.production_loss import PARENTS, TABLES
+    kinds = ("Work Order", "Production Plan", "Jifeng Flow Order", "BOM", "Item", "Warehouse", "Sales Order")
+    fields = {kind: set(PARENTS[kind]) for kind in kinds}
+    tables = {kind: tuple((field, child, set(names)) for field, child, names in TABLES.get(kind, ()))
+              for kind in kinds}
+    tables["Work Order"] = tuple((field, child, names | {"source_warehouse"}
+                                 if field == "required_items" else names)
+                                for field, child, names in tables["Work Order"])
+    fields["Company"] = {"name", "modified", "default_currency"}
+    identity = {"name", "modified", "docstatus"}
+    child = identity | {"parent", "parenttype", "parentfield", "idx"}
+    fields["Job Card"] = identity | {"company", "work_order", "operation", "operation_id", "production_item",
+        "finished_good", "stock_uom", "posting_date", "is_corrective_job_card", "track_semi_finished_goods",
+        "is_subcontracted", *PRODUCTION_QUANTITY_FIELDS}
+    tables["Job Card"] = (
+        ("time_logs", "Job Card Time Log", child | {"employee", "from_time", "to_time", "time_in_mins", "completed_qty", "operation"}),
+        ("sub_operations", "Job Card Operation", child | {"sub_operation", "completed_qty", "completed_time", "status"}),
+    )
+    return fields, tables
+
+
+def _projection(document, fields):
+    quantities = {"qty", "quantity", "required_qty", "stock_qty", "planned_qty", "completed_qty",
+                  "time_in_mins", "completed_time", *PRODUCTION_QUANTITY_FIELDS}
+    return tuple((field, str(_decimal(_get(document, field), "计薪来源数量").normalize()) if field in quantities
+                  else _datetime(_get(document, field)).isoformat() if field in ("from_time", "to_time")
+                       and _get(document, field) else str(_get(document, field) or "")) for field in fields)
+
+
+WORK_ORIGIN = ("name", "company", "production_item", "stock_uom", "bom_no", "qty", "jf_flow_order",
+    "production_plan", "production_plan_item", "production_plan_sub_assembly_item", "sales_order", "sales_order_item",
+    "wip_warehouse", "fg_warehouse", "track_semi_finished_goods")
+PLAN_PARENT_ORIGIN = ("name", "parent", "parenttype", "parentfield", "item_code", "jf_flow_order", "bom_no",
+    "planned_qty", "stock_uom", "sales_order", "sales_order_item", "item_reference", "material_request",
+    "material_request_item", "product_bundle_item")
+PLAN_CHILD_ORIGIN = ("name", "parent", "parenttype", "parentfield", "production_item", "parent_item_code",
+    "production_plan_item", "bom_no", "bom_level", "type_of_manufacturing", "qty", "uom", "stock_uom",
+    "sales_order", "sales_order_item", "fg_warehouse")
+
+
+def _work_origin(work):
+    return (_projection(work, WORK_ORIGIN),
+        tuple(sorted(_projection(row, ("name", "item_code", "required_qty", "stock_uom", "source_warehouse"))
+                     for row in _get(work, "required_items", []) or [])),
+        tuple(sorted(_projection(row, ("name", "operation")) for row in _get(work, "operations", []) or [])))
+
+
+def _card_origin(card):
+    """Business values, including physical completed/lost/pending quantities."""
+    fields, tables = child_wage_source_contract()
+    quantities = [_get(card, field) for field in PRODUCTION_QUANTITY_FIELDS]
+    if any(value in (None, "") for value in quantities):
+        frappe.throw("子装配报工的原生数量来源不完整，不能计薪")
+    identity = _projection(card, sorted(fields["Job Card"] - {"modified"}))
+    rows = tuple((field, tuple(sorted(_projection(row, sorted(names - {"modified"}))
+                  for row in _get(card, field, []) or []))) for field, _, names in tables["Job Card"])
+    return identity, rows
+
+
+class _ChildWageSource:
+    def __init__(self, work, scope, reader):
+        self.work, self.scope, self.reader = work, scope, reader
+        self.flow_order = scope["flow"].name
+        # Freeze business origins only. Native completion/transferred counters,
+        # status and modified timestamps remain legitimate progress updates.
+        from jifeng_erp.flow_wage_cost_sources import _freeze
+        parents = tuple(_projection(scope[key], fields) for key, fields in (
+            ("plan", ("name", "company", "combine_sub_items")), ("row", PLAN_CHILD_ORIGIN),
+            ("parent_row", PLAN_PARENT_ORIGIN), ("flow", ("name", "company", "item_code", "stock_uom", "bom",
+                                                        "sales_order", "sales_order_item"))))
+        boms = tuple((_projection(doc, ("name", "company", "item", "uom", "quantity")),
+            tuple(sorted(_projection(row, ("name", "parent", "parenttype", "parentfield", "item_code",
+                "bom_no", "stock_uom", "stock_qty")) for row in doc.get("items") or [])))
+            for (kind, _), (doc, _) in sorted(reader.docs.items()) if kind == "BOM")
+        self.signature = _freeze((_work_origin(work), parents, boms))
+
+    def finish(self):
+        from jifeng_erp.flow_wage_cost_sources import _freeze
+        if any(_freeze(doc) != state for doc, state in self.reader.docs.values()):
+            frappe.throw("子装配计薪来源在本次读取中已变化，请重新核对", frappe.PermissionError)
+        self.reader.finish()
+
+
+def resolve_wage_work_source(work, *, card=None, lock=False):
+    """Read one exact child WO's source with a closed source/permission graph."""
+    if not _get(work, "production_plan_sub_assembly_item"):
+        return None
+    if _get(frappe, "conf") and _get(frappe.conf, "read_from_replica"):
+        frappe.throw("子装配计薪必须核对当前原始来源，不能从延迟副本读取")
+    from jifeng_erp.production_loss import _authorized_read, read_work_flow_source
+    from jifeng_erp.flow_wage_cost_sources import _Read
+    fields, tables = child_wage_source_contract()
+    loader = ((lambda kind, name: _authorized_read(kind, name) if kind != "Company"
+               else frappe.get_doc(kind, name, for_update=True)) if lock else None)
+    reader = _Read(fields=fields, tables=tables, document_loader=loader)
+    current = reader.source("Work Order", work.name)
+    if current.docstatus != 1:
+        frappe.throw("子装配计薪必须来自已提交的原子工单")
+    if any((_get(work, field) or "") != (_get(current, field) or "") for field in
+           ("production_plan", "production_plan_item", "production_plan_sub_assembly_item")):
+        frappe.throw("子装配计薪工单的准确计划来源已变化，请重新读取")
+    scope = read_work_flow_source(current, read=reader.source)
+    reader.source("Company", current.company)
+    if card:
+        current_card = reader.source("Job Card", card.name)
+        if _card_origin(current_card) != _card_origin(card):
+            frappe.throw("子装配报工的数量、单位、工序或人员时间来源已变化，请重新读取")
+    if card and (card.work_order != current.name or card.company != current.company
+            or card.production_item != current.production_item or card.stock_uom != current.stock_uom
+            or _get(card, "finished_good") and card.finished_good != current.production_item
+            or card.docstatus != 1 or _get(card, "is_corrective_job_card")
+            or _get(card, "track_semi_finished_goods") or _get(card, "is_subcontracted")
+            or len([row for row in current.operations if row.name == _get(card, "operation_id")
+                    and row.operation == card.operation]) != 1):
+        frappe.throw("子装配计薪必须来自普通原子工单的准确商品、库存单位和工序")
+    proof = _ChildWageSource(current, scope, reader)
+    proof.finish()
+    return proof
+
+
+def load_source(job_card, *, lock=False, _with_work_source=False):
     card = frappe.get_doc("Job Card", job_card, for_update=lock)
     card.check_permission("read")
     _source_fields("Job Card", (
@@ -139,6 +273,9 @@ def load_source(job_card, *, lock=False):
     if not card.work_order:
         frappe.throw("工资分配需要关联生产工单的报工单")
     work = frappe.get_doc("Work Order", card.work_order)
+    work_source = resolve_wage_work_source(work, card=card, lock=lock)
+    if work_source:
+        work = work_source.work
     work.check_permission("read")
     _source_fields("Work Order", ("company", "jf_flow_order", "operations"))
     table = frappe.get_meta("Work Order").get_field("operations")
@@ -151,7 +288,7 @@ def load_source(job_card, *, lock=False):
                           if row.name == _get(card, "operation_id")), None)
     if not operation_row or operation_row.operation != card.operation:
         frappe.throw("报工单的工序行与生产工单不一致")
-    flow_name = _get(work, "jf_flow_order")
+    flow_name = work_source.flow_order if work_source else _get(work, "jf_flow_order")
     if flow_name:
         flow = frappe.get_doc("Jifeng Flow Order", flow_name)
         flow.check_permission("read")
@@ -168,7 +305,10 @@ def load_source(job_card, *, lock=False):
         frappe.throw("报工数量单位与来源商品库存单位不一致")
     if _quantity(card.total_completed_qty) <= 0:
         frappe.throw("没有已完成数量的报工单不能分配计件份额")
-    return card, work, source_snapshot(card, work), employee_time_details(card.time_logs)
+    result = (card, work, source_snapshot(card, work, _work_source=work_source), employee_time_details(card.time_logs))
+    if work_source:
+        work_source.finish()
+    return (*result, work_source) if _with_work_source else result
 
 
 def production_quantities(card):
@@ -225,7 +365,7 @@ def _bind_source(allocation, snapshot):
 
 
 def validate_allocation(allocation, *, approved_history=None):
-    _, _, snapshot, people = load_source(allocation.job_card, lock=True)
+    _, _, snapshot, people, work_source = load_source(allocation.job_card, lock=True, _with_work_source=True)
     _bind_source(allocation, snapshot)
     if _active_allocations(allocation.job_card, _get(allocation, "name")):
         frappe.throw("该报工单已有未取消的工资分配，不能重复分配")
@@ -294,6 +434,8 @@ def validate_allocation(allocation, *, approved_history=None):
         frappe.throw("请填写员工计件份额")
     if allocation.docstatus == 1 and total_qty != _quantity(allocation.source_completed_qty):
         frappe.throw("各人计件份额合计必须等于来源报工单的已完成数量")
+    if work_source:
+        work_source.finish()
 
 
 def wage_values(allocation, row):
@@ -324,7 +466,7 @@ def validate_allocated_wage(wage):
     allocation = frappe.get_doc(ALLOCATION, wage.wage_allocation)
     allocation.check_permission("read")
     source_name = allocation.job_card
-    _, _, snapshot, _ = load_source(source_name, lock=True)
+    _, _, snapshot, _, work_source = load_source(source_name, lock=True, _with_work_source=True)
     allocation = frappe.get_doc(ALLOCATION, wage.wage_allocation, for_update=True)
     allocation.check_permission("read")
     if allocation.job_card != source_name:
@@ -345,6 +487,8 @@ def validate_allocated_wage(wage):
         (allocation.name, row.name, _get(wage, "name") or ""),
     ):
         frappe.throw("该工资分配员工行已有有效计薪记录，不能重复生成")
+    if work_source:
+        work_source.finish()
 
 
 def validate_wage_source(wage):
@@ -467,7 +611,10 @@ def _job_card_source_state(card, work):
     operations = sorted(((_get(row, "name") or "", _get(row, "sub_operation") or "",
                           number(_get(row, "completed_qty")), number(_get(row, "completed_time")),
                           _get(row, "status") or "") for row in _get(card, "sub_operations", []) or []), key=lambda row: row[0])
-    return identity, logs, operations, bool(_get(card, "is_corrective_job_card")), card.docstatus
+    state = identity, logs, operations, bool(_get(card, "is_corrective_job_card")), card.docstatus
+    if _get(work, "production_plan_sub_assembly_item"):
+        return (*state, _card_origin(card))
+    return state
 
 
 def _assert_job_card_source(doc, before):
@@ -522,10 +669,95 @@ def guard_job_card_allocation(doc, method=None):
         frappe.throw("报工单已有审核工资或分配，不能修改计薪来源；请先取消工资及分配")
 
 
+def _approved_work_wages(work_order):
+    # Internal existence locks only: a stock/planning user need not gain HR
+    # read access to be prevented from editing an approved wage's origin.
+    # Do not expose hidden employee, allocation or wage identities.
+    for kind in (ALLOCATION, "Jifeng Wage Entry"):
+        if _locked_wage_rows(f"SELECT name FROM `tab{kind}` WHERE work_order=%s AND docstatus=1 "
+                             "ORDER BY name FOR UPDATE NOWAIT", (work_order,)):
+            return True
+    return False
+
+
+def _plan_wage_origins(plan):
+    parents = {row.name: row for row in plan.get("po_items") or []}
+    children = plan.get("sub_assembly_items") or []
+    if len(parents) != len(plan.get("po_items") or []) or len({row.name for row in children}) != len(children):
+        frappe.throw("计薪来源生产计划明细身份不唯一，请核对原单")
+    return {row.name: (_projection(plan, ("name", "company", "combine_sub_items")),
+                      _projection(row, PLAN_CHILD_ORIGIN),
+                      _projection(parents.get(row.get("production_plan_item")) or {}, PLAN_PARENT_ORIGIN))
+            for row in children}
+
+
+def guard_subassembly_wage_sources(doc, method=None):
+    """Freeze approved child wage business sources at WO/Plan edits themselves.
+
+    Native manufactured/transferred/produced counters and statuses remain free
+    to progress. Exact source locks are NOWAIT and acquired Flow -> Plan -> WO.
+    Cancellation releases this guard only after wages AND allocations cancel.
+    """
+    if not doc.get("name") or getattr(doc, "is_new", lambda: False)():
+        return
+    kind = doc.get("doctype")
+    if kind not in ("Work Order", "Production Plan"):
+        frappe.throw("子装配计薪来源修改保护不支持此单据")
+    original = frappe.get_doc(kind, doc.name)
+    original.check_permission("read")
+    cancelling = method == "before_cancel"
+    if kind == "Work Order":
+        # A saved draft has no approved native report/wage source yet. Its
+        # normal planning edits retain the existing production validators.
+        if original.docstatus != 1 or not original.get("production_plan_sub_assembly_item"):
+            return
+        if not cancelling and _work_origin(original) == _work_origin(doc):
+            return
+        proof = resolve_wage_work_source(original, lock=True)
+        if _work_origin(original) != _work_origin(proof.work):
+            frappe.throw("子装配计薪工单来源已变化，请重新读取")
+        if _approved_work_wages(proof.work.name):
+            frappe.throw("子装配工单已有审核工资或分配，不能修改或取消计薪来源；请先取消工资及分配")
+        proof.finish()
+        return
+    before, after = _plan_wage_origins(original), _plan_wage_origins(doc)
+    affected = sorted(set(before) if cancelling else
+                      {name for name in set(before) | set(after) if before.get(name) != after.get(name)})
+    if not affected:
+        return
+    from jifeng_erp.production_loss import _authorized_read
+    from jifeng_erp.flow_wage_cost_sources import _Read
+    fields, tables = child_wage_source_contract()
+    # All root Flow locks precede this plan and its peer child WOs. Advisory
+    # values are proved again against the current closed Plan source.
+    flows = sorted({row.get("jf_flow_order") for row in original.get("po_items") or [] if row.get("jf_flow_order")})
+    for flow in flows:
+        _authorized_read("Jifeng Flow Order", flow)
+    reader = _Read(fields=fields, tables=tables, document_loader=_authorized_read)
+    current = reader.source("Production Plan", original.name)
+    if _plan_wage_origins(current) != before:
+        frappe.throw("子装配计薪生产计划来源已变化，请重新读取")
+    rows = reader.records("Work Order", {"production_plan": current.name,
+        "production_plan_sub_assembly_item": ["in", affected], "docstatus": ["in", [0, 1]]}, fields["Work Order"])
+    # Acquire the entire affected WO range before reading individual docs.
+    locked = _locked_wage_rows("SELECT name FROM `tabWork Order` WHERE production_plan=%s "
+        "AND production_plan_sub_assembly_item IN %s AND docstatus<2 ORDER BY name FOR UPDATE NOWAIT",
+        (current.name, tuple(affected)))
+    if {row.get("name") for row in locked} != {row["name"] for row in rows}:
+        frappe.throw("受影响的子装配工单范围已变化或无法完整读取，请重新核对", frappe.PermissionError)
+    for row in rows:
+        work = reader.source("Work Order", row["name"])
+        if _approved_work_wages(work.name):
+            # Prove the original child origin before imposing the wage guard.
+            resolve_wage_work_source(work, lock=True).finish()
+            frappe.throw("生产计划子装配已有审核工资或分配，不能修改或取消计薪来源；请先取消工资及分配")
+    reader.finish()
+
+
 @frappe.whitelist()
 def get_allocation_source(job_card):
     frappe.only_for(["HR User", "HR Manager", "System Manager"])
-    card, _, snapshot, people = load_source(job_card)
+    card, _, snapshot, people, work_source = load_source(job_card, _with_work_source=True)
     quantities = production_quantities(card)
     employees = []
     for name, person in people.items():
@@ -535,4 +767,6 @@ def get_allocation_source(job_card):
         employees.append({"employee": name, "employee_name": employee.employee_name,
                           "hours": float(person["hours"]), "source_hours_complete": int(
                               person["complete"] and not person["overlapping"])})
+    if work_source:
+        work_source.finish()
     return {**snapshot, "employees": employees, "production_quantities": quantities}

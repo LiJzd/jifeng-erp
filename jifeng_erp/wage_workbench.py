@@ -91,8 +91,13 @@ def _source(job_card, company, employee, *, lock=False):
     if not any(row.employee == employee for row in card.time_logs):
         frappe.throw("所选工序报工单中没有这位员工的报工记录")
     work = None
+    proof = None
     if card.work_order:
         work = frappe.get_doc("Work Order", card.work_order, for_update=lock)
+        from jifeng_erp.wage_allocation import resolve_wage_work_source
+        proof = resolve_wage_work_source(work, card=card, lock=lock)
+        if proof:
+            work = proof.work
         work.check_permission("read")
         _fields(work, ("company", "jf_flow_order"))
         _child_fields(work, "operations", ("operation",))
@@ -101,14 +106,17 @@ def _source(job_card, company, employee, *, lock=False):
         if not any(row.name == card.operation_id and row.operation == card.operation
                    for row in work.operations):
             frappe.throw("报工单工序与来源工单不一致")
-        if work.jf_flow_order:
-            flow = frappe.get_doc("Jifeng Flow Order", work.jf_flow_order)
+        flow_name = proof.flow_order if proof else work.jf_flow_order
+        if flow_name:
+            flow = frappe.get_doc("Jifeng Flow Order", flow_name)
             flow.check_permission("read")
             _fields(flow, ("company",))
             if flow.company != company:
                 frappe.throw("流程单公司与计薪公司不一致")
     frappe.get_doc("Operation", card.operation).check_permission("select")
-    return card, work
+    if proof:
+        proof.finish()
+    return card, work, proof
 
 
 @frappe.whitelist()
@@ -117,11 +125,11 @@ def get_entry_source(job_card, company, employee):
     if not frappe.has_permission(WAGE, "create"):
         frappe.throw("没有新增计薪记录的权限", frappe.PermissionError)
     _person(company, employee)
-    card, work = _source(job_card, company, employee)
+    card, work, proof = _source(job_card, company, employee)
     return {"job_card": card.name, "source_modified": str(card.modified),
             "work_order_modified": str(work.modified) if work else "",
             "operation": card.operation, "stock_uom": card.stock_uom,
-            "work_order": card.work_order or "", "flow_order": work.jf_flow_order if work else "",
+            "work_order": card.work_order or "", "flow_order": proof.flow_order if proof else work.jf_flow_order if work else "",
             "source_date": str(card.posting_date)}
 
 
@@ -229,14 +237,14 @@ def save_drafts(payload):
         values.update({field: row[field] for field in REFERENCE_FIELDS if field in row})
         frappe.get_doc("Operation", row["operation"]).check_permission("select")
         if row["job_card"]:
-            card, work = resolved[row["job_card"]]
+            card, work, proof = resolved[row["job_card"]]
             if str(card.modified) != row["source_modified"] or (
                     str(work.modified) if work else "") != row["work_order_modified"]:
                 frappe.throw("工序来源已变化，请重新选择并核对该道报工单")
             if row["operation"] != card.operation or row["stock_uom"] != card.stock_uom:
                 frappe.throw("工序和计件单位必须与所选报工单一致")
             values.update(job_card=card.name, work_order=card.work_order or None,
-                          flow_order=work.jf_flow_order if work else None)
+                          flow_order=proof.flow_order if proof else work.jf_flow_order if work else None)
         elif row["source_modified"] or row["work_order_modified"]:
             frappe.throw("没有报工单的手工录入不能携带来源核对信息")
         elif nonnegative(row["quantity"], "计件数量") or nonnegative(row["piece_rate"], "计件工价"):
@@ -263,11 +271,17 @@ def save_drafts(payload):
         # check; source versions remain part of its exact request fingerprint.
         if "temporary_selection" in payload:
             require_temporary_selection(payload["company"], payload["employee"], payload["temporary_selection"])
+        for _, _, proof in resolved.values():
+            if proof:
+                proof.finish()
         # All original native controller validations, permission checks and
         # source quantity locks run inside one transaction, including the last
         # row. A failed row leaves no partial batch for the next attempt.
         for doc in prepared:
             doc.insert()
+        for _, _, proof in resolved.values():
+            if proof:
+                proof.finish()
     except Exception:
         frappe.db.rollback(save_point="jifeng_wage_workbench")
         raise
