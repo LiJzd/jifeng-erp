@@ -1,0 +1,313 @@
+"""Exact-WO batch WIP quantities/value; callbacks only, no business DB writes."""
+
+from copy import deepcopy
+from decimal import Decimal
+import importlib.util
+from pathlib import Path
+import sys
+import textwrap
+import types
+import unittest
+from unittest.mock import patch
+
+
+class Doc(dict):
+    def __getattribute__(self, name):
+        if name not in ("__class__", "__dict__") and dict.__contains__(self, name):
+            return self[name]
+        return super().__getattribute__(name)
+
+    def __getattr__(self, name):
+        return self.get(name)
+
+    __setattr__ = dict.__setitem__
+
+    def precision(self, field):
+        return 2 if field in {"amount", "basic_amount", "stock_value_difference"} else 9
+
+    def check_permission(self, permission):
+        if self.get("denied"):
+            raise PermissionError("source denied")
+
+
+class BatchLossTests(unittest.TestCase):
+    def setUp(self):
+        frappe = types.ModuleType("frappe")
+        frappe.throw = lambda message: (_ for _ in ()).throw(ValueError(message))
+        utils = types.ModuleType("frappe.utils")
+        utils.flt = lambda value, precision=None: round(float(value or 0), precision) if precision is not None else float(value or 0)
+        modules = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils})
+        modules.start()
+        self.addCleanup(modules.stop)
+        source = Path(__file__).parents[1] / "jifeng_erp/production_loss_batches.py"
+        spec = importlib.util.spec_from_file_location("batch_loss_source_under_test", source)
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        self.store, self.queries = {}, []
+        self.work = Doc(name="WO", company="JF", wip_warehouse="WIP", required_items=[Doc(item_code="RM")])
+        self.item = self.add("Item", "RM", stock_uom="Kg", has_batch_no=1, has_serial_no=0, is_stock_item=1)
+        self.batch = self.add("Batch", "BATCH", item="RM", disabled=0, use_batchwise_valuation=0)
+        row = Doc(name="TRANSFER-ROW", parent="TRANSFER", parenttype="Stock Entry", parentfield="items", docstatus=1,
+                  item_code="RM", stock_uom="Kg", qty=10, uom="Kg", conversion_factor=1, transfer_qty=10,
+                  s_warehouse="RAW", t_warehouse="WIP", serial_and_batch_bundle="SOURCE-OUTWARD")
+        self.transfer = self.add("Stock Entry", "TRANSFER", company="JF", work_order="WO", docstatus=1,
+            purpose="Material Transfer for Manufacture", posting_date="2026-10-09", posting_time="09:00:00", items=[row])
+        self.inward = self.bundle("INWARD", "TRANSFER", "TRANSFER-ROW", quantity=10, rate=4)
+        self.sle = self.ledger("SLE-IN", "TRANSFER", "TRANSFER-ROW", quantity=10, value=40, bundle="INWARD")
+        self.loss = Doc(name="LOSS", company="JF", docstatus=0, posting_date="2026-10-09", posting_time="10:00:00", items=[])
+
+    def add(self, kind, name, **values):
+        doc = Doc(doctype=kind, name=name, modified="v1", docstatus=1, **{key: value for key, value in values.items() if key != "docstatus"})
+        doc.docstatus = values.get("docstatus", 1)
+        self.store[kind, name] = doc
+        return doc
+
+    def bundle(self, name, voucher, detail, *, quantity, rate, batch="BATCH", status=1, time="09:00:00"):
+        doc = self.add("Serial and Batch Bundle", name, company="JF", item_code="RM", warehouse="WIP", voucher_type="Stock Entry",
+            voucher_no=voucher, voucher_detail_no=detail, type_of_transaction="Inward" if quantity > 0 else "Outward",
+            is_cancelled=int(status == 2), docstatus=status, has_batch_no=1, has_serial_no=0,
+            total_qty=quantity, total_amount=quantity * rate)
+        row = self.add("Serial and Batch Entry", name + "-ROW", parent=name, parenttype="Serial and Batch Bundle", parentfield="entries",
+            docstatus=status, item_code="RM", warehouse="WIP", batch_no=batch, serial_no=None, qty=quantity,
+            incoming_rate=rate, stock_value_difference=quantity * rate, is_cancelled=int(status == 2))
+        doc.entries = [row]
+        return doc
+
+    def ledger(self, name, voucher, detail, *, quantity, value, bundle=None, batch=None, time="09:00:00", cancelled=0, warehouse="WIP"):
+        return self.add("Stock Ledger Entry", name, company="JF", item_code="RM", stock_uom="Kg", warehouse=warehouse,
+            voucher_type="Stock Entry", voucher_no=voucher, voucher_detail_no=detail, actual_qty=quantity, stock_value_difference=value,
+            serial_and_batch_bundle=bundle, batch_no=batch, serial_no=None, is_cancelled=cancelled, is_adjustment_entry=0,
+            posting_date="2026-10-09", posting_time=time, creation="2026-10-09 " + time)
+
+    def read(self, kind, name):
+        document = self.store[kind, name]
+        document.check_permission("read")
+        return document
+
+    def records(self, kind, filters, fields, parenttype=None):
+        self.queries.append((kind, deepcopy(filters), set(fields), parenttype))
+        result = []
+        for (doctype, _), doc in self.store.items():
+            if doctype != kind:
+                continue
+            matched = True
+            for field, value in filters.items():
+                actual = doc.get(field)
+                if isinstance(value, list):
+                    operator, expected = value
+                    matched = matched and ({"in": lambda: actual in expected, "not in": lambda: actual not in expected,
+                        "<": lambda: actual < expected, "<=": lambda: str(actual) <= str(expected)}[operator]())
+                else:
+                    matched = matched and actual == value
+            if matched:
+                result.append(Doc({field: doc.get(field) for field in fields}))
+        return sorted(result, key=lambda row: row.name)
+
+    def row(self, name="LOSS-ROW", qty=10, batch="BATCH", bundle=None):
+        row = Doc(name=name, item_code="RM", batch_no=batch, qty=qty, transfer_qty=qty, stock_uom="Kg", uom="Kg", conversion_factor=1,
+                  s_warehouse="WIP", t_warehouse=None, serial_and_batch_bundle=bundle, serial_no=None)
+        self.loss.items.append(row)
+        return row
+
+    def proposal(self, quantity=10):
+        return self.module.proposal(self.work, {"RM": quantity}, read=self.read, records=self.records)
+
+    def proof(self, *, posted=False):
+        return self.module.prove_loss_batches(self.loss, self.work, read=self.read, records=self.records, posted=posted)
+
+    def posted(self, qty=10):
+        row = self.row(qty=qty, bundle="LOSS-BUNDLE")
+        self.loss.docstatus = 1
+        bundle = self.bundle("LOSS-BUNDLE", "LOSS", row.name, quantity=-qty, rate=4, time="10:00:00")
+        sle = self.ledger("SLE-LOSS", "LOSS", row.name, quantity=-qty, value=-qty * 4, bundle=bundle.name, time="10:00:00")
+        return row, bundle, sle
+
+    def test_exact_inward_sle_bundle_proposal_and_native_draft_selection(self):
+        proposal = self.proposal()[0]
+        self.assertEqual((proposal["batch_no"], proposal["qty"], proposal["expected_value"]), ("BATCH", 10, 40))
+        self.assertEqual(proposal["source_transfers"], [{"stock_entry": "TRANSFER", "detail": "TRANSFER-ROW", "qty": 10}])
+        # Stock Entry Detail points to the source Outward bundle; WIP provenance
+        # must follow the actual target SLE's independent Inward bundle.
+        self.assertNotIn(("Serial and Batch Bundle", "SOURCE-OUTWARD"), self.store)
+        row = self.row(bundle="DRAFT")
+        self.bundle("DRAFT", "LOSS", row.name, quantity=-10, rate=999, status=0)
+        self.assertEqual(self.proof()[row.name]["value"], 40)
+
+    def test_wrong_batch_work_warehouse_parent_and_missing_transfer_sle_rejected(self):
+        row = self.row()
+        for doc, field, value in ((row, "batch_no", "FOREIGN"), (self.transfer, "work_order", "OTHER"),
+                (self.inward, "warehouse", "OTHER"), (self.inward, "voucher_detail_no", "OTHER"),
+                (self.transfer.items[0], "parentfield", "other"), (self.sle, "warehouse", "OTHER")):
+            self.add("Batch", "FOREIGN", item="RM")
+            original = doc.get(field)
+            doc[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError): self.proof()
+            doc[field] = original
+        self.assertEqual(self.loss.docstatus, 0)
+
+    def test_other_consumption_return_and_cancel_release_actual_batch_pool(self):
+        self.bundle("USE", "CONSUMPTION", "USE-ROW", quantity=-3, rate=4)
+        used = self.ledger("SLE-USE", "CONSUMPTION", "USE-ROW", quantity=-3, value=-12, bundle="USE")
+        self.assertEqual(self.proposal(7)[0]["qty"], 7)
+        with self.assertRaisesRegex(ValueError, "库存不足"): self.proposal(8)
+        # Native return transfer out of WIP is another negative movement.
+        returned = self.ledger("SLE-RETURN", "RETURN", "RETURN-ROW", quantity=-2, value=-8, batch="BATCH")
+        self.assertEqual(self.proposal(5)[0]["qty"], 5)
+        used.is_cancelled = returned.is_cancelled = 1
+        self.assertEqual(self.proposal()[0]["qty"], 10)
+
+    def test_two_loss_rows_cannot_each_reuse_whole_batch_quantity(self):
+        self.row(name="ROW-1", qty=6)
+        self.row(name="ROW-2", qty=5)
+        with self.assertRaisesRegex(ValueError, "累计出库"): self.proof()
+
+    def test_other_work_inward_same_batch_is_not_borrowed(self):
+        self.bundle("OTHER-IN", "OTHER-TRANSFER", "OTHER-ROW", quantity=2, rate=4)
+        self.ledger("OTHER-SLE", "OTHER-TRANSFER", "OTHER-ROW", quantity=2, value=8, bundle="OTHER-IN")
+        with self.assertRaisesRegex(ValueError, "混有其他来源"): self.proposal()
+
+    def test_flag_zero_uniform_whole_item_price_works_and_other_batch_price_differs_blocks(self):
+        self.assertEqual(self.batch.use_batchwise_valuation, 0)
+        self.assertEqual(self.proposal()[0]["expected_value"], 40)
+        self.add("Batch", "OTHER-BATCH", item="RM", use_batchwise_valuation=1)
+        self.bundle("OTHER-IN", "OTHER", "OTHER-ROW", quantity=2, rate=9, batch="OTHER-BATCH")
+        self.ledger("OTHER-SLE", "OTHER", "OTHER-ROW", quantity=2, value=18, bundle="OTHER-IN")
+        with self.assertRaisesRegex(ValueError, "多种历史价层"): self.proposal()
+
+    def test_posted_real_lots_quantity_value_and_future_price_do_not_revalue_history(self):
+        row, bundle, sle = self.posted()
+        self.assertEqual(self.proof(posted=True)[row.name]["value"], 40)
+        self.add("Batch", "FUTURE", item="RM")
+        self.bundle("FUTURE-IN", "FUTURE", "FUTURE-ROW", quantity=2, rate=9, batch="FUTURE")
+        self.ledger("FUTURE-SLE", "FUTURE", "FUTURE-ROW", quantity=2, value=18, bundle="FUTURE-IN", time="11:00:00")
+        self.assertEqual(self.proof(posted=True)[row.name]["value"], 40)
+        sle.stock_value_difference = -39
+        with self.assertRaisesRegex(ValueError, "价值与确切库存账"): self.proof(posted=True)
+
+    def test_cancelled_delinked_original_proves_origin_without_current_average(self):
+        row, bundle, sle = self.posted()
+        self.loss.docstatus = bundle.docstatus = bundle.entries[0].docstatus = 2
+        bundle.is_cancelled = bundle.entries[0].is_cancelled = sle.is_cancelled = 1
+        row.serial_and_batch_bundle = ""
+        self.add("Batch", "NEW-PRICE", item="RM")
+        self.ledger("FUTURE-SLE", "OTHER", "OTHER-ROW", quantity=2, value=99, batch="NEW-PRICE", time="11:00:00")
+        self.assertEqual(self.proof()[row.name]["value"], 40)
+        self.assertFalse(any(kind == "Stock Ledger Entry" and filters.get("item_code") == "RM"
+            and "voucher_no" not in filters for kind, filters, _fields, _parent in self.queries))
+        row.batch_no = "NEW-PRICE"
+        with self.assertRaisesRegex(ValueError, "所选批号"): self.proof()
+
+    def test_hidden_batch_sle_transfer_or_child_sources_cannot_be_omitted(self):
+        for doc in (self.batch, self.sle, self.transfer):
+            doc.denied = True
+            with self.subTest(kind=doc.doctype), self.assertRaises(PermissionError): self.proposal()
+            doc.denied = False
+        original = self.records
+        def hidden(kind, filters, fields, **kwargs):
+            result = original(kind, filters, fields, **kwargs)
+            return [] if kind == "Serial and Batch Entry" else result
+        with patch.object(self, "records", hidden), self.assertRaisesRegex(ValueError, "不完整"): self.proposal()
+
+    def test_read_change_and_lock_errors_abort_without_retry(self):
+        original = self.records
+        def changed(kind, filters, fields, **kwargs):
+            result = original(kind, filters, fields, **kwargs)
+            if kind == "Stock Ledger Entry": self.sle.stock_value_difference = 39
+            return result
+        with patch.object(self, "records", changed), self.assertRaisesRegex(ValueError, "本次读取期间已变化"): self.proposal()
+        calls = []
+        def locked(*args, **kwargs):
+            calls.append(args)
+            raise TimeoutError("NOWAIT occupied")
+        with patch.object(self, "records", locked), self.assertRaises(TimeoutError): self.proposal()
+        self.assertEqual(len(calls), 1)
+
+    def test_serial_and_multiple_original_same_batch_layers_stay_explicitly_unsupported(self):
+        self.item.has_serial_no = 1
+        with self.assertRaisesRegex(ValueError, "序号原料"): self.proposal()
+        self.item.has_serial_no = 0
+        row = Doc(self.transfer.items[0])
+        row.name = "SECOND-ROW"
+        self.transfer.items.append(row)
+        self.bundle("SECOND-IN", "TRANSFER", "SECOND-ROW", quantity=10, rate=4)
+        self.ledger("SECOND-SLE", "TRANSFER", "SECOND-ROW", quantity=10, value=40, bundle="SECOND-IN")
+        with self.assertRaisesRegex(ValueError, "多笔原转料"): self.proposal()
+
+    def test_nonbatch_material_path_remains_empty_and_zero_real_value_is_supported(self):
+        self.item.has_batch_no = 0
+        self.assertEqual(self.proposal(), [])
+        self.row()
+        self.assertEqual(self.proof(), {})
+        self.item.has_batch_no = 1
+        self.sle.stock_value_difference = self.inward.total_amount = self.inward.entries[0].incoming_rate = self.inward.entries[0].stock_value_difference = 0
+        proposed = self.proposal()[0]
+        self.assertEqual((proposed["expected_value"], proposed["allow_zero_valuation_rate"]), (0, 1))
+
+    def test_native_bundle_amount_formula_closes_actual_outward_value(self):
+        # Exact 16.36 method from material-return-bundle-native-read.private.json.
+        # This is the upstream amount calculation, not the helper's pool math.
+        source = '''
+        def calculate_qty_and_amount(self, save=False):
+            self.total_amount = 0.0
+            self.total_qty = 0.0
+            self.avg_rate = 0.0
+            for row in self.entries:
+                rate = flt(row.incoming_rate)
+                row.stock_value_difference = flt(row.qty) * rate
+                self.total_amount += flt(row.qty) * rate
+                self.total_qty += flt(row.qty)
+            if self.total_qty:
+                self.avg_rate = flt(self.total_amount) / flt(self.total_qty)
+            if save:
+                self.db_set({"total_qty": self.total_qty, "avg_rate": self.avg_rate, "total_amount": self.total_amount})
+        '''
+        namespace = {"flt": sys.modules["frappe.utils"].flt}
+        exec(compile(textwrap.dedent(source), "installed16.36-bundle-amount", "exec"), namespace)
+        row, bundle, sle = self.posted()
+        bundle.total_amount = bundle.entries[0].stock_value_difference = 999
+        namespace["calculate_qty_and_amount"](bundle)
+        sle.stock_value_difference = bundle.total_amount
+        self.assertEqual((bundle.total_qty, bundle.total_amount, bundle.avg_rate), (-10, -40, 4))
+        self.assertEqual(self.proof(posted=True)[row.name]["value"], 40)
+
+    def test_disabled_batch_and_active_reposting_stop_new_issue_but_cancel_uses_original(self):
+        self.batch.disabled = 1
+        self.row()
+        with self.assertRaisesRegex(ValueError, "已停用"): self.proof()
+        self.batch.disabled = 0
+        job = self.add("Repost Item Valuation", "REPOST", company="JF", status="Queued", item_code="RM", warehouse="WIP")
+        with self.assertRaisesRegex(ValueError, "正在重估"): self.proposal()
+        self.store.pop(("Repost Item Valuation", job.name))
+        self.loss.items = []
+        row, bundle, sle = self.posted()
+        self.loss.docstatus = 2
+        bundle.docstatus = bundle.entries[0].docstatus = 2
+        bundle.is_cancelled = bundle.entries[0].is_cancelled = sle.is_cancelled = 1
+        self.batch.disabled = 1
+        self.assertEqual(self.proof()[row.name]["value"], 40)
+
+    def test_exact_batch_reservation_consumption_excludes_foreign_and_cancellation_resets_zero(self):
+        row, bundle, sle = self.posted(qty=7)
+        row.update(parent="LOSS", parenttype="Stock Entry", parentfield="items")
+        self.loss.update(doctype="Stock Entry", purpose="Material Issue", jf_production_loss_work_order="WO")
+        self.store["Stock Entry", "LOSS"] = self.loss
+        self.add("Stock Entry", "FOREIGN", company="JF", work_order="OTHER", purpose="Manufacture", docstatus=1,
+            posting_date="2026-10-09", posting_time="10:00:00", items=[])
+        self.ledger("FOREIGN-SLE", "FOREIGN", "OTHER-ROW", quantity=-1, value=-4, batch="BATCH", time="10:00:00")
+        result = self.module.consumed_batches(self.work, read=self.read, records=self.records)["RM", "BATCH"]
+        self.assertEqual((result["qty"], result["value"], result["original_qty"], result["available_qty"]), (7, 28, 10, 2))
+        self.assertEqual((result["source_entry"], result["source_detail"]), ("TRANSFER", "TRANSFER-ROW"))
+        excluded = self.module.consumed_batches(self.work, read=self.read, records=self.records, exclude="LOSS")["RM", "BATCH"]
+        self.assertEqual((excluded["qty"], excluded["available_qty"]), (0, 9))
+        self.loss.docstatus = bundle.docstatus = bundle.entries[0].docstatus = 2
+        sle.is_cancelled = bundle.is_cancelled = bundle.entries[0].is_cancelled = 1
+        result = self.module.consumed_batches(self.work, read=self.read, records=self.records)["RM", "BATCH"]
+        self.assertEqual((result["qty"], result["available_qty"]), (0, 9))
+
+    def test_missing_selected_batch_fails_explicitly_before_reader_lookup(self):
+        self.row(batch=None)
+        with self.assertRaisesRegex(ValueError, "缺少明确选择"): self.proof()
+
+
+if __name__ == "__main__":
+    unittest.main()
