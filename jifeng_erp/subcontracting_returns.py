@@ -1167,7 +1167,120 @@ def _guard_return_allocation(document, source, proof, entries):
                         frappe.throw("成本中心分摊的分批退回存在分钱舍入，无法准确累计反冲原已入账归属，请按准确整行退回核对")
 
 
+def _locked_subcontract_qty_rows(query, values):
+    try:
+        return frappe.db.sql(query, values, as_dict=True)
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError) as exc:
+        # Native submit/cancel can already hold the current receipt. Never
+        # wait for another receipt while it waits for our Job Card. Keep the
+        # native DB exception type so the entire request transaction rolls back.
+        raise type(exc)("同工序委外收回正在更新，请重新读取后再操作") from None
+
+
+def _subcontract_manufactured_qty(job_card, *, company=None):
+    """Internal, current-read completion from exact accepted receipt pools.
+
+    Native receipt returns put rejected goods in negative ``qty`` too. A
+    SUM(qty) therefore changes accepted completion when rejected stock is
+    returned. Read all effective rows for this card (including hidden ones),
+    classify each return by its original row/warehouse, and disclose only the
+    aggregate. This is the native writer's scope, not a source browsing API.
+    """
+    cards = _locked_subcontract_qty_rows("""
+        select name, company, is_subcontracted, stock_uom
+        from `tabJob Card` where name = %s for update nowait
+    """, (job_card,))
+    if (len(cards) != 1 or not cint(cards[0].is_subcontracted)
+            or not cards[0].company or company and cards[0].company != company):
+        frappe.throw("委外合格完成量必须关联本公司的准确委外报工单")
+    card = cards[0]
+    fields = tuple(dict.fromkeys(("name", "parent", "subcontracting_receipt_item",
+        "warehouse", "rejected_warehouse", "qty", "rejected_qty", "process_loss_qty",
+        "received_qty", "conversion_factor", *_ROW_IDENTITY)))
+    # Include a return whose original belongs to this card even if its saved
+    # job_card was changed; it must fail identity checks, not vanish from sums.
+    rows = _locked_subcontract_qty_rows("""
+        select {fields}, parent.company as receipt_company,
+               parent.supplier as receipt_supplier,
+               parent.supplier_warehouse as receipt_supplier_warehouse,
+               parent.is_return as receipt_is_return,
+               parent.return_against as receipt_return_against
+        from `tabSubcontracting Receipt` parent
+        inner join `tabSubcontracting Receipt Item` child on child.parent = parent.name
+        left join `tabSubcontracting Receipt Item` original
+          on original.name = child.subcontracting_receipt_item
+         and original.parenttype = 'Subcontracting Receipt' and original.parentfield = 'items'
+        where parent.docstatus = 1 and child.docstatus = 1
+          and child.parenttype = 'Subcontracting Receipt' and child.parentfield = 'items'
+          and (child.job_card = %s or original.job_card = %s)
+        order by parent.name, child.idx for update nowait
+    """.format(fields=", ".join("child.`{}`".format(field) for field in fields)),
+        (job_card, job_card))
+    # Raw SQL dictionaries have no precision(). Unsaved native child Documents
+    # retain the exact projection/aliases and use installed field precision;
+    # there is no load, insert or client-provided quantity metadata here.
+    rows = [frappe.get_doc(dict(row, doctype="Subcontracting Receipt Item")) for row in rows]
+    if len({row.name for row in rows}) != len(rows):
+        frappe.throw("委外合格完成量存在重复原收回明细")
+    originals, returned = {}, {}
+    for row in rows:
+        if (row.receipt_company != card.company or row.job_card != card.name
+                or card.stock_uom and row.stock_uom != card.stock_uom):
+            frappe.throw("委外合格完成量的公司、报工单或库存单位与准确来源不一致")
+        if _factor(row) != 1:
+            frappe.throw("委外报工回写仅支持已核实的库存单位换算系数1，请先核对历史非1来源")
+        if not cint(row.receipt_is_return):
+            if min(_number(row.get(field)) for field in ("qty", "rejected_qty", "process_loss_qty")) < 0:
+                frappe.throw("原委外收回实物数量或损耗异常，请先核对合格完成来源")
+            _covered_stock(row)
+            originals[row.name] = row
+            returned[row.name] = [Decimal(0), Decimal(0)]
+    for row in rows:
+        if not cint(row.receipt_is_return):
+            continue
+        original = originals.get(row.subcontracting_receipt_item)
+        if (not original or row.receipt_return_against != original.parent
+                or row.receipt_supplier != original.receipt_supplier
+                or row.receipt_supplier_warehouse != original.receipt_supplier_warehouse):
+            frappe.throw("委外完成量退回缺少准确有效原收回明细，不能猜测合格或拒收份额")
+        accepted, rejected = _physical_pools(row, original)
+        returned[original.name][0] += accepted
+        returned[original.name][1] += rejected
+    qty = Decimal(0)
+    for name, original in originals.items():
+        for amount, field in zip(returned[name], ("qty", "rejected_qty")):
+            if flt(amount, _precision(original, field)) > flt(original.get(field), _precision(original, field)):
+                frappe.throw("委外完成量累计退回超过准确原合格或拒收实物数量")
+        qty += _number(original.qty) - returned[name][0]
+    return flt(qty)
+
+
+class SubcontractingJobCardQtyMixin:
+    def set_manufactured_qty(self):
+        if not self.is_subcontracted:
+            return super().set_manufactured_qty()
+        self.manufactured_qty = _subcontract_manufactured_qty(self.name, company=self.company)
+        self.db_set("manufactured_qty", self.manufactured_qty)
+        # Preserve the installed native tail and its transaction/errors.
+        self.update_semi_finished_good_details()
+        self.set_status(update_status=True)
+
+
 class SubcontractingReceiptReturnMixin:
+    def get_manufactured_qty(self, job_card):
+        return _subcontract_manufactured_qty(job_card, company=self.company)
+
+    def update_job_card(self):
+        # Multiple receipt rows can share a card. Refresh its aggregate once;
+        # deterministic card order also preserves one downstream refresh.
+        for name in sorted({row.job_card for row in self.get("items") if row.job_card}):
+            # The shared aggregator acquires the current card with NOWAIT;
+            # a blocking get_doc(for_update=True) here would defeat that guard.
+            card = frappe.get_doc("Job Card", name)
+            if card.company != self.company or not cint(card.is_subcontracted):
+                frappe.throw("委外收回不能回写其他公司或普通生产报工单的合格完成量")
+            card.set_manufactured_qty()
+
     def make_item_gl_entries(self, gl_entries, inventory_account_map=None, *, _source_proof=None):
         """Post exact SLE values and native accepted-quantity fees, even at zero FG value."""
         if (self.docstatus == 2 or any(row.get("secondary_item_type") or row.get("valuation_type")
