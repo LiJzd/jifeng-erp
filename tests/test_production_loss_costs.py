@@ -1,8 +1,10 @@
 """Loss-source classification and replacement costing; no business writes."""
 
 from copy import deepcopy
+from datetime import datetime
 from decimal import Decimal
 import importlib.util
+import sys
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
@@ -27,7 +29,8 @@ class TestProductionLossSources(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("production_loss_cost_source_under_test",
             Path(__file__).parents[1] / "jifeng_erp/production_loss.py")
         self.loss = importlib.util.module_from_spec(spec)
-        with patch.object(self.frappe, "whitelist", lambda **kwargs: lambda function: function):
+        with patch.object(self.frappe, "whitelist", lambda **kwargs: lambda function: function), \
+                patch.object(sys.modules["frappe.utils"], "now_datetime", lambda: datetime(2026, 10, 3, 11), create=True):
             spec.loader.exec_module(self.loss)
         import jifeng_erp
         patches = patch.object(jifeng_erp, "production_loss", self.loss, create=True)
@@ -53,7 +56,8 @@ class TestProductionLossSources(unittest.TestCase):
                     self.base.metas[kind][field] = source_fixture.Record(
                         fieldname=field, fieldtype="Float", permlevel=0)
 
-    def get_doc(self, kind, name, **kwargs):
+    def get_doc(self, kind, name=None, **kwargs):
+        name = kind if name is None else name
         doc = self.base.get_doc(kind, name, **kwargs)
         for field, childtype, _fields in self.tables.get(kind, ()):
             doc[field] = [self.document_type(deepcopy(row))
@@ -224,7 +228,10 @@ class TestProductionLossSources(unittest.TestCase):
                 has_batch_no=1, has_serial_no=0, total_qty=quantity, total_amount=quantity * 4)
             self.child("Serial and Batch Bundle", name, "entries", name + "-ROW", item_code="RM",
                 docstatus=1, warehouse="RM-WH", batch_no="BATCH-1", qty=quantity, incoming_rate=4,
-                stock_value_difference=quantity * 4, is_cancelled=0)
+                stock_value_difference=quantity * 4, is_cancelled=0,
+                voucher_type=self.module.SE, voucher_no=voucher, voucher_detail_no=detail,
+                type_of_transaction="Inward" if quantity > 0 else "Outward",
+                posting_datetime="2026-10-03 " + clock, creation="2026-10-03 " + clock)
             if quantity > 0:
                 self.base.add(self.module.SLE, "TRANSFER-IN", company="JF", item_code="RM", warehouse="RM-WH",
                     stock_uom="Kg", voucher_type=self.module.SE, voucher_no=voucher, voucher_detail_no=detail,
@@ -274,7 +281,10 @@ class TestProductionLossSources(unittest.TestCase):
             has_batch_no=1, has_serial_no=0, total_qty=5, total_amount=20)
         self.child("Serial and Batch Bundle", "INWARD-SECOND", "entries", "INWARD-SECOND-ROW",
             item_code="RM", docstatus=1, warehouse="RM-WH", batch_no="BATCH-1", qty=5,
-            incoming_rate=4, stock_value_difference=20, is_cancelled=0)
+            incoming_rate=4, stock_value_difference=20, is_cancelled=0,
+            voucher_type=self.module.SE, voucher_no="TRANSFER-SECOND", voucher_detail_no="TRANSFER-SECOND-ROW",
+            type_of_transaction="Inward", posting_datetime="2026-10-03 09:30:00",
+            creation="2026-10-03 09:30:00")
         self.base.add(self.module.SLE, "TRANSFER-SECOND-IN", company="JF", item_code="RM",
             warehouse="RM-WH", stock_uom="Kg", voucher_type=self.module.SE, voucher_no="TRANSFER-SECOND",
             voucher_detail_no="TRANSFER-SECOND-ROW", posting_date="2026-10-03", posting_time="09:30:00",
@@ -307,14 +317,20 @@ class TestProductionLossSources(unittest.TestCase):
                     document.update(uom="Nos", batch_no="BATCH-1" if with_batch else None,
                         serial_no="\n".join(names))
         for bundle_name, quantity in (("INWARD", 1), ("OUTWARD", -1)):
-            self.base.documents["Serial and Batch Bundle", bundle_name].update(
+            bundle = self.base.documents["Serial and Batch Bundle", bundle_name]
+            bundle.update(
                 has_serial_no=1, has_batch_no=int(with_batch))
             del self.base.documents["Serial and Batch Entry", bundle_name + "-ROW"]
             for index, serial in enumerate(names):
                 self.child("Serial and Batch Bundle", bundle_name, "entries", bundle_name + "-" + serial,
                     item_code="RM", docstatus=1, warehouse="RM-WH", serial_no=serial,
                     batch_no="BATCH-1" if with_batch else None, qty=quantity, incoming_rate=4,
-                    stock_value_difference=quantity * 4, is_cancelled=0, idx=index + 1)
+                    stock_value_difference=quantity * 4, is_cancelled=0, idx=index + 1,
+                    voucher_type=bundle.voucher_type, voucher_no=bundle.voucher_no,
+                    voucher_detail_no=bundle.voucher_detail_no,
+                    type_of_transaction="Inward" if quantity > 0 else "Outward",
+                    posting_datetime="2026-10-03 " + ("09:00:00" if quantity > 0 else "10:00:00"),
+                    creation="2026-10-03 " + ("09:00:00" if quantity > 0 else "10:00:00"))
         for serial in names:
             self.base.add("Serial No", serial, serial_no=serial, item_code="RM", company="JF",
                 docstatus=0, batch_no="BATCH-1" if with_batch else None,
@@ -322,6 +338,98 @@ class TestProductionLossSources(unittest.TestCase):
         loss.jf_production_loss_source_signature = self.loss.source_signature(
             self.get_doc("Job Card", "CARD"), self.get_doc(self.module.WO, "WO"))
         return loss
+
+    def seed_single_valuation_policy(self):
+        self.extend_schema("Stock Settings", {"name", "modified", "do_not_use_batchwise_valuation"})
+        self.base.metas["Stock Settings"]["do_not_use_batchwise_valuation"].fieldtype = "Check"
+        doc = self.base.add("Stock Settings", "Stock Settings", docstatus=0,
+            do_not_use_batchwise_valuation=0)
+        self.single_stored = {"name": "Stock Settings", "modified": doc.modified,
+                              "do_not_use_batchwise_valuation": "0"}
+        self.frappe.db.get_singles_dict = Mock(side_effect=lambda doctype: deepcopy(self.single_stored)
+            if doctype == "Stock Settings" else self.fail("unexpected Single read"))
+        native_meta = self.frappe.get_meta
+        def get_meta(doctype):
+            meta = native_meta(doctype)
+            meta.issingle = doctype == "Stock Settings"
+            return meta
+        self.frappe.get_meta = get_meta
+        return doc
+
+    def test_single_valuation_source_uses_native_document_and_raw_singles_without_fake_table(self):
+        self.seed_single_valuation_policy()
+        session = self.module._Session("FLOW")
+        self.assertEqual(session._loss_reader("Stock Settings", "Stock Settings").do_not_use_batchwise_valuation, 0)
+        session.finish()
+        self.assertFalse(any(call.args and call.args[0] == "Stock Settings"
+            for call in self.frappe.get_all.call_args_list + self.frappe.get_list.call_args_list))
+        self.frappe.db.get_singles_dict.assert_called_with("Stock Settings")
+        self.assert_no_writes()
+
+    def test_single_policy_raw_change_without_modified_or_document_change_invalidates_cost(self):
+        self.seed_single_valuation_policy()
+        session = self.module._Session("FLOW")
+        session._loss_reader("Stock Settings", "Stock Settings")
+        with self.assertRaises(PermissionError):
+            session.finish(lambda: self.single_stored.update(do_not_use_batchwise_valuation="1"))
+        self.assert_no_writes()
+
+    def test_single_policy_field_mask_and_late_role_metadata_deny_partial_cost(self):
+        self.seed_single_valuation_policy()
+        self.base.metas["Stock Settings"]["do_not_use_batchwise_valuation"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module._Session("FLOW")._loss_reader("Stock Settings", "Stock Settings")
+        self.base.metas["Stock Settings"]["do_not_use_batchwise_valuation"].mask = 0
+        permission = self.base.add("Custom DocPerm", "SINGLE-PERM", parent="Stock Settings", role="QA", read=1)
+        session = self.module._Session("FLOW")
+        session._loss_reader("Stock Settings", "Stock Settings")
+        permission.read = 0
+        with self.assertRaises(PermissionError):
+            session.finish()
+        self.assert_no_writes()
+
+    def seed_different_price_batch_loss(self):
+        loss = self.seed_split_transfer_loss_source()
+        self.seed_single_valuation_policy()
+        self.base.documents["Item", "RM"].valuation_method = "Moving Average"
+        self.base.documents["Company", "JF"].valuation_method = "Moving Average"
+        self.base.documents["Batch", "BATCH-1"].use_batchwise_valuation = 1
+        self.base.documents[self.module.SLE, "TRANSFER-SECOND-IN"].stock_value_difference = 40
+        self.base.documents["Serial and Batch Bundle", "INWARD-SECOND"].total_amount = 40
+        self.base.documents["Serial and Batch Entry", "INWARD-SECOND-ROW"].update(
+            incoming_rate=8, stock_value_difference=40)
+        self.base.documents[self.module.SLE, "LOSS-SLE"].stock_value_difference = -60
+        self.base.documents["Serial and Batch Bundle", "OUTWARD"].total_amount = -60
+        self.base.documents["Serial and Batch Entry", "OUTWARD-ROW"].update(
+            incoming_rate=6, stock_value_difference=-60)
+        self.base.documents["Stock Entry Detail", "LOSS-RM"].update(
+            basic_rate=6, basic_amount=60, amount=60, valuation_rate=6)
+        return loss
+
+    def test_actual_different_price_batch_values_feed_one_booked_loss_cost_and_cancel(self):
+        loss = self.seed_different_price_batch_loss()
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["issue_material"]), (60, 60))
+        self.assertEqual([row["loss_issue"] for row in result["loss_batches"]], ["LOSS"])
+        loss.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 0)
+        self.assert_no_writes()
+
+    def test_different_price_cost_requires_policy_and_exact_native_bundle_source_fields(self):
+        self.seed_different_price_batch_loss()
+        self.base.metas["Stock Settings"]["do_not_use_batchwise_valuation"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.base.metas["Stock Settings"]["do_not_use_batchwise_valuation"].mask = 0
+        self.base.metas["Serial and Batch Entry"]["posting_datetime"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.base.metas["Serial and Batch Entry"]["posting_datetime"].mask = 0
+        session = self.module._Session("FLOW")
+        session.load_issues()
+        with self.assertRaises(PermissionError):
+            session.finish(lambda: self.single_stored.update(do_not_use_batchwise_valuation="1"))
+        self.assert_no_writes()
 
     def test_exact_serial_history_values_once_with_and_without_serial_wise_valuation(self):
         for enabled in (True, False):

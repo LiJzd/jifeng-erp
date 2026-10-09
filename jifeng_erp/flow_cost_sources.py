@@ -247,6 +247,7 @@ class _Session:
         self.loss_batches = None
         self.loss_tables = {}
         self.loss_authorization = {}
+        self.loss_single_values = {}
         self.ledger = {}
         self.repost_state = None
         self.receipt_fees = {}
@@ -1034,6 +1035,21 @@ class _Session:
         if not fields or not isinstance(name, str) or not name:
             _invalid()
         key = doctype, name
+        if doctype == "Stock Settings":
+            # Native valuation reads a Single from tabSingles. It has no
+            # ordinary source table/list query; keep its exact stored values
+            # and original document permissions in the same source closure.
+            if name != doctype or configured:
+                _invalid()
+            _fields(doctype, fields)
+            doc = frappe.get_doc(doctype)
+            doc.check_permission("read")
+            state = self._loss_single_state(fields, doc)
+            if doctype in self.loss_single_values and self.loss_single_values[doctype] != (fields, state):
+                _deny()
+            self.loss_single_values[doctype] = fields, state
+            self.documents[key] = doc, _freeze(doc), "read", fields
+            return doc
         if key in self.documents:
             doc, _state, permission, previous_fields = self.documents[key]
             fields |= previous_fields
@@ -1068,6 +1084,32 @@ class _Session:
             self.children[doctype, name, field] = children
             self.loss_tables[doctype, name, field] = childtype, child_fields
         return doc
+
+    def _loss_single_state(self, fields, document=None):
+        doctype = "Stock Settings"
+        if (set(fields) != {"name", "modified", "do_not_use_batchwise_valuation"}
+                or not frappe.get_meta(doctype).issingle):
+            _invalid()
+        # Native Document.load_from_db uses this uncached tabSingles API.
+        # Preserve absent values as well as raw text; a change without a
+        # modified update must still invalidate the request.
+        stored = frappe.db.get_singles_dict(doctype)
+        if not isinstance(stored, dict) or stored.get("name") not in (None, "", doctype):
+            _invalid()
+        flag = _number(stored.get("do_not_use_batchwise_valuation"))
+        if flag not in (0, 1):
+            _invalid()
+        if document is not None and (document.name != doctype
+                or str(document.get("modified") or "") != str(stored.get("modified") or "")
+                or _number(document.get("do_not_use_batchwise_valuation")) != flag):
+            _invalid()
+        return tuple((field, field in stored, _freeze(stored.get(field))) for field in sorted(fields))
+
+    def _check_loss_singles(self):
+        for _doctype, (fields, saved) in self.loss_single_values.items():
+            _fields("Stock Settings", fields)
+            if self._loss_single_state(fields) != saved:
+                _deny()
 
     def load_losses(self):
         if self.loss_batches is not None:
@@ -1486,12 +1528,14 @@ class _Session:
         self._check_stage_values()
         self.repost_state = self._reposting()
         try:
-            loaded = {key: frappe.get_doc(*key) for key in self.documents}
+            loaded = {key: frappe.get_doc(key[0]) if key[0] in self.loss_single_values else frappe.get_doc(*key)
+                      for key in self.documents}
         except frappe.DoesNotExistError:
             _deny()
         # Reload all first; a later native permission hook can revoke an earlier
         # source. No DTO is returned until the whole accumulated graph passes.
         self._check_documents(loaded)
+        self._check_loss_singles()
         for doctype, filters, fields, parenttype, options, raw_state, native_state in self.queries:
             if fields is not None:
                 _fields(doctype, fields, parenttype)
@@ -1517,6 +1561,7 @@ class _Session:
             _deny()
         if any(_authorization(scope) != state for scope, state in self.loss_authorization.items()):
             _deny()
+        self._check_loss_singles()
 
     def _check_documents(self, loaded):
         if (self.receipt_dimensions is not None
