@@ -59,6 +59,9 @@ MANUFACTURE_FIELDS = {"work_order", "job_card", "total_additional_costs"}
 MANUFACTURE_QUANTITY_FIELDS = {"from_bom", "fg_completed_qty", "process_loss_qty"}
 MANUFACTURE_ITEM_FIELDS = {"is_finished_item", "secondary_item_type", "valuation_type",
                            "additional_cost", "landed_cost_voucher_amount"}
+LOSS_TYPE = "制造损耗出库"
+LOSS_PREFIX = "jf_production_loss_"
+LOSS_WORK_ORDER = LOSS_PREFIX + "work_order"
 TABLES = {
     material_returns.BUNDLE: (("entries", material_returns.BUNDLE_ENTRY, material_returns.BUNDLE_ENTRY_FIELDS),),
     FLOW: (("materials", "Jifeng Material Line", CHILD | {"item_code"}),),
@@ -237,6 +240,8 @@ class _Session:
         self.manufactures = None
         self.manufacture_batches = None
         self.manufacture_names = set()
+        self.loss_batches = None
+        self.loss_tables = {}
         self.ledger = {}
         self.repost_state = None
         self.receipt_fees = {}
@@ -995,9 +1000,112 @@ class _Session:
                 _invalid()
         self.ledger[doctype, doc.name] = rows
 
+    def _loss_reader(self, doctype, name):
+        """Freeze the loss proof's exact native documents and all child sets."""
+        from jifeng_erp import production_loss
+
+        fields = set(PARENTS.get(doctype, set())) | set(production_loss.PARENTS.get(doctype, set()))
+        if not fields or not isinstance(name, str) or not name:
+            _invalid()
+        key = doctype, name
+        if key in self.documents:
+            doc, _state, permission, previous_fields = self.documents[key]
+            fields |= previous_fields
+        else:
+            try:
+                doc = frappe.get_doc(doctype, name)
+            except frappe.DoesNotExistError:
+                _invalid()
+            permission = "read"
+        doc.check_permission(permission)
+        rows = self.records(doctype, {"name": name}, fields)
+        if (len(rows) != 1 or any(doc.get(field) != value for field, value in rows[0].items())
+                or ("company" in fields and doc.get("company") != self.company)):
+            _invalid()
+        self.documents[key] = doc, _freeze(doc), permission, fields
+        tables = {field: (childtype, set(child_fields))
+                  for field, childtype, child_fields in TABLES.get(doctype, ())}
+        configured = production_loss.TABLES.get(doctype, ())
+        if configured and isinstance(configured[0], str):
+            configured = (configured,)
+        for field, childtype, child_fields in configured:
+            if field in tables and tables[field][0] != childtype:
+                _invalid()
+            tables[field] = childtype, set(child_fields) | tables.get(field, (None, set()))[1]
+        for field, (childtype, child_fields) in tables.items():
+            _table(doctype, field, childtype)
+            children = self.records(childtype, {"parent": name}, child_fields, doctype)
+            actual = {row.name: row for row in doc.get(field) or []}
+            if len(actual) != len(doc.get(field) or []) or set(actual) != {row["name"] for row in children}:
+                _invalid()
+            for child in children:
+                if (child.get("parenttype") != doctype or child.get("parentfield") != field
+                        or any(actual[child["name"]].get(column) != value for column, value in child.items())):
+                    _invalid()
+            self.children[doctype, name, field] = children
+            self.loss_tables[doctype, name, field] = childtype, child_fields
+        return doc
+
+    def load_losses(self):
+        if self.loss_batches is not None:
+            return self.loss_batches
+        work_rows = self.raw(WO, {"jf_flow_order": self.flow.name})
+        parents = {}
+        if work_rows:
+            found = self.raw(SE, {"docstatus": 1, LOSS_WORK_ORDER: ["in", sorted(row["name"] for row in work_rows)]})
+            parents.update((row["name"], row) for row in found)
+        found = self.raw(SE, [[SE, "docstatus", "=", 1], [SE, "stock_entry_type", "=", LOSS_TYPE],
+                             ["Stock Entry Detail", "jf_flow_order", "=", self.flow.name]], distinct=True)
+        parents.update((row["name"], row) for row in found)
+        result, by_card, by_work = [], {}, {}
+        if parents:
+            from jifeng_erp import production_loss
+
+            if production_loss.LOSS_TYPE != LOSS_TYPE:
+                _invalid()
+            for name in sorted(parents):
+                doc = self._loss_reader(SE, name)
+                self._posted(SE, doc)
+                source = production_loss.read_loss_source(doc, read=self._loss_reader)
+                if ((source["flow_order"], source["company"], source["item_code"], source["stock_uom"]) !=
+                        (self.flow.name, self.company, self.fg.name, self.fg.stock_uom)
+                        or source["loss_entry"] != name):
+                    _invalid()
+                qty = _number(source["qty"])
+                if qty <= 0 or _number(source["lost_qty"]) != qty or _number(source["inventory_qty"]) != 0:
+                    _invalid()
+                card = self._loss_reader("Job Card", source["job_card"])
+                key = source["job_card"]
+                by_card[key] = by_card.get(key, Decimal(0)) + qty
+                if by_card[key] > _number(card.process_loss_qty):
+                    frappe.throw("同一报工的有效制造损耗出库累计数量超过已确认损耗，不能重复计入成本或补产覆盖")
+                work = self._loss_reader(WO, source["work_order"])
+                by_work[work.name] = by_work.get(work.name, Decimal(0)) + qty
+                if by_work[work.name] > _number(work.qty):
+                    frappe.throw("同一工单的有效制造损耗出库累计数量超过原工单库存数量，不能借用其他生产范围")
+                # Money belongs to the ordinary Material Issue SLE collector.
+                # This independent source contributes quantity coverage only.
+                result.append({"loss_issue": name, "work_order": source["work_order"],
+                    "job_card": source["job_card"], "company": self.company, "item_code": self.fg.name,
+                    "stock_uom": self.fg.stock_uom, "qty": qty, "inventory_qty": Decimal(0), "lost_qty": qty})
+        self.loss_batches = result
+        return result
+
+    def _check_loss_coverage(self):
+        by_work = {}
+        for source in self.load_losses():
+            by_work[source["work_order"]] = by_work.get(source["work_order"], Decimal(0)) + source["qty"]
+        for name, loss in by_work.items():
+            work = self._loss_reader(WO, name)
+            manufactured = [source for source in self.manufacture_batches or [] if source["work_order"] == name]
+            if (any(source["lost_qty"] for source in manufactured)
+                    or loss + sum((source["qty"] for source in manufactured), Decimal(0)) > _number(work.qty)):
+                frappe.throw("同一工单制造入库和损耗出库的覆盖量冲突，不能重复计入已确认损耗或借用其他生产范围")
+
     def load_issues(self):
         if self.issues is not None:
             return self.issues
+        self.load_losses()
         parents = {}
         for field in ("purpose", "stock_entry_type"):
             found = self.records(SE, [[SE, "docstatus", "=", 1], [SE, field, "=", "Material Issue"],
@@ -1013,9 +1121,14 @@ class _Session:
         selected = []
         issue_sources = {}
         self.material_return_sources = {}
+        loss_names = {source["loss_issue"] for source in self.load_losses()}
         for row in parents.values():
             doc = self.source(SE, row["name"])
             self._posted(SE, doc)
+            if (doc.get("stock_entry_type") == LOSS_TYPE
+                    or any(doc.get(field) for field in doc.as_dict() if field.startswith(LOSS_PREFIX))):
+                if doc.name not in loss_names:
+                    _invalid()
             if doc.get("purpose") != "Material Issue" or doc.get("jf_material_issue_flow") not in (None, "", self.flow.name):
                 _invalid()
             expected, targets = {}, set()
@@ -1408,6 +1521,10 @@ class _Session:
                 fieldname, childtype, fields = self.extra_tables[doctype, name]
                 _table(doctype, fieldname, childtype)
                 _fields(childtype, fields, doctype)
+            for (parenttype, parent, fieldname), (childtype, fields) in self.loss_tables.items():
+                if (parenttype, parent) == (doctype, name):
+                    _table(doctype, fieldname, childtype)
+                    _fields(childtype, fields, doctype)
         for (doctype, _name, _table_field), (child, fields) in self.receipt_tracking_tables.items():
             _fields(child, fields, doctype)
 
@@ -1482,6 +1599,26 @@ def manufacture_batch_candidates(flow_order):
     return rows
 
 
+def production_batch_candidates(flow_order):
+    """One closed read of actual stock-backed production and loss coverage."""
+    session = _Session(flow_order, include_stages=True)
+    session.load_issues()
+    _receipt_dto(session)
+    session.load_manufactures()
+    session._check_loss_coverage()
+    rows = [{"source_kind": "Manufacture", "source_name": source["manufacture"],
+             **{field: source[field] for field in ("work_order", "company", "item_code", "stock_uom", "qty", "inventory_qty", "lost_qty")}}
+            for source in session.manufacture_batches]
+    rows.extend({"source_kind": "Production Loss", "source_name": source["loss_issue"],
+                 **{field: source[field] for field in ("work_order", "job_card", "company", "item_code", "stock_uom", "qty", "inventory_qty", "lost_qty")}}
+                for source in session.load_losses())
+    state = _freeze(rows)
+    session.finish()
+    if _freeze(rows) != state:
+        _deny()
+    return rows
+
+
 def posted_flow_costs(flow_order):
     from jifeng_erp.flow_wage_cost_sources import posted_flow_wage_costs
 
@@ -1501,9 +1638,11 @@ def posted_flow_costs(flow_order):
                for row in manufactures):
             frappe.throw("同一生产范围已有制造附加费和工资计提，尚未核实附加费是否包含人工；请先明确费用来源，避免重复计入工资成本")
     manufacture_batches = session.manufacture_batches
-    computed_sources = _freeze((issues, receipts, manufactures, manufacture_batches))
+    loss_batches = session.load_losses()
+    session._check_loss_coverage()
+    computed_sources = _freeze((issues, receipts, manufactures, manufacture_batches, loss_batches))
     session.finish(additional_guard=wages["finish_guard"])
-    if _freeze((issues, receipts, manufactures, manufacture_batches)) != computed_sources:
+    if _freeze((issues, receipts, manufactures, manufacture_batches, loss_batches)) != computed_sources:
         _deny()
     return {"issues": issues["rows"], "receipts": receipts["rows"], "manufactures": manufactures, "totals": {
         "issue_material": issues["totals"]["material"], "receipt_material": receipts["totals"]["material"],
@@ -1511,5 +1650,5 @@ def posted_flow_costs(flow_order):
         "material": issues["totals"]["material"] + receipts["totals"]["material"] + manufacture_material,
         "processing": receipts["totals"]["processing"] + wages["total"], "other": receipts["totals"]["other"] + manufacture_other},
         "receipt_valuation": receipts["receipt_valuation"],
-        "wages": wages["rows"], "manufacture_batches": manufacture_batches,
+        "wages": wages["rows"], "manufacture_batches": manufacture_batches, "loss_batches": loss_batches,
         "currency": session.currency}

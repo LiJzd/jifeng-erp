@@ -1,0 +1,291 @@
+"""Loss-source classification and replacement costing; no business writes."""
+
+from copy import deepcopy
+from decimal import Decimal
+import importlib.util
+from pathlib import Path
+import unittest
+from unittest.mock import Mock, patch
+
+import test_receipt_batches as preview_fixture
+import test_flow_cost_sources as source_fixture
+
+
+class TestProductionLossSources(unittest.TestCase):
+    """Actual loss helper and cost collector over native-shaped documents/SLE."""
+
+    def setUp(self):
+        self.base = source_fixture.TestFlowCostSources(methodName="runTest")
+        self.base.setUp()
+        self.addCleanup(self.base.doCleanups)
+        self.install_loss_contract(self.base)
+
+    def install_loss_contract(self, native):
+        self.base = native
+        self.module, self.frappe = self.base.module, self.base.frappe
+        self.document_type = type(self.base.get_doc(self.module.FLOW, "FLOW"))
+        spec = importlib.util.spec_from_file_location("production_loss_cost_source_under_test",
+            Path(__file__).parents[1] / "jifeng_erp/production_loss.py")
+        self.loss = importlib.util.module_from_spec(spec)
+        with patch.object(self.frappe, "whitelist", lambda **kwargs: lambda function: function):
+            spec.loader.exec_module(self.loss)
+        import jifeng_erp
+        patches = patch.object(jifeng_erp, "production_loss", self.loss, create=True)
+        patches.start(); self.addCleanup(patches.stop)
+        self.tables = {}
+        for kind, fields in self.loss.PARENTS.items():
+            self.extend_schema(kind, fields)
+        for kind, tables in self.loss.TABLES.items():
+            self.tables[kind] = tables
+            for field, childtype, fields in tables:
+                self.extend_schema(childtype, fields)
+                self.base.metas[kind][field] = source_fixture.Record(
+                    fieldname=field, fieldtype="Table", permlevel=0, options=childtype)
+        self.frappe.get_doc.side_effect = self.get_doc
+
+    def extend_schema(self, kind, fields):
+        if kind not in self.base.metas:
+            self.base.schema(kind, fields, set())
+        else:
+            self.base.permitted[kind].update(fields)
+            for field in fields:
+                if field not in self.base.metas[kind]:
+                    self.base.metas[kind][field] = source_fixture.Record(
+                        fieldname=field, fieldtype="Float", permlevel=0)
+
+    def get_doc(self, kind, name, **kwargs):
+        doc = self.base.get_doc(kind, name, **kwargs)
+        for field, childtype, _fields in self.tables.get(kind, ()):
+            doc[field] = [self.document_type(deepcopy(row))
+                          for (row_kind, _), row in self.base.documents.items()
+                          if row_kind == childtype and row.parent == name
+                          and row.parenttype == kind and row.parentfield == field]
+        return doc
+
+    def child(self, kind, name, field, childname, **values):
+        _field, childtype, fields = next(table for table in self.tables[kind] if table[0] == field)
+        return self.base.add(childtype, childname, **({column: None for column in fields - {"name"}} | {
+            "parent": name, "parenttype": kind, "parentfield": field, "idx": 1} | values))
+
+    def seed_loss(self, name="LOSS", card="CARD", work="WO", qty=5):
+        self.base.documents[self.module.FLOW, "FLOW"].update(stock_uom="Nos", bom="FG-BOM")
+        if (self.module.WO, work) not in self.base.documents:
+            self.base.add(self.module.WO, work, company="JF", production_item="FG", jf_flow_order="FLOW",
+                stock_uom="Nos", bom_no="FG-BOM", qty=qty, wip_warehouse="RM-WH", track_semi_finished_goods=0)
+            self.child(self.module.WO, work, "operations", work + "-OP", operation="CAST")
+            self.child(self.module.WO, work, "required_items", work + "-RAW", item_code="RM",
+                stock_uom="Kg", required_qty=10)
+        if ("Job Card", card) not in self.base.documents:
+            self.base.add("Job Card", card, company="JF", work_order=work, production_item="FG", stock_uom="Nos",
+                operation="CAST", operation_id=work + "-OP", for_quantity=qty, process_loss_qty=qty,
+                total_completed_qty=0, pending_qty=0, is_subcontracted=0, track_semi_finished_goods=0,
+                is_corrective_job_card=0, finished_good=None, wip_warehouse="RM-WH")
+            self.child("Job Card", card, "time_logs", card + "-TIME", employee="EMPLOYEE",
+                from_time="2026-10-03 08:00:00", to_time="2026-10-03 09:00:00", completed_qty=0)
+        doc, row = self.base.issue(name, qty=10, factor=1, stock_entry_type=self.loss.LOSS_TYPE,
+            from_warehouse="RM-WH", work_order=None, job_card=None,
+            jf_production_loss_work_order=work, jf_production_loss_job_card=card,
+            jf_production_loss_qty=qty, jf_production_loss_no_residual=1, jf_production_loss_reason="全部破损，无残值",
+            jf_production_loss_request="738da24c-b07a-44bc-b008-6b4e811e3531",
+            jf_production_loss_source_version="2026-10-03 10:00:00")
+        doc.jf_production_loss_source_signature = self.loss.source_signature(
+            self.get_doc("Job Card", card), self.get_doc(self.module.WO, work))
+        return doc, row
+
+    def assert_no_writes(self):
+        for method in (self.frappe.db.commit, self.frappe.db.set_value, self.frappe.db.sql,
+                       self.frappe.new_doc, self.frappe.delete_doc):
+            method.assert_not_called()
+
+    def test_loss_stock_cost_is_counted_once_then_replacement_cancel_changes_exact_source_set(self):
+        loss, _row = self.seed_loss()
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["issue_material"],
+                          result["totals"]["manufacture_material"]), (40, 40, 0))
+        self.assertEqual(result["loss_batches"][0]["qty"], 5)
+        candidates = self.module.production_batch_candidates("FLOW")
+        self.assertEqual([(row["source_kind"], row["source_name"], row["qty"],
+                           row["inventory_qty"], row["lost_qty"]) for row in candidates],
+                         [("Production Loss", "LOSS", 5, 0, 5)])
+        replacement = self.base.manufacture("REPLACE", work="REPLACE-WO", material=40, qty=5)
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual(result["totals"]["material"], 80)
+        self.assertEqual({row["source_name"] for row in self.module.production_batch_candidates("FLOW")}, {"LOSS", "REPLACE"})
+        replacement.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 40)
+        loss.docstatus = 2
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["loss_batches"]), (0, []))
+        self.assert_no_writes()
+
+    def test_duplicate_card_or_other_cards_cannot_lend_work_order_loss_coverage(self):
+        self.seed_loss()
+        self.seed_loss("SECOND")
+        with self.assertRaisesRegex(ValueError, "同一报工"):
+            self.module.posted_flow_costs("FLOW")
+        self.base.documents[self.module.SE, "SECOND"].docstatus = 2
+        self.seed_loss("THIRD", card="OTHER-CARD")
+        with self.assertRaisesRegex(ValueError, "同一工单"):
+            self.module.material_issue_costs("FLOW")
+        self.assert_no_writes()
+
+    def test_actual_source_identity_signature_and_sle_are_required(self):
+        doc, row = self.seed_loss()
+        cases = [(doc, "stock_entry_type", "Material Issue"), (doc, "jf_production_loss_work_order", "OTHER"),
+            (doc, "jf_production_loss_no_residual", 0), (doc, "jf_production_loss_source_signature", "wrong"),
+            (row, "jf_flow_order", "OTHER"), (row, "transfer_qty", 9),
+            (self.base.documents[self.module.SLE, "LOSS-SLE"], "actual_qty", -9),
+            (self.base.documents["Job Card", "CARD"], "company", "OTHER")]
+        for target, field, value in cases:
+            old = target.get(field); target[field] = value
+            with self.subTest(field=field), self.assertRaises((ValueError, PermissionError)):
+                self.module.posted_flow_costs("FLOW")
+            target[field] = old
+        doc.stock_entry_type, doc.jf_production_loss_work_order = "Material Issue", "OTHER"
+        with self.assertRaises(ValueError): self.module.material_issue_costs("FLOW")
+        doc.stock_entry_type, doc.jf_production_loss_work_order = self.loss.LOSS_TYPE, "WO"
+        self.base.documents[self.module.SLE, "LOSS-SLE"].is_cancelled = 1
+        with self.assertRaises(ValueError): self.module.production_batch_candidates("FLOW")
+        self.assert_no_writes()
+
+    def test_hidden_source_child_fields_and_late_change_refuse_partial_cost(self):
+        self.seed_loss()
+        for kind, name in ((self.module.SE, "LOSS"), ("Job Card", "CARD"), ("Work Order Item", "WO-RAW")):
+            self.base.list_denied.add((kind, name))
+            with self.subTest(kind=kind), self.assertRaises(PermissionError):
+                self.module.posted_flow_costs("FLOW")
+            self.base.list_denied.clear()
+        self.base.hidden["Job Card"] = {"process_loss_qty"}
+        with self.assertRaises(PermissionError): self.module.posted_flow_costs("FLOW")
+        self.base.hidden.clear()
+        count = 0
+        def edit_after_source_read(filters):
+            nonlocal count
+            count += 1
+            if count == 2:
+                self.base.documents["Job Card Time Log", "CARD-TIME"].to_time = "2026-10-03 09:30:00"
+        self.base.list_hooks["Company"] = edit_after_source_read
+        with self.assertRaises(PermissionError): self.module.posted_flow_costs("FLOW")
+        self.assert_no_writes()
+
+    def test_combined_candidates_keep_existing_outsourced_semi_source_graph_closed(self):
+        cast, _receipt, _row = self.base.stage_chain(qty=10)
+        cast.docstatus = 2
+        for suffix, outsourced in (("CAST", 1), ("PLATE", 0)):
+            self.base.documents["Work Order Operation", suffix + "-OP"].is_subcontracted = outsourced
+            self.base.documents["Job Card", suffix + "-JC"].is_subcontracted = outsourced
+        self.base.documents["Purchase Order Item", "PO-STAGE"].update(fg_item="SEMI", job_card="CAST-JC", bom="CAST-BOM")
+        self.base.documents["Subcontracting Order Item", "SCO-STAGE"].update(item_code="SEMI", job_card="CAST-JC", bom="CAST-BOM")
+        self.base.documents["Subcontracting Receipt Item", "PLATE-FG"].update(item_code="SEMI", job_card="CAST-JC",
+            bom="CAST-BOM", rm_cost_per_qty=4, rm_supp_cost=40, service_cost_per_qty=1, amount=50)
+        self.base.documents["Subcontracting Receipt Supplied Item", "PLATE-RM"].update(main_item_code="SEMI", rm_item_code="RM",
+            consumed_qty=4, stock_uom="Kg", rate=10, amount=40)
+        self.base.documents[self.module.SLE, "PLATE-RM-SLE"].update(item_code="RM", stock_uom="Kg", actual_qty=-4,
+            stock_value_difference=-40)
+        self.base.documents[self.module.SLE, "PLATE-FG-SLE"].update(item_code="SEMI", stock_value_difference=50)
+        final = self.base.manufacture("FINAL", work="STAGE-WO", material=50, other=1, qty=10, raw_qty=10)
+        final.job_card, final.bom_no = "PLATE-JC", "PLATE-BOM"
+        self.base.documents["Stock Entry Detail", "FINAL-RM"].update(item_code="SEMI", uom="Nos", stock_uom="Nos")
+        self.base.documents[self.module.SLE, "FINAL-RM-SLE"].update(item_code="SEMI", stock_uom="Nos")
+        self.assertEqual([(row["source_kind"], row["source_name"], row["qty"])
+                          for row in self.module.production_batch_candidates("FLOW")], [("Manufacture", "FINAL", 10)])
+        self.assert_no_writes()
+
+
+class TestProductionLossPreview(unittest.TestCase):
+    def setUp(self):
+        self.base = preview_fixture.TestReceiptBatches(methodName="runTest")
+        self.base.setUp()
+        self.addCleanup(self.base.doCleanups)
+        self.preview = self.base.saving_preview()
+        self.base.workflow.stock_plan_quantity.return_value = Decimal(5)
+        self.loss = {"loss_issue": "LOSS", "work_order": "WO", "job_card": "JC",
+            "company": "JF", "item_code": "FG", "stock_uom": "Nos",
+            "qty": Decimal(5), "inventory_qty": Decimal(0), "lost_qty": Decimal(5)}
+        self.actual = {"totals": {"material": Decimal(40), "processing": Decimal(0), "other": Decimal(0)},
+            "issues": [{"issue": "LOSS", "material": Decimal(40)}], "receipts": [], "manufactures": [], "wages": [],
+            "manufacture_batches": [], "loss_batches": [self.loss], "currency": "CNY"}
+        # Isolate the preview's typed source/quantity contract. The complete
+        # inventory/source service is exercised separately below.
+        self.preview._read_actual_costs = Mock(side_effect=lambda: deepcopy(self.actual))
+        self.batch = type(self.preview.batches[0])(receipt_type="首次回货", reference_no="LOSS",
+            source_loss_issue="LOSS", source_manufacture=None, source_receipt=None, source_receipt_item=None,
+            received_qty=5, good_qty=0, rework_qty=0, pending_qty=0, lost_qty=5, extra_processing_amount=0)
+        self.preview.batches = [self.batch]
+
+    def test_all_loss_keeps_real_cost_unallocated_without_fake_finished_stock(self):
+        self.preview.validate()
+        self.assertEqual((self.preview.total_cost, self.preview.estimated_unit_cost, self.preview.unallocated_cost,
+                          self.preview.good_qty, self.preview.lost_qty), ("40", "0", "40", "0", "5"))
+        self.assertEqual(self.batch.estimated_cost, "0")
+        self.base.assert_no_posting()
+
+    def test_actual_source_collector_drives_preview_and_replacement_reverse_without_double_cost(self):
+        source = TestProductionLossSources(methodName="runTest")
+        source.install_loss_contract(self.base.native)
+        self.addCleanup(source.doCleanups)
+        self.base.receipt.docstatus = 2
+        source.seed_loss()
+        del self.preview._read_actual_costs
+        self.preview.validate()
+        self.assertEqual((self.preview.material_amount, self.preview.total_cost, self.preview.unallocated_cost),
+                         (Decimal(40), "40", "40"))
+        replacement_batch = self.replacement()
+        replacement = self.base.native.manufacture("REPLACEMENT", work="REPLACE-WO", material=40, qty=5)
+        self.preview.validate()
+        self.assertEqual((self.preview.total_cost, self.preview.estimated_unit_cost, self.preview.unallocated_cost),
+                         ("80", "16", "0"))
+        replacement.docstatus = 2
+        self.preview.batches.remove(replacement_batch)
+        self.preview.validate()
+        self.assertEqual((self.preview.total_cost, self.preview.unallocated_cost), ("40", "40"))
+        self.base.assert_no_posting()
+
+    def replacement(self):
+        source = {"manufacture": "REPLACEMENT", "work_order": "REPLACE-WO", "company": "JF", "item_code": "FG",
+            "stock_uom": "Nos", "qty": Decimal(5), "inventory_qty": Decimal(5), "lost_qty": Decimal(0)}
+        self.actual["manufacture_batches"] = [source]
+        self.actual["manufactures"] = [{"manufacture": "REPLACEMENT", "material": Decimal(40)}]
+        self.actual["totals"]["material"] = Decimal(80)
+        batch = type(self.batch)(receipt_type="首次回货", reference_no="REPLACEMENT", source_manufacture="REPLACEMENT",
+            source_loss_issue=None, source_receipt=None, source_receipt_item=None, received_qty=5,
+            good_qty=5, rework_qty=0, pending_qty=0, lost_qty=0, extra_processing_amount=0)
+        self.preview.batches.append(batch)
+        return batch
+
+    def test_replacement_adds_actual_input_then_cancel_restores_unallocated_loss(self):
+        replacement = self.replacement()
+        self.preview.validate()
+        self.assertEqual((self.preview.planned_qty, self.preview.total_cost, self.preview.estimated_unit_cost,
+                          self.preview.unallocated_cost, replacement.estimated_cost), (5, "80", "16", "0", "80"))
+        self.actual["manufacture_batches"], self.actual["manufactures"] = [], []
+        self.actual["totals"]["material"] = Decimal(40)
+        with self.assertRaisesRegex(ValueError, "未提交"):
+            self.preview.validate()
+        self.preview.batches.remove(replacement)
+        self.preview.validate()
+        self.assertEqual((self.preview.total_cost, self.preview.unallocated_cost, self.preview.good_qty), ("40", "40", "0"))
+        self.base.assert_no_posting()
+
+    def test_loss_cannot_borrow_classification_or_mix_duplicate_source_kinds(self):
+        cases = (("lost_qty", 4), ("good_qty", 1), ("pending_qty", 1), ("rework_qty", 1),
+                 ("extra_processing_amount", 1), ("source_manufacture", "LOSS"))
+        for field, value in cases:
+            previous = self.batch.get(field)
+            self.batch[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError): self.preview.validate()
+            self.batch[field] = previous
+        self.preview.batches.append(type(self.batch)(self.batch))
+        with self.assertRaisesRegex(ValueError, "重复"): self.preview.validate()
+        self.base.assert_no_posting()
+
+    def test_removing_loss_link_or_manufacture_link_cannot_lend_extra_coverage(self):
+        self.batch.source_loss_issue = None
+        with self.assertRaisesRegex(ValueError, "确认损耗"): self.preview.validate()
+        self.batch.source_loss_issue = "LOSS"
+        replacement = self.replacement(); replacement.source_manufacture = None
+        with self.assertRaisesRegex(ValueError, "确认损耗"): self.preview.validate()
+        self.base.assert_no_posting()
+
+
+if __name__ == "__main__": unittest.main()

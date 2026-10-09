@@ -10,6 +10,7 @@
   "source_receipt",
   "source_receipt_item",
   "source_manufacture",
+  "source_loss_issue",
   "received_qty",
   "good_qty",
   "rework_qty",
@@ -54,6 +55,14 @@
    "options": "Stock Entry",
    "read_only": 1,
    "description": "按制造单全部终成品入库量与父单确认损耗核对；工艺损耗只计一次。"
+  },
+  {
+   "fieldname": "source_loss_issue",
+   "fieldtype": "Link",
+   "label": "来源制造损耗出库单",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "description": "独立损耗来源没有成品入库；覆盖量全数列为损耗，实际材料费用按出库凭证计一次。"
   },
   {
    "fieldname": "received_qty",

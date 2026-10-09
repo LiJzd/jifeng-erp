@@ -37,6 +37,47 @@ frappe.ui.form.on("Jifeng Cost Preview", {
         const basis = frm.doc.cost_basis || (frm.doc.receipt_cost_loaded_at ? "历史实际费用口径待确认" : "流程估算");
         frm.set_intro(`费用口径：${basis}。实际口径保存或重新核算时重读当前已提交来源，撤销后净费用随之更新；无待保存修改时，请使用“重新核算当前实际费用”。正式制造损耗后补产，按有效来源核对新增投入，流程目标库存量保留原值。估算口径保留人工费用。试算不产生库存或财务凭证。`, "blue");
         if (!frm.is_new() && frm.doc.flow_order) {
+            frm.add_custom_button("读取已提交制造损耗出库批次", async () => {
+                const held = frm.doc, flowOrder = held.flow_order, previewName = held.name;
+                const original = JSON.stringify(held.batches || []);
+                const response = await frappe.call({ method: "jifeng_erp.workflow.production_batch_candidates",
+                    type: "GET", args: { flow_order: flowOrder } });
+                if (frm.doc !== held || frm.doc.name !== previewName || frm.doc.flow_order !== flowOrder) return;
+                if (JSON.stringify(frm.doc.batches || []) !== original) {
+                    frappe.msgprint("读取期间批次已修改，请保留当前分类并重新读取损耗来源。"); return;
+                }
+                const sources = (response.message || []).filter(source => source.source_kind === "Production Loss");
+                if (!sources.length) {
+                    frappe.msgprint("没有已提交且完整关联本流程单的制造损耗出库。现有批次未更改；已撤销来源请核对后删除。"); return;
+                }
+                let added = 0, bound = 0, conflicts = 0;
+                const changed = [], escape = value => frappe.utils.escape_html(String(value));
+                for (const source of sources) {
+                    const existing = (frm.doc.batches || []).filter(row => row.source_loss_issue === source.source_name);
+                    const accurate = row => row.receipt_type === "首次回货" && Number(row.received_qty) === Number(source.qty)
+                        && Number(row.lost_qty) === Number(source.lost_qty) && !row.source_manufacture
+                        && !row.source_receipt && !row.source_receipt_item
+                        && ["good_qty", "rework_qty", "pending_qty", "extra_processing_amount"].every(field => !Number(row[field] || 0));
+                    if (existing.length) {
+                        if (existing.length !== 1 || !accurate(existing[0]))
+                            changed.push(`${escape(source.source_name)}：库存入库 0，确认损耗 ${source.lost_qty} ${escape(source.stock_uom)}`);
+                        continue;
+                    }
+                    const manual = (frm.doc.batches || []).filter(row => row.reference_no === source.source_name);
+                    if (manual.length) {
+                        if (manual.length === 1 && !manual[0].source_loss_issue && accurate(manual[0])) {
+                            manual[0].source_loss_issue = source.source_name; frm.dirty(); bound++;
+                        } else conflicts++;
+                        continue;
+                    }
+                    frm.add_child("batches", { receipt_type: "首次回货", reference_no: source.source_name,
+                        source_loss_issue: source.source_name, received_qty: source.qty, lost_qty: source.lost_qty,
+                        good_qty: 0, rework_qty: 0, pending_qty: 0, extra_processing_amount: 0 });
+                    added++;
+                }
+                frm.refresh_field("batches");
+                frappe.msgprint(`新增 ${added} 条制造损耗出库批次${bound ? `；${bound} 条同单号完整损耗分类已绑定来源` : ""}${conflicts ? `；${conflicts} 条同单号分类或来源未吻合，请核对原行` : ""}。这些来源没有成品入库，覆盖量全数列为损耗。实际材料成本由出库凭证计一次；没有合格产出时费用保留为未分配成本。补产入库须另绑定真实制造来源。本操作不会自动保存或入账。${changed.length ? `<br>已有批次需核对，未覆盖分类：<br>${changed.join("<br>")}` : ""}`);
+            });
             frm.add_custom_button("读取已提交制造入库批次", async () => {
                 const flowOrder = frm.doc.flow_order, previewName = frm.doc.name;
                 const response = await frappe.call({
@@ -160,7 +201,8 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                         "此前带入的所选费用已无有效来源，材料费、加工费和其他费将清零。";
                     if (reader === "posted_flow_costs") {
                         const sources = [
-                            ...result.issues.map(row => row.source_material_issue
+                            ...result.issues.map(row => (result.loss_batches || []).some(source => source.loss_issue === row.issue)
+                                ? `制造损耗出库 ${row.issue}` : row.source_material_issue
                                 ? `领料退库 ${row.issue}（原领料 ${row.source_material_issue}）`
                                 : `物料出库 ${row.issue}`),
                             ...result.receipts.map(row => `委外回货 ${row.receipt}`),
@@ -168,12 +210,12 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                             ...(result.wages || []).map(row => `工资计提 ${row.journal_entry}（计薪 ${row.wage_entry}）`),
                         ];
                         message += `本次来源：${[...new Set(sources)].map(value => frappe.utils.escape_html(value)).join("、") || "无"}。制造只计凭证耗料与附加费，内部转料和成品入库价值不重复相加；计薪记录须已纳入有效工资计提才计入加工费，付款不再累加费用。`;
-                        const lossSources = (result.manufacture_batches || []).filter(row => Number(row.lost_qty));
+                        const lossSources = [...(result.manufacture_batches || []), ...(result.loss_batches || [])].filter(row => Number(row.lost_qty));
                         if (lossSources.length) {
                             const escape = value => frappe.utils.escape_html(String(value));
-                            message += `<br>已确认制造损耗：${lossSources.map(row => `${escape(row.manufacture)} ${escape(row.lost_qty)} ${escape(row.stock_uom)}`).join("、")}。请先读取制造入库批次并核对分类；保存会核对来源覆盖量和损耗，清空来源不能消除已确认损耗。`;
+                            message += `<br>已确认制造损耗：${lossSources.map(row => `${escape(row.loss_issue || row.manufacture)} ${escape(row.lost_qty)} ${escape(row.stock_uom)}`).join("、")}。请读取对应制造入库或损耗出库批次并核对分类；保存会核对来源覆盖量和损耗，清空来源不能消除已确认损耗。`;
                         }
-                        const coverage = (result.manufacture_batches || []).reduce((sum, row) => sum + Number(row.qty), 0);
+                        const coverage = [...(result.manufacture_batches || []), ...(result.loss_batches || [])].reduce((sum, row) => sum + Number(row.qty), 0);
                         if (coverage > Number(frm.doc.planned_qty))
                             message += `<br>流程目标库存量 ${Number(frm.doc.planned_qty)}，本次有效制造投入覆盖量 ${coverage}；损耗补产须全部绑定准确制造批次，保存时核对实际入库没有扩大目标。`;
                     }

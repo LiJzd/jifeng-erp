@@ -179,7 +179,7 @@ class JifengCostPreview(Document):
         return additional_input_qty
 
     def _validate_manufacture_batches(self):
-        linked = [row for row in self.batches if row.get("source_manufacture")]
+        linked = [row for row in self.batches if row.get("source_manufacture") or row.get("source_loss_issue")]
         actual_basis = self.get("cost_basis") == POSTED_ACTUAL
         if not linked and not actual_basis:
             return Decimal(0)
@@ -191,28 +191,43 @@ class JifengCostPreview(Document):
             result = getattr(self, "_cost_refresh_result", None)
             if result is None:
                 result = self._read_actual_costs()
-            candidates = result["manufacture_batches"]
+            candidates = result["manufacture_batches"] + result.get("loss_batches", [])
         else:
-            from jifeng_erp.workflow import manufacture_batch_candidates
+            if any(row.get("source_loss_issue") for row in linked):
+                from jifeng_erp.workflow import production_batch_candidates
 
-            candidates = manufacture_batch_candidates(self.flow_order)
-        sources = {source["manufacture"]: source for source in candidates}
+                candidates = production_batch_candidates(self.flow_order)
+            else:
+                from jifeng_erp.workflow import manufacture_batch_candidates
+
+                candidates = manufacture_batch_candidates(self.flow_order)
+        def identity(source):
+            if source.get("source_kind"):
+                return source["source_kind"], source["source_name"]
+            return ("Production Loss", source["loss_issue"]) if source.get("loss_issue") else ("Manufacture", source["manufacture"])
+        sources = {identity(source): source for source in candidates}
         seen = set()
         for row in linked:
-            if row.source_receipt or row.source_receipt_item:
-                frappe.throw("同一批次不能同时关联制造入库与委外回货")
-            if row.source_manufacture in seen:
-                frappe.throw("同一制造入库单不能重复带入试算")
-            seen.add(row.source_manufacture)
-            source = sources.get(row.source_manufacture)
+            if row.source_receipt or row.source_receipt_item or (row.get("source_manufacture") and row.get("source_loss_issue")):
+                frappe.throw("同一批次不能同时关联制造入库、制造损耗出库或委外回货，须保留一种准确来源")
+            key = ("Production Loss", row.source_loss_issue) if row.get("source_loss_issue") else ("Manufacture", row.source_manufacture)
+            if key in seen:
+                frappe.throw("同一制造或损耗来源不能重复带入试算")
+            seen.add(key)
+            source = sources.get(key)
             if not source or (source["company"], source["item_code"]) != (self.company, self.item_code):
-                frappe.throw("来源制造单未提交、不可读或与本公司的终成品、流程单不一致；已撤销的批次请核对后删除")
+                frappe.throw("来源制造或损耗单未提交、不可读或与本公司的终成品、流程单不一致；已撤销的批次请核对后删除")
             if row.receipt_type != "首次回货":
                 frappe.throw("制造入库批次须按首次回货核对新产出，不能转作返工回货或待检处理")
             if Decimal(str(source["qty"])) != Decimal(str(row.received_qty or 0)):
                 frappe.throw("来源制造入库量与确认损耗已变化，请读取来源并核对批次分类后保存")
             if Decimal(str(row.lost_qty or 0)) < source["lost_qty"]:
                 frappe.throw("试算批次损耗不能少于制造入库单已确认的工艺损耗")
+            if key[0] == "Production Loss" and (
+                    Decimal(str(row.lost_qty or 0)) != Decimal(str(source["qty"]))
+                    or any(Decimal(str(row.get(field) or 0)) for field in (
+                        "good_qty", "rework_qty", "pending_qty", "extra_processing_amount"))):
+                frappe.throw("制造损耗出库没有成品入库，覆盖量须全数列为损耗，不能借作合格、返工或待检数量及追加加工费")
         if actual_basis:
             # A replacement manufacturing entry consumes new input while the
             # Flow's deliverable stock target stays fixed. Permit only the
@@ -225,11 +240,11 @@ class JifengCostPreview(Document):
             additional = max(Decimal(0), coverage - plan) if loss else Decimal(0)
             if additional and (inventory > plan or additional > loss):
                 frappe.throw("制造入库已超过流程目标库存量，不能按损耗补产扩大试算数量，请核对流程计划和生产来源")
-            missing = [source["manufacture"] for source in candidates
-                       if (source["lost_qty"] or additional) and source["manufacture"] not in seen]
+            missing = [identity(source)[1] for source in candidates
+                       if (source["lost_qty"] or additional) and identity(source) not in seen]
             if missing:
-                frappe.throw("已过账制造单存在确认损耗，请读取制造入库批次并核对分类后再核算：" + "、".join(missing))
-            if additional and any(not row.get("source_manufacture")
+                frappe.throw("已过账制造或损耗单存在确认损耗，请读取对应来源批次并核对分类后再核算：" + "、".join(missing))
+            if additional and any(not (row.get("source_manufacture") or row.get("source_loss_issue"))
                     and row.receipt_type == "首次回货" and Decimal(str(row.received_qty or 0))
                     for row in self.batches):
                 frappe.throw("损耗补产的新增投入须全部关联准确制造来源，不能供未绑定的首次回货批次扩量")
