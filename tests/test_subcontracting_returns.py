@@ -57,8 +57,13 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.frappe.has_permission = lambda doctype, mode: True
         self.frappe.get_cached_value = lambda doctype, name, field: 1
         self.frappe.session = types.SimpleNamespace(user="qa")
+        self.tables = {"items": Row(fieldtype="Table", options="Subcontracting Receipt Item", permlevel=0),
+                       "supplied_items": Row(fieldtype="Table", options="Subcontracting Receipt Supplied Item", permlevel=0),
+                       "additional_costs": Row(fieldtype="Table", options="Landed Cost Taxes and Charges", permlevel=0)}
         self.frappe.get_meta = lambda doctype: types.SimpleNamespace(
-            get_field=lambda field: None, get_permlevel_access=lambda **kw: {0})
+            get_field=lambda field: self.tables.get(field) if doctype == "Subcontracting Receipt" else None,
+            get_permlevel_access=lambda **kw: {0})
+        self.frappe.share = types.SimpleNamespace(get_shared=lambda *args, **kwargs: [])
         self.model = types.ModuleType("frappe.model")
         self.model.get_permitted_fields = lambda *args, **kw: []
         utils = types.ModuleType("frappe.utils")
@@ -532,14 +537,29 @@ class SubcontractingReturnTest(unittest.TestCase):
     def test_source_cost_permission_and_mask_cannot_be_bypassed_by_draft_mapping(self):
         field = Row(mask=0, permlevel=0)
         self.frappe.get_meta = lambda doctype: types.SimpleNamespace(
-            get_field=lambda name: field if name == "service_cost_per_qty" else None,
-            get_permlevel_access=lambda **kw: set())
+            get_field=lambda name: field if name == "service_cost_per_qty" else self.tables.get(name),
+            get_permlevel_access=lambda **kw: {0} if kw.get("permission_type") == "read" else set())
         with self.assertRaisesRegex(PermissionError, "来源字段的权限"):
             self.subject.make_subcontract_return("SOURCE")
         self.model.get_permitted_fields = lambda *args, **kw: ["service_cost_per_qty"]
         field.mask = 1
         with self.assertRaisesRegex(PermissionError, "被遮蔽"):
             self.subject.make_subcontract_return("SOURCE")
+
+    def test_parent_tables_use_read_and_mask_levels_instead_of_scalar_projection(self):
+        # Actual Frappe 16 scalar projection excludes all three Table fields.
+        self.assertEqual(self.model.get_permitted_fields("Subcontracting Receipt"), [])
+        self.subject._read_source_fields(self.source)
+        self.tables["supplied_items"].permlevel = 1
+        with self.assertRaisesRegex(PermissionError, "明细表的权限"):
+            self.subject._read_source_fields(self.source)
+        self.tables["supplied_items"].permlevel = 0
+        self.tables["supplied_items"].mask = 1
+        self.frappe.get_meta = lambda doctype: types.SimpleNamespace(
+            get_field=lambda name: self.tables.get(name) if doctype == "Subcontracting Receipt" else None,
+            get_permlevel_access=lambda **kw: {0} if kw.get("permission_type") == "read" else set())
+        with self.assertRaisesRegex(PermissionError, "被遮蔽明细表"):
+            self.subject._read_source_fields(self.source)
 
 
 if __name__ == "__main__":

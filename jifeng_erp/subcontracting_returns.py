@@ -78,10 +78,26 @@ def _read_fields(doctype, fields, parenttype=None):
 
 def _read_source_fields(source):
     _read_fields(RECEIPT, {"company", "supplier", "supplier_warehouse", "posting_date", "posting_time",
-                           "docstatus", "is_return", "items", "supplied_items", "additional_costs"})
+                           "docstatus", "is_return"})
     for table, child in (("items", "Subcontracting Receipt Item"),
                          ("supplied_items", "Subcontracting Receipt Supplied Item"),
                          ("additional_costs", "Landed Cost Taxes and Charges")):
+        # get_permitted_fields projects database columns and excludes Tables.
+        # Check the parent Table's actual read/mask level independently; still
+        # enforce the full child field projection before copying source facts.
+        meta = frappe.get_meta(RECEIPT)
+        field = meta.get_field(table)
+        levels = set(meta.get_permlevel_access(permission_type="read", user=frappe.session.user))
+        if 0 not in levels and frappe.share.get_shared(RECEIPT, frappe.session.user,
+                                                       rights=["read"], limit=1):
+            levels.add(0)
+        if (not field or field.fieldtype != "Table" or field.options != child
+                or (field.permlevel or 0) not in levels):
+            frappe.throw("没有完整读取原收回明细表的权限", frappe.PermissionError)
+        mask_levels = meta.get_permlevel_access(permission_type="mask", user=frappe.session.user)
+        if (frappe.session.user != "Administrator" and field.get("mask")
+                and (field.permlevel or 0) not in mask_levels):
+            frappe.throw("没有读取原收回被遮蔽明细表的权限", frappe.PermissionError)
         fields = {field for row in source.get(table) or [] for field in row.as_dict()
                   if not field.startswith("_")}
         _read_fields(child, fields, RECEIPT)
