@@ -63,10 +63,15 @@ class FixedCostEngine(cost_models.TestFlowCostSources):
         self.scopes, self.native_options, self.external_calls, self.script_calls = [], [], [], []
         self.source_callback, self.external_callback = None, None
         self.hooks = {dt: ["source"] for dt in (self.module.FLOW, self.module.WO)}
-        class CostMeta(cost_models.Meta):
-            def get_table_fields(inner):
-                return [field for field in inner.fields if field.fieldtype == "Table"]
-        self.frappe.get_meta = lambda kind: CostMeta(self, kind)
+        # Keep the captured native GL columns exposed by the base harness.
+        # The scoped Engine also needs table metadata, but must not replace
+        # the original Meta instance and discard its installed interfaces.
+        base_get_meta = self.frappe.get_meta
+        def get_meta(kind):
+            result = base_get_meta(kind)
+            result.get_table_fields = lambda: [field for field in result.fields if field.fieldtype == "Table"]
+            return result
+        self.frappe.get_meta = get_meta
         source = types.ModuleType("jifeng_erp.sample_source_permissions")
         def unscoped(user=None, doctype=None):
             self.external_calls.append(("unscoped", doctype))
