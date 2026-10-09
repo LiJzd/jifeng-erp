@@ -53,7 +53,7 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                     .filter(row => row.source_manufacture).map(row => [row.source_manufacture, row]));
                 const manualReferences = new Set((frm.doc.batches || [])
                     .filter(row => !row.source_manufacture && row.reference_no).map(row => row.reference_no));
-                let added = 0, conflicts = 0;
+                let added = 0, bound = 0, conflicts = 0;
                 const changed = [], escape = value => frappe.utils.escape_html(String(value));
                 for (const source of candidates) {
                     const row = existing.get(source.manufacture);
@@ -63,7 +63,22 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                             changed.push(`${escape(source.manufacture)}：实际入库 ${source.inventory_qty}，确认损耗 ${source.lost_qty}，覆盖量 ${source.qty} ${escape(source.stock_uom)}`);
                         continue;
                     }
-                    if (manualReferences.has(source.manufacture)) { conflicts++; continue; }
+                    if (manualReferences.has(source.manufacture)) {
+                        const manual = (frm.doc.batches || []).filter(row => !row.source_manufacture
+                            && row.reference_no === source.manufacture);
+                        if (manual.length === 1 && !manual[0].source_receipt && !manual[0].source_receipt_item
+                            && manual[0].receipt_type === "首次回货"
+                            && Number(manual[0].received_qty) === Number(source.qty)
+                            && Number(manual[0].lost_qty || 0) >= Number(source.lost_qty)) {
+                            // Reading this exact document may bind an existing
+                            // matching manual batch; keep all classifications.
+                            manual[0].source_manufacture = source.manufacture;
+                            existing.set(source.manufacture, manual[0]);
+                            frm.dirty();
+                            bound++;
+                        } else conflicts++;
+                        continue;
+                    }
                     const child = frm.add_child("batches", {
                         receipt_type: "首次回货", reference_no: source.manufacture,
                         source_manufacture: source.manufacture, received_qty: source.qty,
@@ -73,7 +88,7 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                     added++;
                 }
                 frm.refresh_field("batches");
-                frappe.msgprint(`新增 ${added} 条制造入库批次${conflicts ? `；${conflicts} 条单号与未绑定制造来源的批次相同，已跳过，请先核对原批次` : ""}。同一制造单的终成品分行合并，确认损耗只计一次，其余先列为待检；请核对合格、返工、待检分类后保存。已过账实际费用口径不能遗漏有确认损耗的制造批次。本操作不会自动保存或入账。${changed.length ? `<br><br>以下来源或分类需重新核对，已有人工分类未覆盖：<br>${changed.join("<br>")}` : ""}`);
+                frappe.msgprint(`新增 ${added} 条制造入库批次${bound ? `；${bound} 条同单号手工批次的覆盖量和损耗吻合，已绑定来源并保留分类` : ""}${conflicts ? `；${conflicts} 条单号与未绑定制造来源的批次相同但数量、类型或来源未吻合，已跳过，请核对原批次后重新读取` : ""}。同一制造单的终成品分行合并，确认损耗只计一次，其余先列为待检；请核对合格、返工、待检分类后保存。已过账实际费用口径不能遗漏有确认损耗的制造批次。本操作不会自动保存或入账。${changed.length ? `<br><br>以下来源或分类需重新核对，已有人工分类未覆盖：<br>${changed.join("<br>")}` : ""}`);
             });
             frm.add_custom_button("读取已提交委外回货批次", async () => {
                 const flowOrder = frm.doc.flow_order;

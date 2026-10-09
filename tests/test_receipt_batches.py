@@ -662,17 +662,19 @@ const frappe={ui:{form:{on:(_,h)=>handlers=h}},utils:{escape_html:v=>v.replace(/
  call:options=>{requests.push(options);return new Promise(resolve=>release=resolve);},msgprint:message=>messages.push(message)};
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe});
 (async()=>{
- const buttons={},manual={reference_no:'MANUAL',good_qty:2},classified={source_manufacture:'OLD',reference_no:'OLD',receipt_type:'首次回货',received_qty:5,good_qty:4,lost_qty:1};
- const doc={name:'CP',flow_order:'FLOW',batches:[manual,classified]},frm={doc,is_new:()=>false,set_intro:()=>{},set_df_property:()=>{},
+ const buttons={},manual={reference_no:'MANUAL',good_qty:2},matching={reference_no:'MATCH',receipt_type:'首次回货',received_qty:5,good_qty:3,rework_qty:1,lost_qty:1},classified={source_manufacture:'OLD',reference_no:'OLD',receipt_type:'首次回货',received_qty:5,good_qty:4,lost_qty:1};
+ const doc={name:'CP',flow_order:'FLOW',batches:[manual,matching,classified]},frm={doc,is_new:()=>false,set_intro:()=>{},set_df_property:()=>{},dirty:()=>{},
  add_custom_button:(name,handler)=>buttons[name]=handler,add_child:(_,values)=>{added.push(values);doc.batches.push(values);return values;},refresh_field:()=>{}};
  handlers.refresh(frm);const read=buttons['读取已提交制造入库批次'];
  const stale=read();doc.flow_order='OTHER';release({message:[{manufacture:'WRONG'}]});await stale;assert.equal(added.length,0);assert.equal(messages.length,0);
  doc.flow_order='FLOW';const next=read();release({message:[
   {manufacture:'MAKE<1>',qty:5,inventory_qty:4,lost_qty:1,stock_uom:'Nos'},
   {manufacture:'MANUAL',qty:2,inventory_qty:2,lost_qty:0,stock_uom:'Nos'},
+  {manufacture:'MATCH',qty:5,inventory_qty:4,lost_qty:1,stock_uom:'Nos'},
   {manufacture:'OLD',qty:6,inventory_qty:4,lost_qty:2,stock_uom:'Nos'}]});await next;
  assert.equal(added.length,1);assert.equal(added[0].source_manufacture,'MAKE<1>');assert.equal(added[0].received_qty,5);assert.equal(added[0].lost_qty,1);assert.equal(added[0].pending_qty,4);
  assert.deepEqual(manual,{reference_no:'MANUAL',good_qty:2});assert.equal(classified.received_qty,5);assert.equal(classified.good_qty,4);assert.equal(classified.lost_qty,1);
+ assert.equal(matching.source_manufacture,'MATCH');assert.equal(matching.good_qty,3);assert.equal(matching.rework_qty,1);assert.equal(matching.lost_qty,1);
  assert.match(messages[0],/已跳过.*确认损耗只计一次.*未覆盖/);assert.match(messages[0],/OLD：实际入库 4，确认损耗 2，覆盖量 6 Nos/);
  assert.ok(requests.every(request=>request.method==='jifeng_erp.workflow.manufacture_batch_candidates'));
 })().catch(error=>{console.error(error);process.exitCode=1;});
