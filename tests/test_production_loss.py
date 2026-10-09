@@ -205,7 +205,7 @@ class ProductionLossTests(unittest.TestCase):
         self.store["Item", "RM"].has_batch_no = 1
         with self.assertRaisesRegex(ValueError, "逐批核对"): self.source()
 
-    def test_orphan_plan_refs_and_subassembly_full_loss_remain_rejected(self):
+    def test_orphan_plan_and_subassembly_references_remain_rejected(self):
         for field in ("production_plan", "production_plan_item", "production_plan_sub_assembly_item"):
             self.work[field] = "PLAN-SOURCE"
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "生产计划"):

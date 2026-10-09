@@ -27,11 +27,11 @@ PARENTS = {
         "for_quantity", "total_completed_qty", "process_loss_qty", "pending_qty", "is_subcontracted",
         "track_semi_finished_goods", "is_corrective_job_card", "finished_good", "wip_warehouse"},
     "Work Order": IDENTITY | {"company", "production_item", "stock_uom", "bom_no", "jf_flow_order", "qty",
-        "track_semi_finished_goods", "wip_warehouse", "status", "produced_qty",
+        "track_semi_finished_goods", "wip_warehouse", "fg_warehouse", "status", "produced_qty",
         "production_plan", "production_plan_item", "production_plan_sub_assembly_item", "sales_order", "sales_order_item"},
     "Jifeng Flow Order": IDENTITY | {"company", "item_code", "stock_uom", "bom", "sales_order", "sales_order_item"},
-    "Production Plan": IDENTITY | {"company", "status"},
-    "BOM": IDENTITY | {"company", "item", "uom", "is_active"},
+    "Production Plan": IDENTITY | {"company", "status", "combine_sub_items"},
+    "BOM": IDENTITY | {"company", "item", "uom", "is_active", "quantity"},
     "Sales Order": IDENTITY | {"company"},
     "Item": {"name", "modified", "stock_uom", "is_stock_item", "has_serial_no", "has_batch_no"},
     "Warehouse": {"name", "modified", "company", "is_group", "disabled"},
@@ -51,7 +51,11 @@ TABLES = {
     "Jifeng Flow Order": (("materials", "Jifeng Material Line", CHILD | {"item_code"}),),
     "Production Plan": (("po_items", "Production Plan Item", CHILD | {
         "item_code", "jf_flow_order", "bom_no", "planned_qty", "stock_uom", "sales_order", "sales_order_item",
-        "item_reference", "material_request", "material_request_item", "product_bundle_item"}),),
+        "item_reference", "material_request", "material_request_item", "product_bundle_item"}),
+        ("sub_assembly_items", "Production Plan Sub Assembly Item", CHILD | {
+            "production_item", "parent_item_code", "production_plan_item", "bom_no", "bom_level",
+            "type_of_manufacturing", "qty", "uom", "stock_uom", "sales_order", "sales_order_item", "fg_warehouse"})),
+    "BOM": (("items", "BOM Item", CHILD | {"item_code", "bom_no", "stock_uom", "stock_qty"}),),
     "Sales Order": (("items", "Sales Order Item", CHILD | {
         "item_code", "qty", "uom", "stock_uom", "conversion_factor", "stock_qty"}),),
 }
@@ -141,6 +145,8 @@ def source_signature(card, work):
     # Flow vouchers unchanged while freezing the new exact sales-line link.
     if work.get("production_plan"):
         state["plan_sales"] = {field: work.get(field) for field in ("sales_order", "sales_order_item")}
+    if work.get("production_plan_sub_assembly_item"):
+        state["subassembly_warehouse"] = work.get("fg_warehouse")
     return hashlib.sha256(json.dumps(state, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -155,6 +161,11 @@ def _plan_source(work, flow, read):
             work.get("production_plan_sub_assembly_item"))
     if not any(refs):
         return None, None
+    if refs[0] and refs[2] and not refs[1]:
+        scope = read_work_flow_source(work, read=read)
+        if scope["flow"].name != flow.name:
+            frappe.throw("子装配工单的父流程来源不一致")
+        return scope["plan"], scope["row"]
     if not refs[0] or not refs[1] or refs[2]:
         frappe.throw("生产计划损耗必须关联准确普通成品行；双引用或子装配全损耗暂不支持")
     plan = read("Production Plan", refs[0])
@@ -197,7 +208,152 @@ def _plan_source(work, flow, read):
     return plan, row
 
 
+def read_plan_subassembly_source(plan, row_name, *, read, arranging=False):
+    """One uncombined, direct in-house child of an exact final Flow plan row.
+
+    This is a pure source reader for both the native factory (before a WO
+    exists) and its later loss/cost readers. It acquires no locks or writes;
+    callers own complete table permissions, current reads and change closure.
+    """
+    plan.check_permission("read")
+    rows = [row for row in plan.get("sub_assembly_items") or [] if row.name == row_name]
+    if (plan.docstatus != 1 or plan.get("combine_sub_items") or len(rows) != 1):
+        frappe.throw("子装配损耗必须来自已提交生产计划的单一未合并子装配行")
+    row = rows[0]
+    if (row.get("parent") != plan.name or row.get("parenttype") != "Production Plan"
+            or row.get("parentfield") != "sub_assembly_items" or row.get("type_of_manufacturing") != "In House"
+            or not row.get("production_plan_item")):
+        frappe.throw("子装配必须是原生产计划准确 In House 行，不能使用外发或合并来源")
+    equivalents = [item for item in plan.get("sub_assembly_items") or []
+                   if item.get("production_plan_item") == row.production_plan_item
+                   and item.get("production_item") == row.production_item and item.get("bom_no") == row.bom_no]
+    if len(equivalents) != 1:
+        frappe.throw("同一父成品的相同子装配和 BOM 只能有一条准确计划行，不能重复占用需求")
+    parents = [parent for parent in plan.get("po_items") or [] if parent.name == row.production_plan_item]
+    if len(parents) != 1:
+        frappe.throw("子装配缺少唯一原生产计划成品行")
+    parent = parents[0]
+    if (parent.get("parent") != plan.name or parent.get("parenttype") != "Production Plan"
+            or parent.get("parentfield") != "po_items" or not parent.get("jf_flow_order")
+            or parent.get("item_reference") or parent.get("material_request")
+            or parent.get("material_request_item") or parent.get("product_bundle_item")):
+        frappe.throw("子装配父成品行必须保留单一准确流程和销售来源")
+    flow = read("Jifeng Flow Order", parent.jf_flow_order)
+    if (flow.name != parent.jf_flow_order or flow.get("docstatus") == 2 or flow.company != plan.company
+            or flow.item_code != parent.item_code or flow.get("bom") != parent.bom_no
+            or flow.stock_uom != parent.stock_uom or _qty(parent.get("planned_qty")) <= 0):
+        frappe.throw("子装配父成品行的流程、公司、商品、BOM 或库存单位不一致")
+    parent_bom = read("BOM", parent.bom_no)
+    bom = read("BOM", row.get("bom_no"))
+    item = read("Item", row.get("production_item"))
+    for document, code, unit in ((parent_bom, parent.item_code, parent.stock_uom),
+                                 (bom, row.production_item, row.get("stock_uom"))):
+        if (document.docstatus != 1 or document.company != plan.company or document.item != code
+                or document.uom != unit or _qty(document.get("quantity")) <= 0):
+            frappe.throw("子装配及父成品必须使用同公司已提交、商品和库存单位准确的 BOM")
+    if (parent_bom.name != parent.bom_no or bom.name != row.bom_no or item.name != row.production_item
+            or not item.get("is_stock_item") or item.stock_uom != row.get("stock_uom")
+            or row.get("uom") != row.get("stock_uom") or _qty(row.get("qty")) <= 0
+            or row.production_item == parent.item_code or row.get("parent_item_code") != parent.item_code
+            or _qty(row.get("bom_level")) != 0):
+        frappe.throw("本入口只支持父成品直属子装配，须核对商品、BOM 层级和库存单位")
+    components = [component for component in parent_bom.get("items") or []
+                  if component.item_code == row.production_item]
+    if (len(components) != 1 or components[0].get("bom_no") != row.bom_no
+            or components[0].get("stock_uom") != row.stock_uom
+            or _qty(components[0].get("stock_qty")) <= 0):
+        frappe.throw("子装配商品及 BOM 不能唯一对应父成品 BOM 的准确子项")
+    maximum = _qty(parent.planned_qty) * _qty(components[0].stock_qty) / _qty(parent_bom.quantity)
+    if flt(row.qty, row.precision("qty")) > flt(maximum, row.precision("qty")):
+        frappe.throw("子装配计划库存数量超过准确父成品 BOM 需求")
+    for field in ("sales_order", "sales_order_item"):
+        if ((row.get(field) or "") != (parent.get(field) or "")
+                or (parent.get(field) or "") != (flow.get(field) or "")):
+            frappe.throw("子装配、父成品和流程的准确销售来源不一致")
+    order_name, line_name = parent.get("sales_order"), parent.get("sales_order_item")
+    if bool(order_name) != bool(line_name):
+        frappe.throw("子装配父成品缺少准确销售订单明细")
+    if order_name:
+        order = read("Sales Order", order_name)
+        lines = [line for line in order.get("items") or [] if line.name == line_name]
+        if order.name != order_name or order.docstatus != 1 or order.company != plan.company or len(lines) != 1:
+            frappe.throw("子装配父成品销售来源必须是同公司已提交订单的准确明细")
+        line = lines[0]
+        if (line.get("parent") != order.name or line.get("parenttype") != "Sales Order"
+                or line.get("parentfield") != "items" or line.item_code != parent.item_code
+                or line.stock_uom != parent.stock_uom or not line.get("uom")
+                or _qty(line.qty) <= 0 or _qty(line.conversion_factor) <= 0 or _qty(line.stock_qty) <= 0
+                or (line.uom == line.stock_uom and _qty(line.conversion_factor) != 1)
+                or not _equal(_qty(line.qty) * _qty(line.conversion_factor), _qty(line.stock_qty), line, "stock_qty")):
+            frappe.throw("子装配父成品销售明细的商品、库存数量或换算不一致")
+    warehouse = read("Warehouse", row.fg_warehouse) if row.get("fg_warehouse") else None
+    if warehouse and (warehouse.name != row.fg_warehouse or warehouse.company != plan.company
+                      or warehouse.get("is_group") or warehouse.get("disabled")):
+        frappe.throw("子装配成品仓库必须是同公司启用的明细仓库")
+    if arranging:
+        if plan.get("status") in ("Closed", "Stopped", "Cancelled", "Draft"):
+            frappe.throw("停止、关闭或未提交的生产计划不能新增子装配损耗或补产")
+        if not bom.get("is_active") or not parent_bom.get("is_active"):
+            frappe.throw("子装配或父成品 BOM 已停用，不能新增损耗或补产")
+    return {"plan": plan, "row": row, "parent_row": parent, "flow": flow,
+            "bom": bom, "item": item, "warehouse": warehouse}
+
+
+def read_work_flow_source(work, *, read, arranging=False):
+    """Derive a child WO's parent Flow without setting a final-FG quantity link."""
+    if not work.get("production_plan_sub_assembly_item"):
+        return {"flow": read("Jifeng Flow Order", work.get("jf_flow_order"))}
+    if (not work.get("production_plan") or work.get("production_plan_item")
+            or work.get("jf_flow_order") or work.get("track_semi_finished_goods")):
+        frappe.throw("子装配工单必须关联单一准确生产计划子行，不能混用成品流程数量、双计划行或半成品工序来源")
+    plan = read("Production Plan", work.production_plan)
+    if plan.name != work.production_plan:
+        frappe.throw("子装配工单的准确原计划名称不一致")
+    scope = read_plan_subassembly_source(plan, work.production_plan_sub_assembly_item, read=read, arranging=arranging)
+    row, bom = scope["row"], scope["bom"]
+    if (work.company != plan.company or work.production_item != row.production_item
+            or work.bom_no != row.bom_no or work.stock_uom != row.stock_uom
+            or _qty(work.qty) <= 0 or _qty(work.qty) > _qty(row.qty)
+            or any((work.get(field) or "") != (row.get(field) or "") for field in ("sales_order", "sales_order_item"))):
+        frappe.throw("子装配工单的公司、商品、BOM、库存数量或销售来源不一致")
+    warehouse = read("Warehouse", work.get("fg_warehouse"))
+    if (not work.get("fg_warehouse") or warehouse.name != work.fg_warehouse or warehouse.company != work.company
+            or warehouse.get("is_group") or warehouse.get("disabled")
+            or row.get("fg_warehouse") and row.fg_warehouse != work.fg_warehouse):
+        frappe.throw("子装配工单成品仓库与准确原子装配来源不一致")
+    required, units = _required(work)
+    components = defaultdict(Decimal)
+    bom_units = {}
+    for component in bom.get("items") or []:
+        if _qty(component.get("stock_qty")):
+            if component.get("bom_no"):
+                frappe.throw("本入口子装配材料包含下层 BOM，请按多层生产流程办理")
+            if component.item_code in bom_units and bom_units[component.item_code] != component.stock_uom:
+                frappe.throw("子装配 BOM 同一材料的库存单位不一致")
+            components[component.item_code] += _qty(component.stock_qty) * _qty(work.qty) / _qty(bom.quantity)
+            bom_units[component.item_code] = component.stock_uom
+    if set(required) != set(components) or any(units[code] != bom_units[code] for code in required):
+        frappe.throw("子装配工单耗料必须完整对应其已提交 BOM 的准确库存材料")
+    for required_row in work.get("required_items") or []:
+        actual = required[required_row.item_code]
+        if not _equal(actual, components[required_row.item_code], required_row, "required_qty"):
+            frappe.throw("子装配工单耗料数量与准确 BOM 库存需求不一致")
+    scope["warehouse"] = warehouse
+    wip = read("Warehouse", work.get("wip_warehouse"))
+    if (not work.get("wip_warehouse") or wip.name != work.wip_warehouse or wip.company != work.company
+            or wip.get("is_group") or wip.get("disabled")):
+        frappe.throw("子装配工单必须使用本公司启用的准确在制仓库")
+    scope["wip_warehouse"] = wip
+    scope["materials"] = required
+    return scope
+
+
 def _arranging_plan(work, flow, read):
+    if work.get("production_plan_sub_assembly_item"):
+        scope = read_work_flow_source(work, read=read, arranging=True)
+        if scope["flow"].name != flow.name:
+            frappe.throw("子装配损耗的父流程来源不一致")
+        return
     plan, _row = _plan_source(work, flow, read)
     if plan:
         if plan.get("status") in ("Closed", "Stopped", "Cancelled", "Draft"):
@@ -211,10 +367,12 @@ def _source_context(card, work, flow, read):
             or work.get("track_semi_finished_goods") or card.get("track_semi_finished_goods")
             or card.get("is_subcontracted") or card.get("is_corrective_job_card")):
         frappe.throw("制造损耗出库仅支持已提交的普通制造工单和普通报工单")
-    if (card.company != work.company or work.company != flow.company
-            or work.get("jf_flow_order") != flow.name or work.production_item != flow.item_code
-            or card.production_item != work.production_item or work.bom_no != flow.get("bom")
-            or card.stock_uom != work.stock_uom or work.stock_uom != flow.stock_uom):
+    scope = read_work_flow_source(work, read=read)
+    child = bool(work.get("production_plan_sub_assembly_item"))
+    if (card.company != work.company or work.company != flow.company or scope["flow"].name != flow.name
+            or card.production_item != work.production_item or card.stock_uom != work.stock_uom
+            or not child and (work.get("jf_flow_order") != flow.name or work.production_item != flow.item_code
+                              or work.bom_no != flow.get("bom") or work.stock_uom != flow.stock_uom)):
         frappe.throw("损耗来源的公司、流程、商品、BOM 或库存单位不一致")
     _plan_source(work, flow, read)
     if card.get("finished_good") and card.finished_good != work.production_item:
@@ -263,7 +421,8 @@ def read_loss_source(doc, *, read, records=None, posted=False):
         frappe.throw("必须明确确认无可回收实物及残值，并填写实际损耗原因")
     card = read("Job Card", doc.get(PREFIX + "job_card"))
     work = read("Work Order", doc.get(PREFIX + "work_order"))
-    flow = read("Jifeng Flow Order", work.get("jf_flow_order"))
+    scope = read_work_flow_source(work, read=read)
+    flow = scope["flow"]
     loss = _source_context(card, work, flow, read)
     qty = _qty(doc.get(PREFIX + "qty"))
     if qty <= 0 or qty != loss:
@@ -273,7 +432,8 @@ def read_loss_source(doc, *, read, records=None, posted=False):
     if doc.get("from_warehouse") != work.wip_warehouse or doc.get("additional_costs"):
         frappe.throw("制造损耗只允许原工单在制仓库实际材料出库，不能追加预计费用")
     required, units = _required(work)
-    flow_items = {row.item_code for row in flow.get("materials") or []}
+    flow_items = (set(required) if work.get("production_plan_sub_assembly_item")
+                  else {row.item_code for row in flow.get("materials") or []})
     if not doc.get("items"):
         frappe.throw("制造损耗缺少实际材料出库明细")
     tracked = False
@@ -303,7 +463,9 @@ def read_loss_source(doc, *, read, records=None, posted=False):
         batch_sources.prove_loss_batches(doc, work, read=read, records=records, posted=posted)
     return {"loss_entry": doc.name, "work_order": work.name, "job_card": card.name, "flow_order": flow.name,
             "company": work.company, "item_code": work.production_item, "stock_uom": work.stock_uom,
-            "qty": qty, "lost_qty": qty, "inventory_qty": ZERO}
+            "qty": qty, "lost_qty": qty, "inventory_qty": ZERO,
+            "production_plan": work.get("production_plan"),
+            "production_plan_sub_assembly_item": work.get("production_plan_sub_assembly_item")}
 
 
 def _sql(query, values):
@@ -339,9 +501,16 @@ def _lock_work_scope(name):
     fields = ("jf_flow_order", "production_plan", "production_plan_item", "production_plan_sub_assembly_item")
     hint = {field: frappe.db.get_value("Work Order", name, field) for field in fields}
     hint["name"] = name
-    if hint["jf_flow_order"]:
-        _lock_source("Jifeng Flow Order", hint["jf_flow_order"])
-    _lock_native_plan_quantities(hint)
+    flows = {hint["jf_flow_order"]} if hint["jf_flow_order"] else set()
+    if hint["production_plan_sub_assembly_item"]:
+        if not hint["production_plan"] or hint["production_plan_item"]:
+            frappe.throw("子装配工单缺少单一准确生产计划来源")
+        flows.update(row.flow for row in _sql("SELECT jf_flow_order AS flow FROM `tabProduction Plan Item` "
+            "WHERE parent=%s AND parenttype='Production Plan' AND parentfield='po_items'", (hint["production_plan"],))
+            if row.get("flow"))
+    for flow_name in sorted(flows):
+        _lock_source("Jifeng Flow Order", flow_name)
+    _lock_native_plan_quantities(hint, flow_hints=flows)
     work = _lock_source("Work Order", name)
     if any((work.get(field) or None) != (hint[field] or None) for field in fields):
         frappe.throw("工单流程或生产计划来源已变化，请重新读取", frappe.TimestampMismatchError)
@@ -389,9 +558,20 @@ def _lock_single_source(doctype, name):
 
 
 def _authorized_read(doctype, name):
+    doc = _internal_read(doctype, name)
+    check_loss_source_read_permissions(doc, doctype=doctype)
+    return doc
+
+
+def check_loss_source_read_permissions(doc, *, doctype=None):
+    """Authorize a complete callback Document without acquiring more locks."""
     from jifeng_erp.flow_quantity import check_quantity_fields
 
-    doc = _internal_read(doctype, name)
+    if doctype is not None and doc.get("doctype") and doc.doctype != doctype:
+        frappe.throw("损耗来源读取单据类型不一致")
+    doctype = doctype or doc.doctype
+    if doctype not in PARENTS:
+        frappe.throw("损耗来源读取类型不受支持")
     doc.check_permission("read")
     check_quantity_fields(doctype, PARENTS[doctype])
     for field, childtype, fields in TABLES.get(doctype, ()):
@@ -629,7 +809,7 @@ def validate_loss_entry(doc, method=None):
     if doc.docstatus != 2:
         if work.get("status") in ("Stopped", "Closed"):
             frappe.throw("停止或关闭的工单不能继续办理损耗出库")
-        _arranging_plan(work, reader("Jifeng Flow Order", work.jf_flow_order), reader)
+        _arranging_plan(work, reader("Jifeng Flow Order", source["flow_order"]), reader)
         _validate_budget(doc, source, work, card)
 
 
@@ -641,19 +821,24 @@ def before_cancel_loss_entry(doc, method=None):
                 frappe.throw("本工单已有损耗出库，请先逆序撤销损耗出库再撤销原转料或耗料")
             if doc.purpose == "Manufacture" and _qty(doc.get("process_loss_qty")):
                 work = _internal_read("Work Order", doc.work_order)
-                if work.get("jf_flow_order") and not work.get("track_semi_finished_goods"):
+                if (work.get("jf_flow_order") or work.get("production_plan_sub_assembly_item")) and not work.get("track_semi_finished_goods"):
                     work.check_permission("read")
                     if work.company != doc.company:
                         frappe.throw("原制造与工单公司不一致")
-                    _cancel_flow_capacity(doc, work, work.jf_flow_order)
+                    scope = read_work_flow_source(work, read=_authorized_read)
+                    _cancel_flow_capacity(doc, work, scope["flow"].name)
         return
     source = read_loss_source(doc, read=_authorized_read, records=_authorized_records, posted=True)
     _cancel_flow_capacity(doc, _internal_read("Work Order", source["work_order"]), source["flow_order"])
 
 
 def _cancel_flow_capacity(doc, work, flow_name):
-    flow = _lock_source("Jifeng Flow Order", flow_name)
     work = _lock_work_scope(work.name)
+    flow = _lock_source("Jifeng Flow Order", flow_name)
+    if work.get("production_plan_sub_assembly_item"):
+        scope = read_work_flow_source(work, read=_internal_read)
+        if scope["flow"].name != flow.name:
+            frappe.throw("撤销损耗的子装配父流程来源不一致")
     from jifeng_erp.workflow import stock_plan_quantity
 
     rows = _sql("""SELECT name, process_loss_qty FROM `tabStock Entry`
@@ -674,6 +859,10 @@ def _cancel_flow_capacity(doc, work, flow_name):
         maximum = _qty(row.get("qty" if reference == "production_plan_sub_assembly_item" else "planned_qty"))
         if committed + plan_others > maximum:
             frappe.throw("此损耗已经释放原生产计划补产预留，请先撤销补产工单或草稿，再撤销损耗出库")
+    if work.get("production_plan_sub_assembly_item"):
+        # Child stock units reserve only their exact plan child. Their loss
+        # cannot release or consume final-FG Flow quantity in another UOM.
+        return
     other_works = _sql("""SELECT qty, produced_qty, process_loss_qty, docstatus FROM `tabWork Order`
         WHERE jf_flow_order=%s AND docstatus<2 AND name!=%s ORDER BY name FOR UPDATE NOWAIT""", (flow.name, work.name))
     others = sum((_committed(row) for row in other_works), ZERO)
@@ -694,7 +883,7 @@ def _plan_reference(work):
     return reference, child, work.get(reference)
 
 
-def _lock_native_plan_quantities(work):
+def _lock_native_plan_quantities(work, *, flow_hints=None):
     """Pre-lock the exact installed native plan scope without waiting.
 
     The installed native quantity class locks one child and submitted peer WOs.
@@ -705,8 +894,19 @@ def _lock_native_plan_quantities(work):
     if not plan:
         return
     reference, child, row = _plan_reference(work)
-    if (not row or not _sql("SELECT name FROM `tabProduction Plan` WHERE name=%s FOR UPDATE NOWAIT", (plan,))
-            or not _sql(f"SELECT name FROM `tab{child}` WHERE name=%s AND parent=%s FOR UPDATE NOWAIT", (row, plan))):
+    if not row or not _sql("SELECT name FROM `tabProduction Plan` WHERE name=%s FOR UPDATE NOWAIT", (plan,)):
+        frappe.throw("工单缺少准确生产计划来源行，请先核对原计划")
+    if reference == "production_plan_sub_assembly_item":
+        for childtype, table in (("Production Plan Item", "po_items"),
+                                 ("Production Plan Sub Assembly Item", "sub_assembly_items")):
+            _sql(f"SELECT name FROM `tab{childtype}` WHERE parent=%s AND parenttype='Production Plan' "
+                 "AND parentfield=%s ORDER BY name FOR UPDATE NOWAIT", (plan, table))
+        current = frappe.get_doc("Production Plan", plan, for_update=True)
+        if (flow_hints is None or {item.get("jf_flow_order") for item in current.get("po_items") or []
+                if item.get("jf_flow_order")} != set(flow_hints)
+                or len([item for item in current.get("sub_assembly_items") or [] if item.name == row]) != 1):
+            frappe.throw("子装配原计划流程或来源行已变化，请重新读取", frappe.TimestampMismatchError)
+    elif not _sql(f"SELECT name FROM `tab{child}` WHERE name=%s AND parent=%s FOR UPDATE NOWAIT", (row, plan)):
         frappe.throw("工单缺少准确生产计划来源行，请先核对原计划")
     _sql(f"SELECT name FROM `tabWork Order` WHERE production_plan=%s AND {reference}=%s "
          "AND docstatus<2 AND name!=%s ORDER BY name FOR UPDATE NOWAIT", (plan, row, work.get("name")))
@@ -951,13 +1151,12 @@ def _request(value):
 def _creation_context(job_card):
     # Initial pointer lookup does not lock Card before the existing Flow lock.
     pointer = frappe.db.get_value("Job Card", job_card, "work_order")
-    flow_name = frappe.db.get_value("Work Order", pointer, "jf_flow_order") if pointer else None
-    flow = _authorized_read("Jifeng Flow Order", flow_name)
+    work = _authorized_read("Work Order", pointer)
+    flow = read_work_flow_source(work, read=_authorized_read)["flow"]
     flow.check_permission("write")
     from jifeng_erp.workflow import validate_flow_source
 
     validate_flow_source(flow)
-    work = _authorized_read("Work Order", pointer)
     card = _authorized_read("Job Card", job_card)
     loss = _source_context(card, work, flow, _authorized_read)
     if work.get("status") in ("Stopped", "Closed"):

@@ -15,7 +15,7 @@ class ProductionLossWorkOrderMixin:
         # Native set_process_loss_qty locks its Plan child before aggregating
         # losses. Acquire the linked Flow/Plan scope first, without changing the
         # native quantity validation or Plan/SO rollup method.
-        if (self.get("production_plan") and self.get("jf_flow_order")
+        if (self.get("production_plan") and (self.get("jf_flow_order") or self.get("production_plan_sub_assembly_item"))
                 and not self.get("track_semi_finished_goods") and self.get("name") and not self.is_new()):
             _lock_work_scope(self.name)
         return super().set_process_loss_qty(*args, **kwargs)
