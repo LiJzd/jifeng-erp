@@ -236,6 +236,24 @@ def _material_facts(source):
         totals[0] += qty
         totals[1] += amount
     for name, original in rows.items():
+        if not _number(original.get("qty")) and _number(original.get("rejected_qty")) > 0:
+            # Native v16.36 skips primary material assignment when accepted
+            # qty is zero. Prove the exact original consumption from active
+            # supplier-warehouse SLE instead of trusting that zero/stale cache.
+            ledger = _source_stock_entries(source)
+            for raw in source.get("supplied_items") or []:
+                if raw.get("reference_name") != name:
+                    continue
+                selected = [entry for entry in ledger if entry.voucher_detail_no == raw.name
+                            and entry.item_code == raw.rm_item_code
+                            and entry.warehouse == source.supplier_warehouse]
+                quantity = -sum((_number(entry.actual_qty) for entry in selected), Decimal(0))
+                value = -sum((_number(entry.stock_value_difference) for entry in selected), Decimal(0))
+                if (any(_number(entry.actual_qty) > 0 for entry in selected)
+                        or not _same(quantity, _number(raw.consumed_qty), raw)
+                        or value < 0 or not _same(value, _number(raw.amount), raw, "amount")):
+                    frappe.throw("原全部拒收材料的有效库存数量或价值与准确耗料不一致")
+            continue
         if original.get("rm_supp_cost") in (None, ""):
             frappe.throw("原委外收回缺少已过账材料金额，不能按零成本退回")
         amount = sum((value[1] for value in facts[name].values()), Decimal(0))
@@ -301,8 +319,8 @@ native result before stock/GL posting; no invoice is automatically credited.
                 frappe.throw("当前BOM或估值退料与原收回实际耗料比例不一致，不能提交错误库存或成本")
 
 
-def _stock_pools(source):
-    cached = getattr(source, "_jifeng_return_stock_pools", None)
+def _source_stock_entries(source):
+    cached = getattr(source, "_jifeng_return_stock_entries", None)
     if cached is not None:
         return cached
     if not frappe.has_permission("Stock Ledger Entry", "read"):
@@ -317,6 +335,30 @@ def _stock_pools(source):
     rows = frappe.get_list("Stock Ledger Entry", filters={"company": source.company,
         "voucher_type": RECEIPT, "voucher_no": source.name, "is_cancelled": 0},
         fields=sorted(fields), limit_page_length=0)
+    membership = frappe.get_all("Stock Ledger Entry", filters={"company": source.company,
+        "voucher_type": RECEIPT, "voucher_no": source.name, "is_cancelled": 0},
+        pluck="name", limit_page_length=0)
+    names = [row.name for row in rows]
+    if len(set(names)) != len(names) or set(names) != set(membership):
+        frappe.throw("没有完整核对原收回实物或材料库存来源的权限", frappe.PermissionError)
+    expected = {(original.name, original.item_code, warehouse)
+                for original in source.items
+                for field, warehouse in (("qty", original.get("warehouse")),
+                                          ("rejected_qty", original.get("rejected_warehouse")))
+                if _number(original.get(field))}
+    expected.update((raw.name, raw.rm_item_code, source.supplier_warehouse)
+                    for raw in source.get("supplied_items") or [] if _number(raw.get("consumed_qty")))
+    if any((row.voucher_detail_no, row.item_code, row.warehouse) not in expected for row in rows):
+        frappe.throw("原收回有效库存账存在无法对应准确实物或耗料的明细，请先核对")
+    source._jifeng_return_stock_entries = rows
+    return rows
+
+
+def _stock_pools(source):
+    cached = getattr(source, "_jifeng_return_stock_pools", None)
+    if cached is not None:
+        return cached
+    rows = _source_stock_entries(source)
     pools = {}
     for original in source.items:
         values = []
@@ -491,6 +533,10 @@ class SubcontractingReceiptReturnMixin:
 
     def calculate_additional_costs(self):
         if not cint(self.get("is_return")):
+            if (any(not _number(row.get("qty")) and _number(row.get("rejected_qty")) > 0
+                    for row in self.items)
+                    and any(_number(row.get("amount")) for row in self.get("additional_costs") or [])):
+                frappe.throw("全部拒收收回的附加费用分摊规则尚未明确，请先核对费用分摊，不能按零合格数量计算")
             return super().calculate_additional_costs()
         source = _return_source(self)
         originals = {row.name: row for row in source.items}
@@ -517,6 +563,7 @@ class SubcontractingReceiptReturnMixin:
 
     def calculate_items_qty_and_amount(self):
         if not cint(self.get("is_return")):
+            self._set_all_rejected_material_costs()
             return super().calculate_items_qty_and_amount()
         source = _return_source(self)
         originals = {row.name: row for row in source.items}
@@ -554,6 +601,48 @@ class SubcontractingReceiptReturnMixin:
             total_qty += _number(row.qty) + _number(row.get("rejected_qty"))
             total_amount += _number(row.amount)
         self.total_qty, self.total = float(total_qty), float(total_amount)
+
+    def _set_all_rejected_material_costs(self):
+        """Repair the native zero-accepted branch before its own calculation.
+
+        This runs on normal set_missing_values and submit validation; native
+        stock/GL writers and cancellation remain unchanged. New receipts use
+        native generated consumption/current valuation, not historical guesses.
+        """
+        for row in self.items:
+            if (row.get("secondary_item_type") or row.get("valuation_type")
+                    or _number(row.get("qty")) or _number(row.get("rejected_qty")) <= 0):
+                continue
+            if (not row.get("bom") or _number(row.get("landed_cost_voucher_amount"))
+                    or any(item.get("reference_name") == row.name
+                           and (item.get("secondary_item_type") or item.get("valuation_type"))
+                           for item in self.items)):
+                frappe.throw("全部拒收含副产品、无BOM或到岸成本，尚不能准确计算原生收回成本")
+            # Native writes rejected SLE inside `if item.warehouse`, although
+            # its accepted-warehouse validator skips accepted qty == 0.
+            # Apply the same explicit header default, never lose rejected FG
+            # while posting only supplier-warehouse consumption.
+            if not row.get("warehouse"):
+                row.warehouse = self.get("set_warehouse")
+            if not row.get("warehouse"):
+                frappe.throw("全部拒收收回仍须填写接收仓库和拒收仓库，请补齐后保存")
+            received = sum((_number(row.get(field)) for field in
+                            ("qty", "rejected_qty", "process_loss_qty")), Decimal(0))
+            if received <= 0 or _number(row.get("process_loss_qty")) < 0:
+                frappe.throw("全部拒收的覆盖数量或损耗无效")
+            material = Decimal(0)
+            for raw in self.get("supplied_items") or []:
+                if raw.get("reference_name") != row.name:
+                    continue
+                if (raw.get("main_item_code") != row.get("item_code")
+                        or raw.get("consumed_qty") in (None, "") or raw.get("rate") in (None, "")
+                        or min(_number(raw.consumed_qty), _number(raw.rate)) < 0):
+                    frappe.throw("全部拒收的准确耗料数量或估值缺失")
+                material += _number(raw.consumed_qty) * _number(raw.rate)
+            row.received_qty = float(received)
+            row.rm_supp_cost = float(material)
+            row.rm_cost_per_qty = float(material / received)
+            row.secondary_items_cost_per_qty = 0
 
     @frappe.whitelist()
     def get_secondary_items(self, recalculate_rate=False):

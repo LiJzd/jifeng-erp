@@ -108,6 +108,8 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.frappe.get_doc = get_source
         self.frappe.db = types.SimpleNamespace(sql=get_returns, exists=lambda *args, **kwargs: False)
         self.frappe.get_list = self.stock_entries
+        self.frappe.get_all = lambda *args, **kwargs: [row.name for row in self.stock_entries(*args,
+            filters=kwargs["filters"], limit_page_length=kwargs["limit_page_length"])]
 
         outer = self
 
@@ -129,6 +131,14 @@ class SubcontractingReturnTest(unittest.TestCase):
 
             def initialized_fields(self):
                 self.available_materials = {}
+
+            def calculate_items_qty_and_amount(self):
+                outer.native_calls.append("forward-cost")
+                return "native-cost-result"
+
+            def calculate_additional_costs(self):
+                outer.native_calls.append("forward-additional-cost")
+                return "native-additional-result"
 
         self.DocClass = type("Return", (self.subject.SubcontractingReceiptReturnMixin, Native), {})
         self.doc = self.document("CURRENT", [self.row()], cls=self.DocClass)
@@ -176,6 +186,13 @@ class SubcontractingReturnTest(unittest.TestCase):
                                     warehouse=warehouse, voucher_type="Subcontracting Receipt", voucher_no="SOURCE",
                                     voucher_detail_no=original.name, actual_qty=float(qty),
                                     stock_value_difference=float(qty * price), is_cancelled=0))
+        for index, raw in enumerate(self.source.get("supplied_items") or []):
+            raw.setdefault("name", "RAW-" + str(index))
+            if raw.consumed_qty:
+                rows.append(Row(name="SLE-" + raw.name, company="JF", item_code=raw.rm_item_code,
+                    warehouse="Supplier", voucher_type="Subcontracting Receipt", voucher_no="SOURCE",
+                    voucher_detail_no=raw.name, actual_qty=-raw.consumed_qty,
+                    stock_value_difference=-raw.amount, is_cancelled=0))
         return rows
 
     def test_partial_accepted_return_preserves_rejected_pool_and_native_validation(self):
@@ -367,6 +384,73 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.assertEqual(self.subject.validate_physical_return(self.doc)[2]["SRC-ROW"],
                          [Decimal(0), Decimal(1)])
 
+    def test_all_rejected_legacy_missing_cache_uses_exact_native_raw_stock_and_zero_fg_value(self):
+        self.loss_cost_fixture(rejected=2, loss=1)
+        self.source_row.update(qty=0, received_qty=3, amount=6, rm_supp_cost=None, rm_cost_per_qty=0)
+        self.doc.items = [self.row(warehouse="Rejected")]
+        self.assertEqual(self.doc.validate(), "native-result")
+        row, raw = self.doc.items[0], self.doc.supplied_items[0]
+        self.assertEqual((row.qty, row.rate, row.amount, raw.consumed_qty, raw.amount), (-1, 0, 0, -1, -8))
+        self.assertEqual((row.rm_supp_cost, row.service_cost_per_qty), (-8, 2))
+        self.assertEqual((self.source_row.rm_supp_cost, self.source_row.process_loss_qty), (None, 1))
+
+    def test_all_rejected_raw_stock_missing_hidden_or_changed_is_not_a_zero_cost_fallback(self):
+        for change in ("missing", "hidden", "quantity", "value"):
+            with self.subTest(change=change):
+                self.loss_cost_fixture(rejected=2, loss=1)
+                self.source_row.update(qty=0, received_qty=3, amount=6, rm_supp_cost=0)
+                self.source._jifeng_return_stock_entries = None
+                rows = self.stock_entries("Stock Ledger Entry", filters={"company": "JF",
+                    "voucher_type": "Subcontracting Receipt", "voucher_no": "SOURCE", "is_cancelled": 0},
+                    limit_page_length=0)
+                if change in ("missing", "hidden"):
+                    rows = [row for row in rows if row.item_code != "RAW"]
+                    if change == "missing":
+                        self.frappe.get_all = lambda *args, **kwargs: [row.name for row in rows]
+                elif change == "quantity":
+                    rows[-1].actual_qty = -2
+                else:
+                    rows[-1].stock_value_difference = -23
+                self.frappe.get_list = lambda *args, **kwargs: rows
+                with self.assertRaises((ValueError, PermissionError)):
+                    self.subject._material_facts(self.source)
+
+    def test_forward_all_rejected_seeds_exact_material_then_calls_native_cost_calculation(self):
+        self.doc.is_return = 0
+        self.doc.items = [self.row(qty=0, rejected_qty=2, received_qty=0, process_loss_qty=1,
+                                  rm_supp_cost=0, rm_cost_per_qty=999)]
+        self.doc.supplied_items = [Row(reference_name="RETURN-ROW", main_item_code="FG",
+                                     consumed_qty=3, rate=8)]
+        self.assertEqual(self.doc.calculate_items_qty_and_amount(), "native-cost-result")
+        row = self.doc.items[0]
+        self.assertEqual((row.received_qty, row.rm_supp_cost, row.rm_cost_per_qty), (3, 24, 8))
+        self.assertEqual(self.native_calls, ["forward-cost"])
+
+    def test_forward_all_rejected_unknown_valuation_and_additional_allocation_stop_before_native(self):
+        self.doc.is_return = 0
+        self.doc.items = [self.row(qty=0, rejected_qty=2, process_loss_qty=1)]
+        for field, value in (("bom", None), ("landed_cost_voucher_amount", 4)):
+            with self.subTest(field=field):
+                saved = self.doc.items[0].get(field)
+                self.doc.items[0][field] = value
+                with self.assertRaisesRegex(ValueError, "全部拒收"):
+                    self.doc.calculate_items_qty_and_amount()
+                self.doc.items[0][field] = saved
+        self.doc.additional_costs = [Row(amount=4)]
+        with self.assertRaisesRegex(ValueError, "附加费用分摊规则"):
+            self.doc.calculate_additional_costs()
+        self.assertEqual(self.native_calls, [])
+
+    def test_all_rejected_keeps_native_stock_writer_warehouse_gate_explicit(self):
+        self.doc.is_return = 0
+        self.doc.items = [self.row(qty=0, rejected_qty=2, process_loss_qty=0, warehouse=None)]
+        self.doc.supplied_items = []
+        with self.assertRaisesRegex(ValueError, "接收仓库和拒收仓库"):
+            self.doc.calculate_items_qty_and_amount()
+        self.doc.set_warehouse = "Good"
+        self.doc.calculate_items_qty_and_amount()
+        self.assertEqual(self.doc.items[0].warehouse, "Good")
+
     def test_accepted_and_rejected_prices_cannot_be_blended_into_one_native_row(self):
         self.loss_cost_fixture(rejected=1, loss=0)
         self.doc.items[0].rejected_qty = -1
@@ -405,6 +489,7 @@ class SubcontractingReturnTest(unittest.TestCase):
         for change in ("hidden", "wrong_row", "wrong_qty", "negative_value"):
             with self.subTest(change=change):
                 self.source._jifeng_return_stock_pools = None
+                self.source._jifeng_return_stock_entries = None
                 rows = self.stock_entries("Stock Ledger Entry", filters={"company": "JF",
                     "voucher_type": "Subcontracting Receipt", "voucher_no": "SOURCE",
                     "is_cancelled": 0}, limit_page_length=0)
@@ -417,7 +502,7 @@ class SubcontractingReturnTest(unittest.TestCase):
                 else:
                     rows[0].stock_value_difference = -1
                 self.frappe.get_list = lambda *args, **kwargs: rows
-                with self.assertRaisesRegex(ValueError, "准确实物库存来源"):
+                with self.assertRaises((ValueError, PermissionError)):
                     self.subject._stock_pools(self.source)
 
     def test_stock_value_permission_and_unsettled_source_repost_are_not_bypassed(self):

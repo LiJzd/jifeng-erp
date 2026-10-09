@@ -516,7 +516,7 @@ class TestFlowCostSources(unittest.TestCase):
         self.assertEqual((returned["inventory_value_change"], returned["valuation_cost_basis"],
                           returned["valuation_difference"]), (Decimal("-9.6"), Decimal("-7.2"), Decimal("-2.4")))
 
-    def test_accepted_rejected_and_lost_all_contribute_and_missing_qty_zero_cost_is_rejected(self):
+    def test_accepted_rejected_and_lost_all_contribute_and_qty_zero_cache_is_reconstructed(self):
         self.receipt(qty=60, rejected=10, loss=30)
         self.assertEqual(self.module.receipt_costs("FLOW")["totals"]["material"], 100)
         self.documents.clear()
@@ -524,7 +524,41 @@ class TestFlowCostSources(unittest.TestCase):
         _doc, item = self.receipt(qty=0, rejected=100, loss=0)
         self.assertEqual(self.module.receipt_costs("FLOW")["totals"], {"material": 100, "processing": 200, "other": 0})
         item.rm_supp_cost = None  # native qty=0 branch can leave a missing/stale source
-        with self.assertRaisesRegex(ValueError, "缺失"):
+        item.rm_cost_per_qty = None
+        item.amount = 200  # native original used only the persisted service fee
+        result = self.module.receipt_costs("FLOW")
+        self.assertEqual(result["totals"], {"material": 100, "processing": 200, "other": 0})
+        self.assertEqual(result["receipt_valuation"]["valuation_difference"], -300)
+
+    def test_native_all_rejected_stale_cache_loss_and_partial_return_use_actual_consumption(self):
+        _doc, item = self.receipt(qty=0, rejected=2, loss=1)
+        item.update(rm_supp_cost=0, rm_cost_per_qty=0, amount=6)
+        self.receipt("RETURN", qty=-1, loss=0, is_return=1, original="SCR", flow=None, from_rejected=True)
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual({field: result["totals"][field] for field in ("material", "processing", "other")},
+                         {"material": 2, "processing": 4, "other": 0})
+        self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 0,
+                        "valuation_cost_basis": 6, "valuation_difference": -6})
+        returned = next(row for row in result["receipts"] if row["receipt"] == "RETURN")
+        self.assertEqual((returned["inventory_value_change"], returned["valuation_cost_basis"],
+                          returned["valuation_difference"]), (0, -3, 3))
+
+    def test_all_rejected_missing_fees_or_material_sle_cannot_supply_partial_cost(self):
+        _doc, item = self.receipt(qty=0, rejected=100, loss=0)
+        item.update(rm_supp_cost=0, rm_cost_per_qty=None, amount=200)
+        for field in ("service_cost_per_qty", "additional_cost_per_qty"):
+            saved = item[field]
+            item[field] = None
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "缺失"):
+                self.module.receipt_costs("FLOW")
+            item[field] = saved
+        ledger = self.documents[self.module.SLE, "SCR-RM-SLE"]
+        ledger.stock_value_difference = -99
+        with self.assertRaisesRegex(ValueError, "实际材料库存价值"):
+            self.module.receipt_costs("FLOW")
+        ledger.stock_value_difference = -100
+        self.list_denied.add((self.module.SLE, ledger.name))
+        with self.assertRaises(PermissionError):
             self.module.receipt_costs("FLOW")
 
     def test_hidden_parent_return_child_and_ledger_reject_the_whole_cost(self):

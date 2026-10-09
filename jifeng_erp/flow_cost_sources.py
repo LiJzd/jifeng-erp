@@ -594,8 +594,12 @@ class _Session:
                        for item in self.table(SCR, doc.name, "items"))):
             frappe.throw("回货包含副产品、估值分摊或到岸费用，尚不能准确拆分三项流程成本，请核对原生来源")
         actual = next(item for item in doc.get("items") if item.name == row["name"])
-        if any(row.get(field) in (None, "") for field in
-               ("received_qty", "rm_supp_cost", "rm_cost_per_qty", "service_cost_per_qty", "additional_cost_per_qty", "amount")):
+        all_rejected = (not doc.get("is_return") and not _number(row.get("qty"))
+                        and _number(row.get("rejected_qty")) > 0)
+        required = ("received_qty", "service_cost_per_qty", "additional_cost_per_qty", "amount")
+        if not all_rejected:
+            required += ("rm_supp_cost", "rm_cost_per_qty")
+        if any(row.get(field) in (None, "") for field in required):
             frappe.throw("回货的已过账材料或费用来源缺失，不能按零成本补齐")
         received = _number(row["received_qty"])
         quantity = sum((_number(row.get(field)) for field in ("qty", "rejected_qty", "process_loss_qty")), Decimal(0))
@@ -613,17 +617,30 @@ class _Session:
             if not _same_quantity(item["amount"], _number(item.get("consumed_qty")) * _number(item["rate"]), child, "amount"):
                 _invalid()
             total += _number(item["amount"])
-        material = _number(row["rm_supp_cost"])
-        if (not _same_quantity(material, total, actual, "rm_supp_cost")
-                or not _same_quantity(_number(row["rm_cost_per_qty"]) * received, material, actual, "rm_supp_cost")):
-            frappe.throw("回货已过账材料费用与精确耗料来源不一致，不能提供部分成本")
-        rates = [_number(row[field]) for field in ("rm_cost_per_qty", "service_cost_per_qty", "additional_cost_per_qty")]
+        if all_rejected:
+            # Installed v16.36 clears rm_supp_cost when creating raw rows, then
+            # assigns the primary material caches only if accepted qty != 0.
+            # Neither its zero/stale cache nor primary amount proves consumed
+            # cost in this case. Exact raw rows AND their effective native SLE
+            # must agree; rejected FG SLE remains the separate stock value.
+            material = self._receipt_material_stock_value(doc, supplied)
+            if (not _same_quantity(material, total, actual, "rm_supp_cost")
+                    or _number(row["amount"]) < 0):
+                frappe.throw("全部拒收的实际材料库存价值与准确耗料不一致，不能猜测历史成本")
+            material_rate = material / received
+        else:
+            material = _number(row["rm_supp_cost"])
+            if (not _same_quantity(material, total, actual, "rm_supp_cost")
+                    or not _same_quantity(_number(row["rm_cost_per_qty"]) * received, material, actual, "rm_supp_cost")):
+                frappe.throw("回货已过账材料费用与精确耗料来源不一致，不能提供部分成本")
+            material_rate = _number(row["rm_cost_per_qty"])
+        rates = [material_rate, _number(row["service_cost_per_qty"]), _number(row["additional_cost_per_qty"])]
         if any(rate < 0 for rate in rates) or (material > 0) != (received > 0) and material:
             _invalid()
         processing, other = rates[1] * received, rates[2] * received
         if doc.get("is_return"):
             self._receipt_return_values(doc, row, supplied, actual)
-        elif not _same_quantity(row["amount"], material + processing + other, actual, "amount"):
+        elif not all_rejected and not _same_quantity(row["amount"], material + processing + other, actual, "amount"):
             frappe.throw("回货已过账金额包含无法准确拆分的分摊或费用，不能简化为三项流程成本")
         # Rates are persisted in Company currency. A foreign account amount in
         # additional_costs is not silently treated as company currency.
@@ -655,6 +672,19 @@ class _Session:
                 # may exclude same-WO semi products to prevent double counting.
                 "valuation_cost_basis": valuation_basis,
                 "valuation_difference": inventory_value - valuation_basis}
+
+    def _receipt_material_stock_value(self, doc, supplied):
+        """Authoritative raw consumption, after complete ledger/permission checks."""
+        total = Decimal(0)
+        for item in supplied:
+            entries = [entry for entry in self.ledger[SCR, doc.name]
+                       if entry["voucher_detail_no"] == item["name"]]
+            value = -sum((_number(entry["stock_value_difference"]) for entry in entries), Decimal(0))
+            child = next(child for child in doc.get("supplied_items") if child.name == item["name"])
+            if value < 0 or not _same_quantity(value, item.get("amount"), child, "amount"):
+                frappe.throw("全部拒收的实际材料库存价值与准确耗料不一致，不能猜测历史成本")
+            total += value
+        return total
 
     def _receipt_return_values(self, doc, row, supplied, actual):
         """Prove a physical return from original facts; never today's BOM.
