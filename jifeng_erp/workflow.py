@@ -6,6 +6,7 @@ from jifeng_erp.jushuitan import record_key
 
 MATERIAL_FIELDS = ("item_code", "item_name", "uom", "qty_per_unit", "unit_price", "supplier", "note")
 OPERATION_FIELDS = ("operation", "supplier", "unit_price", "note")
+PROFILE_FIELDS = ("company", "item_code", "bom", "supplier_product_code", "specification", "requirements", "packaging")
 BLOCKED_STATUSES = {"Cancelled", "Merged", "Split"}
 
 
@@ -19,14 +20,76 @@ def recipe_totals(doc):
 
 
 def copy_recipe(target, source):
-    for table, fields in (("materials", MATERIAL_FIELDS), ("operations", OPERATION_FIELDS)):
-        target.set(table, [{f: row.get(f) for f in fields} for row in source.get(table)])
+    from jifeng_erp.flow_quantity import check_quantity_fields
+
+    source.check_permission("read")
+    check_quantity_fields(source.doctype, PROFILE_FIELDS + ("materials", "operations"))
+    check_quantity_fields(target.doctype, PROFILE_FIELDS + ("materials", "operations"), permission_type="write")
+    copied = {}
+    for table, childtype, fields in (("materials", "Jifeng Material Line", MATERIAL_FIELDS),
+                                     ("operations", "Jifeng Operation Line", OPERATION_FIELDS)):
+        source_table = frappe.get_meta(source.doctype).get_field(table)
+        target_table = frappe.get_meta(target.doctype).get_field(table)
+        if any(not df or df.fieldtype != "Table" or df.options != childtype
+               for df in (source_table, target_table)):
+            frappe.throw("商品档案与流程单的物料或工序表定义不一致，请核对原单")
+        check_quantity_fields(childtype, fields, parenttype=source.doctype)
+        check_quantity_fields(childtype, fields, permission_type="write", parenttype=target.doctype)
+        rows = source.get(table) or []
+        if any(row.doctype != childtype or not row.name or row.parent != source.name
+               or row.parenttype != source.doctype or row.parentfield != table for row in rows):
+            frappe.throw("商品档案物料或工序明细缺少准确来源，请核对原单")
+        copied[table] = [{f: row.get(f) for f in fields} for row in rows]
+    for table, rows in copied.items():
+        target.set(table, rows)
+
+
+def item_image_snapshot(item_code):
+    """Copy an authorized Item attachment once; saved Flow images stay historical."""
+    from jifeng_erp.flow_quantity import check_quantity_fields
+
+    item = frappe.get_doc("Item", item_code)
+    item.check_permission("read")
+    try:
+        check_quantity_fields("Item", ("image",))
+    except frappe.PermissionError:
+        return None
+    if not item.get("image"):
+        return None
+    from jifeng_erp.product_archive import _business_image_state
+
+    return item.image if _business_image_state(item)["state"] == "已上传" else None
+
+
+def _external_source_rows(order):
+    from jifeng_erp.flow_quantity import check_quantity_fields
+
+    order.check_permission("read")
+    check_quantity_fields("Jifeng External Order", ("name", "company", "source_status", "items"))
+    check_quantity_fields("Jifeng External Order Item", ("name", "parent", "parenttype", "parentfield",
+                          "external_line_id", "item_code", "qty", "source_status"),
+                          parenttype="Jifeng External Order")
+    table = frappe.get_meta("Jifeng External Order").get_field("items")
+    if not table or table.fieldtype != "Table" or table.options != "Jifeng External Order Item":
+        frappe.throw("外部订单明细表定义不一致，请核对来源")
+    result = {}
+    for row in order.items:
+        if (row.doctype != "Jifeng External Order Item" or not row.name or row.parent != order.name
+                or row.parenttype != order.doctype or row.parentfield != "items"
+                or not row.external_line_id or row.external_line_id in result):
+            frappe.throw("外部订单明细缺少唯一且准确的来源，请核对同步订单")
+        result[row.external_line_id] = row
+    return result
 
 
 def create_flows(order):
     order.check_permission("write")
     frappe.db.get_value(order.doctype, order.name, "name", for_update=True)
     order.reload()
+    _external_source_rows(order)
+    from jifeng_erp.flow_quantity import check_quantity_fields
+
+    check_quantity_fields(order.doctype, ("online_order_id", "requirements", "packaging", "requirements_attachment"))
     if order.source_status in BLOCKED_STATUSES:
         frappe.throw("取消、合并或拆分的源订单不能生成新流程单")
     created = []
@@ -36,6 +99,13 @@ def create_flows(order):
         key = record_key(order.name, row.external_line_id)
         existing = frappe.db.get_value("Jifeng Flow Order", {"source_key": key}, "name")
         if existing:
+            linked = frappe.get_doc("Jifeng Flow Order", existing)
+            linked.check_permission("read")
+            check_quantity_fields("Jifeng Flow Order", ("source_key", "external_order", "external_line_id", "sales_order", "company"))
+            if (linked.source_key != key or linked.external_order != order.name
+                    or linked.external_line_id != row.external_line_id or linked.get("sales_order")
+                    or linked.company != order.company):
+                frappe.throw("已有流程单的公司或准确来源行冲突，请核对原单")
             row.flow_order = existing
             created.append(existing)
             continue
@@ -137,7 +207,11 @@ def create_sales_order_flows(sales_order):
         if existing:
             linked = frappe.get_doc("Jifeng Flow Order", existing)
             linked.check_permission("read")
-            if linked.sales_order != order.name or linked.sales_order_item != row.name:
+            from jifeng_erp.flow_quantity import check_quantity_fields
+
+            check_quantity_fields("Jifeng Flow Order", ("source_key", "sales_order", "sales_order_item", "external_order", "company"))
+            if (linked.source_key != key or linked.sales_order != order.name or linked.sales_order_item != row.name
+                    or linked.get("external_order") or linked.company != order.company):
                 frappe.throw("流程单来源标识冲突，请检查订单明细")
             created.append(existing)
             continue
@@ -264,14 +338,39 @@ def validate_flow_source(flow):
     _check_sample_flow(flow)
     if flow.source_changed or flow.source_status in BLOCKED_STATUSES or (flow.sales_order and flow.source_status == "Closed"):
         frappe.throw("请先核对源订单变更或取消状态")
+    if flow.get("external_order"):
+        order = _locked_source_order("Jifeng External Order", flow.external_order)
+        rows = _external_source_rows(order)
+        row = rows.get(flow.external_line_id)
+        if (order.company != flow.company or order.source_status in BLOCKED_STATUSES
+                or not row or row.source_status == "Cancelled"
+                or row.item_code != flow.item_code or number(row.qty, "来源数量") <= 0
+                or number(row.qty, "来源数量") != number(flow.source_qty, "来源快照数量")
+                or flow.source_key != record_key(order.name, flow.external_line_id)):
+            frappe.throw("外部订单公司、明细、数量或状态已变化，请先核对流程单来源")
     if flow.sales_order:
-        sales_order = frappe.get_doc("Sales Order", flow.sales_order)
+        sales_order = _locked_source_order("Sales Order", flow.sales_order)
         sales_order.check_permission("read")
-        if sales_order.docstatus != 1 or sales_order.status == "Closed":
+        if sales_order.company != flow.company or sales_order.docstatus != 1 or sales_order.status == "Closed":
             frappe.throw("销售订单已取消或关闭，不能生成采购申请")
         source_line = next((row for row in sales_order.items if row.name == flow.sales_order_item), None)
         if not source_line or not _sales_row_selected(source_line) or _sales_line_differs(flow, source_line, sales_order):
             frappe.throw("销售订单明细已变化，请先核对流程单来源")
+
+
+def _locked_source_order(doctype, name):
+    # Source saves lock the Order before linked Flows; downstream creation has
+    # already locked the Flow. NOWAIT prevents a reversed wait and the native
+    # for_update reload reads the current row rather than an older snapshot.
+    if doctype not in ("Jifeng External Order", "Sales Order"):
+        frappe.throw("流程单来源类型无效")
+    try:
+        rows = frappe.db.sql(f"SELECT name FROM `tab{doctype}` WHERE name=%s FOR UPDATE NOWAIT", (name,))
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
+        frappe.throw("来源订单正在修改，请重新读取后再生成下游单据")
+    if not rows:
+        frappe.throw("流程单来源订单已不存在，请核对原单")
+    return frappe.get_doc(doctype, name, for_update=True)
 
 
 def _check_sample_flow(flow):

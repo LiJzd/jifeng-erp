@@ -8,7 +8,7 @@ from jifeng_erp.flow_quantity import (
     plan_quantity, positive_quantity, read_item_stock_uom, read_sales_quantity_snapshot,
     require_stock_plan, same_version, unit_name,
 )
-from jifeng_erp.workflow import copy_recipe, make_material_request, make_work_order, recipe_totals
+from jifeng_erp.workflow import copy_recipe, item_image_snapshot, make_material_request, make_work_order, recipe_totals
 
 
 _QUANTITY_CONFIRMED = object()
@@ -91,7 +91,11 @@ class JifengFlowOrder(Document):
             self.material_amount, self.processing_amount = previous.material_amount, previous.processing_amount
         else:
             self.material_amount, self.processing_amount = 0, 0
-        self.image = frappe.db.get_value("Item", self.item_code, "image")
+        # Later Item image uploads, source syncs and memo edits must not change
+        # the picture on an existing production document. Changing the Item on
+        # a manual flow deliberately establishes a new snapshot.
+        self.image = (previous.get("image") if previous and previous.item_code == self.item_code
+                      else item_image_snapshot(self.item_code))
         if self.target_warehouse:
             warehouse = frappe.get_doc("Warehouse", self.target_warehouse)
             warehouse.check_permission("read")

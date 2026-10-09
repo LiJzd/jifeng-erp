@@ -1,6 +1,7 @@
 """Exercise the manual Sales Order handoff without an installed Frappe site."""
 
 import importlib.util
+import json
 import pathlib
 import sys
 import types
@@ -31,7 +32,8 @@ class Record(dict):
         return self["items"]
 
     def check_permission(self, permission):
-        return None
+        if permission in self.get("denied", ()):
+            raise PermissionError("native document denied")
 
     def reload(self):
         return self
@@ -62,7 +64,7 @@ class FakeDatabase:
         self.profiles = profiles
 
     def get_value(self, doctype, lookup, field, **kwargs):
-        if doctype == "Sales Order":
+        if doctype in ("Sales Order", "Jifeng External Order"):
             return lookup
         if doctype == "Jifeng Product Profile":
             return next((name for name, profile in self.profiles.items()
@@ -81,9 +83,17 @@ class FakeDatabase:
             return name in self.requests
         raise AssertionError(doctype)
 
+    def sql(self, query, values):
+        if "FOR UPDATE NOWAIT" in query:
+            if getattr(self, "busy", False):
+                raise TimeoutError("source order busy")
+            return [(values[0],)]
+        raise AssertionError(query)
+
 
 class TestSalesOrderFlow(unittest.TestCase):
     def setUp(self):
+        self.denied_fields = set()
         self.flows = {}
         self.work_orders = {}
         self.requests = {}
@@ -105,17 +115,38 @@ class TestSalesOrderFlow(unittest.TestCase):
         frappe.whitelist = lambda: lambda function: function
         frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         frappe.PermissionError = PermissionError
+        frappe.QueryTimeoutError = TimeoutError
+        frappe.QueryDeadlockError = RuntimeError
+        self.frappe = frappe
         frappe.session = types.SimpleNamespace(user="Synthetic")
         readable = {"name", "company", "docstatus", "status", "item_code", "planned_qty", "stock_uom",
                     "quantity_basis", "qty", "uom", "conversion_factor", "stock_qty", "sales_order", "external_order",
                     "source_qty", "source_uom", "source_stock_uom", "source_conversion_factor", "source_stock_qty",
                     "source_stock_precision", "stock_plan_confirmation_note", "stock_plan_confirmed_at", "stock_plan_confirmed_by"}
         model = types.ModuleType("frappe.model")
-        model.get_permitted_fields = lambda *args, **kwargs: readable
-        frappe.get_meta = lambda *args: types.SimpleNamespace(fields=[], has_field=lambda field: False,
-            get_permlevel_access=lambda **kwargs: [0],
-            get_field=lambda field: Record(fieldname=field, fieldtype="Table" if field == "items" else "Data",
-                                          options="Sales Order Item" if field == "items" else None, permlevel=0, mask=0))
+        self.schemas = {}
+        for slug in ("jifeng_flow_order", "jifeng_product_profile", "jifeng_material_line", "jifeng_operation_line",
+                     "jifeng_external_order", "jifeng_external_order_item"):
+            path = pathlib.Path(__file__).parents[1] / "jifeng_erp/jifeng_erp/doctype" / slug / (slug + ".json")
+            schema = json.loads(path.read_text(encoding="utf-8"))
+            self.schemas[schema["name"]] = {field["fieldname"]: Record(permlevel=0, mask=0, **field)
+                                          for field in schema["fields"]}
+
+        def allowed(doctype, permission_type="read", parenttype=None, **kwargs):
+            columns = set(self.schemas.get(doctype, {})) | readable | {"parent", "parenttype", "parentfield"}
+            return columns - {field for dt, action, field in self.denied_fields if dt == doctype and action == permission_type}
+
+        model.get_permitted_fields = allowed
+
+        def meta(doctype):
+            fields = self.schemas.get(doctype, {})
+            return types.SimpleNamespace(fields=list(fields.values()), has_field=lambda field: field in fields,
+                get_permlevel_access=lambda permission_type="read", **kwargs: [] if permission_type == "mask" else [0],
+                get_field=lambda field: fields.get(field) or Record(fieldname=field,
+                    fieldtype="Table" if field == "items" else "Data",
+                    options="Sales Order Item" if field == "items" else None, permlevel=0, mask=0))
+
+        frappe.get_meta = meta
         frappe.db = FakeDatabase(self.flows, self.requests, self.profiles)
         frappe.get_all = lambda doctype, **kwargs: list(self.work_orders if doctype == "Work Order" else self.flows)
 
@@ -130,6 +161,8 @@ class TestSalesOrderFlow(unittest.TestCase):
                 return flow
             if doctype == "Sales Order":
                 return self.order
+            if doctype == "Jifeng External Order":
+                return self.external
             if doctype == "Jifeng Flow Order":
                 return self.flows[name]
             if doctype == "Work Order":
@@ -177,10 +210,15 @@ class TestSalesOrderFlow(unittest.TestCase):
 
     def test_ordinary_sales_flow_keeps_native_profile_default_and_manual_plan_on_reuse(self):
         self.profiles["RING"] = Record(name="RING", item_code="RING", company="JF",
+            doctype="Jifeng Product Profile",
             bom="PROFILE-BOM", supplier_product_code="CODE", specification="SPEC",
             requirements="档案要求", packaging="档案包装",
-            materials=[Record(item_code="RAW", qty_per_unit=2, unit_price=3)],
-            operations=[Record(operation="POLISH", unit_price=4)])
+            materials=[Record(doctype="Jifeng Material Line", name="RAW-ROW", parent="RING",
+                              parenttype="Jifeng Product Profile", parentfield="materials",
+                              item_code="RAW", qty_per_unit=2, unit_price=3)],
+            operations=[Record(doctype="Jifeng Operation Line", name="OP-ROW", parent="RING",
+                               parenttype="Jifeng Product Profile", parentfield="operations",
+                               operation="POLISH", unit_price=4)])
         names = self.workflow.create_sales_order_flows(self.order.name)
         flow = self.flows[names[0]]
         self.assertEqual((flow.profile, flow.bom), ("RING", "PROFILE-BOM"))
@@ -208,6 +246,125 @@ class TestSalesOrderFlow(unittest.TestCase):
         self.order.docstatus = 2
         self.workflow.refresh_sales_order_flows(self.order)
         self.assertEqual((flow.source_status, flow.source_changed), ("Cancelled", 1))
+
+    def external_order(self):
+        self.external = Record(doctype="Jifeng External Order", name="EXT", company="JF", online_order_id="WEB-1",
+            source_status="WaitConfirm", requirements="按样板", packaging="独立袋", requirements_attachment=None,
+            items=[Record(doctype="Jifeng External Order Item", name="EXT-ROW", parent="EXT",
+                          parenttype="Jifeng External Order", parentfield="items", external_line_id="LINE-1",
+                          item_code="RING", qty=10, source_status="WaitConfirm")])
+        return self.external
+
+    def test_external_reuse_keeps_plan_recipe_and_notes_but_checks_exact_company_and_source(self):
+        order = self.external_order()
+        names = self.workflow.create_flows(order)
+        flow = self.flows[names[0]]
+        flow.planned_qty, flow.requirements, flow.materials = 7, "本单另定", [Record(item_code="RAW", qty_per_unit=9)]
+        self.assertEqual(self.workflow.create_flows(order), names)
+        self.assertEqual((flow.planned_qty, flow.requirements, flow.materials[0].qty_per_unit), (7, "本单另定", 9))
+        for field, value in (("company", "OTHER"), ("external_order", "WRONG"), ("external_line_id", "WRONG"),
+                             ("sales_order", "SO")):
+            old = flow.get(field)
+            flow[field] = value
+            order.items[0].flow_order = None
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "来源行冲突"):
+                self.workflow.create_flows(order)
+            self.assertIsNone(order.items[0].flow_order)
+            flow[field] = old
+        flow.denied = {"read"}
+        with self.assertRaises(PermissionError):
+            self.workflow.create_flows(order)
+        self.assertIsNone(order.items[0].flow_order)
+
+    def test_external_current_source_is_checked_before_downstream_even_when_cached_status_is_active(self):
+        order = self.external_order()
+        flow = self.flows[self.workflow.create_flows(order)[0]]
+        flow.source_changed, flow.sales_order = 0, None
+        self.workflow.validate_flow_source(flow)
+        for document, field, value in ((order, "company", "OTHER"), (order, "source_status", "Cancelled"),
+                                       (order.items[0], "source_status", "Cancelled"), (order.items[0], "qty", 11),
+                                       (order.items[0], "item_code", "WRONG"), (order.items[0], "external_line_id", "REMOVED")):
+            old = document[field]
+            document[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "流程单来源"):
+                self.workflow.validate_flow_source(flow)
+            document[field] = old
+        self.denied_fields.add(("Jifeng External Order Item", "read", "qty"))
+        with self.assertRaises(PermissionError):
+            self.workflow.validate_flow_source(flow)
+
+    def test_busy_source_order_stops_before_creating_downstream(self):
+        flow = self.flows[self.workflow.create_sales_order_flows(self.order.name)[0]]
+        flow.bom, flow.source_changed = "BOM-RING", 0
+        self.frappe.db.busy = True
+        with self.assertRaisesRegex(ValueError, "正在修改"):
+            self.workflow.make_work_order(flow)
+        self.assertFalse(self.work_orders)
+
+    def test_external_duplicate_or_wrong_child_identity_never_creates_flow(self):
+        order = self.external_order()
+        for field, value in (("parent", "OTHER"), ("parenttype", "Other"), ("parentfield", "other"),
+                             ("doctype", "Other"), ("name", None)):
+            old = order.items[0][field]
+            order.items[0][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "准确的来源"):
+                self.workflow.create_flows(order)
+            self.assertFalse(self.flows)
+            order.items[0][field] = old
+        order.items.append(Record(**dict(order.items[0], name="ANOTHER-ROW")))
+        with self.assertRaisesRegex(ValueError, "唯一"):
+            self.workflow.create_flows(order)
+        self.assertFalse(self.flows)
+
+    def test_profile_recipe_masks_writes_and_foreign_rows_never_copy_partial_or_zero_costs(self):
+        profile = Record(doctype="Jifeng Product Profile", name="P", company="JF", item_code="RING",
+            materials=[Record(doctype="Jifeng Material Line", name="M", parent="P", parenttype="Jifeng Product Profile",
+                              parentfield="materials", item_code="RAW", qty_per_unit=2, unit_price=3)],
+            operations=[Record(doctype="Jifeng Operation Line", name="O", parent="P", parenttype="Jifeng Product Profile",
+                               parentfield="operations", operation="POLISH", unit_price=4)])
+        target = Record(doctype="Jifeng Flow Order", materials=[{"old": 1}], operations=[{"old": 2}])
+        self.schemas["Jifeng Material Line"]["unit_price"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.workflow.copy_recipe(target, profile)
+        self.schemas["Jifeng Material Line"]["unit_price"].mask = 0
+        self.denied_fields.add(("Jifeng Operation Line", "write", "unit_price"))
+        with self.assertRaises(PermissionError):
+            self.workflow.copy_recipe(target, profile)
+        self.denied_fields.clear()
+        self.schemas["Jifeng Product Profile"]["materials"].permlevel = 1
+        with self.assertRaises(PermissionError):
+            self.workflow.copy_recipe(target, profile)
+        self.schemas["Jifeng Product Profile"]["materials"].permlevel = 0
+        profile.operations[0].parent = "OTHER"
+        with self.assertRaisesRegex(ValueError, "准确来源"):
+            self.workflow.copy_recipe(target, profile)
+        self.assertEqual((target.materials, target.operations), ([{"old": 1}], [{"old": 2}]))
+        profile.operations[0].parent = "P"
+        self.workflow.copy_recipe(target, profile)
+        self.assertEqual((target.materials[0]["qty_per_unit"], target.materials[0]["unit_price"],
+                          target.operations[0]["unit_price"]), (2, 3, 4))
+
+    def test_sales_reuse_rejects_foreign_company(self):
+        flow = self.flows[self.workflow.create_sales_order_flows(self.order.name)[0]]
+        flow.company = "OTHER"
+        with self.assertRaisesRegex(ValueError, "来源标识冲突"):
+            self.workflow.create_sales_order_flows(self.order.name)
+
+    def test_new_flow_image_requires_item_field_access_and_exact_authorized_attachment(self):
+        item = Record(name="RING", image="/files/ring.jpg")
+        self.schemas["Item"] = {"image": Record(fieldname="image", fieldtype="Attach Image", permlevel=0, mask=0)}
+        archive = types.ModuleType("jifeng_erp.product_archive")
+        archive._business_image_state = lambda source: {"state": "已上传", "url": "/different-download-url"}
+        with patch.dict(sys.modules, {"jifeng_erp.product_archive": archive}), patch.object(self.frappe, "get_doc", return_value=item):
+            self.assertEqual(self.workflow.item_image_snapshot("RING"), item.image)
+            archive._business_image_state = lambda source: {"state": "附件不可用", "url": ""}
+            self.assertIsNone(self.workflow.item_image_snapshot("RING"))
+            self.schemas["Item"]["image"].mask = 1
+            archive._business_image_state = lambda source: self.fail("masked image must not be read as an attachment")
+            self.assertIsNone(self.workflow.item_image_snapshot("RING"))
+            item.denied = {"read"}
+            with self.assertRaises(PermissionError):
+                self.workflow.item_image_snapshot("RING")
 
     def test_same_product_on_two_lines_keeps_separate_flows(self):
         self.order.items[1].item_code = "RING"

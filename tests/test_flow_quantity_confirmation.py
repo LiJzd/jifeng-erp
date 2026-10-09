@@ -116,6 +116,7 @@ class TestFlowQuantityConfirmation(unittest.TestCase):
         document.Document = FakeDocument
         workflow = types.ModuleType("jifeng_erp.workflow")
         workflow.copy_recipe = lambda *args: None
+        workflow.item_image_snapshot = lambda item_code: self.item.get("image")
         workflow.make_material_request = lambda *args: None
         workflow.make_work_order = lambda *args: None
         workflow.recipe_totals = lambda doc: (Decimal(0), Decimal(0))
@@ -143,6 +144,27 @@ class TestFlowQuantityConfirmation(unittest.TestCase):
             self.events.append("flow-lock" if kwargs.get("for_update") else "flow-read")
             return name
         return None
+
+    def test_saved_flow_image_survives_item_upload_memo_sync_and_client_readonly_override(self):
+        for old_image in (None, "/files/old-production.jpg"):
+            self.flow = self.make_flow(image=old_image, quantity_basis="stock_v1", stock_uom="Nos")
+            self.item.image = "/files/current-item.jpg"
+            self.flow.image = "/files/client-override.jpg"
+            self.flow.requirements = "备注补充"
+            self.flow.flags.from_sync = True
+            self.flow.validate()
+            self.assertEqual(self.flow.image, old_image)
+
+    def test_new_manual_flow_and_explicit_changed_item_take_new_image_snapshot(self):
+        self.item.image = "/files/current-item.jpg"
+        self.flow = self.make_flow(image="/files/client-override.jpg")
+        self.flow._before = None
+        self.flow.validate()
+        self.assertEqual(self.flow.image, self.item.image)
+        self.flow = self.make_flow(image="/files/old-production.jpg", quantity_basis="stock_v1", stock_uom="Nos")
+        self.flow.item_code = "ANOTHER-ITEM"
+        self.flow.validate()
+        self.assertEqual(self.flow.image, self.item.image)
 
     def get_doc(self, doctype, name=None, **kwargs):
         if doctype == "Item":
