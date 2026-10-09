@@ -524,6 +524,11 @@ class ReceiptAccountingRiskTest(unittest.TestCase):
         self.assertEqual(net(candidate),net(native))
         self.assertEqual(self.subject.receipt_accounting_fee(source,source.items[0],'service_cost_per_qty'),200)
         self.assertEqual(net(candidate)[('SERVICE','FG-CC','PROJECT')],-200)
+        self.gl[source.name]=ledger_rows(native,self.Row)
+        returned=self.receipt(qty=-100,raw=-800,fee=2.004,fg=-1000,is_return=1)
+        self.assertEqual(net(self.calculate(returned)),{key:-value for key,value in net(native).items()})
+        self.assertEqual(self.subject.receipt_accounting_fee(returned,returned.items[0],
+            'service_cost_per_qty',source.items[0]),-200)
 
     def test_only_rejected_zero_value_source_and_return_have_material_gl_without_estimated_fee(self):
         source=self.receipt(qty=0,rejected=1,fg=0)
