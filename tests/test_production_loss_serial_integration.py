@@ -27,13 +27,18 @@ class SerialLossIntegrationTests(unittest.TestCase):
         self.b.transfer.items[0].serial_no = self.doc.items[0].serial_no
 
     def add_serial_entries(self, bundle, numbers, *, quantity):
+        parent = self.h.store.get(("Stock Entry", bundle.voucher_no), self.doc)
+        posting = str(parent.posting_date) + " " + str(parent.posting_time)
         for number in numbers:
             self.b.add("Serial No", number, serial_no=number, item_code="RM", company="JF", warehouse="WIP",
                        status="Active", batch_no="BATCH", purchase_rate=4)
             row = self.b.add("Serial and Batch Entry", bundle.name + "-" + number, parent=bundle.name,
                 parenttype="Serial and Batch Bundle", parentfield="entries", docstatus=bundle.docstatus,
                 item_code="RM", warehouse="WIP", batch_no="BATCH", serial_no=number, qty=quantity,
-                incoming_rate=4, stock_value_difference=quantity * 4, is_cancelled=int(bundle.docstatus == 2))
+                incoming_rate=4, stock_value_difference=quantity * 4, is_cancelled=int(bundle.docstatus == 2),
+                voucher_type=bundle.voucher_type, voucher_no=bundle.voucher_no,
+                voucher_detail_no=bundle.voucher_detail_no, type_of_transaction=bundle.type_of_transaction,
+                posting_datetime=posting, creation=posting)
             bundle.entries.append(row)
 
     def reserve_serials(self, numbers=None, *, name="SRE", source="TRANSFER", detail="TRANSFER-ROW"):
@@ -163,7 +168,7 @@ class SerialLossIntegrationTests(unittest.TestCase):
                           serial_no="\n".join(self.numbers[6:]))
         self.b.add("Stock Entry", "TRANSFER2", company="JF", work_order="WO", docstatus=1,
             purpose="Material Transfer for Manufacture", posting_date="2026-10-09", posting_time="09:30:00", items=[second_row])
-        inward = self.b.bundle("INWARD2", "TRANSFER2", second_row.name, quantity=4, rate=4)
+        inward = self.b.bundle("INWARD2", "TRANSFER2", second_row.name, quantity=4, rate=4, time="09:30:00")
         for row in inward.entries:
             del self.h.store["Serial and Batch Entry", row.name]
         inward.entries = []
@@ -222,7 +227,7 @@ class MultipleTransferLossTests(unittest.TestCase):
         second_row.update(name="TRANSFER2-ROW", parent="TRANSFER2", qty=4, transfer_qty=4)
         self.transfer2 = self.b.add("Stock Entry", "TRANSFER2", company="JF", work_order="WO", docstatus=1,
             purpose="Material Transfer for Manufacture", posting_date="2026-10-09", posting_time="09:30:00", items=[second_row])
-        inward = self.b.bundle("INWARD2", "TRANSFER2", second_row.name, quantity=4, rate=4)
+        inward = self.b.bundle("INWARD2", "TRANSFER2", second_row.name, quantity=4, rate=4, time="09:30:00")
         self.sle2 = self.b.ledger("SLE-IN2", "TRANSFER2", second_row.name, quantity=4, value=16,
             bundle=inward.name, time="09:30:00")
         self.h.ledger["TRANSFER2"] = [self.sle2]

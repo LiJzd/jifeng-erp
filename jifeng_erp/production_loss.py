@@ -11,7 +11,7 @@ import json
 from uuid import UUID
 
 import frappe
-from frappe.utils import flt, get_datetime
+from frappe.utils import flt, get_datetime, now_datetime
 from jifeng_erp import production_loss_batches as batch_sources
 
 LOSS_TYPE = "制造损耗出库"
@@ -65,6 +65,7 @@ for _kind, _tables in batch_sources.TABLES.items():
         _merged[_field] = _child, set(_fields) | _merged.get(_field, (None, set()))[1]
     TABLES[_kind] = tuple((field, child, fields) for field, (child, fields) in _merged.items())
 ZERO = Decimal(0)
+SINGLE_SOURCES = frozenset(("Stock Settings",))
 # These are private controller reads, not a costing DTO permission contract.
 # Native WO stock callbacks already update only their own reservations without
 # exposing the reservation ledger to the stock operator.
@@ -350,6 +351,8 @@ def _lock_work_scope(name):
 def _lock_source(doctype, name):
     if not isinstance(name, str) or not name or doctype not in PARENTS:
         frappe.throw("损耗来源缺少准确单据")
+    if doctype in SINGLE_SOURCES:
+        return _lock_single_source(doctype, name)
     # Fixed table names; values remain bound parameters. No waits on other
     # Receipt/Entry parents while holding this source lock.
     if not _sql(f"SELECT name FROM `tab{doctype}` WHERE name=%s FOR UPDATE NOWAIT", (name,)):
@@ -358,6 +361,31 @@ def _lock_source(doctype, name):
         _sql(f"SELECT name FROM `tab{childtype}` WHERE parent=%s AND parenttype=%s AND parentfield=%s "
              "ORDER BY name FOR UPDATE NOWAIT", (name, doctype, field))
     return frappe.get_doc(doctype, name, for_update=True)
+
+
+def _lock_single_source(doctype, name):
+    """Current singleton policy; its native rows live only in tabSingles.
+
+    Lock the whole exact doctype range before native Document.load_from_db.
+    This covers an absent policy field as well as an existing one. The native
+    loader casts the Check/default fields; no estimated setting is injected.
+    Its subsequent blocking read owns the same rows/range already acquired
+    NOWAIT, so it does not introduce a wait on another source parent.
+    """
+    if name != doctype or not frappe.get_meta(doctype).issingle:
+        frappe.throw("损耗估价单例来源不准确")
+    rows = _sql("SELECT field,value FROM `tabSingles` WHERE doctype=%s ORDER BY field FOR UPDATE NOWAIT", (doctype,))
+    current = {row.field: row.value for row in rows}
+    if len(current) != len(rows):
+        frappe.throw("损耗估价设置存在重复字段，不能猜测生效规则")
+    try:
+        doc = frappe.get_doc(doctype, name, for_update=True)
+        native = frappe.db.get_singles_dict(doctype, for_update=True)
+    except (frappe.QueryTimeoutError, frappe.QueryDeadlockError) as exc:
+        frappe.throw("库存估价设置正在更新，请重新读取后再操作", type(exc))
+    if dict(native) != current or doc.name != doctype or doc.doctype != doctype:
+        frappe.throw("库存估价设置在本次读取期间已变化，请重新读取", frappe.TimestampMismatchError)
+    return doc
 
 
 def _authorized_read(doctype, name):
@@ -385,6 +413,8 @@ def _current_records(doctype, filters, fields, parenttype=None):
     every IN member remain bound. The helper receives this adapter explicitly;
     cost readers instead supply their own permission/change-closed Session.
     """
+    if doctype in SINGLE_SOURCES:
+        frappe.throw("库存估价单例必须按准确名称读取，不能使用单据列表")
     allowed = _record_fields(doctype, parenttype)
     fields = set(fields)
     if (not fields or "name" not in fields or not fields.issubset(allowed)
@@ -1033,7 +1063,12 @@ def _inspect(job_card, request_id=None, *, only_previous=False):
                       "conversion_factor": 1, "transfer_qty": float(amount), "s_warehouse": work.wip_warehouse,
                       "jf_flow_order": flow.name})
     if requested_batches:
-        for row in batch_sources.proposal(work, requested_batches, read=_authorized_read, records=_authorized_records):
+        # The draft is created at the native current timestamp. Do not offer
+        # stock from a future-dated transfer; its saved posting timestamp is
+        # proved again by the pre-ledger controller before any stock movement.
+        posting = now_datetime()
+        for row in batch_sources.proposal(work, requested_batches, read=_authorized_read, records=_authorized_records,
+                                         posting_date=posting.date(), posting_time=posting.time()):
             # Proof amounts/source names stay internal. Native creates a fresh
             # outward bundle from the explicit batch/serial stock-unit row.
             items.append({field: row[field] for field in ("item_code", "qty", "uom", "stock_uom",

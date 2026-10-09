@@ -138,6 +138,7 @@ class ProductionLossTests(unittest.TestCase):
         utils = types.ModuleType("frappe.utils")
         utils.flt = lambda value, precision=None: round(float(value or 0), precision) if precision is not None else float(value or 0)
         utils.get_datetime = lambda value: datetime.fromisoformat(str(value))
+        utils.now_datetime = lambda: datetime(2026, 10, 9, 10, 0, 0)
         quantity = types.ModuleType("jifeng_erp.flow_quantity")
         quantity.check_quantity_fields = Mock()
         workflow = types.ModuleType("jifeng_erp.workflow")
