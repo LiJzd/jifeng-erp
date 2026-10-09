@@ -24,15 +24,20 @@ class TestSyncCheckpoints(unittest.TestCase):
             return decorate
         self.frappe.whitelist = whitelist
         self.frappe.db = Mock()
+        self.frappe.flags = types.SimpleNamespace()
+        self.frappe.get_meta = Mock(return_value=types.SimpleNamespace(has_field=lambda field: True))
         self.frappe.db.exists.return_value = True
         self.frappe.enqueue = Mock()
         utils = types.ModuleType("frappe.utils")
         utils.get_datetime = lambda value: value if isinstance(value, datetime) else datetime.fromisoformat(value)
         utils.now_datetime = datetime.now
+        file_manager = types.ModuleType("frappe.utils.file_manager")
+        file_manager.save_file = Mock()
         workflow = types.ModuleType("jifeng_erp.workflow")
         workflow.BLOCKED_STATUSES = {"Cancelled", "Merged", "Split"}
         workflow.create_flows = Mock()
-        with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.utils": utils, "jifeng_erp.workflow": workflow}):
+        with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.utils": utils,
+                                     "frappe.utils.file_manager": file_manager, "jifeng_erp.workflow": workflow}):
             spec = importlib.util.spec_from_file_location("sync_under_test", pathlib.Path(__file__).parents[1] / "jifeng_erp" / "sync.py")
             self.sync = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.sync)
@@ -142,6 +147,7 @@ class TestSyncCheckpoints(unittest.TestCase):
     def test_new_sku_keeps_remote_image_out_of_public_item_until_archived(self):
         class Doc:
             def __init__(self, values=None):
+                self.__dict__.update(source_image_candidates=None, archived_image_source=None)
                 self.__dict__.update(values or {})
                 self.flags = types.SimpleNamespace()
                 self.name = getattr(self, "item_code", None) or getattr(self, "uom_name", None) or "mapping"
@@ -178,21 +184,31 @@ class TestSyncCheckpoints(unittest.TestCase):
 
         item_code = self.upsert_sku(settings, {
             "sku_id": "SKU-1", "name": "商品1", "unit": "Nos", "pic": "https://cdn.example.com/1.jpg",
+            "pic_big": "https://cdn.example.com/1-big.jpg",
         })
 
         item = next(doc for doc in inserted if getattr(doc, "doctype", None) == "Item")
         self.assertEqual(item_code, "SKU-1")
         self.assertEqual(item.image, "")
-        self.assertEqual(mapping.source_image, "https://cdn.example.com/1.jpg")
+        self.assertEqual(mapping.source_image, "https://cdn.example.com/1-big.jpg")
+        import json
+        candidates = json.loads(mapping.source_image_candidates)
+        self.assertEqual(candidates["scope"], settings.sync_scope)
+        self.assertEqual(candidates["sku_id"], "SKU-1")
+        self.assertEqual([(row["field"], row["url"]) for row in candidates["sources"]],
+                         [("pic_big", "https://cdn.example.com/1-big.jpg"), ("pic", "https://cdn.example.com/1.jpg")])
+        self.assertFalse(hasattr(self.frappe.flags, "jifeng_image_metadata_write"))
         self.assertEqual(mapping.image_sync_status, "待处理")
         self.assertIsNone(mapping.archived_image)
         self.frappe.enqueue.assert_called_once_with(
-            "jifeng_erp.images.archive_image", mapping_name="mapping", queue="long", timeout=120,
+            "jifeng_erp.images.archive_image", mapping_name="mapping", queue="long", timeout=300,
             enqueue_after_commit=True)
 
     def test_changed_sku_image_clears_stale_sync_image_but_preserves_manual_item_image(self):
         class Doc:
             def __init__(self, **values):
+                self.__dict__.update(scope="scope", sku_id="SKU-1", source_image_candidates=None,
+                                     archived_image_source=None)
                 self.__dict__.update(values)
                 self.flags = types.SimpleNamespace()
 
@@ -270,6 +286,8 @@ class TestSyncCheckpoints(unittest.TestCase):
     def test_unmanaged_mapping_never_reads_or_mutates_existing_item(self):
         class Doc:
             def __init__(self, **values):
+                self.__dict__.update(scope="scope", sku_id="SKU-1", source_image_candidates=None,
+                                     archived_image_source=None)
                 self.__dict__.update(values)
                 self.flags = types.SimpleNamespace()
 
@@ -299,6 +317,8 @@ class TestSyncCheckpoints(unittest.TestCase):
     def test_same_source_pending_state_is_not_marked_complete_from_old_archive(self):
         class Doc:
             def __init__(self, **values):
+                self.__dict__.update(scope="scope", sku_id="SKU-1", source_image_candidates=None,
+                                     archived_image_source=None)
                 self.__dict__.update(values)
                 self.flags = types.SimpleNamespace()
 
@@ -331,9 +351,31 @@ class TestSyncCheckpoints(unittest.TestCase):
         self.assertEqual(mapping.archived_image, "/files/old.jpg")
         self.assertEqual(self.frappe.enqueue.call_count, 2)
 
+        # Only a newly observed genuine candidate re-enqueues a missing main
+        # image. Existing failure results remain terminal when data is unchanged.
+        mapping.image_sync_status = "失败"
+        mapping.image_sync_error = "图片服务器返回 HTTP 404，已停止下载。"
+        self.frappe.get_doc.side_effect = [mapping, profile]
+        self.frappe.enqueue.reset_mock()
+        self.upsert_sku(self.settings(company="QA", image_hosts="cdn.example.com"), {
+            "sku_id": "SKU-1", "pic_big": "https://cdn.example.com/current.jpg",
+        })
+        self.assertEqual(mapping.image_sync_status, "失败")
+        self.frappe.enqueue.assert_not_called()
+        self.frappe.get_doc.side_effect = [mapping, profile]
+        self.upsert_sku(self.settings(company="QA", image_hosts="cdn.example.com"), {
+            "sku_id": "SKU-1", "pic_big": "https://cdn.example.com/current.jpg",
+            "pic": "https://cdn.example.com/new-observed.jpg",
+        })
+        self.assertEqual(mapping.image_sync_status, "待处理")
+        self.assertEqual(mapping.source_image, "https://cdn.example.com/current.jpg")
+        self.frappe.enqueue.assert_called_once()
+
     def test_legacy_default_status_with_source_and_archive_is_migrated_to_complete(self):
         class Doc:
             def __init__(self, **values):
+                self.__dict__.update(scope="scope", sku_id="SKU-1", source_image_candidates=None,
+                                     archived_image_source=None)
                 self.__dict__.update(values)
                 self.flags = types.SimpleNamespace()
 
@@ -361,6 +403,8 @@ class TestSyncCheckpoints(unittest.TestCase):
     def test_order_fallback_without_sku_details_preserves_source_baseline_then_full_sku_updates(self):
         class Doc:
             def __init__(self, **values):
+                self.__dict__.update(scope="scope", sku_id="SKU-1", source_image_candidates=None,
+                                     archived_image_source=None)
                 self.__dict__.update(values)
                 self.flags = types.SimpleNamespace()
 
@@ -446,7 +490,7 @@ class TestSyncCheckpoints(unittest.TestCase):
 
         self.sync.upsert_sku.assert_called_once_with(settings, {
             "sku_id": "SKU-1", "name": "订单商品", "pic": "",
-        })
+        }, image_origin="order")
 
     def test_order_refresh_preserves_manual_line_requirements_and_packaging(self):
         class Child:
@@ -541,6 +585,8 @@ class TestSyncCheckpoints(unittest.TestCase):
     def test_sku_sync_refuses_profile_owned_by_another_company(self):
         class Doc:
             def __init__(self, **values):
+                self.__dict__.update(scope="scope", sku_id="SKU-1", source_image_candidates=None,
+                                     archived_image_source=None)
                 self.__dict__.update(values)
                 self.flags = types.SimpleNamespace()
 
@@ -618,6 +664,9 @@ class TestImageRetryLifecycle(unittest.TestCase):
         self.frappe.get_doc = Mock()
         self.frappe.get_single = Mock()
         self.frappe.db = Mock()
+        self.frappe.db.sql.return_value = []
+        self.frappe.flags = types.SimpleNamespace()
+        self.frappe.get_meta = Mock(return_value=types.SimpleNamespace(has_field=lambda field: True))
         self.frappe.conf = {}
         self.frappe.enqueue = Mock()
         self.frappe.throw = lambda message: (_ for _ in ()).throw(RuntimeError(message))
@@ -649,7 +698,8 @@ class TestImageRetryLifecycle(unittest.TestCase):
         values = {"name": "mapping-1", "scope": "scope", "sku_id": "SKU-1", "item_code": "ITEM-1",
                   "managed_item": 1, "source_image": "https://cdn.example.com/image.jpg",
                   "archived_image": None, "image_sync_status": "待处理", "image_sync_error": "",
-                  "image_sync_attempted_at": None}
+                  "image_sync_attempted_at": None, "source_image_candidates": None,
+                  "archived_image_source": None}
         values.update(overrides)
 
         class Mapping(types.SimpleNamespace):
@@ -663,7 +713,8 @@ class TestImageRetryLifecycle(unittest.TestCase):
         return Mapping(**values)
 
     def settings(self):
-        return types.SimpleNamespace(sync_scope="scope", enabled=True, image_hosts="cdn.example.com")
+        return types.SimpleNamespace(sync_scope="scope", enabled=True, image_hosts="cdn.example.com",
+                                     company="QA", merchant_id="42")
 
     def no_proxy_environment(self):
         return patch.dict("os.environ", {key: "" for key in self.images.PROXY_ENV_VARS})

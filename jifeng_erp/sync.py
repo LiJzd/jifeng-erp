@@ -6,6 +6,8 @@ import frappe
 from frappe.utils import get_datetime, now_datetime
 
 from jifeng_erp.jushuitan import Client, JushuitanError, order_snapshot, record_key, safe_image_url
+from jifeng_erp.images import (IMAGE_JOB_TIMEOUT, _require_image_metadata_fields,
+                               image_metadata_write, source_image_candidates_from_sku)
 from jifeng_erp.workflow import BLOCKED_STATUSES
 
 
@@ -189,7 +191,8 @@ def sync_skus(settings, api, log):
             begin, end, page = end - timedelta(minutes=2), min(end + timedelta(days=6), target), 1
 
 
-def upsert_sku(settings, raw):
+def upsert_sku(settings, raw, *, image_origin="sku"):
+    _require_image_metadata_fields(frappe)
     sku_id = str(raw.get("sku_id") or "")
     if not sku_id:
         raise JushuitanError("商品响应缺少 sku_id")
@@ -234,6 +237,20 @@ def upsert_sku(settings, raw):
         mapping.supplier_sku_id = str(incoming_supplier_sku_id)
     mapping.supplier_name = raw.get("supplier_name") or mapping.supplier_name
     mapping.source_modified = raw.get("modified") or mapping.source_modified
+    candidate_fields = []
+    if raw_image_present and image_origin == "sku":
+        candidates = source_image_candidates_from_sku(mapping, raw)
+        if mapping.source_image_candidates != candidates:
+            mapping.source_image_candidates = candidates
+            candidate_fields.append("source_image_candidates")
+    if (candidate_fields and not image_changed and mapping.image_sync_status == "失败"
+            and (mapping.image_sync_error or "").startswith((
+                "图片服务器返回 HTTP 403，已停止下载。", "图片服务器返回 HTTP 404，已停止下载。"))):
+        # A newly observed real candidate can repair a previously missing main
+        # image during normal sync. Unchanged failures are not re-enqueued.
+        mapping.image_sync_status = "待处理"
+        mapping.image_sync_error = ""
+        mapping.image_sync_attempted_at = now_datetime()
     if image_changed:
         mapping.source_image = image or None
         # Keep the last successful attachment as the ownership baseline while
@@ -294,7 +311,8 @@ def upsert_sku(settings, raw):
     if incoming_specification not in (None, ""):
         mapping.source_specification = str(incoming_specification)
     mapping.flags.from_sync = True
-    mapping.save(ignore_permissions=True)
+    with image_metadata_write(mapping.name if existing else key, candidate_fields, frappe_context=frappe):
+        mapping.save(ignore_permissions=True)
     if image_changed and not image:
         return mapping.item_code
     if mapping.source_image and mapping.image_sync_status == "待处理":
@@ -304,7 +322,7 @@ def upsert_sku(settings, raw):
             mapping.save(ignore_permissions=True)
             return mapping.item_code
         frappe.enqueue("jifeng_erp.images.archive_image", mapping_name=mapping.name,
-                       queue="long", timeout=120, enqueue_after_commit=True)
+                       queue="long", timeout=IMAGE_JOB_TIMEOUT, enqueue_after_commit=True)
     return mapping.item_code
 
 
@@ -347,7 +365,8 @@ def upsert_order(settings, snapshot):
         sku_key = record_key(settings.sync_scope, row["sku_id"])
         item_code = frappe.db.get_value("Jifeng SKU Mapping", sku_key, "item_code")
         if not item_code:
-            item_code = upsert_sku(settings, {"sku_id": row["sku_id"], "name": row["item_name"], "pic": row["image_url"]})
+            item_code = upsert_sku(settings, {"sku_id": row["sku_id"], "name": row["item_name"],
+                                              "pic": row["image_url"]}, image_origin="order")
         flow_name = frappe.db.get_value("Jifeng Flow Order", {"source_key": record_key(key, row["external_line_id"])}, "name")
         active_lines.add(row["external_line_id"])
         if flow_name:
