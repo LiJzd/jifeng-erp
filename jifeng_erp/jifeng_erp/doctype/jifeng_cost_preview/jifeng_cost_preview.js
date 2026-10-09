@@ -101,6 +101,18 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                         ];
                         message += `本次来源：${[...new Set(sources)].map(value => frappe.utils.escape_html(value)).join("、") || "无"}。制造只计凭证耗料与附加费，内部转料和成品入库价值不重复相加；计薪记录须已纳入有效工资计提才计入加工费，付款不再累加费用。`;
                     }
+                    const valuation = result.receipt_valuation;
+                    const receiptRows = reader === "receipt_costs" ? result.rows : result.receipts;
+                    if (valuation && (receiptRows || []).length) {
+                        message += `<br>回货库存核对：成品入库净价值 ${amount(valuation.inventory_value_change)}，收回耗料及工费合计（含内部半成品）${amount(valuation.valuation_cost_basis)}，入库估价差额 ${amount(valuation.valuation_difference)}。`;
+                        const differences = (receiptRows || []).filter(row => Number(row.valuation_difference));
+                        if (differences.length) {
+                            const escape = value => frappe.utils.escape_html(String(value ?? ""));
+                            message += `<div class="table-responsive"><table class="table table-bordered table-condensed"><thead><tr><th>回货单</th><th>商品</th><th>入库净量</th><th>成品入库净价值</th><th>耗料及工费合计</th><th>入库估价差额</th></tr></thead><tbody>${differences.map(row =>
+                                `<tr><td>${escape(row.receipt)}</td><td>${escape(row.item_code)}</td><td>${escape(row.inventory_qty_change)} ${escape(row.stock_uom)}</td><td>${amount(row.inventory_value_change)}</td><td>${amount(row.valuation_cost_basis)}</td><td>${amount(row.valuation_difference)}</td></tr>`
+                            ).join("")}</tbody></table></div>材料、加工和其他费用按实际来源计入；估价差额单独供库存核对。`;
+                        }
+                    }
                     message += "不包含尚未过账费用；若批次追加加工费已计入委外收货，请先清零该笔追加费，避免重复计算。";
                 } else {
                     message = "读取流程单预计费用并选择流程估算口径；以后保存保留人工费用，不会自动带入已过账费用。";
