@@ -566,19 +566,78 @@ def _creation_context(job_card):
     return flow, work, card, loss
 
 
-def _inspect(job_card, request_id=None):
-    flow, work, card, loss = _creation_context(job_card)
+def _request_records(request_id, *, lock=False):
+    query = f"SELECT name, docstatus FROM `tabStock Entry` WHERE {PREFIX}request=%s ORDER BY name"
+    rows = _sql(query + (" FOR UPDATE NOWAIT" if lock else ""), (request_id,))
+    if len(rows) > 1:
+        frappe.throw("同一损耗办理标记对应多张单据，请先核对原单")
+    return rows
+
+
+def _history_card(job_card):
+    from jifeng_erp.flow_quantity import check_quantity_fields
+
+    card = _lock_source("Job Card", job_card)
+    card.check_permission("read")
+    check_quantity_fields("Job Card", {"name"})
+    if card.name != job_card:
+        frappe.throw("原报工单指向不一致")
+    return card
+
+
+def _request_history(job_card, request_id, expected_name):
+    """Read the exact immutable trace, without using history as a new source.
+
+    A cancelled record remains readable after reporting/BOM/status changes.
+    The caller must still be able to read the current original Card identity
+    and every historical field used to identify this specific cancelled SE.
+    """
+    rows = _request_records(request_id, lock=True)
+    if len(rows) != 1 or rows[0].name != expected_name or rows[0].docstatus != 2:
+        frappe.throw("原办理记录状态已变化，请重新回读", frappe.TimestampMismatchError)
+    from jifeng_erp.flow_quantity import check_quantity_fields
+
+    doc = _lock_source("Stock Entry", rows[0].name)
+    doc.check_permission("read")
+    fields = {"name", "docstatus", "purpose", "stock_entry_type", PREFIX + "request", PREFIX + "job_card",
+              PREFIX + "work_order"}
+    check_quantity_fields("Stock Entry", fields)
+    card = _history_card(job_card)
+    if (doc.docstatus != 2 or card.name != job_card or doc.get(PREFIX + "request") != request_id
+            or doc.get(PREFIX + "job_card") != card.name or not doc.get(PREFIX + "work_order")
+            or doc.stock_entry_type != LOSS_TYPE or doc.purpose != "Material Issue"):
+        frappe.throw("办理标记与原报工单或历史损耗出库指向不一致")
+    return doc
+
+
+def _inspect(job_card, request_id=None, *, only_previous=False):
+    if only_previous and not request_id:
+        frappe.throw("回读原办理结果必须提供准确的原办理标记")
     if request_id:
         request_id = _request(request_id)
-        rows = _sql(f"SELECT name FROM `tabStock Entry` WHERE {PREFIX}request=%s ORDER BY name FOR UPDATE NOWAIT",
-                    (request_id,))
-        if len(rows) > 1:
-            frappe.throw("同一损耗办理标记对应多张单据，请先核对原单")
+        # Advisory only: never acquire an active SE before the normal Flow/
+        # WO/Card source locks. Cancellation is re-proved under its own lock.
+        rows = _request_records(request_id)
+        if rows and rows[0].docstatus == 2:
+            history = _request_history(job_card, request_id, rows[0].name)
+            return {"stock_entry": history.name, "docstatus": 2, "existing": True}, None
+        if not rows and only_previous:
+            _history_card(job_card)
+            # A current exact-UUID locking read catches a pending insert or a
+            # stale advisory snapshot. Never clear an unknown write on a plain
+            # repeatable-read snapshot. A newly appeared row requires a fresh
+            # GET; do not acquire Flow/source locks after an active SE lock.
+            if _request_records(request_id, lock=True):
+                frappe.throw("原办理记录刚发生变化，请重新回读", frappe.TimestampMismatchError)
+            return {"stock_entry": None, "docstatus": None, "existing": False}, None
+    flow, work, card, loss = _creation_context(job_card)
+    if request_id:
+        rows = _request_records(request_id, lock=True)
         if rows:
             doc = _authorized_read("Stock Entry", rows[0].name)
             source = read_loss_source(doc, read=_authorized_read)
-            if source["job_card"] != card.name:
-                frappe.throw("办理标记已用于其他报工单")
+            if source["job_card"] != card.name or doc.docstatus not in (0, 1):
+                frappe.throw("办理标记与当前有效损耗来源不一致，请重新回读")
             return {"stock_entry": doc.name, "docstatus": doc.docstatus, "existing": True}, (flow, work, card, loss)
     docs = _loss_documents(job_card=card.name, include_drafts=True)
     if len(docs) > 1:
@@ -607,18 +666,21 @@ def _inspect(job_card, request_id=None):
 
 
 @frappe.whitelist(methods=["GET"])
-def inspect_loss_issue(job_card, request_id=None):
-    return _inspect(job_card, request_id)[0]
+def inspect_loss_issue(job_card, request_id=None, only_previous=0):
+    if str(only_previous) not in ("0", "1"):
+        frappe.throw("损耗办理回读方式不正确")
+    return _inspect(job_card, request_id, only_previous=str(only_previous) == "1")[0]
 
 
 @frappe.whitelist(methods=["POST"])
 def create_loss_issue(job_card, expected_version, no_residual, reason, warehouse, request_id):
     request_id = _request(request_id)
-    result, (flow, work, card, loss) = _inspect(job_card, request_id)
+    result, context = _inspect(job_card, request_id)
     if result["existing"]:
         if result["docstatus"] == 2:
             frappe.throw("此办理标记的损耗出库已取消，不能自动重新办理，请重新核对报工后另行操作")
         return result
+    flow, work, card, loss = context
     if str(card.modified) != str(expected_version):
         frappe.throw("报工来源版本已变化，请刷新后重新核对损耗", frappe.TimestampMismatchError)
     if str(no_residual) != "1" or not isinstance(reason, str) or not reason.strip():

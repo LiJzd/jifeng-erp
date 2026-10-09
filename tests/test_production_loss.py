@@ -126,7 +126,7 @@ class ProductionLossTests(unittest.TestCase):
                 normalized = query.replace(" ", "")
                 field = next(field for field in ("request", "job_card", "work_order")
                              if f"jf_production_loss_{field}=%s" in query)
-                return [Doc(name=doc.name) for doc in entries if doc.get("jf_production_loss_" + field) == args[0]
+                return [Doc(name=doc.name, docstatus=doc.docstatus) for doc in entries if doc.get("jf_production_loss_" + field) == args[0]
                         and ("docstatus=1" not in normalized or doc.docstatus == 1)
                         and ("docstatus<2" not in normalized or doc.docstatus < 2)]
             if "WHERE name=%s" in query:
@@ -340,6 +340,66 @@ class ProductionLossTests(unittest.TestCase):
             self.module.create_loss_issue("JC", self.card.modified, 1, "重新报废", "WIP", REQUEST)
         self.assertEqual(len(self.insert_count), 1)
 
+    def test_cancelled_exact_request_reads_after_card_source_changes_without_replaying(self):
+        doc = self.entry(status=2)
+        self.store["Stock Entry", "LOSS"] = doc
+        self.card.update(docstatus=2, total_completed_qty=3, process_loss_qty=0, pending_qty=2,
+                         work_order="CHANGED-WORK", modified="new-source")
+        self.work.update(docstatus=2, bom_no="CHANGED-BOM")
+        self.flow.bom = "CHANGED-BOM"
+        with patch.object(self.module, "_creation_context", side_effect=AssertionError("history used new source")), \
+             patch.object(self.module, "read_loss_source", side_effect=AssertionError("history used current signature")):
+            result = self.module.inspect_loss_issue("JC", REQUEST, only_previous=1)
+            self.assertEqual(result, {"stock_entry": "LOSS", "docstatus": 2, "existing": True})
+            with self.assertRaisesRegex(ValueError, "不能自动重新办理"):
+                self.module.create_loss_issue("JC", "new-source", 1, "重新确认", "WIP", REQUEST)
+        self.assertFalse(self.insert_count)
+
+    def test_cancelled_history_is_card_bound_and_requires_both_document_and_used_field_permissions(self):
+        doc = self.entry(status=2)
+        self.store["Stock Entry", "LOSS"] = doc
+        other = Doc(self.card); other.name = "OTHER-CARD"
+        self.store["Job Card", other.name] = other
+        with self.assertRaisesRegex(ValueError, "指向不一致"):
+            self.module.inspect_loss_issue(other.name, REQUEST, only_previous=1)
+        for target in (self.card, doc):
+            target.denied = ("read",)
+            with self.assertRaises(PermissionError): self.module.inspect_loss_issue("JC", REQUEST, only_previous=1)
+            target.denied = ()
+        for doctype, denied_field in (("Stock Entry", "jf_production_loss_request"), ("Job Card", "name")):
+            def deny(kind, fields, **kwargs):
+                if kind == doctype and denied_field in fields: raise PermissionError("field/mask denied")
+            with patch.object(self.modules["jifeng_erp.flow_quantity"], "check_quantity_fields", deny), self.assertRaises(PermissionError):
+                self.module.inspect_loss_issue("JC", REQUEST, only_previous=1)
+
+    def test_history_advisory_status_is_rechecked_and_active_request_keeps_flow_first_lock_order(self):
+        doc = self.entry()
+        self.store["Stock Entry", "LOSS"] = doc
+        result = self.module.inspect_loss_issue("JC", REQUEST, only_previous=1)
+        self.assertTrue(result["existing"])
+        first_active_lock = next(i for i, query in enumerate(self.queries)
+                                 if "tabStock Entry` WHERE jf_production_loss_request" in query and "FOR UPDATE" in query)
+        flow_lock = next(i for i, query in enumerate(self.queries) if "tabJifeng Flow Order" in query)
+        self.assertLess(flow_lock, first_active_lock)
+        with patch.object(self.module, "_request_records", side_effect=[
+                [Doc(name="LOSS", docstatus=2)], [Doc(name="LOSS", docstatus=0)]]):
+            with self.assertRaises(RuntimeError): self.module.inspect_loss_issue("JC", REQUEST, only_previous=1)
+
+    def test_previous_absence_is_a_current_locked_read_without_loss_eligibility_and_pending_write_is_unknown(self):
+        self.card.total_completed_qty, self.card.process_loss_qty = 5, 0
+        with patch.object(self.module, "_creation_context", side_effect=AssertionError("absence used create context")):
+            result = self.module.inspect_loss_issue("JC", REQUEST, only_previous=1)
+            self.assertFalse(result["existing"])
+            current = [query for query in self.queries if "jf_production_loss_request=%s" in query and "NOWAIT" in query]
+            self.assertEqual(len(current), 1)
+            with patch.object(self.module, "_request_records", side_effect=[[], TimeoutError("pending insert")]):
+                with self.assertRaises(TimeoutError): self.module.inspect_loss_issue("JC", REQUEST, only_previous=1)
+            with patch.object(self.module, "_request_records", side_effect=[[], [Doc(name="JUST-CREATED", docstatus=0)]]):
+                with self.assertRaises(RuntimeError): self.module.inspect_loss_issue("JC", REQUEST, only_previous=1)
+        self.assertFalse(self.insert_count)
+        with self.assertRaisesRegex(ValueError, "全部损耗"):
+            self.module.inspect_loss_issue("JC", REQUEST)
+
     def test_stale_source_permission_and_wrong_warehouse_do_not_create(self):
         with self.assertRaises(RuntimeError):
             self.module.create_loss_issue("JC", "stale", 1, "全部报废", "WIP", REQUEST)
@@ -355,7 +415,7 @@ class ProductionLossTests(unittest.TestCase):
             with self.subTest(error=error), self.assertRaisesRegex(error, "正在更新"):
                 self.module.inspect_loss_issue("JC", REQUEST)
         self.assertFalse(self.insert_count)
-        self.assertTrue(all("NOWAIT" in query for query in self.queries))
+        self.assertTrue(all("NOWAIT" in query for query in self.queries if "FOR UPDATE" in query))
 
     def progress_module(self):
         spec = importlib.util.spec_from_file_location("loss_progress_under_test", ROOT / "jifeng_erp/production_loss_progress.py")
