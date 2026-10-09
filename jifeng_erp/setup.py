@@ -550,11 +550,73 @@ def _propagate_subcontracting_stock_flow(doc):
     return stages
 
 
+def _subassembly_work_source(work, *, arranging=False, current=False):
+    """Use the exact native child plan reference without allocating parent FG."""
+    if not work.get("production_plan_sub_assembly_item"):
+        return None
+    from jifeng_erp.production_loss import (
+        _authorized_read, check_loss_source_read_permissions, read_work_flow_source,
+    )
+
+    if current:
+        pointers = {field: work.get(field) for field in (
+            "production_plan", "production_plan_item", "production_plan_sub_assembly_item")}
+        work = _authorized_read("Work Order", work.name)
+        if any(work.get(field) != value for field, value in pointers.items()):
+            frappe.throw("子装配工单来源已变化，请刷新原工单后重新办理")
+    check_loss_source_read_permissions(work)
+    source = read_work_flow_source(work, read=_authorized_read, arranging=arranging)
+    source["work_order"] = work
+    return source
+
+
+def _subassembly_stock_rows(doc, work, source):
+    """Bind stock rows to the child WO's own material and warehouse scope."""
+    from jifeng_erp.production_loss import LOSS_TYPE, _required
+
+    required, units = _required(work)
+    purpose = doc.get("purpose")
+    loss = doc.get("stock_entry_type") == LOSS_TYPE and doc.get("jf_production_loss_work_order") == work.name
+    if purpose not in ("Material Transfer for Manufacture", "Manufacture", "Material Consumption for Manufacture"):
+        if not loss or purpose != "Material Issue":
+            frappe.throw("子装配库存凭证必须从原工单转料、制造或准确制造损耗来源办理")
+    if not work.get("wip_warehouse"):
+        frappe.throw("子装配工单缺少准确原在制仓库")
+    if doc.get("bom_no") and doc.bom_no != work.bom_no:
+        frappe.throw("子装配库存凭证BOM与原子工单不一致")
+    if not doc.get("items"):
+        frappe.throw("子装配库存凭证缺少实际材料或成品明细")
+    allowed = set()
+    for row in doc.items:
+        finished = bool(row.get("is_finished_item"))
+        if row.get("secondary_item_type"):
+            frappe.throw("子装配副产品须先核实准确估值和物料来源，不能归入原计划成本")
+        if finished:
+            if (purpose != "Manufacture" or row.item_code != work.production_item
+                    or row.get("stock_uom") != work.stock_uom or row.get("s_warehouse")
+                    or row.get("t_warehouse") != work.get("fg_warehouse")):
+                frappe.throw("子装配制造成品必须使用原子商品、库存单位和成品仓库")
+        elif (row.item_code not in required or row.get("stock_uom") != units[row.item_code]
+                or (purpose == "Material Transfer for Manufacture" and
+                    (not row.get("s_warehouse") or row.get("t_warehouse") != work.wip_warehouse))
+                or (purpose != "Material Transfer for Manufacture" and
+                    (row.get("s_warehouse") != work.wip_warehouse or row.get("t_warehouse")))):
+            frappe.throw("子装配材料必须属于准确原子工单并使用其原在制仓库和库存单位")
+        if row.get("jf_flow_order") and row.jf_flow_order != source["flow"].name:
+            frappe.throw("子装配库存明细不能关联其他流程单")
+        row.jf_flow_order = source["flow"].name
+        allowed.add(id(row))
+    return allowed
+
+
 def validate_flow_links(doc, method=None):
     if doc.doctype == "Job Card":
         work_order = frappe.get_doc("Work Order", doc.work_order)
         work_order.check_permission("read")
-        source_flow = work_order.get("jf_flow_order")
+        child_source = _subassembly_work_source(work_order, current=True)
+        if child_source:
+            work_order = child_source["work_order"]
+        source_flow = child_source["flow"].name if child_source else work_order.get("jf_flow_order")
         if doc.get("jf_flow_order") and doc.jf_flow_order != source_flow:
             frappe.throw("报工单流程单与生产工单来源不一致")
         if work_order.company != doc.company or work_order.production_item != doc.production_item:
@@ -562,11 +624,16 @@ def validate_flow_links(doc, method=None):
         if source_flow:
             flow = frappe.get_doc("Jifeng Flow Order", source_flow, for_update=True)
             flow.check_permission("read")
-            if flow.company != doc.company or flow.item_code != doc.production_item:
+            if flow.company != doc.company or (not child_source and flow.item_code != doc.production_item):
                 frappe.throw("报工单与流程单的公司、商品不一致")
+        if child_source and (doc.get("track_semi_finished_goods")
+                or (doc.get("stock_uom") and doc.stock_uom != work_order.stock_uom)
+                or (doc.get("wip_warehouse") and doc.wip_warehouse != work_order.wip_warehouse)):
+            frappe.throw("子装配报工必须使用普通原子工单的库存单位和在制仓库")
         doc.jf_flow_order = source_flow
         return
     stage_links, stock_stage_items, work_stage = {}, {}, None
+    subassembly_rows = set()
     if doc.doctype in ("Purchase Order", "Subcontracting Order", "Subcontracting Receipt"):
         for row in doc.get("items") or []:
             if not row.get("job_card"):
@@ -598,17 +665,31 @@ def validate_flow_links(doc, method=None):
 
         validate_work_order(doc)
         validate_replacement(doc)
-        if doc.docstatus != 2 and doc.get("jf_flow_order"):
-            flow = frappe.get_doc("Jifeng Flow Order", doc.jf_flow_order, for_update=True)
+        child_source = _subassembly_work_source(doc)
+        source_flow = child_source["flow"].name if child_source else doc.get("jf_flow_order")
+        if doc.docstatus != 2 and source_flow:
+            flow = frappe.get_doc("Jifeng Flow Order", source_flow, for_update=True)
             flow.check_permission("read")
             from jifeng_erp.material_issue import assert_no_net_issue_for_manufacturing
 
             assert_no_net_issue_for_manufacturing(flow)
         return
     work_flow = None
-    if doc.doctype == "Stock Entry" and doc.get("work_order"):
-        work_order = frappe.get_doc("Work Order", doc.work_order)
-        if work_order.get("jf_flow_order"):
+    work_name = doc.get("work_order") or doc.get("jf_production_loss_work_order")
+    if doc.doctype == "Stock Entry" and work_name:
+        if (doc.get("work_order") and doc.get("jf_production_loss_work_order")
+                and doc.work_order != doc.jf_production_loss_work_order):
+            frappe.throw("库存凭证工单与制造损耗原工单来源不一致")
+        work_order = frappe.get_doc("Work Order", work_name)
+        child_source = _subassembly_work_source(work_order, current=True)
+        if child_source:
+            work_order = child_source["work_order"]
+            work_order.check_permission("read")
+            work_flow = child_source["flow"]
+            if work_order.company != doc.company or work_flow.company != doc.company:
+                frappe.throw("子装配工单、库存凭证与流程单公司不一致")
+            subassembly_rows = _subassembly_stock_rows(doc, work_order, child_source)
+        elif work_order.get("jf_flow_order"):
             if (work_order.get("track_semi_finished_goods") and doc.get("purpose") == "Manufacture"
                     and not work_stage):
                 frappe.throw("半成品工单制造须从准确报工工序生成，不能从整张工单另造入库重复产出")
@@ -687,7 +768,7 @@ def validate_flow_links(doc, method=None):
 
                     stage = stage or procurement_stage(doc, row, historical=doc.docstatus == 2)
                 allowed_stage = (stage and stage["flow"].get("name") == flow.name)
-                allowed_stock = (id(row) in stock_stage_items or (work_stage and row.item_code in
+                allowed_stock = (id(row) in subassembly_rows or id(row) in stock_stage_items or (work_stage and row.item_code in
                     work_stage["materials"] | ({work_stage["item"]} if doc.get("purpose") == "Manufacture" else set())))
                 if not allowed_stage and not allowed_stock:
                     frappe.throw("凭证物料不在流程单物料分析中，请先补齐分析")

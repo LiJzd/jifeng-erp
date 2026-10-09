@@ -85,6 +85,8 @@ class TestFlowStockEntry(unittest.TestCase):
         material_issue.assert_no_net_issue_for_manufacturing = assert_no_net_issue_for_manufacturing
         production = types.ModuleType("jifeng_erp.production_instruction")
         production.validate_work_order = lambda doc: None
+        replacement = types.ModuleType("jifeng_erp.production_replacement")
+        replacement.validate_replacement = lambda doc: None
         custom = types.ModuleType("frappe.custom.doctype.custom_field.custom_field")
         custom.create_custom_fields = lambda *args, **kwargs: None
         modules = {
@@ -95,6 +97,7 @@ class TestFlowStockEntry(unittest.TestCase):
             "frappe.custom.doctype.custom_field.custom_field": custom,
             "jifeng_erp.material_issue": material_issue,
             "jifeng_erp.production_instruction": production,
+            "jifeng_erp.production_replacement": replacement,
         }
         modules_patch = patch.dict(sys.modules, modules)
         modules_patch.start()
