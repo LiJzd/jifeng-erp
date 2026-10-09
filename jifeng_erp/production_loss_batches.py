@@ -1,4 +1,4 @@
-"""Prove batch materials from their exact Work Order WIP transfer history.
+"""Prove tracked materials from their exact Work Order WIP transfer history.
 
 Every read is supplied by the caller. The costing Session owns permission and
 read-change closure; stock writers supply current NOWAIT readers. This module
@@ -30,7 +30,9 @@ PARENTS = {
     BUNDLE: IDENTITY | {"company", "item_code", "warehouse", "voucher_type", "voucher_no", "voucher_detail_no",
         "type_of_transaction", "is_cancelled", "has_batch_no", "has_serial_no", "total_qty", "total_amount"},
     "Batch": IDENTITY | {"item", "disabled", "use_batchwise_valuation"},
-    "Item": {"name", "modified", "stock_uom", "is_stock_item", "has_batch_no", "has_serial_no"},
+    "Item": {"name", "modified", "stock_uom", "is_stock_item", "has_batch_no", "has_serial_no",
+        "use_serial_no_wise_valuation"},
+    "Serial No": IDENTITY | {"item_code", "batch_no", "company", "warehouse", "status"},
     REPOST: IDENTITY | {"company", "status", "item_code", "warehouse", "voucher_type", "voucher_no",
         "based_on", "reposting_data_file", "items_to_be_repost"},
 }
@@ -90,6 +92,35 @@ def _batch(name, item, *, read):
     return batch
 
 
+def _serials(value):
+    if not isinstance(value, str):
+        _fail("序号材料缺少准确原序号")
+    names = [name.strip() for name in value.splitlines() if name.strip()]
+    if not names or len(names) != len(set(names)) or len(names) > MAX_ROWS:
+        _fail("序号材料存在空号或重复序号")
+    return names
+
+
+def _serial(name, item, company, batch, *, read, current_warehouse=None):
+    if not isinstance(name, str) or not name.strip():
+        _fail("序号材料缺少准确原序号")
+    doc = read("Serial No", name)
+    doc.check_permission("read")
+    if (doc.name != name or doc.item_code != item or doc.company != company
+            or (doc.get("batch_no") or None) != (batch or None)):
+        _fail("原序号的商品、公司或批号与准确库存来源不一致")
+    if current_warehouse and (doc.get("warehouse") != current_warehouse or doc.get("status") != "Active"):
+        _fail("所选原序号当前不在本工单在制仓或不可出库")
+    return doc
+
+
+def _mirror(doc, lots):
+    if doc.get("serial_no") and set(_serials(doc.serial_no)) != {row["serial_no"] for row in lots.values()}:
+        _fail("库存明细旧序号字段与原生序号凭证不一致")
+    if doc.get("batch_no") and {row["batch_no"] for row in lots.values()} != {doc.batch_no}:
+        _fail("损耗明细所选批号与真实出库批号不一致")
+
+
 def _stamp(doc):
     # ISO dates and native posting_time strings/timedeltas preserve ordering
     # after padding the clock fields (timedelta string may start with 0:).
@@ -103,20 +134,34 @@ def _stamp(doc):
 
 def _lots(sle, *, read, records, historical=False):
     qty, value = _number(sle.actual_qty), _number(sle.stock_value_difference)
-    if (sle.docstatus != 1 or not qty or sle.get("is_adjustment_entry") or sle.get("serial_no")
-            or qty * value < 0):
+    if sle.docstatus != 1 or not qty or sle.get("is_adjustment_entry") or qty * value < 0:
         _fail("批号库存账方向、状态或价值层无法唯一核对")
+    item = read("Item", sle.item_code)
+    item.check_permission("read")
+    serial, batched = bool(item.get("has_serial_no")), bool(item.get("has_batch_no"))
+    if not (serial or batched) or sle.stock_uom != item.stock_uom:
+        _fail("库存账追踪方式或单位与原材料不一致")
     name = sle.get("serial_and_batch_bundle")
     if not name:
-        batch = sle.get("batch_no")
-        _batch(batch, sle.item_code, read=read)
-        return {batch: {"qty": qty, "value": value, "rate": value / qty}}
+        if serial:
+            # Installed SerialNoValuation uses each exact Inward child rate.
+            # Its separate deprecated-SLE fallback is not proved here.
+            _fail("旧序号库存账缺少逐号原入向凭证，当前入口不能猜测原号损耗金额")
+        batch = sle.get("batch_no") or None
+        if batched:
+            _batch(batch, sle.item_code, read=read)
+        elif batch:
+            _fail("未启用批号的材料不能混入批号库存账")
+        if sle.get("serial_no"):
+            _fail("未启用序号的材料不能混入序号库存账")
+        return {batch: {"qty": qty, "value": value, "rate": value / qty,
+                        "serial_no": None, "batch_no": batch}}
     bundle = read(BUNDLE, name)
     bundle.check_permission("read")
     allowed = {1, 2} if historical else {1}
     if (bundle.docstatus not in allowed or (not historical and bundle.get("is_cancelled"))
             or bundle.company != sle.company or bundle.item_code != sle.item_code or bundle.warehouse != sle.warehouse
-            or bundle.get("has_serial_no") or not bundle.get("has_batch_no")
+            or bool(bundle.get("has_serial_no")) != serial or bool(bundle.get("has_batch_no")) != batched
             or bundle.voucher_type != sle.voucher_type or bundle.voucher_no != sle.voucher_no
             or bundle.voucher_detail_no != sle.voucher_detail_no
             or bundle.type_of_transaction != ("Inward" if qty > 0 else "Outward")):
@@ -132,30 +177,38 @@ def _lots(sle, *, read, records, historical=False):
         row = children[raw["name"]]
         if (any(row.get(field) != amount for field, amount in raw.items() if field in fields)
                 or row.parent != name or row.parenttype != BUNDLE or row.parentfield != "entries"
-                or row.docstatus != bundle.docstatus or row.get("serial_no")
+                or row.docstatus != bundle.docstatus
                 or row.item_code != sle.item_code or row.warehouse != sle.warehouse
                 or (not historical and row.get("is_cancelled"))):
             _fail("原批号凭证明细的物料、数量或父凭证不一致")
-        batch, quantity = row.get("batch_no"), _number(row.qty)
+        batch, number, quantity = row.get("batch_no") or None, row.get("serial_no") or None, _number(row.qty)
+        key = ("serial", number) if serial else batch
         rate, amount = _number(row.get("incoming_rate")), _number(row.get("stock_value_difference"))
-        if (not batch or batch in result or not quantity or quantity * qty <= 0 or rate < 0
+        if (not key or key in result or not quantity or quantity * qty <= 0 or rate < 0
+                or (serial and (not number or abs(quantity) != 1)) or (not serial and number)
                 or not _same(amount, quantity * rate, row, "stock_value_difference")):
             _fail("同批重复或存在无法准确区分的历史价层，请逐层核对原单")
-        _batch(batch, sle.item_code, read=read)
-        result[batch] = {"qty": quantity, "value": amount, "rate": rate}
+        if batched:
+            _batch(batch, sle.item_code, read=read)
+        elif batch:
+            _fail("未启用批号的材料不能混入批号凭证")
+        if serial:
+            _serial(number, sle.item_code, sle.company, batch, read=read)
+        result[key] = {"qty": quantity, "value": amount, "rate": rate, "batch_no": batch, "serial_no": number}
     if (not _same(sum((row["qty"] for row in result.values()), ZERO), qty, sle, "actual_qty")
             or not _same(sum((row["value"] for row in result.values()), ZERO), value, sle, "stock_value_difference")
             or not _same(bundle.total_qty, qty, sle, "actual_qty")
             or not _same(bundle.total_amount, value, sle, "stock_value_difference")):
         _fail("逐批数量或价值与确切库存账不一致")
-    if sle.get("batch_no") and set(result) != {sle.batch_no}:
-        _fail("库存账旧批号字段与批号凭证不一致")
+    _mirror(sle, result)
     return result
 
 
-def _selected_batch(doc, row, item, *, read, records):
+def _selected_lots(doc, row, item, *, read, records):
     """Validate a native-created draft bundle without trusting its valuation."""
-    batch = row.get("batch_no")
+    batch = row.get("batch_no") or None
+    serial, batched = bool(item.get("has_serial_no")), bool(item.get("has_batch_no"))
+    selected = {}
     if row.get("serial_and_batch_bundle"):
         bundle = read(BUNDLE, row.serial_and_batch_bundle)
         bundle.check_permission("read")
@@ -163,27 +216,47 @@ def _selected_batch(doc, row, item, *, read, records):
                 or bundle.item_code != item.name or bundle.warehouse != row.s_warehouse
                 or bundle.voucher_type != SE or bundle.voucher_no != doc.name
                 or bundle.voucher_detail_no != row.name or bundle.type_of_transaction != "Outward"
-                or bundle.get("has_serial_no") or not bundle.get("has_batch_no")):
+                or bool(bundle.get("has_serial_no")) != serial or bool(bundle.get("has_batch_no")) != batched):
             _fail("损耗批号凭证必须是本单、本行准确新建的原生出向草稿")
         fields = TABLES[BUNDLE][0][2]
         entries = records(ENTRY, {"parent": bundle.name}, fields, parenttype=BUNDLE)
         actual = bundle.get("entries") or []
-        if len(entries) != 1 or len(actual) != 1:
-            _fail("请按一行一批办理损耗，不能合并或遗漏原批号明细")
-        entry, native = entries[0], actual[0]
-        if (any(native.get(field) != value for field, value in entry.items() if field in fields)
-                or entry.get("parent") != bundle.name or entry.get("parenttype") != BUNDLE
-                or entry.get("parentfield") != "entries" or entry.get("docstatus") != 0
-                or entry.get("is_cancelled") or entry.get("serial_no")
-                or entry.get("item_code") != item.name or entry.get("warehouse") != row.s_warehouse
-                or not _same(-_number(entry.get("qty")), row.transfer_qty, row, "transfer_qty")
-                or (batch and batch != entry.get("batch_no"))):
-            _fail("新出向批号凭证与本次损耗选择不一致")
-        batch = entry.get("batch_no")
-    selected = _batch(batch, item.name, read=read)
-    if selected.get("disabled"):
-        _fail("所选原批号已停用，不能新增损耗出库")
-    return batch
+        native_rows = {child.name: child for child in actual}
+        if (not entries or len(entries) > MAX_ROWS or len(native_rows) != len(actual)
+                or len(entries) != len(actual) or {child.get("name") for child in entries} != set(native_rows)):
+            _fail("新出向批次或序号明细不完整")
+        for entry in entries:
+            native = native_rows[entry["name"]]
+            number, chosen_batch = entry.get("serial_no") or None, entry.get("batch_no") or None
+            key = ("serial", number) if serial else chosen_batch
+            quantity = _number(entry.get("qty"))
+            if (any(native.get(field) != value for field, value in entry.items() if field in fields)
+                    or entry.get("parent") != bundle.name or entry.get("parenttype") != BUNDLE
+                    or entry.get("parentfield") != "entries" or entry.get("docstatus") != 0
+                    or entry.get("is_cancelled") or not key or key in selected or quantity >= 0
+                    or (serial and (not number or quantity != -1)) or (not serial and number)
+                    or entry.get("item_code") != item.name or entry.get("warehouse") != row.s_warehouse):
+                _fail("新出向批号凭证与本次损耗选择不一致")
+            selected[key] = {"qty": quantity, "serial_no": number, "batch_no": chosen_batch}
+    elif serial:
+        selected = {("serial", number): {"qty": Decimal(-1), "serial_no": number, "batch_no": batch}
+                    for number in _serials(row.get("serial_no"))}
+    else:
+        selected = {batch: {"qty": -_number(row.transfer_qty), "serial_no": None, "batch_no": batch}}
+    if (not serial and len(selected) != 1
+            or not _same(-sum((lot["qty"] for lot in selected.values()), ZERO), row.transfer_qty, row, "transfer_qty")):
+        _fail("损耗明细数量与所选批次或逐号数量不一致")
+    _mirror(row, selected)
+    for lot in selected.values():
+        if batched:
+            if _batch(lot["batch_no"], item.name, read=read).get("disabled"):
+                _fail("所选原批号已停用，不能新增损耗出库")
+        elif lot["batch_no"]:
+            _fail("未启用批号的材料不能混入批号损耗")
+        if serial:
+            _serial(lot["serial_no"], item.name, doc.company, lot["batch_no"], read=read,
+                    current_warehouse=row.s_warehouse)
+    return selected
 
 
 def _transfers(work, *, read, records):
@@ -214,6 +287,39 @@ def _reposting(work, items, transfers, *, read, records):
             _fail("相关批号库存正在重估或范围无法确认，请完成重估后再办理")
 
 
+def _add_origin(origin, key, values, doc, row, sle):
+    source = {"stock_entry": doc.name, "detail": row.name, "original_qty": values["qty"]}
+    if key not in origin:
+        origin[key] = {**values, "sources": [source], "sle": sle,
+                       "source_entry": doc.name, "source_detail": row.name}
+        return
+    pool = origin[key]
+    if values.get("serial_no"):
+        _fail("同一原序号有多次有效入向来源，请先核对原号的返库及转料顺序")
+    if values["rate"] != pool["rate"] or values.get("batch_no") != pool.get("batch_no"):
+        _fail("同批原转料存在不同价层，不能猜测逐层损耗金额")
+    pool["qty"] += values["qty"]
+    pool["value"] += values["value"]
+    matched = next((entry for entry in pool["sources"]
+                    if (entry["stock_entry"], entry["detail"]) == (doc.name, row.name)), None)
+    if matched:
+        matched["original_qty"] += values["qty"]
+    else:
+        pool["sources"].append(source)
+    if len(pool["sources"]) != 1:
+        pool["source_entry"] = pool["source_detail"] = None
+
+
+def _sources(pool, selected_qty=None):
+    # These are proved capacities of the complete fungible same-price pool,
+    # not invented historical outgoing-to-transfer assignments. A serial has
+    # one exact source. SRE distributes current consumption within these caps.
+    result = [dict(entry) for entry in pool["sources"]]
+    if selected_qty is not None and len(result) == 1:
+        result[0]["qty"] = selected_qty
+    return result
+
+
 def _pool(work, item, *, read, records, cutoff=None, exclude=None):
     transfers = _transfers(work, read=read, records=records)
     _reposting(work, {item.name}, transfers, read=read, records=records)
@@ -236,17 +342,16 @@ def _pool(work, item, *, read, records, cutoff=None, exclude=None):
             doc, row = source
             if row.stock_uom != item.stock_uom or _stamp(sle) != _stamp(doc):
                 _fail()
+            _mirror(row, lots)
             seen_sources[key] += _number(sle.actual_qty)
             for batch, values in lots.items():
-                if batch in origin:
-                    _fail("同一批号有多笔原转料来源，当前入口不能猜测逐层预留和历史价值")
-                origin[batch] = {**values, "source_entry": doc.name, "source_detail": row.name, "sle": sle}
+                _add_origin(origin, batch, values, doc, row, sle)
         for batch, values in lots.items():
             current[batch] += values["qty"]
             all_rates.add(values["rate"])
     # A homogeneous price layer is also valid when native batch valuation is
     # disabled: moving average/FIFO/LIFO cannot invent a different lot price.
-    if len(all_rates) != 1:
+    if len(all_rates) != 1 and not (item.get("has_serial_no") and item.get("use_serial_no_wise_valuation")):
         _fail("在制仓该材料存在多种历史价层，当前入口不能推测原批出库价值")
     for key, amount in seen_sources.items():
         row = transfers[key][1]
@@ -256,8 +361,8 @@ def _pool(work, item, *, read, records, cutoff=None, exclude=None):
                         and (not cutoff or _stamp(source) <= cutoff)}
     if set(seen_sources) != expected_sources:
         _fail("原工单转料库存账或批次来源不完整，不能遗漏另一笔原转料")
-    # Every chosen lot must have exactly one positive origin and no foreign
-    # inward movement. Outward use/returns by any actor reduce the physical pool.
+    # The whole chosen pool belongs to this WO. Any actor's physical outflow
+    # reduces it; foreign inward stock cannot expand its proved source capacity.
     for sle in ledger:
         if cutoff and _stamp(sle) > cutoff or sle.voucher_type == SE and sle.voucher_no == exclude:
             continue
@@ -290,10 +395,10 @@ def _historical_origins(work, item, *, read, records, cutoff):
             if _number(sle.actual_qty) <= 0 or sle.stock_uom != item.stock_uom or _stamp(sle) != _stamp(doc):
                 _fail()
             qty += _number(sle.actual_qty)
-            for batch, values in _lots(sle, read=read, records=records).items():
-                if batch in result:
-                    _fail("原批号有多个转料来源，无法准确证明原损耗归属")
-                result[batch] = {**values, "source_entry": voucher, "source_detail": detail}
+            lots = _lots(sle, read=read, records=records)
+            _mirror(row, lots)
+            for batch, values in lots.items():
+                _add_origin(result, batch, values, doc, row, sle)
         if not ledger or not _same(qty, row.transfer_qty, row, "transfer_qty"):
             _fail("撤销损耗缺少完整原工单批次转料证据")
     return result
@@ -305,26 +410,32 @@ def proposal(work, requested_by_item, *, read, records, posting_date=None, posti
     for code, requested in sorted(requested_by_item.items()):
         item = read("Item", code)
         item.check_permission("read")
-        if item.get("has_serial_no"):
-            _fail("序号原料全损耗须逐号核对，当前批号入口暂不支持")
-        if not item.get("has_batch_no"):
+        if not (item.get("has_batch_no") or item.get("has_serial_no")):
             continue
         remaining = _number(requested)
-        if remaining <= 0 or not item.get("is_stock_item"):
+        if (remaining <= 0 or not item.get("is_stock_item")
+                or item.get("has_serial_no") and remaining != remaining.to_integral_value()):
             _fail()
         pools = _pool(work, item, read=read, records=records, cutoff=cutoff)
-        for batch, pool in sorted(pools.items(), key=lambda pair: (_stamp(pair[1]["sle"]), pair[1]["source_entry"], pair[0])):
+        for _key, pool in sorted(pools.items(), key=lambda pair:
+                (_stamp(pair[1]["sle"]), pair[1]["sources"][0]["stock_entry"], str(pair[0]))):
             qty = min(remaining, pool["available"])
             if not qty:
                 continue
-            batch_doc = _batch(batch, code, read=read)
-            if batch_doc.get("disabled"):
+            batch, serial = pool["batch_no"], pool["serial_no"]
+            if item.get("has_batch_no") and _batch(batch, code, read=read).get("disabled"):
                 _fail("所选原批号已停用，不能新增损耗出库")
+            if serial:
+                if qty != 1:
+                    _fail("序号材料必须按原号的整数库存数量办理")
+                _serial(serial, code, work.company, batch, read=read, current_warehouse=work.wip_warehouse)
             value = qty * pool["rate"]
             result.append({"item_code": code, "batch_no": batch, "qty": qty, "stock_uom": item.stock_uom,
                 "uom": item.stock_uom, "conversion_factor": 1, "use_serial_batch_fields": 1,
                 "expected_value": value, "allow_zero_valuation_rate": int(pool["rate"] == 0),
-                "source_transfers": [{"stock_entry": pool["source_entry"], "detail": pool["source_detail"], "qty": qty}]})
+                "source_transfers": _sources(pool, qty)})
+            if serial:
+                result[-1]["serial_no"] = serial
             remaining -= qty
             if not remaining:
                 break
@@ -338,13 +449,12 @@ def prove_loss_batches(doc, work, *, read, records, posted=False):
     historical, pools_by_item = doc.docstatus == 2, {}
     for row in doc.get("items") or []:
         item = read("Item", row.item_code)
-        if item.get("has_serial_no"):
-            _fail("序号原料全损耗须逐号核对，当前批号入口暂不支持")
-        if not item.get("has_batch_no"):
+        if not (item.get("has_batch_no") or item.get("has_serial_no")):
             continue
         item.check_permission("read")
         quantity = _number(row.transfer_qty)
-        if (not item.get("is_stock_item") or quantity <= 0 or row.get("serial_no") or row.stock_uom != item.stock_uom
+        if (not item.get("is_stock_item") or quantity <= 0 or row.stock_uom != item.stock_uom
+                or item.get("has_serial_no") and quantity != quantity.to_integral_value()
                 or row.s_warehouse != work.wip_warehouse or row.get("t_warehouse")):
             _fail()
         if posted or historical:
@@ -362,20 +472,20 @@ def prove_loss_batches(doc, work, *, read, records, posted=False):
                     lots[batch] = values
                     value -= values["value"]
                     qty -= values["qty"]
-            if not ledger or len(lots) != 1 or not _same(qty, quantity, row, "transfer_qty"):
+            if (not ledger or not lots or (not item.get("has_serial_no") and len(lots) != 1)
+                    or not _same(qty, quantity, row, "transfer_qty")):
                 _fail("损耗出库缺少完整原批次库存账，不能按当前均价补账")
             if row.get("serial_and_batch_bundle") and any(sle.get("serial_and_batch_bundle") != row.serial_and_batch_bundle for sle in ledger):
                 _fail()
         else:
-            batch = _selected_batch(doc, row, item, read=read, records=records)
-            lots = {batch: {"qty": -quantity}}
+            lots = _selected_lots(doc, row, item, read=read, records=records)
             value = None
         if row.item_code not in pools_by_item:
             pools_by_item[row.item_code] = (_historical_origins(work, item, read=read, records=records, cutoff=_stamp(doc))
                 if historical else _pool(work, item, read=read, records=records,
                                          cutoff=_stamp(doc) if posted else None, exclude=doc.name))
         pools = pools_by_item[row.item_code]
-        sources, expected = [], ZERO
+        sources, detail_lots, expected = [], [], ZERO
         for batch, chosen in lots.items():
             if historical:
                 original = pools.get(batch)
@@ -384,20 +494,29 @@ def prove_loss_batches(doc, work, *, read, records, posted=False):
                     _fail("原损耗批号或历史金额与原工单转料不一致")
                 original["available"] += chosen["qty"]
                 expected -= chosen["value"]
-                sources.append({"stock_entry": original["source_entry"], "detail": original["source_detail"], "qty": -chosen["qty"]})
+                lot_sources = _sources(original, -chosen["qty"])
+                sources.extend(lot_sources)
+                detail_lots.append({"lot_key": batch, "qty": -chosen["qty"], "value": -chosen["value"],
+                    "batch_no": chosen["batch_no"], "serial_no": chosen["serial_no"], "sources": lot_sources})
                 continue
             pool = pools.get(batch)
             if not pool or -chosen["qty"] > pool["available"]:
                 _fail("所选批号不在原工单准确转料池内，或累计出库超过剩余数量")
+            if (value is not None and not _same(-chosen["value"], -chosen["qty"] * pool["rate"], row, "amount")):
+                _fail("原生逐号或逐批损耗金额与准确原转料价层不一致")
             expected += -chosen["qty"] * pool["rate"]
-            sources.append({"stock_entry": pool["source_entry"], "detail": pool["source_detail"], "qty": -chosen["qty"]})
+            lot_sources = _sources(pool, -chosen["qty"])
+            sources.extend(lot_sources)
+            detail_lots.append({"lot_key": batch, "qty": -chosen["qty"], "value": -chosen["qty"] * pool["rate"],
+                "batch_no": chosen["batch_no"], "serial_no": chosen["serial_no"], "sources": lot_sources})
             pool["available"] += chosen["qty"]
         if value is not None and not _same(value, expected, row, "amount"):
             _fail("原生批号实际损耗金额与原转料单一价层不一致，不能改账凑齐")
-        if row.get("batch_no") and set(lots) != {row.batch_no}:
-            _fail("损耗明细所选批号与真实出库批号不一致")
+        _mirror(row, lots)
+        batches = {lot["batch_no"] for lot in lots.values()}
         result[row.name] = {"qty": quantity, "value": expected, "rate": expected / quantity,
-            "batch_no": next(iter(lots)) if len(lots) == 1 else None, "sources": sources}
+            "batch_no": next(iter(batches)) if len(batches) == 1 else None, "sources": sources,
+            "lots": detail_lots, "serial_nos": [lot["serial_no"] for lot in lots.values() if lot["serial_no"]]}
     return result
 
 
@@ -422,15 +541,14 @@ def consumed_batches(work, *, read, records, exclude=None):
     items = sorted({row.item_code for row in work.get("required_items") or []})
     for code in items:
         item = read("Item", code)
-        if item.get("has_serial_no"):
-            _fail("序号原料消费预留须逐号核对，当前批号入口暂不支持")
-        if not item.get("has_batch_no"):
+        if not (item.get("has_batch_no") or item.get("has_serial_no")):
             continue
         pools = _pool(work, item, read=read, records=records, exclude=exclude)
         for batch, pool in pools.items():
             result[code, batch] = {"qty": ZERO, "value": ZERO, "original_qty": pool["qty"],
                 "source_entry": pool["source_entry"], "source_detail": pool["source_detail"],
-                "available_qty": pool["available"]}
+                "available_qty": pool["available"], "batch_no": pool["batch_no"], "serial_no": pool["serial_no"],
+                "sources": _sources(pool)}
         if not documents:
             continue
         ledger = _records(SLE, {"company": work.company, "item_code": code, "warehouse": work.wip_warehouse,

@@ -122,10 +122,59 @@ class BatchLossTests(unittest.TestCase):
         sle = self.ledger("SLE-LOSS", "LOSS", row.name, quantity=-qty, value=-qty * 4, bundle=bundle.name, time="10:00:00")
         return row, bundle, sle
 
+    def second_transfer(self, quantity=5, rate=4):
+        row = Doc(self.transfer.items[0])
+        row.update(name="SECOND-ROW", parent="SECOND-TRANSFER", qty=quantity, transfer_qty=quantity)
+        doc = self.add("Stock Entry", "SECOND-TRANSFER", company="JF", work_order="WO", docstatus=1,
+            purpose="Material Transfer for Manufacture", posting_date="2026-10-09", posting_time="09:30:00", items=[row])
+        bundle = self.bundle("SECOND-IN", doc.name, row.name, quantity=quantity, rate=rate)
+        ledger = self.ledger("SECOND-SLE", doc.name, row.name, quantity=quantity, value=quantity * rate,
+                             bundle=bundle.name, time=doc.posting_time)
+        return doc, bundle, ledger
+
+    def serial_bundle(self, name, voucher, detail, rates, *, direction=1, status=1, batch=None):
+        doc = self.bundle(name, voucher, detail, quantity=len(rates) * direction, rate=0, status=status)
+        self.store.pop(("Serial and Batch Entry", name + "-ROW"))
+        doc.update(has_serial_no=1, has_batch_no=int(batch is not None), total_amount=direction * sum(rates.values()))
+        doc.entries = []
+        for number, rate in rates.items():
+            doc.entries.append(self.add("Serial and Batch Entry", name + "-" + number, parent=name,
+                parenttype="Serial and Batch Bundle", parentfield="entries", docstatus=status, item_code="RM",
+                warehouse="WIP", serial_no=number, batch_no=batch, qty=direction, incoming_rate=rate,
+                stock_value_difference=direction * rate, is_cancelled=int(status == 2)))
+        return doc
+
+    def serial_source(self, rates=None, *, both=False, serial_valuation=1):
+        rates = rates or {"SN-1": 4, "SN-2": 9}
+        self.item.update(has_serial_no=1, has_batch_no=int(both), use_serial_no_wise_valuation=serial_valuation)
+        batch = "BATCH" if both else None
+        for number in rates:
+            self.add("Serial No", number, docstatus=0, item_code="RM", company="JF", warehouse="WIP",
+                     status="Active", batch_no=batch)
+        self.transfer.items[0].update(qty=len(rates), transfer_qty=len(rates), serial_no="\n".join(rates), batch_no=batch)
+        self.inward = self.serial_bundle("INWARD", "TRANSFER", "TRANSFER-ROW", rates, batch=batch)
+        self.sle.update(actual_qty=len(rates), stock_value_difference=sum(rates.values()), serial_no="\n".join(rates))
+        return rates
+
+    def serial_loss(self, rates, *, status=1, both=False):
+        batch = "BATCH" if both else None
+        row = self.row(qty=len(rates), batch=batch, bundle="LOSS-BUNDLE")
+        row.update(serial_no="\n".join(rates), parent="LOSS", parenttype="Stock Entry", parentfield="items")
+        self.loss.update(docstatus=status, doctype="Stock Entry", purpose="Material Issue", jf_production_loss_work_order="WO")
+        self.store["Stock Entry", "LOSS"] = self.loss
+        bundle = self.serial_bundle("LOSS-BUNDLE", "LOSS", row.name, rates, direction=-1, status=status, batch=batch)
+        ledger = self.ledger("SLE-LOSS", "LOSS", row.name, quantity=-len(rates), value=-sum(rates.values()),
+                             bundle=bundle.name, time="10:00:00", cancelled=int(status == 2))
+        if status:
+            for number in rates:
+                self.store["Serial No", number].update(status="Consumed", warehouse=None)
+        return row, bundle, ledger
+
     def test_exact_inward_sle_bundle_proposal_and_native_draft_selection(self):
         proposal = self.proposal()[0]
         self.assertEqual((proposal["batch_no"], proposal["qty"], proposal["expected_value"]), ("BATCH", 10, 40))
-        self.assertEqual(proposal["source_transfers"], [{"stock_entry": "TRANSFER", "detail": "TRANSFER-ROW", "qty": 10}])
+        self.assertEqual(proposal["source_transfers"], [{"stock_entry": "TRANSFER", "detail": "TRANSFER-ROW",
+                                                      "qty": 10, "original_qty": 10}])
         # Stock Entry Detail points to the source Outward bundle; WIP provenance
         # must follow the actual target SLE's independent Inward bundle.
         self.assertNotIn(("Serial and Batch Bundle", "SOURCE-OUTWARD"), self.store)
@@ -222,16 +271,17 @@ class BatchLossTests(unittest.TestCase):
         with patch.object(self, "records", locked), self.assertRaises(TimeoutError): self.proposal()
         self.assertEqual(len(calls), 1)
 
-    def test_serial_and_multiple_original_same_batch_layers_stay_explicitly_unsupported(self):
-        self.item.has_serial_no = 1
-        with self.assertRaisesRegex(ValueError, "序号原料"): self.proposal()
-        self.item.has_serial_no = 0
+    def test_same_transfer_multiple_original_rows_share_exact_same_price_pool(self):
         row = Doc(self.transfer.items[0])
         row.name = "SECOND-ROW"
         self.transfer.items.append(row)
         self.bundle("SECOND-IN", "TRANSFER", "SECOND-ROW", quantity=10, rate=4)
         self.ledger("SECOND-SLE", "TRANSFER", "SECOND-ROW", quantity=10, value=40, bundle="SECOND-IN")
-        with self.assertRaisesRegex(ValueError, "多笔原转料"): self.proposal()
+        proposed = self.proposal(15)[0]
+        self.assertEqual((proposed["qty"], proposed["expected_value"]), (15, 60))
+        self.assertEqual({(entry["stock_entry"], entry["detail"]): entry["original_qty"]
+                          for entry in proposed["source_transfers"]},
+                         {("TRANSFER", "TRANSFER-ROW"): 10, ("TRANSFER", "SECOND-ROW"): 10})
 
     def test_nonbatch_material_path_remains_empty_and_zero_real_value_is_supported(self):
         self.item.has_batch_no = 0
@@ -307,6 +357,124 @@ class BatchLossTests(unittest.TestCase):
     def test_missing_selected_batch_fails_explicitly_before_reader_lookup(self):
         self.row(batch=None)
         with self.assertRaisesRegex(ValueError, "缺少明确选择"): self.proof()
+
+    def test_multiple_transfer_batch_capacity_actual_consumption_and_cancel(self):
+        self.second_transfer()
+        proposed = self.proposal(15)[0]
+        self.assertEqual((proposed["qty"], proposed["expected_value"]), (15, 60))
+        row, bundle, sle = self.posted(qty=12)
+        row.update(parent="LOSS", parenttype="Stock Entry", parentfield="items")
+        self.loss.update(doctype="Stock Entry", purpose="Material Issue", jf_production_loss_work_order="WO")
+        self.store["Stock Entry", "LOSS"] = self.loss
+        proven = self.proof(posted=True)[row.name]
+        self.assertEqual((proven["value"], [source["original_qty"] for source in proven["sources"]]), (48, [10, 5]))
+        used = self.module.consumed_batches(self.work, read=self.read, records=self.records)["RM", "BATCH"]
+        self.assertEqual((used["qty"], used["original_qty"], used["available_qty"]), (12, 15, 3))
+        self.assertIsNone(used["source_entry"])
+        self.assertEqual([source["stock_entry"] for source in used["sources"]], ["TRANSFER", "SECOND-TRANSFER"])
+        self.loss.docstatus = bundle.docstatus = bundle.entries[0].docstatus = 2
+        sle.is_cancelled = bundle.is_cancelled = bundle.entries[0].is_cancelled = 1
+        row.serial_and_batch_bundle = ""
+        self.assertEqual(self.proof()[row.name]["value"], 48)
+        restored = self.module.consumed_batches(self.work, read=self.read, records=self.records)["RM", "BATCH"]
+        self.assertEqual((restored["qty"], restored["available_qty"]), (0, 15))
+
+    def test_multiple_transfer_hidden_source_mixed_price_and_cumulative_overuse_rejected(self):
+        _doc, bundle, ledger = self.second_transfer()
+        ledger.denied = True
+        with self.assertRaises(PermissionError): self.proposal(15)
+        ledger.denied = False
+        bundle.entries[0].incoming_rate = 5
+        bundle.entries[0].stock_value_difference = bundle.total_amount = ledger.stock_value_difference = 25
+        with self.assertRaisesRegex(ValueError, "价层"): self.proposal(15)
+        bundle.entries[0].incoming_rate = 4
+        bundle.entries[0].stock_value_difference = bundle.total_amount = ledger.stock_value_difference = 20
+        self.row(name="A", qty=8)
+        self.row(name="B", qty=8)
+        with self.assertRaisesRegex(ValueError, "累计出库"): self.proof()
+
+    def test_serial_proposal_uses_each_exact_source_rate_and_rejects_fractional_quantities(self):
+        self.serial_source()
+        proposed = self.proposal(2)
+        self.assertEqual([(row["serial_no"], row["qty"], row["expected_value"]) for row in proposed],
+                         [("SN-1", 1, 4), ("SN-2", 1, 9)])
+        self.assertTrue(all(row["batch_no"] is None for row in proposed))
+        with self.assertRaises(ValueError): self.proposal(Decimal("1.5"))
+        self.store["Serial No", "SN-1"].warehouse = "OTHER"
+        with self.assertRaisesRegex(ValueError, "不在本工单"): self.proposal(1)
+
+    def test_serial_draft_native_bundle_price_is_not_trusted_and_duplicate_selection_rejected(self):
+        self.serial_source()
+        row, bundle, _sle = self.serial_loss({"SN-1": 999, "SN-2": 999}, status=0)
+        self.store.pop(("Stock Ledger Entry", "SLE-LOSS"))
+        proven = self.proof()[row.name]
+        self.assertEqual((proven["qty"], proven["value"]), (2, 13))
+        self.assertEqual([(lot["lot_key"], lot["value"]) for lot in proven["lots"]],
+                         [(("serial", "SN-1"), 4), (("serial", "SN-2"), 9)])
+        duplicate = Doc(row)
+        duplicate.update(name="DUPLICATE", transfer_qty=1, qty=1, serial_no="SN-1", serial_and_batch_bundle=None)
+        self.loss.items.append(duplicate)
+        with self.assertRaisesRegex(ValueError, "累计出库"): self.proof()
+        self.loss.items.pop()
+        row.serial_no = "SN-1\nSN-1"
+        with self.assertRaisesRegex(ValueError, "重复序号"): self.proof()
+
+    def test_serial_posted_consumed_state_each_value_and_cancel_native_delink(self):
+        rates = self.serial_source()
+        row, bundle, sle = self.serial_loss(rates)
+        self.assertEqual(self.proof(posted=True)[row.name]["value"], 13)
+        used = self.module.consumed_batches(self.work, read=self.read, records=self.records)
+        self.assertEqual([(used["RM", ("serial", name)]["qty"], used["RM", ("serial", name)]["value"])
+                          for name in rates], [(1, 4), (1, 9)])
+        self.loss.docstatus = bundle.docstatus = 2
+        bundle.is_cancelled = sle.is_cancelled = 1
+        for child in bundle.entries: child.update(docstatus=2, is_cancelled=1)
+        row.serial_and_batch_bundle = ""
+        self.assertEqual(self.proof()[row.name]["value"], 13)
+        restored = self.module.consumed_batches(self.work, read=self.read, records=self.records)
+        self.assertEqual([restored["RM", ("serial", name)]["qty"] for name in rates], [0, 0])
+        sle.stock_value_difference = -12
+        with self.assertRaisesRegex(ValueError, "价值与确切库存账"): self.proof()
+
+    def test_serial_nonwise_valuation_requires_uniform_whole_material_layer(self):
+        self.serial_source(serial_valuation=0)
+        with self.assertRaisesRegex(ValueError, "多种历史价层"): self.proposal(2)
+        for child in self.inward.entries:
+            child.incoming_rate = child.stock_value_difference = 4
+        self.inward.total_amount = self.sle.stock_value_difference = 8
+        self.assertEqual(sum(row["expected_value"] for row in self.proposal(2)), 8)
+
+    def test_serial_actual_prices_cannot_offset_each_other_into_same_total(self):
+        self.serial_source()
+        row, bundle, _sle = self.serial_loss({"SN-1": 6, "SN-2": 7})
+        self.assertEqual(bundle.total_amount, -13)
+        with self.assertRaisesRegex(ValueError, "逐号或逐批损耗金额"): self.proof(posted=True)
+
+    def test_serial_and_batch_identity_permissions_and_legacy_unknown_value_rejected(self):
+        self.serial_source(both=True)
+        proposed = self.proposal(2)
+        self.assertEqual([row["batch_no"] for row in proposed], ["BATCH", "BATCH"])
+        serial = self.store["Serial No", "SN-1"]
+        for field, invalid in (("item_code", "OTHER"), ("company", "OTHER"), ("batch_no", "OTHER")):
+            original = serial[field]
+            serial[field] = invalid
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "原序号"): self.proposal(2)
+            serial[field] = original
+        serial.denied = True
+        with self.assertRaises(PermissionError): self.proposal(2)
+        serial.denied = False
+        self.sle.serial_and_batch_bundle = None
+        with self.assertRaisesRegex(ValueError, "旧序号库存账"): self.proposal(2)
+
+    def test_serial_requires_unique_exact_original_inward_and_all_source_entries(self):
+        self.serial_source()
+        row = Doc(self.transfer.items[0])
+        row.update(name="SECOND-ROW", parent="SECOND-TRANSFER", qty=1, transfer_qty=1, serial_no="SN-1")
+        self.add("Stock Entry", "SECOND-TRANSFER", company="JF", work_order="WO", docstatus=1,
+            purpose="Material Transfer for Manufacture", posting_date="2026-10-09", posting_time="09:30:00", items=[row])
+        self.serial_bundle("SECOND-IN", "SECOND-TRANSFER", row.name, {"SN-1": 4})
+        self.ledger("SECOND-SLE", "SECOND-TRANSFER", row.name, quantity=1, value=4, bundle="SECOND-IN", time="09:30:00")
+        with self.assertRaisesRegex(ValueError, "多次有效入向"): self.proposal(1)
 
 
 if __name__ == "__main__":
