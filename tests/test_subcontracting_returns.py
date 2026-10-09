@@ -59,6 +59,27 @@ def process_sle_against_current_timestamp(self):
 '''
 
 
+# The installed native callback validates both identities on a dual-tracked
+# entry before its rate writer chooses the serial-specific price.
+_NATIVE_SERIAL_BATCH_VALIDATION = r'''
+def validate_returned_serial_batch_no(self, return_against, row, original_inv_details):
+    if frappe.flags.through_repost_item_valuation and not frappe.in_test:
+        return
+    if row.serial_no and row.serial_no not in original_inv_details["serial_nos"]:
+        self.throw_error_message(
+            _(
+                "Serial No {0} is not present in the {1} {2}, hence you can't return it against the {1} {2}"
+            ).format(bold(row.serial_no), self.voucher_type, bold(return_against))
+        )
+    if row.batch_no and row.batch_no not in original_inv_details["batches"]:
+        self.throw_error_message(
+            _(
+                "Batch No {0} is not present in the original {1} {2}, hence you can't return it against the {1} {2}"
+            ).format(bold(row.batch_no), self.voucher_type, bold(return_against))
+        )
+'''
+
+
 class Row(dict):
     def __getattr__(self, name):
         return self.get(name)
@@ -986,6 +1007,46 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.source.use_serial_no_wise_valuation = 0
         with self.assertRaisesRegex(ValueError, "未启用原生逐号估值"):
             bundle.get_valuation_rate_for_return_entry("SOURCE")
+
+    def test_dual_tracked_finished_return_passes_native_both_identity_checks_and_keeps_per_serial_prices(self):
+        row = self.finished_fixture(serial=True)
+        for entry in self.bundles["SOURCE-FG"].entries:
+            entry.batch_no = "FG-BATCH"
+        selected = self.bundles["CHOSEN-FG"].entries[0]
+        selected.batch_no = "FG-BATCH"
+        self.doc.validate()
+        self.frappe.db.exists = lambda kind, name: kind == "Subcontracting Receipt Item" and name == row.name
+        self.source.has_serial_no, self.source.use_serial_no_wise_valuation = 1, 1
+        self.frappe.flags, self.frappe.in_test = Row(through_repost_item_valuation=False), False
+        namespace = {"frappe": self.frappe, "_": lambda value: value, "bold": lambda value: value}
+        exec(compile(textwrap.dedent(_NATIVE_SERIAL_BATCH_VALIDATION),
+            "installed-erpnext-16.36-dual-tracking", "exec"), namespace)
+        class NativeBundle(Document):
+            validate_returned_serial_batch_no = namespace["validate_returned_serial_batch_no"]
+            def throw_error_message(self, message):
+                raise ValueError(message)
+        Bundle = type("ReturnBundle", (self.subject.SubcontractingReceiptMaterialReturnBundleMixin, NativeBundle), {})
+        bundle = Bundle(**vars(self.bundles["CHOSEN-FG"]))
+        mapping = bundle.get_valuation_rate_for_return_entry("SOURCE")
+        bundle.validate_returned_serial_batch_no("SOURCE", selected, mapping)
+        self.assertEqual((mapping["serial_nos"]["FG-0"], mapping["serial_nos"]["FG-3"]), (4, 8))
+        self.assertEqual(mapping["batches"], {"FG-BATCH": 0})
+        selected.batch_no = "OTHER-BATCH"
+        with self.assertRaisesRegex(ValueError, "Batch No"):
+            bundle.validate_returned_serial_batch_no("SOURCE", selected, mapping)
+        selected.batch_no, selected.serial_no = "FG-BATCH", "OTHER-SERIAL"
+        with self.assertRaisesRegex(ValueError, "Serial No"):
+            bundle.validate_returned_serial_batch_no("SOURCE", selected, mapping)
+
+    def test_raw_and_finished_dual_tracking_mapping_retains_existing_batch_prices_without_using_serial_average(self):
+        pools = {
+            ("serial", "S1"): {"qty": Decimal(1), "value": Decimal(3), "batch": "SERIAL-BATCH"},
+            ("serial", "S2"): {"qty": Decimal(1), "value": Decimal(27), "batch": "SERIAL-BATCH"},
+            ("batch", "OTHER-BATCH"): {"qty": Decimal(2), "value": Decimal(8), "batch": "OTHER-BATCH"},
+        }
+        mapping = self.subject._lot_rate_mapping(pools)
+        self.assertEqual(mapping, {"serial_nos": {"S1": 3, "S2": 27},
+            "batches": {"SERIAL-BATCH": 0, "OTHER-BATCH": 4}})
 
     def native_cancel_dispatch(self, *, other_active=False):
         row = self.finished_fixture()

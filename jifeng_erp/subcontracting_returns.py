@@ -1161,10 +1161,16 @@ class SubcontractingReceiptMaterialReturnBundleMixin:
 
 
 def _lot_rate_mapping(pools):
-    return {"serial_nos": {key[1]: float(pool["value"] / pool["qty"])
+    mapping = {"serial_nos": {key[1]: float(pool["value"] / pool["qty"])
                            for key, pool in pools.items() if key[0] == "serial"},
             "batches": {key[1]: float(pool["value"] / pool["qty"])
                         for key, pool in pools.items() if key[0] == "batch"}}
+    for key, pool in pools.items():
+        if key[0] == "serial" and pool["batch"]:
+            # Native checks both identities on a serial+batch entry. Its
+            # serial branch still applies the exact per-serial price.
+            mapping["batches"].setdefault(pool["batch"], 0.0)
+    return mapping
 
 
 def _check_serial_return_valuation(item_code, pools):
