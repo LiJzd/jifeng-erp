@@ -36,6 +36,39 @@ class TestJushuitan(unittest.TestCase):
         self.assertFalse(kwargs["allow_redirects"])
         self.assertEqual(args[0], "https://dev-api.jushuitan.com/open/sku/query")
 
+    def test_sku_queries_keep_complete_business_fields_and_native_pagination(self):
+        import json
+
+        source = {"sku_id": "SKU-A", "name": "测试手链", "unit": "Nos",
+                  "supplier_sku_id": "SUP-001", "supplier_name": "测试供应商",
+                  "properties_value": "银色", "modified": "2026-01-02 12:00:00",
+                  "pic": "https://cdn.example.com/thumb.jpg",
+                  "pic_big": "https://cdn.example.com/full.jpg"}
+        for arguments, expected_business in (
+            ({"sku_ids": ["SKU-A"]},
+             {"sku_ids": "SKU-A", "page_index": 1, "page_size": 100}),
+            ({"begin": "2026-01-01 00:00:00", "end": "2026-01-07 00:00:00", "page": 2},
+             {"modified_begin": "2026-01-01 00:00:00", "modified_end": "2026-01-07 00:00:00",
+              "page_index": 2, "page_size": 100}),
+        ):
+            with self.subTest(arguments=arguments):
+                api, session = self.make_client([])
+
+                def provider_reply(url, **kwargs):
+                    business = json.loads(kwargs["data"]["biz"])
+                    # The real provider omits basic product fields when the
+                    # caller requests only its pics projection.
+                    row = ({key: source[key] for key in ("sku_id", "pic", "pic_big")}
+                           if business.get("flds") == "pics" else dict(source))
+                    return response({"datas": [row], "has_next": True})
+
+                session.post.side_effect = provider_reply
+                result = api.skus(**arguments)
+                self.assertEqual(result["datas"], [source])
+                self.assertTrue(result["has_next"])
+                self.assertEqual(json.loads(session.post.call_args.kwargs["data"]["biz"]),
+                                 expected_business)
+
     def test_order_cursor_keeps_full_integer_precision(self):
         import json
         api, session = self.make_client([response()])

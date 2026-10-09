@@ -92,7 +92,10 @@ class Client:
         return self.query(ORDER_QUERY, {"start_ts": int(cursor or 1), "is_get_total": False, "page_index": 1, "page_size": 100})
 
     def skus(self, sku_ids=None, begin=None, end=None, page=1):
-        business = {"page_index": page, "page_size": 100, "flds": "pics"}
+        # The provider treats flds as a projection. Request its default complete
+        # snapshot so names, units, supplier codes, and specifications accompany
+        # the image fields used by ingestion.
+        business = {"page_index": page, "page_size": 100}
         if sku_ids:
             if len(sku_ids) > 20:
                 raise JushuitanError("一次最多查询 20 个商品编码")
