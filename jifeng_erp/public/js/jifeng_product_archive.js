@@ -36,7 +36,7 @@ window.JifengProductArchive = class JifengProductArchive {
 			df: { fieldname: "company", fieldtype: "Link", options: "Company", label: __("公司"), onchange: () => this.changeScope() } });
 		this.companyControl.$input.on("input.jfe-product-archive-company change.jfe-product-archive-company", () => this.changeScope());
 		this.search = this.element("input"); this.search.type = "text"; this.search.maxLength = 140;
-		this.search.placeholder = __("关键词"); this.search.setAttribute("aria-label", __("关键词"));
+		this.search.placeholder = __("代码、名称、供应商货号或规格"); this.search.setAttribute("aria-label", __("关键词"));
 		this.search.addEventListener("input", () => this.resetList("关键词已改变，请查询。"));
 		this.search.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); this.query(); } });
 		this.includeInactive = this.element("input"); this.includeInactive.type = "checkbox";
@@ -193,10 +193,20 @@ window.JifengProductArchive = class JifengProductArchive {
 		this.tbody.replaceChildren();
 		for (const row of this.rows) {
 			const tr = this.element("tr");
-			for (const field of ["legacy_number", "legacy_code", "major_category", "minor_category", "display_name", "display_uom", "legacy_remarks"]) tr.append(this.element("td", row.profile[field] ?? ""));
+			for (const field of ["legacy_number", "legacy_code", "major_category", "minor_category", "display_name", "display_uom", "legacy_remarks"]) {
+				const cell = this.element("td"), original = row.profile[field];
+				const linked = ({ legacy_code: [row.item_code, "商品编码"], display_name: [row.item.item_name, "商品名称"], display_uom: [row.item.stock_uom, "库存单位"] })[field];
+				if ((original === null || original === undefined || original === "") && linked && linked[0] !== null && linked[0] !== undefined) {
+					cell.textContent = field === "display_uom" ? __(String(linked[0])) : String(linked[0]); cell.title = __(linked[1]);
+				} else cell.textContent = original ?? "";
+				tr.append(cell);
+			}
 			tr.append(this.element("td", row.profile.inactive ? __("是") : __("否")));
 			for (const field of ["profile_image", "patent_image"]) { const td = this.element("td"), state = row.image_states[field];
 				if (state?.state === "已上传" && this.safePreview(state.url)) { const img = this.element("img"); img.src = state.url; img.alt = __(this.labels[field]); td.append(img); }
+				else if (field === "profile_image" && row.business_item_image?.state === "已上传" && this.safeBusinessPreview(row.business_item_image.url)) {
+					const img = this.element("img"); img.src = row.business_item_image.url; img.alt = __("商品图片"); td.append(img, this.element("div", __("商品图片"))); td.title = __("关联商品的图片");
+				}
 				else td.textContent = state?.state || ""; tr.append(td);
 			}
 			const action = this.element("td"); action.append(this.button(row.can_write ? "修改" : "查看", () => this.openEditor(row.name))); tr.append(action); this.tbody.append(tr);
@@ -286,14 +296,34 @@ window.JifengProductArchive = class JifengProductArchive {
 		for (const [field, label, type, options] of [["item_name", "业务商品名称", "Data", ""], ["item_group", "业务商品明细分组", "Link", "Item Group"], ["stock_uom", "实际库存单位", "Link", "UOM"]]) {
 			state.itemControls[field] = this.nativeControl(businessGrid, field, label, type, options, () => this.freeze(state));
 		}
-		state.business.append(businessGrid); state.review = this.element("div", undefined, "jfe-product-archive-review");
+		state.business.append(businessGrid);
+		state.linkedBusiness = this.element("section", undefined, "jfe-product-archive-linked-business");
+		state.review = this.element("div", undefined, "jfe-product-archive-review");
 		const footer = this.element("div", undefined, "jfe-product-archive-editor-footer");
 		state.newButton = this.button("新增", () => this.newDraft(state)); state.saveButton = this.button("保存", () => this.save(state));
 		state.closeButton = this.button("关闭", () => state.dialog.hide());
 		state.recipeButton = this.button("工艺与材料", () => this.openRecipe(state));
 		state.resolveButton = this.button("核对保存结果", () => this.resolve(state)); state.adoptButton = this.button("采用已核对当前值", () => this.acceptCurrent(state));
 		footer.append(state.newButton, state.saveButton, state.closeButton, state.recipeButton, state.resolveButton, state.adoptButton);
-		host.append(state.scope, state.message, state.form, state.supplierSection, state.business, state.review, footer);
+		host.append(state.scope, state.message, state.form, state.linkedBusiness, state.supplierSection, state.business, state.review, footer);
+	}
+	renderLinkedBusiness(state) {
+		const archive = state.archive, host = state.linkedBusiness; host.replaceChildren(); host.hidden = !archive.name;
+		if (!archive.name) return;
+		host.append(this.element("strong", __("关联商品")));
+		const grid = this.element("div", undefined, "jfe-product-archive-business-grid");
+		for (const [field, label] of [["item_code", "商品编码"], ["item_name", "商品名称"], ["stock_uom", "库存单位"]]) {
+			if (!archive.field_meta.item[field] || !(field in archive.item)) continue;
+			const cell = this.element("div"); cell.append(this.element("label", __(label)), this.element("div", field === "stock_uom" ? __(String(archive.item[field] ?? "")) : archive.item[field] ?? "")); grid.append(cell);
+		}
+		if (archive.business_item_image) {
+			const cell = this.element("div"), image = archive.business_item_image; cell.append(this.element("label", __("商品图片")));
+			const preview = this.element("div", undefined, "jfe-product-archive-image-preview");
+			if (image.state === "已上传" && this.safeBusinessPreview(image.url)) { const img = this.element("img"); img.src = image.url; img.alt = __("商品图片"); preview.append(img); }
+			else preview.textContent = image.state || __("未上传");
+			cell.append(preview); grid.append(cell);
+		}
+		host.append(grid);
 	}
 	nativeControl(host, fieldname, label, fieldtype, options, onchange) {
 		const cell = this.element("div"); host.append(cell);
@@ -343,7 +373,7 @@ window.JifengProductArchive = class JifengProductArchive {
 			(archive.name ? __("；业务商品：") + archive.item_code : "");
 		state.message.textContent = (String(archive.profile.legacy_remarks || "").includes("\n") ? __("原备注含换行，单行显示；未改动时保留原文。 ") : "") +
 			__("编号、旧号可自行填写；代码不自动生成。参考价格和重量留空时保存为0。复制、导入及打印暂不可用。图片请先保存档案后上传，上传后保存图片变更。关闭录入窗口后可导出已保存档案。");
-		state.review.replaceChildren(); this.renderImages(state); this.freeze(state);
+		state.review.replaceChildren(); this.renderLinkedBusiness(state); this.renderImages(state); this.freeze(state);
 	}
 	profileValues(state) {
 		const values = Object.fromEntries(Object.entries(state.controls).filter(([field]) => field !== "copy" && state.archive.field_meta.profile[field] &&
@@ -669,6 +699,17 @@ window.JifengProductArchive = class JifengProductArchive {
 		state.images[field] = { cell, preview, status, uploadButton, clearButton, resolveButton, candidates };
 	}
 	safePreview(url) { return typeof url === "string" && /^\/private\/files\/[^?#\\\x00-\x1f]+(?:\?[^#\\\x00-\x1f]*)?$/.test(url); }
+	safeBusinessPreview(value) {
+		if (typeof value !== "string" || value !== value.trim()) return false;
+		const match = /^\/(?:private\/)?files\/([^?#/\\\x00-\x1f]+)(?:\?[^#\\\x00-\x1f]*)?$/.exec(value);
+		if (!match) return false;
+		try {
+			const url = new URL(value, window.location.origin);
+			if (url.origin !== window.location.origin || url.hash) return false;
+			const filename = decodeURIComponent(match[1]);
+			return !!filename && filename !== "." && filename !== ".." && !/[/%\\\x00-\x1f]/.test(filename);
+		} catch { return false; }
+	}
 	canonicalImage(url) { return typeof url === "string" && url.length <= 140 && /^\/private\/files\/[^?#\\\x00-\x1f]+$/.test(url); }
 	renderImages(state) {
 		for (const [field, panel] of Object.entries(state.images)) {

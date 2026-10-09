@@ -3,6 +3,7 @@ from frappe.model.document import Document
 from jifeng_erp.workflow import create_flows
 from jifeng_erp.jushuitan import record_key
 from jifeng_erp.flow_quantity import FlowQuantityError, assert_no_quantity_downstream, check_quantity_fields
+from jifeng_erp.archive_versions import same_version
 
 
 SOURCE_FIELDS = ("source_key", "external_order", "external_line_id", "sales_order", "company", "item_code")
@@ -17,7 +18,12 @@ class JifengExternalOrder(Document):
             if not previous:
                 frappe.throw("来源订单由聚水潭同步建立；手工订单请直接新建流程单")
             fields = ("sync_key", "scope", "company", "external_order_id", "online_order_id", "shop_id", "merchant_id", "source_status", "source_modified", "source_cursor")
-            if any(self.get(f) != previous.get(f) for f in fields):
+            def unchanged(field):
+                current, original = self.get(field), previous.get(field)
+                # Native form JSON represents Datetime as text; compare the
+                # exact timestamp without permitting an actual source change.
+                return current == original or field == "source_modified" and same_version(original, current)
+            if any(not unchanged(f) for f in fields):
                 frappe.throw("源订单字段只能通过同步更新")
             def source_rows(doc):
                 return [{k: r.get(k) for k in ("external_line_id", "sku_id", "item_code", "qty", "price", "source_status")} for r in doc.items]

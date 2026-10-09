@@ -4,6 +4,7 @@ import pathlib
 import sys
 import types
 import unittest
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 
@@ -92,6 +93,53 @@ class TestExternalOrderRequirements(unittest.TestCase):
             self.assertNotIn("read_only", fields[fieldname])
         write_roles = {perm["role"] for perm in parent["permissions"] if perm.get("write")}
         self.assertTrue({"Stock Manager", "Manufacturing Manager"}.issubset(write_roles))
+
+    def editable_source_order(self):
+        source = Row(external_line_id="LINE-1", sku_id="SKU-1", item_code="ITEM", qty=1, price=2.59,
+                     source_status="WaitConfirm", jf_requirements=None, jf_packaging=None)
+        previous = Row(source_modified=datetime(2023, 12, 21, 0, 23, 33, 123456), items=[source],
+                       company="QA", external_order_id="198959", source_status="WaitConfirm")
+        order = self.order(Row(**vars(source)))
+        order.flags.from_sync = False
+        order.source_modified = "2023-12-21 00:23:33.123456"
+        order.external_order_id = "198959"
+        order.source_status = "WaitConfirm"
+        order.items[0].source_status = "WaitConfirm"
+        order.get = lambda field: getattr(order, field, None)
+        order.get_doc_before_save = Mock(return_value=previous)
+        return order, previous
+
+    def test_native_serialized_timestamp_allows_only_manual_requirements_edit(self):
+        order, previous = self.editable_source_order()
+        order.items[0].jf_requirements = "本行电镀哑光黑"
+        order.items[0].jf_packaging = "本行单件纸盒"
+        order.validate()
+        self.assertIsNone(previous.items[0].jf_requirements)
+        self.assertIsNone(previous.items[0].jf_packaging)
+
+    def test_modified_source_time_is_rejected_at_full_precision(self):
+        for value in ("2023-12-21 00:23:33.123455", "2023-12-21 00:23:34.123456",
+                      "2023-12-21 00:23:33.123456+08:00", "invalid", None):
+            with self.subTest(value=value):
+                order, _ = self.editable_source_order()
+                order.source_modified = value
+                with self.assertRaisesRegex(ValueError, "源订单字段只能"):
+                    order.validate()
+
+    def test_source_identity_and_line_quantity_remain_protected(self):
+        for field in ("external_order_id", "company", "source_status", "source_cursor"):
+            with self.subTest(field=field):
+                order, _ = self.editable_source_order()
+                setattr(order, field, "changed")
+                with self.assertRaisesRegex(ValueError, "源订单字段只能"):
+                    order.validate()
+        for field, value in (("external_line_id", "OTHER"), ("item_code", "OTHER"),
+                             ("qty", 2), ("price", 3.59)):
+            with self.subTest(field=field):
+                order, _ = self.editable_source_order()
+                setattr(order.items[0], field, value)
+                with self.assertRaisesRegex(ValueError, "源订单明细只能"):
+                    order.validate()
 
     def test_new_flow_uses_line_specific_text_and_leaves_existing_flow_untouched(self):
         row = Row(external_line_id="LINE-1", flow_order=None,

@@ -31,7 +31,10 @@
 .jfe-product-archive-image-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .jfe-product-archive-field-profile_image p, .jfe-product-archive-field-patent_image p { font-size: 12px; margin: 5px 0; }
 .jfe-product-archive-field-profile_image button, .jfe-product-archive-field-patent_image button { margin-right: 5px; margin-bottom: 3px; }
-.jfe-product-archive-supplier, .jfe-product-archive-business { border-top: 1px solid #d4dce2; margin-top: 12px; padding-top: 10px; }
+.jfe-product-archive-supplier, .jfe-product-archive-business, .jfe-product-archive-linked-business { border-top: 1px solid #d4dce2; margin-top: 12px; padding-top: 10px; }
+.jfe-product-archive-linked-business .jfe-product-archive-business-grid { margin-top: 8px; }
+.jfe-product-archive-linked-business label { display: block; margin-bottom: 4px; font-size: 13px; }
+.jfe-product-archive-linked-business .jfe-product-archive-business-grid > div { white-space: pre-wrap; overflow-wrap: anywhere; }
 .jfe-product-archive-business > p { font-size: 12px; margin: 6px 0; }
 .jfe-product-archive-business-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; }
 .jfe-product-archive-business-grid .form-group { margin-bottom: 0; }
