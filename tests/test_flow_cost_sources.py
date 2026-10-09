@@ -185,7 +185,12 @@ class TestFlowCostSources(unittest.TestCase):
         self.child(self.module.FLOW, "FLOW", "materials", "MAT", item_code="RM")
 
     def proof_schema(self):
-        for doctype, fields in ((self.module.GLE, self.module.material_returns.receipt_gl_proof_fields()),
+        from erpnext.accounts.general_ledger import get_merge_properties
+        # Native merge keys include advance-voucher attributes which are not
+        # database columns on ordinary GL Entry. Do not fabricate them.
+        persisted_merge = set(get_merge_properties(self.native_gl["dimensions"])) - {
+            "advance_voucher_no", "advance_voucher_type"}
+        for doctype, fields in ((self.module.GLE, persisted_merge),
                 (self.module.SCR, {"project", "finance_book"} | set(self.native_gl["dimensions"])),
                 ("Subcontracting Receipt Item", set(self.native_gl["dimensions"]))):
             self.permitted[doctype].update(fields)
@@ -277,6 +282,8 @@ class TestFlowCostSources(unittest.TestCase):
 
     def get_all(self, doctype, filters, fields=None, limit_page_length=0, order_by=None, **kwargs):
         if doctype == self.module.GLE:
+            if fields and fields != ["*"] and set(fields) - self.permitted[doctype]:
+                raise RuntimeError("query selected a nonexistent GL column")
             self.accounting_fixture(filters.get("voucher_no"))
         if doctype in self.raw_hooks:
             self.raw_hooks[doctype](filters)
@@ -506,6 +513,15 @@ class TestFlowCostSources(unittest.TestCase):
         self.native_gl["dimensions"][:] = ["department"]
         with self.assertRaises(PermissionError):
             session.finish()
+
+    def test_gl_projection_reads_actual_columns_without_transient_advance_merge_keys(self):
+        self.receipt(qty=3, loss=0)
+        fields = self.module.material_returns.receipt_gl_proof_fields()
+        self.assertFalse({"advance_voucher_no", "advance_voucher_type"} & fields)
+        self.assertTrue({"finance_book", "party", "against_voucher", "voucher_detail_no"} <= fields)
+        rows = self.module.material_returns._receipt_fee_ledger(self.get_doc(self.module.SCR, "SCR"))
+        self.assertTrue(rows)
+        self.assertEqual(self.module.receipt_costs("FLOW")["totals"]["processing"], 6)
 
     def test_receipt_proof_closes_native_request_cached_allocation_headers_and_children(self):
         self.multi_receipt()
