@@ -246,6 +246,10 @@ class _Session:
         self.manufacture_batches = None
         self.manufacture_names = set()
         self.loss_batches = None
+        self.production_losses = []
+        self.work_rows = None
+        self.subassembly_works, self.subassembly_nodes = {}, {}
+        self.internal_issue_ledgers = set()
         self.loss_tables = {}
         self.loss_authorization = {}
         self.loss_single_values = {}
@@ -468,6 +472,10 @@ class _Session:
 
     def _stage_event(self, stage, doc, detail, item, ledger, *, output=False):
         node = self._stage_node(stage) if output else self._stage_input(stage, item)
+        return self._internal_event(node, doc, detail, ledger, output=output)
+
+    def _internal_event(self, node, doc, detail, ledger, *, output=False):
+        """An observed internal output/consumption; its supply closes at finish."""
         quantity = sum((_number(row["actual_qty"]) for row in ledger), Decimal(0))
         value = sum((_number(row["stock_value_difference"]) for row in ledger), Decimal(0))
         if not output:
@@ -482,6 +490,25 @@ class _Session:
                 _invalid()
             self.stage_events.append((node, output, quantity, value, doc, detail, primary["name"]))
         return Decimal(0) if node and not output else value
+
+    def _subassembly_input(self, work, item):
+        nodes = [node for node, scope in self.subassembly_nodes.items()
+                 if scope["item"].name == item]
+        if not nodes:
+            return None
+        exact = [node for node in nodes if work.get("production_plan") == node[0]
+                 and work.get("production_plan_item") == self.subassembly_nodes[node]["parent_row"].name]
+        if len(exact) != 1 or work.get("production_plan_sub_assembly_item"):
+            frappe.throw("内部子装配耗用缺少唯一准确的同计划父成品行，不能重复或借用其他流程成本")
+        scope = self.subassembly_nodes[exact[0]]
+        parent = scope["parent_row"]
+        if (work.company != scope["plan"].company or work.production_item != parent.item_code
+                or work.bom_no != parent.bom_no or work.stock_uom != parent.stock_uom
+                or work.get("jf_flow_order") != self.flow.name
+                or any((work.get(field) or "") != (parent.get(field) or "")
+                       for field in ("sales_order", "sales_order_item"))):
+            _invalid()
+        return exact[0]
 
     def _check_stage_values(self):
         """Exclude internal value only after its actual same-WO supply closes.
@@ -1125,10 +1152,50 @@ class _Session:
             if self._loss_single_state(fields) != saved:
                 _deny()
 
+    def _work_sources(self):
+        """Discover children through their exact Plan parent, never a fake FG link."""
+        if self.work_rows is not None:
+            return self.work_rows
+        found = {row["name"]: row for row in self.raw(WO, {"jf_flow_order": self.flow.name})}
+        plans = self.raw("Production Plan", [["Production Plan Item", "jf_flow_order", "=", self.flow.name]],
+                         distinct=True)
+        if plans:
+            from jifeng_erp import production_loss
+
+            for hint in plans:
+                plan = self._loss_reader("Production Plan", hint["name"])
+                parent_names = {row.name for row in plan.get("po_items") or []
+                                if row.get("jf_flow_order") == self.flow.name}
+                for row in plan.get("sub_assembly_items") or []:
+                    if row.get("production_plan_item") not in parent_names:
+                        continue
+                    work_rows = self.raw(WO, {"production_plan": plan.name,
+                        "production_plan_sub_assembly_item": row.name})
+                    # A draft/cancelled Plan may retain history with no active
+                    # source. It never supplies another Plan's production.
+                    active = [work for work in work_rows if work.get("docstatus") == 1]
+                    if not active:
+                        continue
+                    scope = production_loss.read_plan_subassembly_source(plan, row.name, read=self._loss_reader)
+                    node = plan.name, row.name, scope["item"].name
+                    self.subassembly_nodes[node] = scope
+                    self.allowed_items.add(scope["item"].name)
+                    for component in scope["bom"].get("items") or []:
+                        self.allowed_items.add(self._loss_reader("Item", component.item_code).name)
+                    for hint_work in active:
+                        work = self._loss_reader(WO, hint_work["name"])
+                        work_scope = production_loss.read_work_flow_source(work, read=self._loss_reader)
+                        if work_scope["flow"].name != self.flow.name:
+                            _invalid()
+                        self.subassembly_works[work.name] = work_scope
+                        found[work.name] = hint_work
+        self.work_rows = list(found.values())
+        return self.work_rows
+
     def load_losses(self):
         if self.loss_batches is not None:
             return self.loss_batches
-        work_rows = self.raw(WO, {"jf_flow_order": self.flow.name})
+        work_rows = self._work_sources()
         parents = {}
         if work_rows:
             found = self.raw(SE, {"docstatus": 1, LOSS_WORK_ORDER: ["in", sorted(row["name"] for row in work_rows)]})
@@ -1147,8 +1214,11 @@ class _Session:
                 self._posted(SE, doc)
                 source = production_loss.read_loss_source(doc, read=self._loss_reader,
                     records=self._loss_records, posted=True)
+                work = self._loss_reader(WO, source["work_order"])
+                scope = production_loss.read_work_flow_source(work, read=self._loss_reader)
+                item = scope.get("item") or self.fg
                 if ((source["flow_order"], source["company"], source["item_code"], source["stock_uom"]) !=
-                        (self.flow.name, self.company, self.fg.name, self.fg.stock_uom)
+                        (self.flow.name, self.company, item.name, item.stock_uom)
                         or source["loss_entry"] != name):
                     _invalid()
                 qty = _number(source["qty"])
@@ -1159,27 +1229,32 @@ class _Session:
                 by_card[key] = by_card.get(key, Decimal(0)) + qty
                 if by_card[key] > _number(card.process_loss_qty):
                     frappe.throw("同一报工的有效制造损耗出库累计数量超过已确认损耗，不能重复计入成本或补产覆盖")
-                work = self._loss_reader(WO, source["work_order"])
                 by_work[work.name] = by_work.get(work.name, Decimal(0)) + qty
                 if by_work[work.name] > _number(work.qty):
                     frappe.throw("同一工单的有效制造损耗出库累计数量超过原工单库存数量，不能借用其他生产范围")
                 # Money belongs to the ordinary Material Issue SLE collector.
                 # This independent source contributes quantity coverage only.
                 result.append({"loss_issue": name, "work_order": source["work_order"],
-                    "job_card": source["job_card"], "company": self.company, "item_code": self.fg.name,
-                    "stock_uom": self.fg.stock_uom, "qty": qty, "inventory_qty": Decimal(0), "lost_qty": qty})
-        self.loss_batches = result
-        return result
+                    "job_card": source["job_card"], "company": self.company, "item_code": item.name,
+                    "stock_uom": item.stock_uom, "qty": qty, "inventory_qty": Decimal(0), "lost_qty": qty})
+        self.production_losses = result
+        self.loss_batches = [row for row in result if row["item_code"] == self.fg.name]
+        return self.loss_batches
 
     def _check_loss_coverage(self):
         by_work = {}
-        for source in self.load_losses():
+        self.load_losses()
+        for source in self.production_losses:
             by_work[source["work_order"]] = by_work.get(source["work_order"], Decimal(0)) + source["qty"]
+        for name in self.subassembly_works:
+            by_work.setdefault(name, Decimal(0))
         for name, loss in by_work.items():
             work = self._loss_reader(WO, name)
             manufactured = [source for source in self.manufacture_batches or [] if source["work_order"] == name]
-            if (any(source["lost_qty"] for source in manufactured)
-                    or loss + sum((source["qty"] for source in manufactured), Decimal(0)) > _number(work.qty)):
+            if name in self.subassembly_works:
+                manufactured = [source for source in self.manufactures or [] if source["work_order"] == name]
+            if ((loss > 0 and any(source["lost_qty"] for source in manufactured))
+                    or loss + sum((source.get("coverage_qty", source["qty"]) for source in manufactured), Decimal(0)) > _number(work.qty)):
                 frappe.throw("同一工单制造入库和损耗出库的覆盖量冲突，不能重复计入已确认损耗或借用其他生产范围")
 
     def load_issues(self):
@@ -1201,7 +1276,7 @@ class _Session:
         selected = []
         issue_sources = {}
         self.material_return_sources = {}
-        loss_names = {source["loss_issue"] for source in self.load_losses()}
+        loss_names = {source["loss_issue"] for source in self.production_losses}
         for row in parents.values():
             doc = self.source(SE, row["name"])
             self._posted(SE, doc)
@@ -1234,6 +1309,16 @@ class _Session:
                         _invalid()
                     targets.add(detail["name"])
             self._ledger(doc, SE, expected)
+            for detail in self.table(SE, doc.name, "items"):
+                if detail["name"] not in targets or not any(node[2] == detail["item_code"] for node in self.subassembly_nodes):
+                    continue
+                if doc.name not in loss_names or not doc.get(LOSS_WORK_ORDER):
+                    frappe.throw("内部子装配领用缺少准确原计划工单来源，不能同时累计库存价值和子装配成本")
+                work = self._loss_reader(WO, doc.get(LOSS_WORK_ORDER))
+                node = self._subassembly_input(work, detail["item_code"])
+                ledger = [entry for entry in self.ledger[SE, doc.name] if entry["voucher_detail_no"] == detail["name"]]
+                self._internal_event(node, doc, detail["name"], ledger)
+                self.internal_issue_ledgers.update(entry["name"] for entry in ledger)
             selected.extend(row for row in self.ledger[SE, doc.name] if row.get("voucher_detail_no") in targets)
             issue_sources[doc.name] = (doc, {row["name"]: row for row in self.table(SE, doc.name, "items")}, targets)
         return_parents = dict(tagged_returns)
@@ -1324,6 +1409,8 @@ class _Session:
             self.material_return_sources[doc.name] = source.name
             selected.extend(entry for entry in self.ledger[SE, doc.name] if entry.get("voucher_detail_no") in return_targets)
         self.issues = selected
+        if self.internal_issue_ledgers:
+            self.load_manufactures()
         return self.issues
 
     def _manufacture_source(self, name):
@@ -1353,7 +1440,7 @@ class _Session:
     def load_manufactures(self):
         if self.manufactures is not None:
             return self.manufactures
-        work_rows = self.raw(WO, {"jf_flow_order": self.flow.name})
+        work_rows = self._work_sources()
         work_names = [row["name"] for row in work_rows]
         parents = {}
         if work_names:
@@ -1369,9 +1456,20 @@ class _Session:
             doc = self._manufacture_source(name)
             self._posted(SE, doc)
             work = self.source(WO, doc.get("work_order"))
+            if self.subassembly_nodes:
+                work = self._loss_reader(WO, work.name)
+            subassembly = self.subassembly_works.get(work.name)
             if (doc.get("purpose") != "Manufacture" or work.get("docstatus") != 1
-                    or work.get("jf_flow_order") != self.flow.name or work.get("production_item") != self.fg.name):
+                    or (not subassembly and (work.get("jf_flow_order") != self.flow.name
+                                              or work.get("production_item") != self.fg.name))):
                 _invalid()
+            if subassembly:
+                fields = self.documents[SE, name][3] | {"bom_no"}
+                rows = self.records(SE, {"name": name}, fields)
+                if (len(rows) != 1 or any(doc.get(key) != value for key, value in rows[0].items())
+                        or doc.get("bom_no") != subassembly["bom"].name):
+                    _invalid()
+                self.documents[SE, name] = (doc, _freeze(doc), "read", fields)
             if work.get("track_semi_finished_goods") or doc.get("job_card"):
                 if not self.include_stages or not work.get("track_semi_finished_goods") or not doc.get("job_card"):
                     frappe.throw("半成品制造缺少准确工序阶段来源，不能重复累计阶段价值")
@@ -1406,13 +1504,18 @@ class _Session:
                     frappe.throw("制造凭证包含副产品、估值分摊或到岸费用，尚不能准确拆分本流程材料与附加费用")
                 self._warehouse(source or target)
                 if source:
-                    if row.get("is_finished_item") or (not stage and item.name not in self.allowed_items - {self.fg.name}):
+                    allowed = set(subassembly["materials"]) if subassembly else self.allowed_items - {self.fg.name}
+                    if (row.get("is_finished_item") or (not stage and item.name not in allowed)
+                            or subassembly and source != subassembly["wip_warehouse"].name):
                         _invalid()
                     if stage:
                         self._stage_input(stage, item.name)
                     consumed.add(row["name"])
                 else:
-                    if not row.get("is_finished_item") or item.name != (stage["item"] if stage else self.fg.name):
+                    output_item = subassembly["item"].name if subassembly else stage["item"] if stage else self.fg.name
+                    if (not row.get("is_finished_item") or item.name != output_item
+                            or subassembly and (target != subassembly["warehouse"].name
+                                or row["uom"] != subassembly["item"].stock_uom or factor != 1)):
                         _invalid()
                     output_qty += quantity
                     allocated += _number(row.get("additional_cost"))
@@ -1467,11 +1570,30 @@ class _Session:
                     if row["name"] in consumed:
                         external_material += value
                 material = external_material
+            elif self.subassembly_nodes:
+                external_material = Decimal(0)
+                for row in self.table(SE, name, "items"):
+                    output = row["name"] not in consumed
+                    node = ((subassembly["plan"].name, subassembly["row"].name, subassembly["item"].name)
+                            if output and subassembly else
+                            None if output else self._subassembly_input(work, row["item_code"]))
+                    ledger = [entry for entry in self.ledger[SE, name] if entry["voucher_detail_no"] == row["name"]]
+                    value = self._internal_event(node, doc, row["name"], ledger, output=output)
+                    if not output:
+                        external_material += value
+                material = external_material
             batch = self._manufacture_batch(doc, work, consumed, output_qty)
             if batch is not None:
                 batches.append(batch)
-            result.append({"manufacture": name, "work_order": work.name, "qty": output_qty,
-                           "material": material, "other": other})
+            entry = {"manufacture": name, "work_order": work.name, "qty": output_qty,
+                     "material": material, "other": other}
+            if subassembly:
+                loss = _number(doc.get("process_loss_qty"))
+                if (not doc.get("from_bom") or loss < 0
+                        or not _same_quantity(doc.get("fg_completed_qty"), output_qty + loss, doc, "fg_completed_qty")):
+                    _invalid()
+                entry.update(coverage_qty=output_qty + loss, lost_qty=loss)
+            result.append(entry)
         self.manufactures = result
         self.manufacture_batches = batches
         return result
@@ -1650,7 +1772,8 @@ def _receipt_dto(session):
 
 def _issue_dto(session):
     rows = [{"issue": row["voucher_no"], "item_code": row["item_code"],
-             "qty": -_number(row.get("actual_qty")), "material": -_number(row.get("stock_value_difference")),
+             "qty": -_number(row.get("actual_qty")), "material": (Decimal(0) if row["name"] in session.internal_issue_ledgers
+                 else -_number(row.get("stock_value_difference"))),
              "source_material_issue": session.material_return_sources.get(row["voucher_no"], "")}
             for row in session.load_issues()]
     return {"rows": rows, "totals": {"material": sum((row["material"] for row in rows), Decimal(0))},
