@@ -91,6 +91,10 @@ doctype_js = {
     "Employee Separation": "public/js/jifeng_employee_separation.js",
 }
 override_whitelisted_methods = {
+    "erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt.make_subcontract_return":
+        "jifeng_erp.subcontracting_returns.make_subcontract_return",
+    "erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt.make_subcontract_return_against_rejected_warehouse":
+        "jifeng_erp.subcontracting_returns.make_subcontract_return_against_rejected_warehouse",
     "hrms.hr.utils.get_employee_field_property": "jifeng_erp.personnel_ui.get_employee_field_property",
     "frappe.desk.form.linked_with.get": "jifeng_erp.sample_source_queries.get",
     "frappe.desk.form.linked_with.get_submitted_linked_docs":
@@ -130,6 +134,7 @@ extend_doctype_class = {
     "Production Plan": ["jifeng_erp.production_instruction.ProductionInstructionMixin"],
     "Purchase Receipt": ["jifeng_erp.purchase_returns.PurchaseReceiptMixin"],
     "Purchase Order": ["jifeng_erp.subcontract_stage.PurchaseOrderStageMixin"],
+    "Subcontracting Receipt": ["jifeng_erp.subcontracting_returns.SubcontractingReceiptReturnMixin"],
     "Employee Promotion": ["jifeng_erp.personnel_changes.EmployeePromotionMixin"],
     "Employee Transfer": ["jifeng_erp.personnel_changes.EmployeeTransferMixin"],
     "Employee Separation": ["jifeng_erp.personnel_separation.EmployeeSeparationMixin"],
