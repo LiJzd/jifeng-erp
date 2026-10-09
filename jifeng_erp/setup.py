@@ -47,6 +47,26 @@ def install_production_loss_type():
                     "stock_entry_type": name, "purpose": "Material Issue"}).insert(ignore_permissions=True)
 
 
+def subcontracting_return_custom_fields():
+    """Persist actual fee reversals so later returns cannot reprice old ones."""
+    common = {"hidden": 1, "read_only": 1, "no_copy": 1, "print_hide": 1}
+    return {
+        "Subcontracting Receipt": [{**common,
+            "fieldname": "jf_return_allocation_version", "fieldtype": "Data",
+            "label": "退回费用分配版本", "insert_after": "return_against"}],
+        "Subcontracting Receipt Item": [{**common,
+            "fieldname": "jf_processing_reversal_amount", "fieldtype": "Currency",
+            "label": "退回加工费实际反冲", "insert_after": "service_cost_per_qty",
+            "options": "Company:company:default_currency"}, {**common,
+            "fieldname": "jf_additional_reversal_amount", "fieldtype": "Currency",
+            "label": "退回其他费用实际反冲", "insert_after": "additional_cost_per_qty",
+            "options": "Company:company:default_currency"}],
+        "Landed Cost Taxes and Charges": [{**common,
+            "fieldname": "jf_return_source_charge", "fieldtype": "Data",
+            "label": "退回原费用明细", "insert_after": "base_amount"}],
+    }
+
+
 def install():
     fields = {doctype: [{
         "fieldname": "jf_flow_order", "fieldtype": "Link", "label": "集沣流程单",
@@ -174,6 +194,8 @@ def install():
     for doctype, additions in sample_custom_fields().items():
         fields.setdefault(doctype, []).extend(additions)
     for doctype, rows in production_loss_custom_fields().items():
+        fields.setdefault(doctype, []).extend(rows)
+    for doctype, rows in subcontracting_return_custom_fields().items():
         fields.setdefault(doctype, []).extend(rows)
     create_custom_fields(fields, update=True)
     install_production_loss_type()
