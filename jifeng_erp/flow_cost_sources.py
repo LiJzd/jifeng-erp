@@ -1005,6 +1005,16 @@ class _Session:
                 _invalid()
         self.ledger[doctype, doc.name] = rows
 
+    def _loss_records(self, doctype, filters, fields, parenttype=None, **options):
+        # Batch proof enumerates whole native source pools, including empty
+        # pools. Freeze their authorization before the first list callback so
+        # later role/share edits cannot be hidden by request-local caches.
+        scope = tuple(sorted(({doctype} | ({parenttype} if parenttype else set()))
+                             - _authorization_doctypes()))
+        if scope and scope not in self.loss_authorization:
+            self.loss_authorization[scope] = _authorization(scope)
+        return self.records(doctype, filters, fields, parenttype=parenttype, **options)
+
     def _loss_reader(self, doctype, name):
         """Freeze the loss proof's exact native documents and all child sets."""
         from jifeng_erp import production_loss
@@ -1079,7 +1089,8 @@ class _Session:
             for name in sorted(parents):
                 doc = self._loss_reader(SE, name)
                 self._posted(SE, doc)
-                source = production_loss.read_loss_source(doc, read=self._loss_reader)
+                source = production_loss.read_loss_source(doc, read=self._loss_reader,
+                    records=self._loss_records, posted=True)
                 if ((source["flow_order"], source["company"], source["item_code"], source["stock_uom"]) !=
                         (self.flow.name, self.company, self.fg.name, self.fg.stock_uom)
                         or source["loss_entry"] != name):

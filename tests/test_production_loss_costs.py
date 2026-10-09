@@ -191,6 +191,87 @@ class TestProductionLossSources(unittest.TestCase):
         self.assertEqual((result["totals"]["material"], result["loss_batches"]), (0, []))
         self.assert_no_writes()
 
+    def test_batch_list_scope_rechecks_late_permissions_even_for_empty_pool(self):
+        self.extend_schema("Batch", {"name", "item"})
+        permission = self.base.add("Custom DocPerm", "BATCH-PERM", parent="Batch", role="QA", read=1)
+        for rows in (False, True):
+            if rows:
+                self.base.add("Batch", "BATCH-1", item="RM")
+            permission.read = 1
+            session = self.module._Session("FLOW")
+            result = session._loss_records("Batch", {"item": "RM"}, {"name", "item"})
+            self.assertEqual(len(result), int(rows))
+            permission.read = 0
+            with self.subTest(nonempty=rows), self.assertRaises(PermissionError):
+                session.finish()
+        self.assert_no_writes()
+
+    def seed_batch_loss_cost_source(self):
+        loss, row = self.seed_loss()
+        self.base.documents["Item", "RM"].has_batch_no = 1
+        self.base.add("Batch", "BATCH-1", item="RM", disabled=0, use_batchwise_valuation=0)
+        self.base.add(self.module.SE, "TRANSFER", company="JF", purpose="Material Transfer for Manufacture",
+            work_order="WO", posting_date="2026-10-03", posting_time="09:00:00")
+        self.child(self.module.SE, "TRANSFER", "items", "TRANSFER-ROW", item_code="RM", jf_flow_order="FLOW",
+            docstatus=1, qty=10, transfer_qty=10, uom="Kg", stock_uom="Kg", conversion_factor=1,
+            s_warehouse="RAW-WH", t_warehouse="RM-WH", batch_no="BATCH-1")
+        for name, voucher, detail, quantity, clock in (
+                ("INWARD", "TRANSFER", "TRANSFER-ROW", 10, "09:00:00"),
+                ("OUTWARD", "LOSS", row.name, -10, "10:00:00")):
+            self.base.add("Serial and Batch Bundle", name, company="JF", item_code="RM", warehouse="RM-WH",
+                voucher_type=self.module.SE, voucher_no=voucher, voucher_detail_no=detail,
+                type_of_transaction="Inward" if quantity > 0 else "Outward", is_cancelled=0,
+                has_batch_no=1, has_serial_no=0, total_qty=quantity, total_amount=quantity * 4)
+            self.child("Serial and Batch Bundle", name, "entries", name + "-ROW", item_code="RM",
+                docstatus=1, warehouse="RM-WH", batch_no="BATCH-1", qty=quantity, incoming_rate=4,
+                stock_value_difference=quantity * 4, is_cancelled=0)
+            if quantity > 0:
+                self.base.add(self.module.SLE, "TRANSFER-IN", company="JF", item_code="RM", warehouse="RM-WH",
+                    stock_uom="Kg", voucher_type=self.module.SE, voucher_no=voucher, voucher_detail_no=detail,
+                    posting_date="2026-10-03", posting_time=clock, creation="2026-10-03 " + clock,
+                    actual_qty=quantity, stock_value_difference=quantity * 4,
+                    serial_and_batch_bundle=name, is_cancelled=0, is_adjustment_entry=0)
+        row.update(batch_no="BATCH-1", serial_and_batch_bundle="OUTWARD", use_serial_batch_fields=1)
+        self.base.documents[self.module.SLE, "LOSS-SLE"].update(serial_and_batch_bundle="OUTWARD",
+            creation="2026-10-03 10:00:00")
+        native_match = self.base.match_value
+        def native_order(actual, op, value):
+            if op in {"<", "<="}:
+                if actual is None or value is None:
+                    return False
+                if isinstance(value, str) and hasattr(actual, "isoformat"):
+                    actual = actual.isoformat()
+                return actual < value if op == "<" else actual <= value
+            return native_match(actual, op, value)
+        self.base.match_value = native_order
+        return loss
+
+    def test_batch_loss_value_is_counted_once_and_cancel_excludes_source(self):
+        loss = self.seed_batch_loss_cost_source()
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["issue_material"]), (40, 40))
+        self.assertEqual([source["loss_issue"] for source in result["loss_batches"]], ["LOSS"])
+        loss.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 0)
+        self.assert_no_writes()
+
+    def test_batch_loss_cost_refuses_hidden_transfer_masked_batch_and_late_lot_edit(self):
+        self.seed_batch_loss_cost_source()
+        self.base.list_denied.add((self.module.SLE, "TRANSFER-IN"))
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.base.list_denied.clear()
+        self.base.metas["Batch"]["use_batchwise_valuation"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.base.metas["Batch"]["use_batchwise_valuation"].mask = 0
+        session = self.module._Session("FLOW")
+        session.load_issues()
+        self.base.documents["Serial and Batch Entry", "INWARD-ROW"].qty = 9
+        with self.assertRaises(PermissionError):
+            session.finish()
+        self.assert_no_writes()
+
     def test_duplicate_card_or_other_cards_cannot_lend_work_order_loss_coverage(self):
         self.seed_loss()
         self.seed_loss("SECOND")
