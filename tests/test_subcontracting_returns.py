@@ -4,10 +4,59 @@ import datetime
 import importlib.util
 import pathlib
 import sys
+import textwrap
 import types
 import unittest
 from decimal import Decimal
 from unittest.mock import patch
+
+
+# ERPNext 16.36.0 callbacks captured from the installed runtime, 2026-10-09.
+# Cancellation reaches this query through repost_current_voucher(cancelled=True),
+# not by directly passing an inverse SLE to calculate_valuation_for_serial_batch_bundle.
+_NATIVE_CANCEL_DISPATCH = r'''
+def get_sle_against_current_voucher(kwargs):
+    if kwargs.get("name") and not kwargs.get("posting_datetime"):
+        kwargs["posting_datetime"] = frappe.db.get_value(
+            "Stock Ledger Entry", kwargs.get("name"), "posting_datetime"
+        )
+    if not kwargs.get("posting_datetime"):
+        kwargs["posting_datetime"] = get_combine_datetime(kwargs.posting_date, kwargs.posting_time)
+    doctype = frappe.qb.DocType("Stock Ledger Entry")
+    query = (
+        frappe.qb.from_(doctype)
+        .select("*")
+        .where(
+            (doctype.item_code == kwargs.item_code)
+            & (doctype.warehouse == kwargs.warehouse)
+            & (doctype.is_cancelled == 0)
+            & (doctype.posting_datetime == kwargs.posting_datetime)
+        )
+        .orderby(doctype.creation, order=Order.asc)
+        .for_update()
+    )
+    if not kwargs.get("cancelled"):
+        query = query.where(doctype.creation == kwargs.creation)
+    return query.run(as_dict=True)
+
+def seed_previous_sle_for_cancellation(self, anchor_sle):
+    key = (anchor_sle.item_code, anchor_sle.warehouse)
+    if key in self.prev_sle_dict:
+        return
+    args = frappe._dict(anchor_sle)
+    args["sle_id"] = args.get("name")
+    prev_sle = get_previous_sle_of_current_voucher(args)
+    if prev_sle:
+        self.prev_sle_dict[key] = prev_sle
+
+def process_sle_against_current_timestamp(self):
+    sl_entries = get_sle_against_current_voucher(self.args)
+    if self.args.get("cancelled"):
+        self.seed_previous_sle_for_cancellation(sl_entries[0] if sl_entries else self.args)
+    for sle in sl_entries:
+        sle["timestamp"] = sle.posting_datetime
+        self.process_sle(sle)
+'''
 
 
 class Row(dict):
@@ -937,6 +986,88 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.source.use_serial_no_wise_valuation = 0
         with self.assertRaisesRegex(ValueError, "未启用原生逐号估值"):
             bundle.get_valuation_rate_for_return_entry("SOURCE")
+
+    def native_cancel_dispatch(self, *, other_active=False):
+        row = self.finished_fixture()
+        self.doc.docstatus = 2
+        self.bundles["CHOSEN-FG"].is_cancelled = 1
+        # Native SerialBatchBundle.delink_serial_and_batch_bundle clears the
+        # parent's link and flags the bundle/entries; it does not flip entry.qty.
+        row.serial_and_batch_bundle = ""
+        current = Row(name="RETURN-SLE", voucher_type="Subcontracting Receipt", voucher_no="CURRENT",
+            item_code="FG", warehouse="Good", posting_datetime="2026-10-08 10:00:00",
+            creation=1, is_cancelled=1, actual_qty=-1, serial_and_batch_bundle="CHOSEN-FG")
+        inverse = Row(current, name="CANCEL-SLE", creation=2, actual_qty=1)
+        rows = [current, inverse]
+        if other_active:
+            rows.append(Row(current, name="OTHER-SLE", voucher_no="OTHER", is_cancelled=0, creation=3,
+                serial_and_batch_bundle="OTHER-BUNDLE"))
+
+        class Condition:
+            def __init__(self, check):
+                self.check = check
+            def __and__(self, other):
+                return Condition(lambda value: self.check(value) and other.check(value))
+
+        class Column:
+            def __init__(self, name):
+                self.name = name
+            def __eq__(self, value):
+                return Condition(lambda row: row.get(self.name) == value)
+
+        class Query:
+            def __init__(self):
+                self.conditions = []
+            def select(self, *args):
+                return self
+            def where(self, condition):
+                self.conditions.append(condition)
+                return self
+            def orderby(self, *args, **kwargs):
+                return self
+            def for_update(self):
+                return self
+            def run(self, **kwargs):
+                return [row for row in rows if all(condition.check(row) for condition in self.conditions)]
+
+        self.frappe.qb = types.SimpleNamespace(
+            DocType=lambda _doctype: types.SimpleNamespace(**{field: Column(field)
+                for field in ("item_code", "warehouse", "is_cancelled", "posting_datetime", "creation")}),
+            from_=lambda _doctype: Query())
+        self.frappe._dict = Row
+        anchors, processed = [], []
+        previous = Row(name="BEFORE-RETURN", actual_qty=4, stock_value=24, qty_after_transaction=4)
+        def get_previous(args):
+            anchors.append(args)
+            return previous
+        namespace = {"frappe": self.frappe, "Order": types.SimpleNamespace(asc="asc"),
+            "get_previous_sle_of_current_voucher": get_previous}
+        exec(compile(textwrap.dedent(_NATIVE_CANCEL_DISPATCH), "installed-erpnext-16.36-cancel", "exec"), namespace)
+        Runner = type("NativeCancellationRunner", (), {name: namespace[name] for name in
+            ("seed_previous_sle_for_cancellation", "process_sle_against_current_timestamp")})
+        runner = Runner()
+        runner.args, runner.prev_sle_dict = Row(inverse, cancelled=True), {}
+        def process(sle):
+            # A canceled return reaching this branch would need a native SCR
+            # mapping that does not exist. The real query must exclude it.
+            self.assertNotEqual(sle.voucher_no, "CURRENT")
+            processed.append(sle.name)
+        runner.process_sle = process
+        runner.process_sle_against_current_timestamp()
+        return runner, anchors, processed
+
+    def test_native_cancellation_excludes_return_and_inverse_sle_and_restores_before_return_anchor(self):
+        runner, anchors, processed = self.native_cancel_dispatch()
+        self.assertEqual(processed, [])
+        self.assertEqual(anchors[0].sle_id, "CANCEL-SLE")
+        self.assertEqual(runner.prev_sle_dict["FG", "Good"].stock_value, 24)
+        self.assertEqual(self.bundles["CHOSEN-FG"].entries[0].qty, -1)
+
+    def test_native_cancellation_replays_only_other_active_voucher_at_same_timestamp(self):
+        runner, anchors, processed = self.native_cancel_dispatch(other_active=True)
+        self.assertEqual(processed, ["OTHER-SLE"])
+        self.assertEqual(anchors[0].sle_id, "OTHER-SLE")
+        self.assertEqual(runner.prev_sle_dict["FG", "Good"].qty_after_transaction, 4)
 
     def test_forward_and_cancel_keep_native_lifecycle(self):
         self.doc.is_return = 0
