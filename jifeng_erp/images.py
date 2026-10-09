@@ -51,6 +51,26 @@ def _allowed_source_url(url, hosts):
                 and port in (None, 443) and not parsed.username and not parsed.password)
 
 
+def _response_peer_address(response):
+    """Read the connected socket before urllib3 consumes or releases its body."""
+    raw = getattr(response, "raw", None)
+    sockets = [getattr(getattr(raw, "_connection", None), "sock", None)]
+    # Some urllib3 responses release _connection after receiving headers. The
+    # HTTP response can still own the same TLS socket through its buffered file.
+    try:
+        sockets.append(raw._fp.fp.raw._sock)
+    except AttributeError:
+        pass
+    for connected_socket in sockets:
+        if connected_socket is None:
+            continue
+        try:
+            return ipaddress.ip_address(connected_socket.getpeername()[0])
+        except (AttributeError, OSError, TypeError, ValueError):
+            continue
+    return None
+
+
 def _validated_image_bytes(url, hosts):
     try:
         parsed = urlsplit(url)
@@ -63,7 +83,8 @@ def _validated_image_bytes(url, hosts):
 
     try:
         addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
-        if not addresses or any(not ipaddress.ip_address(address[4][0]).is_global for address in addresses):
+        public_addresses = {ipaddress.ip_address(address[4][0]) for address in addresses}
+        if not public_addresses or any(not address.is_global for address in public_addresses):
             return None, None, "图片域名解析到非公网地址，已停止下载。"
 
         # Do not inherit process or system proxy settings. The explicit site
@@ -73,8 +94,13 @@ def _validated_image_bytes(url, hosts):
             session.trust_env = False
             with session.get(url, timeout=(10, 25), stream=True, allow_redirects=False,
                              proxies={"http": "", "https": ""}) as response:
+                peer_address = _response_peer_address(response)
+                if peer_address is None:
+                    return None, None, f"无法核实图片连接的实际对端，已停止下载（HTTP {response.status_code}）。"
+                if peer_address not in public_addresses:
+                    return None, None, f"图片连接对端与本次公网解析地址不一致，已停止下载（HTTP {response.status_code}）。"
                 if response.status_code != 200:
-                    return None, None, "图片服务器未返回成功响应。"
+                    return None, None, f"图片服务器返回 HTTP {response.status_code}，已停止下载。"
                 data = bytearray()
                 for part in response.iter_content(65536):
                     data.extend(part)

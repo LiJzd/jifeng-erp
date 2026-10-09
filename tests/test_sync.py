@@ -668,6 +668,118 @@ class TestImageRetryLifecycle(unittest.TestCase):
     def no_proxy_environment(self):
         return patch.dict("os.environ", {key: "" for key in self.images.PROXY_ENV_VARS})
 
+    def download_response(self, peer="8.8.8.8", status=200, buffered_socket=False):
+        class Response(types.SimpleNamespace):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        connected_socket = None if peer is None else Mock()
+        if connected_socket is not None:
+            connected_socket.getpeername.return_value = (peer, 443)
+        raw = types.SimpleNamespace(_connection=types.SimpleNamespace(sock=connected_socket))
+        if buffered_socket:
+            raw._connection = None
+            raw._fp = types.SimpleNamespace(fp=types.SimpleNamespace(
+                raw=types.SimpleNamespace(_sock=connected_socket)))
+        response = Response(status_code=status, raw=raw, iter_content=Mock(return_value=[b"image"]),
+                            close=Mock())
+        session = types.SimpleNamespace(trust_env=True, get=Mock(return_value=response))
+        self.images.requests.Session.return_value = nullcontext(session)
+        return response, session
+
+    def download_with_public_dns(self):
+        addresses = [(2, 1, 6, "", ("8.8.8.8", 443))]
+        with patch.object(self.images.socket, "getaddrinfo", return_value=addresses):
+            return self.images._validated_image_bytes(
+                "https://cdn.example.com/image.jpg?private=not-for-errors", {"cdn.example.com"})
+
+    def test_download_reads_image_only_after_actual_peer_matches_current_public_dns(self):
+        response, session = self.download_response()
+        image = types.SimpleNamespace(width=2, height=3, format="JPEG", verify=Mock())
+        self.images.Image.open.return_value = nullcontext(image)
+
+        result = self.download_with_public_dns()
+
+        self.assertEqual(result, (b"image", "jpg", ""))
+        self.assertFalse(session.trust_env)
+        session.get.assert_called_once_with(
+            "https://cdn.example.com/image.jpg?private=not-for-errors", timeout=(10, 25),
+            stream=True, allow_redirects=False, proxies={"http": "", "https": ""})
+        response.iter_content.assert_called_once_with(65536)
+        image.verify.assert_called_once_with()
+        response.close.assert_called_once_with()
+
+    def test_download_checks_buffered_tls_socket_when_connection_was_released(self):
+        response, _ = self.download_response(buffered_socket=True)
+        image = types.SimpleNamespace(width=2, height=3, format="PNG", verify=Mock())
+        self.images.Image.open.return_value = nullcontext(image)
+
+        self.assertEqual(self.download_with_public_dns(), (b"image", "png", ""))
+        response.iter_content.assert_called_once_with(65536)
+        response.close.assert_called_once_with()
+
+    def test_download_missing_socket_closes_response_without_consuming_body(self):
+        response, _ = self.download_response(peer=None)
+
+        data, extension, error = self.download_with_public_dns()
+
+        self.assertIsNone(data)
+        self.assertIsNone(extension)
+        self.assertIn("无法核实", error)
+        response.iter_content.assert_not_called()
+        self.images.Image.open.assert_not_called()
+        response.close.assert_called_once_with()
+
+    def test_download_peer_mismatch_closes_response_without_consuming_body(self):
+        for peer in ("1.1.1.1", "127.0.0.1"):
+            with self.subTest(peer=peer):
+                response, _ = self.download_response(peer=peer)
+
+                data, extension, error = self.download_with_public_dns()
+
+                self.assertIsNone(data)
+                self.assertIsNone(extension)
+                self.assertIn("本次公网解析地址不一致", error)
+                self.assertNotIn(peer, error)
+                self.assertNotIn("cdn.example.com", error)
+                self.assertNotIn("private=", error)
+                response.iter_content.assert_not_called()
+                self.images.Image.open.assert_not_called()
+                response.close.assert_called_once_with()
+
+    def test_download_non_200_preserves_status_without_reading_body_or_redirecting(self):
+        for status in (403, 302):
+            with self.subTest(status=status):
+                response, _ = self.download_response(status=status)
+
+                data, extension, error = self.download_with_public_dns()
+
+                self.assertIsNone(data)
+                self.assertIsNone(extension)
+                self.assertIn(f"HTTP {status}", error)
+                self.assertNotIn("cdn.example.com", error)
+                self.assertNotIn("private=", error)
+                response.iter_content.assert_not_called()
+                self.images.Image.open.assert_not_called()
+                response.close.assert_called_once_with()
+
+    def test_download_closed_socket_still_preserves_non_200_status_without_body(self):
+        response, _ = self.download_response(status=403)
+        response.raw._connection.sock.getpeername.side_effect = OSError("socket closed")
+
+        data, extension, error = self.download_with_public_dns()
+
+        self.assertIsNone(data)
+        self.assertIsNone(extension)
+        self.assertIn("HTTP 403", error)
+        self.assertIn("无法核实", error)
+        response.iter_content.assert_not_called()
+        self.images.Image.open.assert_not_called()
+        response.close.assert_called_once_with()
+
     def test_unverified_direct_egress_fails_closed_without_network_request(self):
         mapping = self.mapping()
         self.frappe.get_doc.side_effect = [mapping, mapping]
