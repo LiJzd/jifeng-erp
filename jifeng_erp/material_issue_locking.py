@@ -82,6 +82,15 @@ def _lock_flows(flow_ids):
 
 
 class MaterialIssueLockingMixin:
+    def calculate_rate_and_amount(self, *args, **kwargs):
+        if self.get(_RETURN_SOURCE_FIELD):
+            # Native inward bundle calculation would otherwise copy the whole
+            # row average into every selected batch/serial. Price this exact
+            # source return before native basic amount and GL totals are built.
+            from jifeng_erp.material_returns import validate_material_return
+            validate_material_return(self)
+        return super().calculate_rate_and_amount(*args, **kwargs)
+
     def check_if_latest(self):
         locked_flows = _flow_ids(self)
         current_return_source = self.get(_RETURN_SOURCE_FIELD)
