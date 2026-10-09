@@ -22,6 +22,13 @@ class Record(dict):
 class Document(Record):
     environment = None
 
+    @property
+    def items(self):
+        return self.get("items", [])
+
+    def as_dict(self):
+        return dict(self)
+
     def check_permission(self, permission):
         if ((self.doctype, permission) in self.environment.role_denials
                 or (self.doctype, self.name, permission) in self.environment.denied):
@@ -82,6 +89,7 @@ class TestFlowCostSources(unittest.TestCase):
         self.frappe.get_doc = Mock(side_effect=self.get_doc)
         self.frappe.get_meta = lambda doctype: Meta(self, doctype)
         self.frappe.db = types.SimpleNamespace(commit=Mock(), set_value=Mock(), sql=Mock())
+        self.frappe.has_permission = lambda *args: True
         self.frappe.new_doc, self.frappe.delete_doc = Mock(), Mock()
         model = types.ModuleType("frappe.model")
         model.get_permitted_fields = lambda doctype, **kw: self.permitted[doctype] - self.hidden.get(doctype, set())
@@ -155,6 +163,11 @@ class TestFlowCostSources(unittest.TestCase):
         self.metas[childtype].update({field: Record(fieldname=field, fieldtype="Data", permlevel=0)
             for field in self.module.material_returns.FG_TRACKING_FIELDS})
         Document.environment = self
+        self.metas[self.module.SCR]["total_additional_costs"] = Record(fieldname="total_additional_costs", fieldtype="Currency", permlevel=0)
+        from test_subcontracting_accounting import install_native_gl
+        self.native_gl = install_native_gl(self.frappe, Document, Record,
+            lambda name: [row for (kind, _), row in self.documents.items()
+                          if kind == self.module.SLE and row.voucher_no == name and not row.is_cancelled])
         self.add("Company", "JF", default_currency="CNY")
         self.add("Currency", "CNY")
         self.add("Item", "FG", stock_uom="Nos", is_stock_item=1)
@@ -194,7 +207,7 @@ class TestFlowCostSources(unittest.TestCase):
             "docstatus": self.documents[parenttype, parent].docstatus} | values))
         return row
 
-    def get_doc(self, doctype, name):
+    def get_doc(self, doctype, name, **kwargs):
         if doctype in self.doc_hooks:
             self.doc_hooks[doctype](name)
         if (doctype, name) not in self.documents:
@@ -230,6 +243,8 @@ class TestFlowCostSources(unittest.TestCase):
         return actual == value if op == "=" else actual in value if op == "in" else False
 
     def get_list(self, doctype, filters, limit_page_length, fields=None, order_by=None, pluck=None, **kwargs):
+        if doctype == self.module.GLE:
+            self.accounting_fixture(filters.get("voucher_no"))
         if (doctype, "read") in self.role_denials:
             raise PermissionError("native role denied")
         childtypes = {child for tables in self.module.TABLES.values() for _, child, _ in tables}
@@ -246,12 +261,61 @@ class TestFlowCostSources(unittest.TestCase):
             self.list_hooks[doctype](filters)
         return projected[:limit_page_length] if limit_page_length else projected
 
-    def get_all(self, doctype, filters, fields, limit_page_length, order_by, **kwargs):
+    def get_all(self, doctype, filters, fields=None, limit_page_length=0, order_by=None, **kwargs):
+        if doctype == self.module.GLE:
+            self.accounting_fixture(filters.get("voucher_no"))
         if doctype in self.raw_hooks:
             self.raw_hooks[doctype](filters)
         rows = [deepcopy(row) for (kind, _), row in sorted(self.documents.items())
                 if kind == doctype and self.matches(row, filters)]
+        if kwargs.get("pluck"):
+            rows = [row[kwargs["pluck"]] for row in rows]
         return rows[:limit_page_length] if limit_page_length else rows
+
+    def accounting_fixture(self, name):
+        """Independent saved GL for the explicit source model, including merged expense."""
+        if (self.module.SCR, name) not in self.documents:
+            return
+        doc = self.documents[self.module.SCR, name]
+        for key in [key for key in self.documents if key[0] == self.module.GLE and self.documents[key].voucher_no == name]:
+            del self.documents[key]
+        items = [row for (kind, _), row in self.documents.items()
+                 if kind == "Subcontracting Receipt Item" and row.parent == name]
+        values = {}
+        def add(account, center, project, amount):
+            key = (account, center, project)
+            values[key] = values.get(key, Decimal(0)) + Decimal(str(amount))
+        for item in items:
+            center, project = item.get("cost_center"), item.get("project")
+            fg, material = Decimal(0), Decimal(0)
+            for (kind, _), sle in list(self.documents.items()):
+                if kind != self.module.SLE or sle.voucher_no != name or sle.is_cancelled:
+                    continue
+                if sle.voucher_detail_no == item.name:
+                    fg += Decimal(str(sle.stock_value_difference))
+                    add("STOCK-"+sle.warehouse, center, project, sle.stock_value_difference)
+                else:
+                    raw = self.documents.get(("Subcontracting Receipt Supplied Item", sle.voucher_detail_no))
+                    if raw and raw.reference_name == item.name:
+                        material -= Decimal(str(sle.stock_value_difference))
+                        add("STOCK-"+sle.warehouse, raw.get("cost_center") or center, project, sle.stock_value_difference)
+                        add(raw.get("expense_account") or item.expense_account,
+                            raw.get("cost_center") or center, project, -Decimal(str(sle.stock_value_difference)))
+            qty = Decimal(str(item.qty))
+            if doc.is_return:
+                original = self.documents["Subcontracting Receipt Item", item.subcontracting_receipt_item]
+                qty = qty if item.warehouse == original.warehouse else Decimal(0)
+            processing = qty * Decimal(str(item.service_cost_per_qty or 0))
+            other = qty * Decimal(str(item.additional_cost_per_qty or 0))
+            add(item.expense_account, center, project, -fg + processing - (material+processing+other-fg))
+            add(item.service_expense_account or item.expense_account, center, project, -processing)
+            add("ADJUST", center, project, material+processing+other-fg)
+            add(item.expense_account, doc.get("cost_center") or "HEADER-CC", None, other)
+        for index, ((account, center, project), value) in enumerate(values.items()):
+            if value:
+                self.add(self.module.GLE, name+"-GL-"+str(index),company="JF",voucher_type=self.module.SCR,
+                    voucher_no=name,voucher_detail_no=None,account=account,cost_center=center,project=project,
+                    debit=max(value,0),credit=max(-value,0),is_cancelled=0)
 
     def ledger(self, name, doctype, voucher, detail, item, warehouse, quantity, value, adjustment=0):
         return self.add(self.module.SLE, name, creation=datetime(2026, 10, 3, 10), company="JF", item_code=item, warehouse=warehouse,
@@ -263,13 +327,15 @@ class TestFlowCostSources(unittest.TestCase):
         received = Decimal(str(qty)) + Decimal(str(rejected)) + Decimal(str(loss))
         doc = self.add(self.module.SCR, name, company="JF", posting_date=date(2026, 10, 3),
             posting_time=timedelta(hours=10), is_return=is_return, return_against=original,
-            status="Return" if is_return else "Completed", supplier_warehouse="RM-WH")
+            status="Return" if is_return else "Completed", supplier_warehouse="RM-WH", cost_center="HEADER-CC",
+            use_item_inventory_account=False, company_currency="CNY")
         item = self.child(self.module.SCR, name, "items", name + "-FG", item_code="FG", jf_flow_order=flow,
             qty=qty, rejected_qty=rejected, process_loss_qty=loss, received_qty=received, stock_uom="Nos",
             conversion_factor=1, warehouse="FG-WH", rejected_warehouse="REJECT-WH",
             subcontracting_receipt_item=original + "-FG" if original else None,
             rm_cost_per_qty=1, service_cost_per_qty=2, additional_cost_per_qty=0, rm_supp_cost=received,
-            secondary_items_cost_per_qty=0, landed_cost_voucher_amount=0, amount=received * 3, rate=3)
+            secondary_items_cost_per_qty=0, landed_cost_voucher_amount=0, amount=received * 3, rate=3,
+            expense_account="EXPENSE", service_expense_account="SERVICE", cost_center="FG-CC", project="PROJECT")
         self.child(self.module.SCR, name, "supplied_items", name + "-RM", main_item_code="FG", rm_item_code="RM",
             reference_name=item.name, consumed_qty=received, stock_uom="Kg", rate=1, amount=received)
         # Native originals allocate all covered cost to accepted stock; the
@@ -380,16 +446,16 @@ class TestFlowCostSources(unittest.TestCase):
             self.documents[self.module.SLE, name + "-FG-SLE"].stock_value_difference = row.amount
         return doc, row
 
-    def test_loss_inclusive_fees_use_exact_consumption_not_accepted_times_rates(self):
+    def test_material_covers_loss_while_booked_fees_use_native_accepted_quantity(self):
         self.receipt()
         result = self.module.receipt_costs("FLOW")
-        self.assertEqual(result["totals"], {"material": Decimal(100), "processing": Decimal(200), "other": Decimal(0)})
+        self.assertEqual(result["totals"], {"material": Decimal(100), "processing": Decimal(140), "other": Decimal(0)})
         self.assertEqual(result["rows"], [{"receipt": "SCR", "receipt_item": "SCR-FG", "item_code": "FG", "stock_uom": "Nos",
-            "qty": 70, "material": Decimal(100), "processing": Decimal(200), "other": Decimal(0),
+            "qty": 70, "material": Decimal(100), "processing": Decimal(140), "other": Decimal(0),
             "inventory_qty_change": Decimal(70), "inventory_value_change": Decimal(300),
-            "valuation_cost_basis": Decimal(300), "valuation_difference": Decimal(0)}])
+            "valuation_cost_basis": Decimal(240), "valuation_difference": Decimal(60)}])
         self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 300,
-                                                     "valuation_cost_basis": 300, "valuation_difference": 0})
+                                                     "valuation_cost_basis": 240, "valuation_difference": 60})
         self.assertEqual(result["currency"], "CNY")
         self.assertNotEqual(sum(result["totals"].values()), 70 * (1 + 2))
         self.assertEqual(self.module.receipt_batch_candidates("FLOW")[0]["qty"], 100)
@@ -400,7 +466,7 @@ class TestFlowCostSources(unittest.TestCase):
         self.receipt()
         self.receipt("RETURN", qty=-10, loss=0, is_return=1, original="SCR", flow=None)
         result = self.module.receipt_costs("FLOW")
-        self.assertEqual(result["totals"], {"material": 90, "processing": 180, "other": 0})
+        self.assertEqual(result["totals"], {"material": 90, "processing": 120, "other": 0})
         batch = self.module.receipt_batch_candidates("FLOW")[0]
         self.assertEqual((batch["qty"], batch["original_qty"], batch["returned_qty"], batch["lost_qty"]), (90, 100, 10, 30))
 
@@ -420,14 +486,14 @@ class TestFlowCostSources(unittest.TestCase):
     def test_loss_return_reports_original_stock_value_and_cost_difference_separately(self):
         self.loss_return_costs()
         result = self.module.receipt_costs("FLOW")
-        self.assertEqual(result["totals"], {"material": 16, "processing": 4, "other": 0})
+        self.assertEqual(result["totals"], {"material": 16, "processing": 2, "other": 0})
         rows = {row["receipt"]: row for row in result["rows"]}
         self.assertEqual((rows["SCR"]["inventory_qty_change"], rows["SCR"]["inventory_value_change"],
-                          rows["SCR"]["valuation_cost_basis"], rows["SCR"]["valuation_difference"]), (2, 30, 30, 0))
+                          rows["SCR"]["valuation_cost_basis"], rows["SCR"]["valuation_difference"]), (2, 30, 28, 2))
         self.assertEqual((rows["RETURN"]["inventory_qty_change"], rows["RETURN"]["inventory_value_change"],
                           rows["RETURN"]["valuation_cost_basis"], rows["RETURN"]["valuation_difference"]), (-1, -15, -10, -5))
         self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 15,
-                                                     "valuation_cost_basis": 20, "valuation_difference": -5})
+                                                     "valuation_cost_basis": 18, "valuation_difference": -3})
         self.assertEqual(self.documents["Subcontracting Receipt Item", "SCR-FG"].process_loss_qty, 1)
 
     def test_rejected_zero_value_stock_return_preserves_fees_and_positive_difference(self):
@@ -436,7 +502,7 @@ class TestFlowCostSources(unittest.TestCase):
         self.assertEqual(result["totals"], {"material": 16, "processing": 4, "other": 0})
         returned = next(row for row in result["rows"] if row["receipt"] == "RETURN")
         self.assertEqual((returned["inventory_value_change"], returned["valuation_cost_basis"],
-                          returned["valuation_difference"]), (0, -10, 10))
+                          returned["valuation_difference"]), (0, -8, 8))
         self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 30,
                                                      "valuation_cost_basis": 20, "valuation_difference": 10})
 
@@ -444,24 +510,24 @@ class TestFlowCostSources(unittest.TestCase):
         self.receipt(qty=0, rejected=100, loss=0)
         before = self.module.receipt_costs("FLOW")
         self.assertEqual(before["receipt_valuation"], {"inventory_value_change": 0,
-                                                     "valuation_cost_basis": 300, "valuation_difference": -300})
+                                                     "valuation_cost_basis": 100, "valuation_difference": -100})
         self.receipt("RETURN", qty=-1, loss=0, is_return=1, original="SCR", flow=None, from_rejected=True)
         after = self.module.receipt_costs("FLOW")
-        self.assertEqual(after["totals"], {"material": 99, "processing": 198, "other": 0})
+        self.assertEqual(after["totals"], {"material": 99, "processing": 0, "other": 0})
         self.assertEqual(after["receipt_valuation"], {"inventory_value_change": 0,
-                                                    "valuation_cost_basis": 297, "valuation_difference": -297})
+                                                    "valuation_cost_basis": 99, "valuation_difference": -99})
 
     def test_return_and_original_reverse_cancel_restore_valuation_and_net_costs(self):
         original, returned, _ = self.loss_return_costs()
-        self.assertEqual(self.module.receipt_costs("FLOW")["receipt_valuation"]["valuation_difference"], -5)
+        self.assertEqual(self.module.receipt_costs("FLOW")["receipt_valuation"]["valuation_difference"], -3)
         returned.docstatus = 2
         for (kind, _), row in self.documents.items():
             if kind == self.module.SLE and row.voucher_no == returned.name:
                 row.is_cancelled = 1
         after = self.module.receipt_costs("FLOW")
-        self.assertEqual(after["totals"], {"material": 24, "processing": 6, "other": 0})
+        self.assertEqual(after["totals"], {"material": 24, "processing": 4, "other": 0})
         self.assertEqual(after["receipt_valuation"], {"inventory_value_change": 30,
-                                                    "valuation_cost_basis": 30, "valuation_difference": 0})
+                                                    "valuation_cost_basis": 28, "valuation_difference": 2})
         original.docstatus = 2
         for (kind, _), row in self.documents.items():
             if kind == self.module.SLE and row.voucher_no == original.name:
@@ -516,18 +582,18 @@ class TestFlowCostSources(unittest.TestCase):
         self.wage_cost_result.update(rows=[{"journal_entry": "PAYROLL", "work_order": "WO", "job_card": None}],
                                      total=Decimal(13))
         result = self.module.posted_flow_costs("FLOW")
-        self.assertEqual((result["totals"]["material"], result["totals"]["processing"], result["totals"]["other"]), (56, 17, 0))
+        self.assertEqual((result["totals"]["material"], result["totals"]["processing"], result["totals"]["other"]), (56, 15, 0))
         self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 15,
-                                                     "valuation_cost_basis": 20, "valuation_difference": -5})
+                                                     "valuation_cost_basis": 18, "valuation_difference": -3})
 
     def test_stage_loss_return_basis_retains_internal_supply_but_fee_material_does_not_double_count(self):
         self.stage_chain(qty=3, loss=1)
         self.stage_receipt("RETURN", qty=-1, is_return=1, original="PLATE", flow=None)
         result = self.module.posted_flow_costs("FLOW")
-        self.assertEqual((result["totals"]["material"], result["totals"]["processing"], result["totals"]["other"]), (40, 9, 2))
+        self.assertEqual((result["totals"]["material"], result["totals"]["processing"], result["totals"]["other"]), (40, 6, 2))
         self.assertTrue(all(row["material"] == 0 for row in result["receipts"]))
         self.assertEqual(result["receipt_valuation"], {"inventory_value_change": Decimal("19.2"),
-            "valuation_cost_basis": Decimal("21.6"), "valuation_difference": Decimal("-2.4")})
+            "valuation_cost_basis": Decimal("18.6"), "valuation_difference": Decimal("0.6")})
         returned = next(row for row in result["receipts"] if row["receipt"] == "RETURN")
         self.assertEqual((returned["inventory_value_change"], returned["valuation_cost_basis"],
                           returned["valuation_difference"]), (Decimal("-9.6"), Decimal("-7.2"), Decimal("-2.4")))
@@ -538,13 +604,13 @@ class TestFlowCostSources(unittest.TestCase):
         self.documents.clear()
         self.setUp()
         _doc, item = self.receipt(qty=0, rejected=100, loss=0)
-        self.assertEqual(self.module.receipt_costs("FLOW")["totals"], {"material": 100, "processing": 200, "other": 0})
+        self.assertEqual(self.module.receipt_costs("FLOW")["totals"], {"material": 100, "processing": 0, "other": 0})
         item.rm_supp_cost = None  # native qty=0 branch can leave a missing/stale source
         item.rm_cost_per_qty = None
         item.amount = 200  # native original used only the persisted service fee
         result = self.module.receipt_costs("FLOW")
-        self.assertEqual(result["totals"], {"material": 100, "processing": 200, "other": 0})
-        self.assertEqual(result["receipt_valuation"]["valuation_difference"], -300)
+        self.assertEqual(result["totals"], {"material": 100, "processing": 0, "other": 0})
+        self.assertEqual(result["receipt_valuation"]["valuation_difference"], -100)
 
     def test_native_all_rejected_stale_cache_loss_and_partial_return_use_actual_consumption(self):
         _doc, item = self.receipt(qty=0, rejected=2, loss=1)
@@ -552,12 +618,12 @@ class TestFlowCostSources(unittest.TestCase):
         self.receipt("RETURN", qty=-1, loss=0, is_return=1, original="SCR", flow=None, from_rejected=True)
         result = self.module.posted_flow_costs("FLOW")
         self.assertEqual({field: result["totals"][field] for field in ("material", "processing", "other")},
-                         {"material": 2, "processing": 4, "other": 0})
+                         {"material": 2, "processing": 0, "other": 0})
         self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 0,
-                        "valuation_cost_basis": 6, "valuation_difference": -6})
+                        "valuation_cost_basis": 2, "valuation_difference": -2})
         returned = next(row for row in result["receipts"] if row["receipt"] == "RETURN")
         self.assertEqual((returned["inventory_value_change"], returned["valuation_cost_basis"],
-                          returned["valuation_difference"]), (0, -3, 3))
+                          returned["valuation_difference"]), (0, -1, 1))
 
     def test_all_rejected_missing_fees_or_material_sle_cannot_supply_partial_cost(self):
         _doc, item = self.receipt(qty=0, rejected=100, loss=0)
@@ -822,12 +888,28 @@ class TestFlowCostSources(unittest.TestCase):
         childtype = "Subcontracting Receipt Item"
         self.assertNotIn("return_qty_from_rejected_warehouse", self.permitted[childtype])
         self.assertNotIn("return_qty_from_rejected_warehouse", self.metas[childtype])
-        self.assertEqual(self.module.receipt_costs("FLOW")["totals"], {"material": 100, "processing": 200, "other": 0})
+        self.assertEqual(self.module.receipt_costs("FLOW")["totals"], {"material": 100, "processing": 140, "other": 0})
         self.assertTrue(any(call.args[0] == childtype for call in self.frappe.get_list.call_args_list))
         for call in self.frappe.get_list.call_args_list:
             if call.args[0] == childtype:
                 self.assertNotIn("return_qty_from_rejected_warehouse", call.kwargs["fields"])
         self.hidden[childtype] = {"rm_supp_cost"}
+        with self.assertRaises(PermissionError):
+            self.module.receipt_costs("FLOW")
+
+    def test_fee_gl_source_permissions_and_hidden_rows_reject_partial_costs(self):
+        self.receipt(qty=1, loss=0)
+        self.hidden[self.module.GLE] = {"credit"}
+        with self.assertRaises(PermissionError):
+            self.module.receipt_costs("FLOW")
+        self.hidden.clear()
+        self.metas[self.module.GLE]["debit"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module.receipt_costs("FLOW")
+        self.metas[self.module.GLE]["debit"].mask = 0
+        self.accounting_fixture("SCR")
+        source = next(name for kind, name in self.documents if kind == self.module.GLE)
+        self.list_denied.add((self.module.GLE, source))
         with self.assertRaises(PermissionError):
             self.module.receipt_costs("FLOW")
 
@@ -1302,7 +1384,7 @@ class TestFlowCostSources(unittest.TestCase):
 
     def test_stage_loss_cost_is_native_and_secondary_or_lcv_stays_rejected(self):
         self.stage_chain(qty=3, loss=1)
-        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["processing"], 12)
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["processing"], 9)
         for field, value in (("secondary_item_type", "By-Product"), ("landed_cost_voucher_amount", 1)):
             row = self.documents["Subcontracting Receipt Item", "PLATE-FG"]
             old = row[field]

@@ -3,8 +3,8 @@
 Raw reads are internal completeness guards, never a replacement for native
 document/field access. A missing source rejects the whole result. Two serial
 passes detect request-local changes; they do not promise a concurrent snapshot.
-This service writes nothing. Primary receipt fees include the signed received
-quantity (accepted, rejected and loss). Returns preserve exact original physical
+This service writes nothing. Material covers accepted, rejected and loss;
+booked fees use accepted quantity. Returns preserve exact original physical
 stock value separately from restored material and unit fees. Secondary items,
 LCV and unproved allocation still reject the simplified fee load. The three fee
 categories are not a claim of native stock valuation or GL totals.
@@ -29,13 +29,14 @@ SCR = "Subcontracting Receipt"
 SE = "Stock Entry"
 WO = "Work Order"
 SLE = "Stock Ledger Entry"
+GLE = "GL Entry"
 REPOST = "Repost Item Valuation"
 IDENTITY = {"name", "modified", "docstatus"}
 CHILD = {"name", "modified", "parent", "parenttype", "parentfield", "idx"}
 PARENTS = {
     FLOW: IDENTITY | {"company", "item_code"},
     SCR: IDENTITY | {"company", "posting_date", "posting_time", "is_return", "return_against",
-                     "status", "supplier_warehouse"},
+                     "status", "supplier_warehouse", "cost_center"},
     SE: IDENTITY | {"company", "posting_date", "posting_time", "purpose", "stock_entry_type", "jf_material_issue_flow"},
     SLE: IDENTITY | {"creation", "company", "item_code", "warehouse", "stock_uom", "posting_date", "posting_time",
                      "voucher_type", "voucher_no", "voucher_detail_no", "actual_qty",
@@ -46,6 +47,7 @@ PARENTS = {
     "Currency": {"name", "modified"},
     WO: IDENTITY | {"company", "production_item", "jf_flow_order", "track_semi_finished_goods"},
 }
+PARENTS[GLE] = material_returns.GL_FEE_FIELDS
 PARENTS[SE] |= {"jf_material_return_against"}
 PARENTS[material_returns.BUNDLE] = material_returns.BUNDLE_FIELDS
 # These native sources are read only when an actual Job Card stage is present.
@@ -65,11 +67,13 @@ TABLES = {
             "conversion_factor", "warehouse", "rejected_warehouse", "subcontracting_receipt_item",
             "rm_cost_per_qty", "service_cost_per_qty", "additional_cost_per_qty", "rm_supp_cost",
             "received_qty", "bom", "secondary_item_type", "valuation_type", "reference_name",
-            "secondary_items_cost_per_qty", "landed_cost_voucher_amount", "rate", "amount"}),
+            "secondary_items_cost_per_qty", "landed_cost_voucher_amount", "rate", "amount",
+            "expense_account", "service_expense_account", "cost_center", "project"}),
         ("supplied_items", "Subcontracting Receipt Supplied Item", CHILD | {
-            "main_item_code", "rm_item_code", "reference_name", "consumed_qty", "stock_uom", "rate", "amount"}),
+            "main_item_code", "rm_item_code", "reference_name", "consumed_qty", "stock_uom", "rate", "amount",
+            "expense_account", "cost_center"}),
         ("additional_costs", "Landed Cost Taxes and Charges", CHILD | {
-            "amount", "account_currency", "exchange_rate", "base_amount"}),
+            "amount", "account_currency", "exchange_rate", "base_amount", "expense_account"}),
     ),
     SE: (("items", "Stock Entry Detail", CHILD | {
         "item_code", "jf_flow_order", "qty", "uom", "stock_uom", "conversion_factor", "transfer_qty",
@@ -660,10 +664,26 @@ class _Session:
         rates = [material_rate, _number(row["service_cost_per_qty"]), _number(row["additional_cost_per_qty"])]
         if any(rate < 0 for rate in rates) or (material > 0) != (received > 0) and material:
             _invalid()
-        processing, other = rates[1] * received, rates[2] * received
+        # Keep the frozen estimated FG amount check separate from native
+        # booked fees: native books accepted qty, not rejected/lost coverage.
+        estimated_amount = material + rates[1] * received + rates[2] * received
+        original = None
         if doc.get("is_return"):
             self._receipt_return_values(doc, row, supplied, actual)
-        elif not all_rejected and not _same_quantity(row["amount"], material + processing + other, actual, "amount"):
+            original_doc = self.source(SCR, doc.get("return_against"))
+            original = next((item for item in original_doc.get("items")
+                if item.name == row.get("subcontracting_receipt_item")), None)
+        fee_ledger = lambda source: self.records(GLE, {"company": self.company,
+            "voucher_type": SCR, "voucher_no": source.name, "is_cancelled": 0}, PARENTS[GLE])
+        if doc.get("is_return"):
+            material_returns._prove_receipt_fees(original_doc, ledger_reader=fee_ledger, for_return=True)
+        processing = material_returns.receipt_accounting_fee(doc, actual, "service_cost_per_qty", original,
+            ledger_reader=fee_ledger, fee_source=original_doc if doc.get("is_return") else None)
+        other = material_returns.receipt_accounting_fee(doc, actual, "additional_cost_per_qty", original,
+            ledger_reader=fee_ledger, fee_source=original_doc if doc.get("is_return") else None)
+        if processing or other:
+            material_returns._prove_receipt_fees(doc, ledger_reader=fee_ledger)
+        if not doc.get("is_return") and not all_rejected and not _same_quantity(row["amount"], estimated_amount, actual, "amount"):
             frappe.throw("回货已过账金额包含无法准确拆分的分摊或费用，不能简化为三项流程成本")
         # Rates are persisted in Company currency. A foreign account amount in
         # additional_costs is not silently treated as company currency.

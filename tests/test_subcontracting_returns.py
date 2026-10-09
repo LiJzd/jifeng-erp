@@ -626,6 +626,33 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.source_row.amount = 105
         self.source.additional_costs = [Row(amount=3, base_amount=3, exchange_rate=1,
                                             expense_account="Historical Freight", account_currency="CNY")]
+        # This return now requires actual complete source GL. The saved source
+        # uses the repaired native posting path, not an assumed fee formula.
+        from test_subcontracting_accounting import install_native_gl, ledger_rows
+        self.source_row.update(rate=35, expense_account="EXPENSE", service_expense_account="SERVICE",
+                               cost_center="FG-CC", project="PROJECT")
+        self.source.use_item_inventory_account = False
+        self.source.company_currency = "CNY"
+        self.source.cost_center = "HEADER-CC"
+        original_list, original_all = self.frappe.get_list, self.frappe.get_all
+        def stock_rows(**kwargs):
+            kwargs["filters"] = dict(kwargs["filters"], company="JF")
+            return original_list("Stock Ledger Entry", **kwargs)
+        gl = []
+        self.frappe.get_list = lambda kind, **kwargs: gl if kind == "GL Entry" else stock_rows(**kwargs)
+        def read_all(kind, **kwargs):
+            if kind in ("GL Entry", "Stock Ledger Entry"):
+                rows = gl if kind == "GL Entry" else stock_rows(**kwargs)
+                return [row.name for row in rows] if kwargs.get("pluck") else rows
+            return original_all(kind, **kwargs)
+        self.frappe.get_all = read_all
+        install_native_gl(self.frappe, Document, Row,
+            lambda name: stock_rows(filters={"voucher_type": "Subcontracting Receipt", "voucher_no": name,
+                                            "is_cancelled": 0}, limit_page_length=0))
+        saved = []
+        self.subject.SubcontractingReceiptReturnMixin.make_item_gl_entries(
+            self.source, saved, self.source.get_inventory_account_map())
+        gl.extend(ledger_rows(saved, Row))
         self.doc.items[0].additional_cost_per_qty = 999
         self.doc.native_full_calculation = True
         self.assertEqual(self.doc.validate(), "native-result")
