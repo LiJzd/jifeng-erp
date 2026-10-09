@@ -305,7 +305,9 @@ class TestFlowCostSources(unittest.TestCase):
             if doc.is_return:
                 original = self.documents["Subcontracting Receipt Item", item.subcontracting_receipt_item]
                 qty = qty if item.warehouse == original.warehouse else Decimal(0)
-            processing = qty * Decimal(str(item.service_cost_per_qty or 0))
+            unit_precision = self.precisions.get(("Subcontracting Receipt Item", "service_cost_per_qty"), 2)
+            qty_precision = self.precisions.get(("Subcontracting Receipt Item", "qty"), 6)
+            processing = Decimal(str(round(float(qty), qty_precision))) * Decimal(str(round(float(item.service_cost_per_qty or 0), unit_precision)))
             other = qty * Decimal(str(item.additional_cost_per_qty or 0))
             add(item.expense_account, center, project, -fg + processing - (material+processing+other-fg))
             add(item.service_expense_account or item.expense_account, center, project, -processing)

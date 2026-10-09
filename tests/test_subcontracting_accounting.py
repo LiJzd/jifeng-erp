@@ -512,6 +512,19 @@ class ReceiptAccountingRiskTest(unittest.TestCase):
         returned.items[0].service_expense_account=None
         self.assertEqual(net(self.calculate(returned)),{key:-value for key,value in net(actual).items()})
 
+    def test_processing_uses_native_operand_precision_before_multiplication(self):
+        source=self.receipt(qty=100,raw=800,fee=2.004,fg=1000)
+        class NativeCurrencyRow(self.Row):
+            def precision(self, field):
+                return 2 if field=='service_cost_per_qty' else 6
+        source.items[0]=NativeCurrencyRow(source.items[0])
+        native=[]
+        self.native['make_item_gl_entries'](source,native,source.get_inventory_account_map())
+        candidate=self.calculate(source)
+        self.assertEqual(net(candidate),net(native))
+        self.assertEqual(self.subject.receipt_accounting_fee(source,source.items[0],'service_cost_per_qty'),200)
+        self.assertEqual(net(candidate)[('SERVICE','FG-CC','PROJECT')],-200)
+
     def test_only_rejected_zero_value_source_and_return_have_material_gl_without_estimated_fee(self):
         source=self.receipt(qty=0,rejected=1,fg=0)
         source.items[0].rate=10 # saved estimate does not create accepted processing liability

@@ -135,8 +135,14 @@ def receipt_accounting_fee(document, row, field, original=None, *, ledger_reader
     """
     if row.get(field) in (None, ""):
         frappe.throw("收回缺少已保存费用单价，不能猜测费用入账")
+    def booked(value):
+        if field == "service_cost_per_qty":
+            # Installed native GL rounds both operands before multiplication.
+            return (_number(flt(value.get(field), _precision(value, field)))
+                    * _number(flt(value.get("qty"), _precision(value, "qty"))))
+        return _number(value.get("qty")) * _number(value.get(field))
     if not cint(document.get("is_return")):
-        return _number(row.get("qty")) * _number(row.get(field))
+        return booked(row)
     if original is None or original.get(field) in (None, ""):
         frappe.throw("退回缺少准确原收回费用来源")
     qty = _number(row.get("qty"))
@@ -149,7 +155,7 @@ def receipt_accounting_fee(document, row, field, original=None, *, ledger_reader
     original_stock = _number(original.get("qty")) * _factor(original)
     if accepted_stock < 0 or accepted_stock > original_stock and not _same(accepted_stock, original_stock, original):
         frappe.throw("接受实物退回费用份额超过准确原接受数量")
-    amount = _number(original.get("qty")) * _number(original.get(field))
+    amount = booked(original)
     if amount:
         source = fee_source or _return_source(document)
         _prove_receipt_fees(source, ledger_reader=ledger_reader, for_return=True)
