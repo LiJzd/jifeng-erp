@@ -565,6 +565,20 @@ class ReceiptAccountingRiskTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'没有有效会计'):
             self.calculate(returned)
 
+    def test_true_free_stock_with_exact_zero_value_sle_and_empty_gl_is_returnable(self):
+        source=self.receipt(raw=0,fee=0,fg=0)
+        source.supplied_items[0].consumed_qty=1
+        self.sle[source.name][-1].actual_qty=-1
+        self.book_source(source,legacy=True)
+        self.assertEqual(self.gl[source.name],[])
+        returned=self.receipt(qty=-1,raw=0,fee=0,fg=0,is_return=1)
+        self.assertEqual(net(self.calculate(returned)),{})
+        self.assertEqual([(row.actual_qty,row.stock_value_difference) for row in self.sle[source.name]],[(1,0),(-1,0)])
+        self.sle[source.name]=[row for row in self.sle[source.name] if row.item_code=='RM']
+        delattr(source,'_jifeng_return_stock_entries')
+        with self.assertRaisesRegex(ValueError,'不能把缺失估值当零'):
+            self.calculate(returned)
+
     def test_mixed_accepted_rejected_return_reverses_only_accepted_fee(self):
         source=self.receipt(qty=1,rejected=1,raw=16,fg=10)
         saved=self.book_source(source)

@@ -92,8 +92,6 @@ def _prove_receipt_fees(document, *, ledger_reader=None, for_return=False):
     if len(primary) != 1 or any(row.get("landed_cost_voucher_amount") for row in document.items):
         frappe.throw("原收回费用缺少可逐行核实的有效会计归属，不能按整单合计猜测退回份额")
     actual = (ledger_reader or _receipt_fee_ledger)(document)
-    if not actual:
-        frappe.throw("原收回没有有效会计费用来源，不能反冲尚未入账费用")
     from erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt import SubcontractingReceipt
     if ledger_reader is None:
         _source_stock_entries(document)
@@ -119,6 +117,11 @@ def _prove_receipt_fees(document, *, ledger_reader=None, for_return=False):
             or entry.get("voucher_no") != document.name or cint(entry.get("is_cancelled")) for entry in actual):
         frappe.throw("原收回有效会计费用凭证范围不一致")
     actual_totals, legacy_totals, corrected_totals = totals(actual), totals(expected), totals(corrected)
+    # Real free stock can have effective nonzero-quantity SLE but no monetary
+    # GL after native zero-entry filtering. Exact SLE were checked above;
+    # absence is a fault only if that proven source needs nonzero postings.
+    if not actual and corrected_totals:
+        frappe.throw("原收回没有有效会计费用来源，不能反冲尚未入账费用")
     if (actual_totals not in (legacy_totals, corrected_totals)
             or flt(sum((_number(value) for value in actual_totals.values()), Decimal(0)), _precision(row, "amount"))):
         frappe.throw("原收回有效会计分录与准确库存、耗料和已保存费用不一致，不能猜测费用退回")
