@@ -255,6 +255,116 @@ class TestProductionLossSources(unittest.TestCase):
         self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 0)
         self.assert_no_writes()
 
+    def seed_split_transfer_loss_source(self):
+        loss = self.seed_batch_loss_cost_source()
+        transfer = self.base.documents[self.module.SE, "TRANSFER"]
+        row = self.base.documents["Stock Entry Detail", "TRANSFER-ROW"]
+        row.update(qty=5, transfer_qty=5)
+        self.base.documents[self.module.SLE, "TRANSFER-IN"].update(actual_qty=5, stock_value_difference=20)
+        self.base.documents["Serial and Batch Bundle", "INWARD"].update(total_qty=5, total_amount=20)
+        self.base.documents["Serial and Batch Entry", "INWARD-ROW"].update(qty=5, stock_value_difference=20)
+        self.base.add(self.module.SE, "TRANSFER-SECOND", company="JF", purpose=transfer.purpose,
+            work_order="WO", posting_date="2026-10-03", posting_time="09:30:00")
+        self.child(self.module.SE, "TRANSFER-SECOND", "items", "TRANSFER-SECOND-ROW", item_code="RM",
+            jf_flow_order="FLOW", docstatus=1, qty=5, transfer_qty=5, uom="Kg", stock_uom="Kg",
+            conversion_factor=1, s_warehouse="RAW-WH", t_warehouse="RM-WH", batch_no="BATCH-1")
+        self.base.add("Serial and Batch Bundle", "INWARD-SECOND", company="JF", item_code="RM",
+            warehouse="RM-WH", voucher_type=self.module.SE, voucher_no="TRANSFER-SECOND",
+            voucher_detail_no="TRANSFER-SECOND-ROW", type_of_transaction="Inward", is_cancelled=0,
+            has_batch_no=1, has_serial_no=0, total_qty=5, total_amount=20)
+        self.child("Serial and Batch Bundle", "INWARD-SECOND", "entries", "INWARD-SECOND-ROW",
+            item_code="RM", docstatus=1, warehouse="RM-WH", batch_no="BATCH-1", qty=5,
+            incoming_rate=4, stock_value_difference=20, is_cancelled=0)
+        self.base.add(self.module.SLE, "TRANSFER-SECOND-IN", company="JF", item_code="RM",
+            warehouse="RM-WH", stock_uom="Kg", voucher_type=self.module.SE, voucher_no="TRANSFER-SECOND",
+            voucher_detail_no="TRANSFER-SECOND-ROW", posting_date="2026-10-03", posting_time="09:30:00",
+            creation="2026-10-03 09:30:00", actual_qty=5, stock_value_difference=20,
+            serial_and_batch_bundle="INWARD-SECOND", is_cancelled=0, is_adjustment_entry=0)
+        return loss
+
+    def test_two_actual_transfers_to_one_batch_keep_one_loss_cost_and_source_coverage(self):
+        loss = self.seed_split_transfer_loss_source()
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["totals"]["issue_material"]), (40, 40))
+        self.assertEqual(len(result["loss_batches"]), 1)
+        self.base.list_denied.add((self.module.SLE, "TRANSFER-SECOND-IN"))
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.base.list_denied.clear()
+        loss.docstatus = 2
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 0)
+        self.assert_no_writes()
+
+    def seed_serial_loss_cost_source(self, *, with_batch=False, serial_wise=True):
+        loss = self.seed_batch_loss_cost_source()
+        self.base.documents["Item", "RM"].update(has_serial_no=1, has_batch_no=int(with_batch),
+            use_serial_no_wise_valuation=int(serial_wise), stock_uom="Nos")
+        names = ["SERIAL-" + str(index) for index in range(1, 11)]
+        for (kind, _name), document in list(self.base.documents.items()):
+            if kind in {self.module.SLE, "Stock Entry Detail", "Work Order Item"} and document.get("item_code") == "RM":
+                document.stock_uom = "Nos"
+                if kind == "Stock Entry Detail":
+                    document.update(uom="Nos", batch_no="BATCH-1" if with_batch else None,
+                        serial_no="\n".join(names))
+        for bundle_name, quantity in (("INWARD", 1), ("OUTWARD", -1)):
+            self.base.documents["Serial and Batch Bundle", bundle_name].update(
+                has_serial_no=1, has_batch_no=int(with_batch))
+            del self.base.documents["Serial and Batch Entry", bundle_name + "-ROW"]
+            for index, serial in enumerate(names):
+                self.child("Serial and Batch Bundle", bundle_name, "entries", bundle_name + "-" + serial,
+                    item_code="RM", docstatus=1, warehouse="RM-WH", serial_no=serial,
+                    batch_no="BATCH-1" if with_batch else None, qty=quantity, incoming_rate=4,
+                    stock_value_difference=quantity * 4, is_cancelled=0, idx=index + 1)
+        for serial in names:
+            self.base.add("Serial No", serial, serial_no=serial, item_code="RM", company="JF",
+                docstatus=0, batch_no="BATCH-1" if with_batch else None,
+                warehouse=None, status="Consumed", purchase_rate=4)
+        loss.jf_production_loss_source_signature = self.loss.source_signature(
+            self.get_doc("Job Card", "CARD"), self.get_doc(self.module.WO, "WO"))
+        return loss
+
+    def test_exact_serial_history_values_once_with_and_without_serial_wise_valuation(self):
+        for enabled in (True, False):
+            with self.subTest(serial_wise=enabled):
+                loss = self.seed_serial_loss_cost_source(serial_wise=enabled)
+                result = self.module.posted_flow_costs("FLOW")
+                self.assertEqual(result["totals"]["material"], 40)
+                self.assertEqual([row["loss_issue"] for row in result["loss_batches"]], ["LOSS"])
+                loss.docstatus = 2
+                self.assertEqual(self.module.posted_flow_costs("FLOW")["totals"]["material"], 0)
+        self.assert_no_writes()
+
+    def test_serial_cost_requires_visible_identity_fields_and_rechecks_late_changes(self):
+        self.seed_serial_loss_cost_source(with_batch=True)
+        self.base.list_denied.add(("Serial No", "SERIAL-10"))
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.base.list_denied.clear()
+        self.base.metas["Serial No"]["batch_no"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module.posted_flow_costs("FLOW")
+        self.base.metas["Serial No"]["batch_no"].mask = 0
+        session = self.module._Session("FLOW")
+        session.load_issues()
+        self.base.documents["Serial No", "SERIAL-10"].item_code = "OTHER"
+        with self.assertRaises(PermissionError):
+            session.finish()
+        self.assert_no_writes()
+
+    def test_serial_cost_rechecks_new_type_authorization_and_batch_identity(self):
+        self.seed_serial_loss_cost_source(with_batch=True)
+        permission = self.base.add("Custom DocPerm", "SERIAL-PERM", parent="Serial No", role="QA", read=1)
+        session = self.module._Session("FLOW")
+        session.load_issues()
+        permission.read = 0
+        with self.assertRaises(PermissionError):
+            session.finish()
+        permission.read = 1
+        self.base.documents["Serial No", "SERIAL-10"].batch_no = "ANOTHER-BATCH"
+        with self.assertRaises(ValueError):
+            self.module.posted_flow_costs("FLOW")
+        self.assert_no_writes()
+
     def test_batch_loss_cost_refuses_hidden_transfer_masked_batch_and_late_lot_edit(self):
         self.seed_batch_loss_cost_source()
         self.base.list_denied.add((self.module.SLE, "TRANSFER-IN"))
