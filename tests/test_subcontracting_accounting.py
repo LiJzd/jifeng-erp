@@ -3,6 +3,7 @@
 import sys
 import types
 import unittest
+from unittest.mock import patch
 import copy
 from decimal import Decimal
 from copy import deepcopy
@@ -609,6 +610,12 @@ NATIVE_SOURCES = {'StockController.make_gl_entries': 'def make_gl_entries(self, 
 
 
 
+PERSISTED_GL_MERGE_FIELDS = {'account','cost_center','party','party_type','voucher_detail_no',
+    'against_voucher','against_voucher_type','project','finance_book','voucher_no'}
+GL_SOURCE_FIELDS = {'name','modified','company','voucher_type','voucher_no','voucher_detail_no',
+    'account','cost_center','project','debit','credit','is_cancelled'}
+
+
 def install_native_gl(frappe, document_class, row_class, ledger_read):
     """Bind captured native callbacks; only external DB/account lookup is modelled."""
     frappe._dict = row_class
@@ -637,6 +644,17 @@ def install_native_gl(frappe, document_class, row_class, ledger_read):
     dimensions = types.ModuleType('erpnext.accounts.doctype.accounting_dimension.accounting_dimension')
     dimensions.get_accounting_dimensions=namespace['get_accounting_dimensions']
     sys.modules[dimensions.__name__]=dimensions
+    original_meta=frappe.get_meta
+    def meta(doctype):
+        result=original_meta(doctype)
+        if doctype=='GL Entry' and (not hasattr(result,'get_valid_columns') or
+                                   getattr(result,'_captured_gl_columns',False)):
+            # Actual 16.36 metadata has these ten merge fields. The two
+            # advance identities exist only inside the native GL map.
+            result.get_valid_columns=lambda: GL_SOURCE_FIELDS | PERSISTED_GL_MERGE_FIELDS | set(namespace['dimensions'])
+            result._captured_gl_columns=True
+        return result
+    frappe.get_meta=meta
     cached=frappe.get_cached_value
     frappe.get_cached_value=lambda kind,name,field: (('ROUND','CNY') if isinstance(field,list) else 'CNY') if kind=='Company' and (isinstance(field,list) or field=='default_currency') else cached(kind,name,field)
     document_class.add_gl_entry = namespace['add_gl_entry']
@@ -665,10 +683,8 @@ def install_native_gl(frappe, document_class, row_class, ledger_read):
 
 
 def ledger_rows(entries, row_class):
-    from erpnext.accounts.general_ledger import get_merge_properties
     from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import get_accounting_dimensions
-    fields = {'name','modified','company','voucher_type','voucher_no','voucher_detail_no',
-              'account','cost_center','project','debit','credit','is_cancelled'} | set(get_merge_properties(get_accounting_dimensions()))
+    fields = GL_SOURCE_FIELDS | PERSISTED_GL_MERGE_FIELDS | set(get_accounting_dimensions())
     return [row_class({field: entry.get(field) for field in fields}, name='GL-'+str(index))
             for index, entry in enumerate(entries)]
 
@@ -884,6 +900,50 @@ class ReceiptAccountingRiskTest(unittest.TestCase):
         source.unreadable=True
         with self.assertRaises(PermissionError):
             self.calculate(returned)
+
+    def test_receipt_proof_selects_only_real_persisted_gl_columns(self):
+        source=self.receipt()
+        self.book_source(source)
+        columns=self.frappe.get_meta('GL Entry').get_valid_columns()
+        fields=self.subject.receipt_gl_proof_fields()
+        self.assertTrue(PERSISTED_GL_MERGE_FIELDS.issubset(fields))
+        self.assertTrue({'advance_voucher_no','advance_voucher_type'}.isdisjoint(fields))
+        self.assertTrue(all({'advance_voucher_no','advance_voucher_type'}.isdisjoint(row)
+                            for row in self.gl[source.name]))
+        original=self.frappe.get_all
+        def persisted_select(kind,**options):
+            if kind=='GL Entry':
+                self.assertTrue(set(options['fields']).issubset(columns),'Unknown column in native GL SELECT')
+            return original(kind,**options)
+        self.frappe.get_all=persisted_select
+        self.subject._receipt_fee_ledger(source)
+        self.subject._prove_receipt_fees(source,for_return=True)
+
+    def test_nonpersistent_native_merge_identity_is_not_silently_erased(self):
+        source=self.receipt()
+        self.book_source(source)
+        native_module=sys.modules['erpnext.accounts.general_ledger']
+        original_dict=self.DocClass.get_gl_dict
+        original_process=native_module.process_gl_map
+        for field,value in (('advance_voucher_no','ADVANCE'),('advance_voucher_type','Payment Entry'),
+                            ('advance_voucher_no',0)):
+            with self.subTest(field=field,value=value,phase='before native merge'):
+                def gl_dict(document,values,item=None):
+                    result=original_dict(document,values,item)
+                    result[field]=value
+                    return result
+                with patch.object(self.DocClass,'get_gl_dict',gl_dict):
+                    with self.assertRaisesRegex(ValueError,'非持久化合并标识'):
+                        self.subject._prove_receipt_fees(source,for_return=True)
+            with self.subTest(field=field,value=value,phase='after native merge'):
+                def process(values,**options):
+                    result=original_process(values,**options)
+                    for row in result:
+                        row[field]=value
+                    return result
+                with patch.object(native_module,'process_gl_map',process):
+                    with self.assertRaisesRegex(ValueError,'非持久化合并标识'):
+                        self.subject._prove_receipt_fees(source,for_return=True)
 
     def test_changed_saved_fee_cannot_reverse_different_actual_source_gl(self):
         source=self.receipt()

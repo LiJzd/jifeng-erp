@@ -70,7 +70,10 @@ def receipt_accounting_dimensions():
 
 def receipt_gl_proof_fields():
     from erpnext.accounts.general_ledger import get_merge_properties
-    return GL_FEE_FIELDS | set(get_merge_properties(receipt_accounting_dimensions()))
+    meta = frappe.get_meta("GL Entry")
+    columns = set(meta.get_valid_columns())
+    return GL_FEE_FIELDS | {field for field in get_merge_properties(receipt_accounting_dimensions())
+        if field in columns and not (meta.get_field(field) and meta.get_field(field).get("is_virtual"))}
 
 
 def _booked_receipt_fee(row, field):
@@ -172,10 +175,18 @@ def _prove_receipt_fees(document, *, ledger_reader=None, for_return=False, _sour
     from copy import deepcopy
     unallocated = deepcopy(corrected)
     merge_fields = tuple(get_merge_properties(receipt_accounting_dimensions()))
+    transient = set(merge_fields) - fields
+    def check_transient(entries):
+        if any(entry.get(field) not in (None, "") for entry in entries for field in transient):
+            frappe.throw("原收回会计使用非持久化合并标识，无法从实际会计账完整证明归属")
+    # The native merge key also contains temporary advance identities that
+    # are not database columns. They may be omitted only when truly empty.
+    check_transient([*expected, *corrected])
     # Native allocation keeps row identities; from_repost avoids budget side
     # effects in this proof while preserving allocation, merge and sign rules.
     expected = process_gl_map(expected, from_repost=True)
     corrected = process_gl_map(corrected, from_repost=True)
+    check_transient([*expected, *corrected])
     precision = _precision(primary[0], "amount")
 
     def totals(entries, *, include_detail=True):
