@@ -20,6 +20,7 @@ from frappe.utils import flt
 
 from jifeng_erp.costing import CostingError, receipt_batch_quantities
 from jifeng_erp import subcontract_stage
+from jifeng_erp import subcontracting_returns as material_returns
 from jifeng_erp.flow_cost_scoped_query import record_list
 
 
@@ -45,6 +46,7 @@ PARENTS = {
     WO: IDENTITY | {"company", "production_item", "jf_flow_order", "track_semi_finished_goods"},
 }
 PARENTS[SE] |= {"jf_material_return_against"}
+PARENTS[material_returns.BUNDLE] = material_returns.BUNDLE_FIELDS
 # These native sources are read only when an actual Job Card stage is present.
 PARENTS.update({kind: fields for kind, fields in subcontract_stage.PARENTS.items() if kind not in PARENTS})
 
@@ -54,6 +56,7 @@ MANUFACTURE_FIELDS = {"work_order", "job_card", "total_additional_costs"}
 MANUFACTURE_ITEM_FIELDS = {"is_finished_item", "secondary_item_type", "valuation_type",
                            "additional_cost", "landed_cost_voucher_amount"}
 TABLES = {
+    material_returns.BUNDLE: (("entries", material_returns.BUNDLE_ENTRY, material_returns.BUNDLE_ENTRY_FIELDS),),
     FLOW: (("materials", "Jifeng Material Line", CHILD | {"item_code"}),),
     SCR: (
         ("items", "Subcontracting Receipt Item", CHILD | {
@@ -230,6 +233,7 @@ class _Session:
         self.ledger = {}
         self.repost_state = None
         self.receipt_fees = {}
+        self.receipt_lot_usage, self.receipt_tracking_tables = {}, {}
 
     def raw(self, doctype, filters, **options):
         rows = frappe.get_all(doctype, filters=filters, fields=["*"], order_by="name asc",
@@ -609,6 +613,18 @@ class _Session:
             _invalid()
         supplied = [item for item in self.table(SCR, doc.name, "supplied_items")
                     if item.get("reference_name") == row["name"]]
+        if not doc.get("is_return") and any(material_returns._has_tracking(item)
+                for item in doc.get("supplied_items") or [] if item.get("reference_name") == row["name"]):
+            self._receipt_tracking_children(doc)
+            for item in doc.get("supplied_items") or []:
+                if item.get("reference_name") != row["name"] or not material_returns._has_tracking(item):
+                    continue
+                material_returns._origin_raw(doc, row["name"], item)
+                material_returns.material_lots(item, self.company, doc.supplier_warehouse, original=True, reader=self.source)
+                entries = [entry for entry in self.ledger[SCR, doc.name] if entry["voucher_detail_no"] == item.name]
+                value = -sum((_number(entry["stock_value_difference"]) for entry in entries), Decimal(0))
+                if not _same_quantity(value, item.amount, item, "amount"):
+                    frappe.throw("原批次耗料与有效库存估值不一致，不能猜测部分退回金额")
         total = Decimal(0)
         for item in supplied:
             if item.get("rate") in (None, "") or item.get("amount") in (None, ""):
@@ -726,12 +742,29 @@ class _Session:
         returned_materials = materials(supplied)
         if set(original_materials) != set(returned_materials):
             frappe.throw("委外退回材料种类或库存单位与准确原耗料不同，不能提供部分成本")
+        selected_values = {}
+        if any(material_returns._has_tracking(item) for item in original_doc.get("supplied_items") or []):
+            self._receipt_tracking_children(original_doc)
+            self._receipt_tracking_children(doc)
+            for item in doc.get("supplied_items") or []:
+                if item.get("reference_name") != row["name"] or not _number(item.get("consumed_qty")):
+                    continue
+                origin = material_returns._origin_raw(original_doc, original["name"], item)
+                if material_returns._has_tracking(origin):
+                    expected = material_returns.selected_material_value(origin, item, self.company,
+                        original_doc.supplier_warehouse, reader=self.source,
+                        used=self.receipt_lot_usage.setdefault((original_doc.name, origin.name), {}))
+                    if (not _same_quantity(-_number(item.consumed_qty), _number(origin.consumed_qty) * ratio, item, "consumed_qty")
+                            or not _same_quantity(-_number(item.amount), expected, item, "amount")):
+                        frappe.throw("批次退料数量或金额与明确选择的准确原耗料不一致")
+                    key = (origin.rm_item_code, origin.stock_uom)
+                    selected_values[key] = selected_values.get(key, Decimal(0)) + expected - _number(origin.amount) * ratio
         for key, (quantity, value) in original_materials.items():
             returned_qty, returned_value = returned_materials[key]
             native = next(item for item in doc.get("supplied_items")
                           if (item.rm_item_code, item.stock_uom) == key and item.reference_name == row["name"])
             if (not _same_quantity(returned_qty, -quantity * ratio, native, "consumed_qty")
-                    or not _same_quantity(returned_value, -value * ratio, native, "amount")):
+                    or not _same_quantity(returned_value, -value * ratio - selected_values.get(key, Decimal(0)), native, "amount")):
                 frappe.throw("委外退回材料数量或金额与准确原耗料份额不一致，不能猜测历史成本")
 
         # Original accepted/rejected pools require distinct persisted warehouses
@@ -759,6 +792,20 @@ class _Session:
         if (not _same_quantity(row["amount"], expected_value, actual, "amount")
                 or not _same_quantity(returned_value, expected_value, actual, "amount")):
             frappe.throw("委外实物退回金额或库存价值与准确原入库单价不一致，不能重新分摊损耗或拒收成本")
+
+    def _receipt_tracking_children(self, doc):
+        key = (SCR, doc.name, "supplied_items")
+        if key in self.receipt_tracking_tables:
+            return
+        child = "Subcontracting Receipt Supplied Item"
+        fields = TABLES[SCR][1][2] | {"serial_and_batch_bundle", "serial_no", "batch_no", "bom_detail_no"}
+        rows = self.records(child, {"parent": doc.name}, fields, SCR)
+        actual = {row.name: row for row in doc.get("supplied_items") or []}
+        if set(actual) != {row["name"] for row in rows} or any(
+                item.get("parenttype") != SCR or item.get("parentfield") != "supplied_items"
+                or any(actual[item["name"]].get(field) != value for field, value in item.items()) for item in rows):
+            _invalid()
+        self.receipt_tracking_tables[key] = fields
 
     def _receipt_ledger(self, doc):
         expected = {}
@@ -1202,6 +1249,8 @@ class _Session:
                 fieldname, childtype, fields = self.extra_tables[doctype, name]
                 _table(doctype, fieldname, childtype)
                 _fields(childtype, fields, doctype)
+        for (doctype, _name, _table_field), fields in self.receipt_tracking_tables.items():
+            _fields("Subcontracting Receipt Supplied Item", fields, doctype)
 
 
 def _receipt_dto(session):

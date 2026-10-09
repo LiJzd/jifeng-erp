@@ -38,6 +38,9 @@ class Document(types.SimpleNamespace):
         rows = self.get(field) or []
         row = Row(value)
         row.setdefault("name", field + "-" + str(len(rows) + 1))
+        row.setdefault("parent", self.get("name"))
+        row.setdefault("parenttype", self.get("doctype"))
+        row.setdefault("parentfield", field)
         rows.append(row)
         self.set(field, rows)
         return row
@@ -50,6 +53,7 @@ class Document(types.SimpleNamespace):
 class SubcontractingReturnTest(unittest.TestCase):
     def setUp(self):
         self.events, self.prior, self.prior_raw, self.native_calls = [], [], [], []
+        self.prior_docs = {}
         self.frappe = types.ModuleType("frappe")
         self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
         self.frappe.PermissionError = PermissionError
@@ -61,7 +65,9 @@ class SubcontractingReturnTest(unittest.TestCase):
                        "supplied_items": Row(fieldtype="Table", options="Subcontracting Receipt Supplied Item", permlevel=0),
                        "additional_costs": Row(fieldtype="Table", options="Landed Cost Taxes and Charges", permlevel=0)}
         self.frappe.get_meta = lambda doctype: types.SimpleNamespace(
-            get_field=lambda field: self.tables.get(field) if doctype == "Subcontracting Receipt" else None,
+            get_field=lambda field: (self.tables.get(field) if doctype == "Subcontracting Receipt" else
+                Row(fieldname="entries", fieldtype="Table", options="Serial and Batch Entry", permlevel=0)
+                if doctype == "Serial and Batch Bundle" and field == "entries" else None),
             get_permlevel_access=lambda **kw: {0})
         self.frappe.share = types.SimpleNamespace(get_shared=lambda *args, **kwargs: [])
         self.model = types.ModuleType("frappe.model")
@@ -97,10 +103,23 @@ class SubcontractingReturnTest(unittest.TestCase):
 
         def get_source(doctype, name, **kwargs):
             self.events.append(("source", name, kwargs))
+            if name in self.prior_docs:
+                return self.prior_docs[name]
+            physical = [row for row in self.prior if row.parent == name]
+            if physical:
+                return self.document(name, physical, docstatus=1,
+                    supplied_items=[row for row in self.prior_raw if row.parent == name])
+            if name == "CURRENT":
+                return self.doc
             return self.source
 
         def get_returns(query, values, **kwargs):
             self.events.append(("prior", query, values))
+            if "select parent.name" in query:
+                names = {row.parent for row in [*self.prior, *self.prior_raw]
+                         if row.get("docstatus", 1) == 1}
+                names.update(name for name, doc in self.prior_docs.items() if doc.docstatus == 1)
+                return [Row(name=name) for name in sorted(names) if name != values[1]]
             rows = self.prior_raw if "tabSubcontracting Receipt Supplied Item" in query else self.prior
             return [row for row in rows if row.get("docstatus", 1) == 1
                     and row.parent != values[1]]
@@ -108,8 +127,14 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.frappe.get_doc = get_source
         self.frappe.db = types.SimpleNamespace(sql=get_returns, exists=lambda *args, **kwargs: False)
         self.frappe.get_list = self.stock_entries
-        self.frappe.get_all = lambda *args, **kwargs: [row.name for row in self.stock_entries(*args,
-            filters=kwargs["filters"], limit_page_length=kwargs["limit_page_length"])]
+        def membership(doctype, **kwargs):
+            if doctype == "Stock Ledger Entry":
+                return [row.name for row in self.stock_entries(doctype, **kwargs)]
+            parent = get_source("Subcontracting Receipt", kwargs["filters"]["parent"])
+            table = "items" if doctype == "Subcontracting Receipt Item" else "supplied_items"
+            return [row.name for row in parent.get(table) or []]
+
+        self.frappe.get_all = membership
 
         outer = self
 
@@ -152,6 +177,7 @@ class SubcontractingReturnTest(unittest.TestCase):
 
     def row(self, **values):
         row = Row(self.source_row, name="RETURN-ROW", parent="PRIOR", qty=-1,
+                  parenttype="Subcontracting Receipt", parentfield="items",
                   rejected_qty=0, process_loss_qty=0, conversion_factor=1,
                   service_cost_per_qty=2,
                   subcontracting_receipt_item="SRC-ROW", return_company="JF", return_supplier="SUP",
@@ -534,22 +560,28 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.assertEqual(self.doc.additional_costs[0].base_amount, -0.5)
         self.assertEqual(self.doc.additional_costs[0].expense_account, "Historical Freight")
 
-    def test_whole_serial_material_uses_exact_original_remaining_serials(self):
+    def test_draft_serial_material_does_not_choose_real_serials_and_submit_requires_selection(self):
         self.add_material(qty=1, rate=8, amount=8)
         self.source.supplied_items[0].serial_no = "\n".join("SER-" + str(i) for i in range(10))
         self.doc.native_full_calculation = True
         self.assertEqual(self.doc.validate(), "native-result")
-        self.assertEqual(self.doc.supplied_items[0].serial_no, "SER-0")
-        self.assertEqual(self.doc.supplied_items[0].use_serial_batch_fields, 1)
+        self.assertEqual(self.doc.supplied_items[0].serial_no, "")
+        self.assertEqual(self.doc.supplied_items[0].use_serial_batch_fields, 0)
+        self.doc._action = "submit"
+        with self.assertRaisesRegex(ValueError, "明确选择"):
+            self.doc.validate()
 
-    def test_already_returned_material_serial_is_not_reallocated(self):
+    def test_legacy_serial_source_without_individual_valuation_is_not_guessed(self):
         self.add_material(qty=1, rate=8, amount=8)
         self.source.supplied_items[0].serial_no = "\n".join("SER-" + str(i) for i in range(10))
         self.prior_raw = [Row(parent="PRIOR", source_fg_row="SRC-ROW", rm_item_code="RAW",
-                              stock_uom="Nos", serial_no="SER-0", consumed_qty=-1, docstatus=1)]
+                              name="PRIOR-RAW", reference_name="PRIOR-FG", parenttype="Subcontracting Receipt",
+                              parentfield="supplied_items", stock_uom="Nos", serial_no="SER-0", consumed_qty=-1, docstatus=1)]
+        self.prior_docs["PRIOR"] = self.document("PRIOR", [self.row(name="PRIOR-FG")],
+            docstatus=1, supplied_items=[Row(self.prior_raw[0], doctype="Subcontracting Receipt Supplied Item")])
         self.doc.native_full_calculation = True
-        self.assertEqual(self.doc.validate(), "native-result")
-        self.assertEqual(self.doc.supplied_items[0].serial_no, "SER-1")
+        with self.assertRaisesRegex(ValueError, "逐号历史估值"):
+            self.doc.validate()
 
     def test_missing_actual_material_rows_cannot_be_treated_as_zero_cost(self):
         self.source_row.rm_supp_cost = 8
@@ -557,7 +589,7 @@ class SubcontractingReturnTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "材料金额与准确耗料"):
             self.doc.validate()
 
-    def test_ambiguous_multi_batch_material_is_rejected_without_inventing_lot_quantities(self):
+    def test_draft_multi_batch_material_stays_unselected_and_submit_does_not_invent_quantities(self):
         self.add_material(qty=1, rate=8, amount=8)
         self.source.supplied_items[0].serial_and_batch_bundle = "SOURCE-BUNDLE"
         bundle = self.document("SOURCE-BUNDLE", [], item_code="RAW", docstatus=1,
@@ -567,7 +599,145 @@ class SubcontractingReturnTest(unittest.TestCase):
         get_source = self.frappe.get_doc
         self.frappe.get_doc = lambda doctype, name, **kw: bundle if doctype == "Serial and Batch Bundle" else get_source(doctype, name, **kw)
         self.doc.native_full_calculation = True
-        with self.assertRaisesRegex(ValueError, "多个批次"):
+        self.assertEqual(self.doc.validate(), "native-result")
+        self.assertFalse(self.doc.supplied_items[0].serial_and_batch_bundle)
+        self.doc._action = "submit"
+        with self.assertRaisesRegex(ValueError, "明确选择"):
+            self.doc.validate()
+
+    def batch_fixture(self, *, serial=False):
+        self.add_material(qty=1, rate=8, amount=8)
+        source = self.source.supplied_items[0]
+        source.update(name="SOURCE-RAW", parent="SOURCE", bom_detail_no="BOM-RAW", serial_and_batch_bundle="ORIGINAL-BUNDLE")
+        current = self.doc.supplied_items[0]
+        current.update(name="CURRENT-RAW", parent="CURRENT", bom_detail_no="BOM-RAW", serial_and_batch_bundle="CHOSEN-BUNDLE")
+        entries = ([Row(serial_no="SER-" + str(index), qty=-1, incoming_rate=8, stock_value_difference=-8,
+                        warehouse="Supplier") for index in range(10)] if serial else
+                   [Row(batch_no="A", qty=-4, incoming_rate=5, stock_value_difference=-20, warehouse="Supplier"),
+                    Row(batch_no="B", qty=-6, incoming_rate=10, stock_value_difference=-60, warehouse="Supplier")])
+        self.bundles = {
+            "ORIGINAL-BUNDLE": Document(name="ORIGINAL-BUNDLE", doctype="Serial and Batch Bundle", docstatus=1,
+                company="JF", item_code="RAW", warehouse="Supplier", type_of_transaction="Outward",
+                voucher_type="Subcontracting Receipt", voucher_no="SOURCE", voucher_detail_no="SOURCE-RAW",
+                entries=entries, total_qty=-10),
+            "CHOSEN-BUNDLE": Document(name="CHOSEN-BUNDLE", doctype="Serial and Batch Bundle", docstatus=0,
+                company="JF", item_code="RAW", warehouse="Supplier", type_of_transaction="Inward",
+                voucher_type="Subcontracting Receipt", voucher_no="CURRENT", voucher_detail_no="CURRENT-RAW",
+                entries=[Row(serial_no="SER-7", qty=1, warehouse="Supplier")] if serial else
+                        [Row(batch_no="A", qty=1, warehouse="Supplier")], total_qty=1),
+        }
+        for bundle in self.bundles.values():
+            for entry in bundle.entries:
+                entry.docstatus = bundle.docstatus
+        fetch = self.frappe.get_doc
+        self.frappe.get_doc = lambda kind, name, **kw: self.bundles[name] if kind == "Serial and Batch Bundle" else fetch(kind, name, **kw)
+        self.doc.native_full_calculation = True
+        return source, current
+
+    def test_operator_multi_batch_selection_is_preserved_and_mixed_original_prices_are_exact(self):
+        self.batch_fixture()
+        self.doc._action = "submit"
+        self.assertEqual(self.doc.validate(), "native-result")
+        raw = self.doc.supplied_items[0]
+        self.assertEqual((raw.serial_and_batch_bundle, raw.consumed_qty, raw.rate, raw.amount),
+                         ("CHOSEN-BUNDLE", -1, 5, -5))
+        self.assertEqual((self.doc.items[0].rm_supp_cost, self.doc.items[0].service_cost_per_qty), (-5, 2))
+        # Native FG returns its original stock value separately, irrespective
+        # of which precisely valued raw batch was physically selected.
+        self.assertAlmostEqual(self.doc.items[0].amount, -100 / 3)
+
+    def test_operator_serial_selection_is_preserved_without_replacing_it_with_first_serial(self):
+        self.batch_fixture(serial=True)
+        self.doc._action = "submit"
+        self.assertEqual(self.doc.validate(), "native-result")
+        self.assertEqual(self.doc.supplied_items[0].serial_and_batch_bundle, "CHOSEN-BUNDLE")
+        self.assertEqual(self.bundles["CHOSEN-BUNDLE"].entries[0].serial_no, "SER-7")
+
+    def test_serial_bundle_mapping_does_not_claim_native_disabled_serial_rates_are_written(self):
+        self.batch_fixture(serial=True)
+        self.frappe.db.exists = lambda kind, name: kind == "Subcontracting Receipt Supplied Item" and name == "CURRENT-RAW"
+        Bundle = type("ReturnBundle", (self.subject.SubcontractingReceiptMaterialReturnBundleMixin, Document), {})
+        bundle = Bundle(**vars(self.bundles["CHOSEN-BUNDLE"]))
+        # Native deliberately skips the entry-rate update in this Item mode.
+        self.source.has_serial_no, self.source.use_serial_no_wise_valuation = 1, 0
+        with self.assertRaisesRegex(ValueError, "未启用原生逐号估值"):
+            bundle.get_valuation_rate_for_return_entry("SOURCE")
+        self.source.use_serial_no_wise_valuation = 1
+        rates = bundle.get_valuation_rate_for_return_entry("SOURCE")
+        self.assertEqual(rates["serial_nos"]["SER-7"], 8)
+        self.assertEqual(rates["batches"], {})
+
+    def test_submitted_lot_capacity_and_cancelled_return_release_are_exact(self):
+        self.batch_fixture()
+        prior = Row(name="PRIOR-RAW", parent="PRIOR", source_fg_row="SRC-ROW", reference_name="PRIOR-FG",
+            parenttype="Subcontracting Receipt", parentfield="supplied_items",
+            main_item_code="FG", rm_item_code="RAW", stock_uom="Nos", bom_detail_no="BOM-RAW",
+            consumed_qty=-4, rate=5, amount=-20, serial_and_batch_bundle="PRIOR-BUNDLE", docstatus=1)
+        self.prior_raw = [prior]
+        self.prior_docs["PRIOR"] = self.document("PRIOR", [self.row(name="PRIOR-FG", qty=-4)],
+            docstatus=1, supplied_items=[Row(prior, doctype="Subcontracting Receipt Supplied Item", _native_cache=1)])
+        self.bundles["PRIOR-BUNDLE"] = Document(name="PRIOR-BUNDLE", docstatus=1, company="JF", item_code="RAW",
+            warehouse="Supplier", type_of_transaction="Inward", voucher_type="Subcontracting Receipt",
+            voucher_no="PRIOR", voucher_detail_no="PRIOR-RAW", total_qty=4,
+            entries=[Row(batch_no="A", qty=4, incoming_rate=5, stock_value_difference=20, warehouse="Supplier", docstatus=1)])
+        with self.assertRaisesRegex(ValueError, "累计退回"):
+            self.doc.validate()
+        prior.docstatus = 2
+        self.prior_docs["PRIOR"].docstatus = 2
+        self.assertEqual(self.doc.validate(), "native-result")
+
+    def test_ambiguous_original_row_wrong_lot_or_wrong_selected_quantity_is_rejected(self):
+        for change in ("duplicate_source", "other_batch", "wrong_quantity", "wrong_original_value"):
+            with self.subTest(change=change):
+                source, _ = self.batch_fixture()
+                if change == "duplicate_source":
+                    self.source.supplied_items.append(Row(source, name="OTHER-RAW", consumed_qty=0, amount=0))
+                elif change == "other_batch":
+                    self.bundles["CHOSEN-BUNDLE"].entries[0].batch_no = "OTHER"
+                elif change == "wrong_quantity":
+                    self.bundles["CHOSEN-BUNDLE"].total_qty = 2
+                else:
+                    self.bundles["ORIGINAL-BUNDLE"].entries[0].stock_value_difference = -19
+                with self.assertRaises(ValueError):
+                    self.doc.validate()
+                self.source.supplied_items = [source]
+
+    def test_hidden_submitted_return_is_not_skipped_when_raw_lock_query_has_no_rows(self):
+        self.batch_fixture()
+        self.prior_docs["HIDDEN"] = self.document("HIDDEN", [self.row(name="HIDDEN-FG")],
+            docstatus=1, supplied_items=[], unreadable=True)
+        with self.assertRaisesRegex(PermissionError, "无法完整读取既有"):
+            self.doc.validate()
+        self.prior_docs["HIDDEN"].unreadable = False
+        with self.assertRaisesRegex(ValueError, "缺少或重复准确原耗料"):
+            self.doc.validate()
+
+    def test_prior_raw_child_table_permission_is_required_before_using_selected_lots(self):
+        self.batch_fixture()
+        self.prior_docs["PRIOR"] = self.document("PRIOR", [self.row(name="PRIOR-FG")],
+            docstatus=1, supplied_items=[])
+        self.tables["supplied_items"].permlevel = 1
+        with self.assertRaisesRegex(PermissionError, "完整读取原收回明细表"):
+            self.subject._prior_raw_returns(self.source, "CURRENT")
+
+    def test_prior_native_child_doctype_and_temporary_attributes_are_not_sql_columns(self):
+        self.batch_fixture()
+        sql = Row(name="PRIOR-RAW", parent="PRIOR", parenttype="Subcontracting Receipt",
+            parentfield="supplied_items", source_fg_row="SRC-ROW", reference_name="PRIOR-FG",
+            main_item_code="FG", rm_item_code="RAW", stock_uom="Nos", bom_detail_no="BOM-RAW",
+            consumed_qty=-1, rate=10, amount=-10, serial_and_batch_bundle="PRIOR-BUNDLE", docstatus=1)
+        child = Row(sql, doctype="Subcontracting Receipt Supplied Item", _native_cache=1)
+        self.prior_docs["PRIOR"] = self.document("PRIOR", [self.row(name="PRIOR-FG")],
+            docstatus=1, supplied_items=[child])
+        self.prior_raw = [sql]
+        self.assertEqual(self.subject._prior_raw_returns(self.source, "CURRENT"), [sql])
+        child.doctype = "Other Child"
+        with self.assertRaisesRegex(ValueError, "准确原商品或耗料"):
+            self.subject._prior_raw_returns(self.source, "CURRENT")
+
+    def test_tracked_finished_goods_are_blocked_until_native_exact_return_valuation_is_connected(self):
+        self.source_row.serial_and_batch_bundle = "FG-BUNDLE"
+        with self.assertRaisesRegex(ValueError, "成品.*准确原入库估值"):
             self.doc.validate()
 
     def test_forward_and_cancel_keep_native_lifecycle(self):

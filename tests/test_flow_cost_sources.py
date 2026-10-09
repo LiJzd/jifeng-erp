@@ -76,6 +76,7 @@ class TestFlowCostSources(unittest.TestCase):
         self.frappe.PermissionError = PermissionError
         self.frappe.DoesNotExistError = type("DoesNotExistError", (ValueError,), {})
         self.frappe.throw = lambda message, error=ValueError: (_ for _ in ()).throw(error(message))
+        self.frappe.whitelist = lambda **kwargs: lambda function: function
         self.frappe.get_list = Mock(side_effect=self.get_list)
         self.frappe.get_all = Mock(side_effect=self.get_all)
         self.frappe.get_doc = Mock(side_effect=self.get_doc)
@@ -85,6 +86,8 @@ class TestFlowCostSources(unittest.TestCase):
         model = types.ModuleType("frappe.model")
         model.get_permitted_fields = lambda doctype, **kw: self.permitted[doctype] - self.hidden.get(doctype, set())
         utils = types.ModuleType("frappe.utils")
+        utils.cint = lambda value: int(value or 0)
+        utils.get_datetime = datetime.fromisoformat
         utils.flt = lambda value, precision=None: round(float(value), precision) if precision is not None else float(value)
         # Payroll source closure is tested in its own native-shape harness.
         # These inventory cases receive no accrued wages unless stated below.
@@ -102,6 +105,10 @@ class TestFlowCostSources(unittest.TestCase):
                                           "jifeng_erp.flow_cost_scoped_query": scoped_query})
         patches.start()
         self.addCleanup(patches.stop)
+        returns_spec = importlib.util.spec_from_file_location("jifeng_erp.subcontracting_returns", ROOT / "jifeng_erp/subcontracting_returns.py")
+        returns_module = importlib.util.module_from_spec(returns_spec)
+        sys.modules[returns_spec.name] = returns_module
+        returns_spec.loader.exec_module(returns_module)
         spec = importlib.util.spec_from_file_location("flow_cost_sources_under_test", ROOT / "jifeng_erp/flow_cost_sources.py")
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
@@ -139,6 +146,10 @@ class TestFlowCostSources(unittest.TestCase):
             self.permitted[doctype].update(fields)
             self.metas[doctype].update({field: Record(fieldname=field, fieldtype="Data", permlevel=0)
                                       for field in fields if field not in self.metas[doctype]})
+        childtype = "Subcontracting Receipt Supplied Item"
+        tracking = {"serial_and_batch_bundle", "serial_no", "batch_no", "bom_detail_no"}
+        self.permitted[childtype].update(tracking)
+        self.metas[childtype].update({field: Record(fieldname=field, fieldtype="Data", permlevel=0) for field in tracking})
         Document.environment = self
         self.add("Company", "JF", default_currency="CNY")
         self.add("Currency", "CNY")
@@ -175,7 +186,8 @@ class TestFlowCostSources(unittest.TestCase):
             tables = (*tables, self.module.MANUFACTURE_CHARGES)
         _field, childtype, fields = next(table for table in tables if table[0] == fieldname)
         row = self.add(childtype, name, **({field: None for field in fields - self.module.CHILD} | {
-            "parent": parent, "parenttype": parenttype, "parentfield": fieldname, "idx": 1} | values))
+            "parent": parent, "parenttype": parenttype, "parentfield": fieldname, "idx": 1,
+            "docstatus": self.documents[parenttype, parent].docstatus} | values))
         return row
 
     def get_doc(self, doctype, name):
@@ -559,6 +571,71 @@ class TestFlowCostSources(unittest.TestCase):
         ledger.stock_value_difference = -100
         self.list_denied.add((self.module.SLE, ledger.name))
         with self.assertRaises(PermissionError):
+            self.module.receipt_costs("FLOW")
+
+    def mixed_lot_source(self):
+        _doc, row = self.receipt(qty=4, rejected=0, loss=0)
+        row.update(rm_supp_cost=8, rm_cost_per_qty=2, rate=4, amount=16)
+        self.documents["Subcontracting Receipt Supplied Item", "SCR-RM"].update(
+            rate=2, amount=8, bom_detail_no="BOM-RAW", serial_and_batch_bundle="SOURCE-LOTS")
+        self.documents[self.module.SLE, "SCR-RM-SLE"].stock_value_difference = -8
+        self.documents[self.module.SLE, "SCR-FG-SLE"].stock_value_difference = 16
+        kind = self.module.material_returns.BUNDLE
+        self.add(kind, "SOURCE-LOTS", company="JF", item_code="RM", warehouse="RM-WH", type_of_transaction="Outward",
+                 voucher_type=self.module.SCR, voucher_no="SCR", voucher_detail_no="SCR-RM", total_qty=-4, is_cancelled=0)
+        for batch, rate in (("A", 1), ("B", 3)):
+            self.child(kind, "SOURCE-LOTS", "entries", "SOURCE-" + batch, batch_no=batch, qty=-2,
+                       incoming_rate=rate, stock_value_difference=-2 * rate, warehouse="RM-WH")
+
+    def mixed_lot_return(self, name="RETURN", batch="B", rate=3):
+        _doc, row = self.receipt(name, qty=-1, loss=0, is_return=1, original="SCR", flow=None)
+        row.update(rm_supp_cost=-rate, rm_cost_per_qty=rate)
+        self.documents["Subcontracting Receipt Supplied Item", name + "-RM"].update(
+            rate=rate, amount=-rate, bom_detail_no="BOM-RAW", serial_and_batch_bundle=name + "-LOTS")
+        self.documents[self.module.SLE, name + "-RM-SLE"].stock_value_difference = rate
+        kind = self.module.material_returns.BUNDLE
+        self.add(kind, name + "-LOTS", company="JF", item_code="RM", warehouse="RM-WH", type_of_transaction="Inward",
+            voucher_type=self.module.SCR, voucher_no=name, voucher_detail_no=name + "-RM", total_qty=1, is_cancelled=0)
+        self.child(kind, name + "-LOTS", "entries", name + "-LOT", batch_no=batch, qty=1,
+            incoming_rate=rate, stock_value_difference=rate, warehouse="RM-WH")
+
+    def test_mixed_batch_return_cost_uses_selected_original_rate_and_keeps_fg_value_separate(self):
+        self.mixed_lot_source()
+        self.mixed_lot_return()
+        result = self.module.receipt_costs("FLOW")
+        self.assertEqual(result["totals"], {"material": 5, "processing": 6, "other": 0})
+        returned = next(row for row in result["rows"] if row["receipt"] == "RETURN")
+        self.assertEqual((returned["material"], returned["inventory_value_change"], returned["valuation_cost_basis"],
+                          returned["valuation_difference"]), (-3, -4, -5, 1))
+        self.assertEqual(result["receipt_valuation"], {"inventory_value_change": 12,
+                        "valuation_cost_basis": 11, "valuation_difference": 1})
+
+    def test_return_batch_capacity_cancellation_and_value_tampering_are_checked(self):
+        self.mixed_lot_source()
+        for name in ("RET-1", "RET-2", "RET-3"):
+            self.mixed_lot_return(name)
+        with self.assertRaisesRegex(ValueError, "累计退回"):
+            self.module.receipt_costs("FLOW")
+        self.documents[self.module.SCR, "RET-1"].docstatus = 2
+        for (kind, _), ledger in self.documents.items():
+            if kind == self.module.SLE and ledger.voucher_no == "RET-1":
+                ledger.is_cancelled = 1
+        result = self.module.receipt_costs("FLOW")
+        self.assertEqual(result["totals"]["material"], 2)
+        entry = self.documents[self.module.material_returns.BUNDLE_ENTRY, "RET-2-LOT"]
+        entry.update(incoming_rate=2, stock_value_difference=2)
+        with self.assertRaisesRegex(ValueError, "估值"):
+            self.module.receipt_costs("FLOW")
+
+    def test_hidden_bundle_entry_or_source_lot_changes_refuse_complete_cost(self):
+        self.mixed_lot_source()
+        self.mixed_lot_return()
+        self.hidden[self.module.material_returns.BUNDLE_ENTRY] = {"incoming_rate"}
+        with self.assertRaises(PermissionError):
+            self.module.receipt_costs("FLOW")
+        self.hidden.clear()
+        self.documents[self.module.material_returns.BUNDLE_ENTRY, "SOURCE-B"].stock_value_difference = -5
+        with self.assertRaisesRegex(ValueError, "估值"):
             self.module.receipt_costs("FLOW")
 
     def test_hidden_parent_return_child_and_ledger_reject_the_whole_cost(self):

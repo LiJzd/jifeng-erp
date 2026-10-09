@@ -78,7 +78,7 @@ def _read_fields(doctype, fields, parenttype=None):
 
 def _read_source_fields(source):
     _read_fields(RECEIPT, {"company", "supplier", "supplier_warehouse", "posting_date", "posting_time",
-                           "docstatus", "is_return"})
+                           "docstatus", "is_return", "return_against"})
     for table, child in (("items", "Subcontracting Receipt Item"),
                          ("supplied_items", "Subcontracting Receipt Supplied Item"),
                          ("additional_costs", "Landed Cost Taxes and Charges")):
@@ -174,6 +174,7 @@ def _prior_returns(source, current_name=None):
         where parent.docstatus = 1 and parent.is_return = 1
           and parent.return_against = %s and parent.name != %s
           and child.parenttype = 'Subcontracting Receipt'
+          and child.parentfield = 'items'
         order by parent.name, child.idx
         for update
     """, (source.name, current_name or ""), as_dict=True)
@@ -210,6 +211,14 @@ def validate_physical_return(document, source=None, prior=None):
     if not any(_number(row.get("qty")) < 0 or _number(row.get("rejected_qty")) < 0
                for row in document.items):
         frappe.throw("委外退回至少需要一行负数实物数量")
+    for row in document.items:
+        original = next(item for item in source.items if item.name == row.subcontracting_receipt_item)
+        if any(original.get(field) or row.get(field) for field in
+               ("serial_and_batch_bundle", "rejected_serial_and_batch_bundle", "serial_no", "rejected_serial_no", "batch_no")):
+            # Native SCR's FG bundle lookup also lacks an exact original-row
+            # mapping. Outward batch average pricing can differ from the
+            # original FG SLE pool used here; do not silently post either.
+            frappe.throw("带批次或序列号成品的委外退回尚未完成准确原入库估值接线，不能过账")
     return source, prior, totals
 
 
@@ -272,6 +281,7 @@ native result before stock/GL posting; no invoice is automatically credited.
 """
     originals = {row.name: row for row in source.items}
     facts = _material_facts(source)
+    lot_values = _validate_material_lot_returns(document, source)
     current = {row.name: row for row in document.items}
     expected = {}
     for row in document.items:
@@ -283,6 +293,13 @@ native result before stock/GL posting; no invoice is automatically credited.
         ratio = physical / source_qty
         expected[row.name] = {key: [qty * ratio, amount * ratio]
                               for key, (qty, amount) in facts[original.name].items()}
+        for raw in document.get("supplied_items") or []:
+            if raw.get("reference_name") == row.name and id(raw) in lot_values:
+                origin = _origin_raw(source, original.name, raw)
+                if not _same(-_number(raw.consumed_qty), _number(origin.consumed_qty) * ratio, raw):
+                    frappe.throw("本次批次退料数量与准确原耗料实物份额不一致")
+                key = (raw.rm_item_code, raw.stock_uom)
+                expected[row.name][key][1] += lot_values[id(raw)] - _number(origin.amount) * ratio
         for field in ("service_cost_per_qty", "additional_cost_per_qty"):
             if original.get(field) in (None, "") or row.get(field) in (None, ""):
                 frappe.throw("委外退回缺少准确的原加工或附加费用来源")
@@ -386,33 +403,175 @@ def _copy_row(row):
     return {field: value for field, value in row.as_dict().items() if field not in _COPY_EXCLUDE}
 
 
-def _tracking(raw, allow_draft=False, company=None, warehouse=None):
-    serials = [value.strip() for value in (raw.get("serial_no") or "").splitlines() if value.strip()]
-    batches = {raw.get("batch_no")} if raw.get("batch_no") else set()
-    if raw.get("serial_and_batch_bundle"):
-        bundle = frappe.get_doc("Serial and Batch Bundle", raw.serial_and_batch_bundle)
-        bundle.check_permission("read")
+BUNDLE = "Serial and Batch Bundle"
+BUNDLE_ENTRY = "Serial and Batch Entry"
+BUNDLE_FIELDS = {"name", "modified", "docstatus", "item_code", "company", "warehouse",
+                 "voucher_type", "voucher_no", "voucher_detail_no", "type_of_transaction",
+                 "total_qty", "is_cancelled"}
+BUNDLE_ENTRY_FIELDS = {"name", "modified", "docstatus", "parent", "parenttype", "parentfield", "idx",
+                       "serial_no", "batch_no", "qty", "incoming_rate", "stock_value_difference", "warehouse"}
+
+
+def _has_tracking(raw):
+    return any(raw.get(field) for field in ("serial_and_batch_bundle", "serial_no", "batch_no"))
+
+
+def _origin_raw(source, fg_name, raw):
+    matches = [original for original in source.get("supplied_items") or []
+               if original.get("reference_name") == fg_name
+               and all((original.get(field) or "") == (raw.get(field) or "")
+                       for field in ("rm_item_code", "stock_uom", "bom_detail_no"))]
+    if len(matches) != 1:
+        frappe.throw("退料无法唯一绑定原耗料明细，请明确原耗料来源，不能合并同名物料批次")
+    return matches[0]
+
+
+def _read_bundle(name):
+    bundle = frappe.get_doc(BUNDLE, name)
+    bundle.check_permission("read")
+    _read_fields(BUNDLE, BUNDLE_FIELDS)
+    meta = frappe.get_meta(BUNDLE)
+    field = meta.get_field("entries")
+    levels = set(meta.get_permlevel_access(permission_type="read", user=frappe.session.user))
+    masks = set(meta.get_permlevel_access(permission_type="mask", user=frappe.session.user))
+    if (not field or field.fieldtype != "Table" or field.options != BUNDLE_ENTRY
+            or (field.permlevel or 0) not in levels
+            or frappe.session.user != "Administrator" and field.get("mask") and (field.permlevel or 0) not in masks):
+        frappe.throw("没有完整读取原耗料批次和序列号明细的权限", frappe.PermissionError)
+    _read_fields(BUNDLE_ENTRY, BUNDLE_ENTRY_FIELDS, BUNDLE)
+    return bundle
+
+
+def material_lots(raw, company, warehouse, *, original=False, allow_draft=False, reader=None, bundle=None):
+    """Persisted original lots, or the operator's explicit native selection.
+
+    Values for original pools come from effective bundle entries. A draft's
+    valuation is not trusted: the receipt and native bundle hook recompute it
+    from its exact original pool before posting.
+    """
+    quantity = abs(_number(raw.get("consumed_qty")))
+    if bundle is None and raw.get("serial_and_batch_bundle"):
+        bundle = reader(BUNDLE, raw.get("serial_and_batch_bundle")) if reader else _read_bundle(raw.get("serial_and_batch_bundle"))
+    pools = {}
+    if bundle is not None:
+        draft = allow_draft and bundle.docstatus == 0
         if (bundle.get("is_cancelled") or bundle.get("item_code") != raw.get("rm_item_code")
-                or bundle.get("docstatus") not in ({0, 1} if allow_draft else {1})
-                or bundle.get("voucher_type") != RECEIPT
-                or bundle.get("voucher_no") != raw.get("parent")
-                or company and bundle.get("company") != company
-                or warehouse and bundle.get("warehouse") != warehouse):
-            frappe.throw("原收回材料批次或序列号来源无效，请先核对")
-        _read_fields("Serial and Batch Bundle", {"entries", "item_code", "company", "warehouse",
-                                                "voucher_type", "voucher_no", "docstatus", "is_cancelled"})
-        _read_fields("Serial and Batch Entry", {"serial_no", "batch_no", "qty"}, "Serial and Batch Bundle")
-        serials = [entry.serial_no for entry in bundle.get("entries") or [] if entry.get("serial_no")]
-        batches = {entry.batch_no for entry in bundle.get("entries") or [] if entry.get("batch_no")}
-    if len(serials) != len(set(serials)):
-        frappe.throw("原收回材料序列号重复，不能猜测实物退回来源")
-    if serials and Decimal(len(serials)) != abs(_number(raw.get("consumed_qty"))):
-        frappe.throw("原收回材料序列号数量与准确库存数量不一致")
-    return serials, batches
+                or bundle.docstatus not in ({0, 1} if allow_draft else {1})
+                or bundle.get("voucher_type") != RECEIPT or bundle.get("company") != company
+                or bundle.get("warehouse") != warehouse
+                or bundle.get("type_of_transaction") != ("Outward" if original else "Inward")
+                or bundle.get("voucher_no") not in ({None, "", raw.get("parent")} if draft else {raw.get("parent")})
+                or bundle.get("voucher_detail_no") not in ({None, "", raw.get("name")} if draft else {raw.get("name")})):
+            frappe.throw("原耗料或本次退料批次凭证的物料、仓库、方向或明细来源不一致")
+        for entry in bundle.get("entries") or []:
+            qty = _number(entry.get("qty"))
+            key = ("serial", entry.serial_no) if entry.get("serial_no") else ("batch", entry.get("batch_no"))
+            if (not key[1] or not qty or (qty < 0) != original
+                    or entry.get("docstatus") != bundle.docstatus
+                    or entry.get("warehouse") not in ({None, "", warehouse} if draft else {warehouse})):
+                frappe.throw("耗料批次或序列号的数量、仓库或来源缺失")
+            pool = pools.setdefault(key, {"qty": Decimal(0), "value": Decimal(0), "rates": set(), "batch": entry.get("batch_no")})
+            if key[0] == "serial" and (pool["qty"] or abs(qty) != 1):
+                frappe.throw("耗料序列号重复或数量不是一件")
+            pool["qty"] += abs(qty)
+            if original or not draft:
+                if entry.get("incoming_rate") in (None, "") or entry.get("stock_value_difference") in (None, ""):
+                    frappe.throw("原耗料或已提交退料缺少逐批次、逐序列号历史估值")
+                rate, value = _number(entry.incoming_rate), _number(entry.stock_value_difference)
+                if rate < 0 or not _same(value, qty * rate, entry, "stock_value_difference"):
+                    frappe.throw("耗料批次或序列号的原估值与库存金额不一致")
+                pool["rates"].add(rate)
+                pool["value"] += abs(value)
+        if (not _same(sum((pool["qty"] for pool in pools.values()), Decimal(0)), quantity, raw)
+                or not _same(abs(_number(bundle.get("total_qty"))), quantity, raw)):
+            frappe.throw("批次凭证数量与该原耗料或本次退料明细不一致，请重新明确选择")
+        if original and not _same(sum((pool["value"] for pool in pools.values()), Decimal(0)), _number(raw.get("amount")), raw, "amount"):
+            frappe.throw("原批次凭证估值与该原耗料金额不一致，不能猜测原单价")
+    else:
+        serials = [value.strip() for value in (raw.get("serial_no") or "").splitlines() if value.strip()]
+        if len(set(serials)) != len(serials) or serials and Decimal(len(serials)) != quantity:
+            frappe.throw("明确选择的序列号数量与本次实物退料不一致")
+        if original and len(serials) > 1:
+            frappe.throw("原序列号耗料缺少逐号历史估值凭证，不能用平均价猜测部分退回")
+        keys = [("serial", serial) for serial in serials] or ([("batch", raw.get("batch_no"))] if raw.get("batch_no") else [])
+        for key in keys:
+            qty = Decimal(1) if key[0] == "serial" else quantity
+            rate = _number(raw.get("rate"))
+            pools[key] = {"qty": qty, "value": qty * rate, "rates": {rate}, "batch": raw.get("batch_no")}
+    return pools
+
+
+def selected_material_value(original, returned, company, warehouse, *, reader=None, bundle=None,
+                            used=None, allow_draft=False):
+    if _number(original.get("consumed_qty")) <= 0 or _number(returned.get("consumed_qty")) >= 0:
+        frappe.throw("批次退料须对应原正数耗料和本次负数实物数量")
+    source = material_lots(original, company, warehouse, original=True, reader=reader)
+    chosen = material_lots(returned, company, warehouse, allow_draft=allow_draft, reader=reader, bundle=bundle)
+    if not source or not chosen:
+        frappe.throw("请在原生批次或序列号选择器明确选择本次退回实物，不能自动选批")
+    used = used if used is not None else {}
+    value = Decimal(0)
+    for key, current in chosen.items():
+        pool = source.get(key)
+        if not pool or (current["batch"] or "") != (pool["batch"] or ""):
+            frappe.throw("选择的批次或序列号不属于准确原耗料明细")
+        total = used.get(key, Decimal(0)) + current["qty"]
+        if total > pool["qty"] and not _same(total, pool["qty"], original):
+            frappe.throw("该原耗料批次或序列号累计退回超过原数量，不能重复退回")
+        if len(pool["rates"]) > 1 and (used.get(key, Decimal(0)) or not _same(current["qty"], pool["qty"], original)):
+            frappe.throw("同一原批次有多个历史估值层，部分退回无法唯一确定原金额")
+        rate = pool["value"] / pool["qty"]
+        if current["rates"] and (any(not _same(price, rate, returned, "rate") for price in current["rates"])
+                or not _same(current["value"], current["qty"] * rate, returned, "amount")) and not allow_draft:
+            frappe.throw("已提交退料的批次或序列号估值不符合准确原耗料单价")
+        value += current["qty"] * rate
+        used[key] = total
+    if not allow_draft and (returned.get("amount") in (None, "")
+            or not _same(-_number(returned.get("amount")), value, returned, "amount")
+            or not _same(-_number(returned.get("consumed_qty")) * _number(returned.get("rate")), value, returned, "amount")):
+        frappe.throw("已提交退料金额与明确选择的原批次或序列号估值不一致")
+    return value
+
+
+def _validate_material_lot_returns(document, source):
+    if not any(_has_tracking(raw) for raw in source.get("supplied_items") or []):
+        return {}
+    used, values = {}, {}
+    for raw in _prior_raw_returns(source, document.get("name")):
+        origin = _origin_raw(source, raw.source_fg_row, raw)
+        if _has_tracking(origin):
+            selected_material_value(origin, raw, source.company, source.supplier_warehouse,
+                                    used=used.setdefault(origin.name, {}))
+    rows = {row.name: row for row in document.items}
+    draft = document.docstatus == 0 and document.get("_action") != "submit"
+    for raw in document.get("supplied_items") or []:
+        row = rows.get(raw.get("reference_name"))
+        if not row:
+            frappe.throw("批次退料没有准确的退回商品明细")
+        origin = _origin_raw(source, row.subcontracting_receipt_item, raw)
+        if _has_tracking(origin):
+            if not _has_tracking(raw):
+                if draft:
+                    continue
+                frappe.throw("请在原生批次或序列号选择器明确选择本次退回实物后提交")
+            values[id(raw)] = selected_material_value(origin, raw, source.company, source.supplier_warehouse,
+                # During SCR submit validation its selected bundle is still a
+                # native draft; native SLE processing submits it afterwards.
+                allow_draft=document.docstatus == 0 or document.get("_action") == "submit",
+                used=used.setdefault(origin.name, {}))
+    return values
 
 
 def _prior_raw_returns(source, current_name):
-    return frappe.db.sql("""
+    parents = frappe.db.sql("""
+        select parent.name
+        from `tabSubcontracting Receipt` parent
+        where parent.docstatus = 1 and parent.is_return = 1
+          and parent.return_against = %s and parent.name != %s
+        order by parent.name
+        for update
+    """, (source.name, current_name or ""), as_dict=True)
+    rows = frappe.db.sql("""
         select raw.*, fg.subcontracting_receipt_item as source_fg_row
         from `tabSubcontracting Receipt` parent
         inner join `tabSubcontracting Receipt Supplied Item` raw on raw.parent = parent.name
@@ -421,10 +580,67 @@ def _prior_raw_returns(source, current_name):
         where parent.docstatus = 1 and parent.is_return = 1
           and parent.return_against = %s and parent.name != %s
           and raw.parenttype = 'Subcontracting Receipt'
+          and raw.parentfield = 'supplied_items'
           and fg.parenttype = 'Subcontracting Receipt'
+          and fg.parentfield = 'items'
         order by parent.name, raw.idx
         for update
     """, (source.name, current_name or ""), as_dict=True)
+    if {row.parent for row in rows} - {parent.name for parent in parents}:
+        frappe.throw("既有退料凭证范围不一致，不能核对剩余额度")
+    for name in [parent.name for parent in parents]:
+        parent = frappe.get_doc(RECEIPT, name, for_update=True)
+        try:
+            parent.check_permission("read")
+        except frappe.PermissionError:
+            frappe.throw("无法完整读取既有已提交退料的数量、批次和金额来源", frappe.PermissionError)
+        _read_source_fields(parent)
+        if (parent.docstatus != 1 or not cint(parent.get("is_return"))
+                or parent.get("return_against") != source.name or parent.company != source.company
+                or parent.supplier != source.supplier or parent.supplier_warehouse != source.supplier_warehouse):
+            frappe.throw("既有退料的原收回、公司、供应商或仓库来源不一致")
+        raw = {item.name: item for item in parent.get("supplied_items") or []}
+        items = {item.name: item for item in parent.items}
+        membership = frappe.get_all("Subcontracting Receipt Supplied Item", filters={"parent": name},
+                                    pluck="name", limit_page_length=0)
+        selected = [row for row in rows if row.parent == name]
+        item_membership = frappe.get_all("Subcontracting Receipt Item", filters={"parent": name},
+                                         pluck="name", limit_page_length=0)
+        if (set(raw) != set(membership) or set(raw) != {row.name for row in selected}
+                or set(items) != set(item_membership)
+                or any(item.get("parenttype") != RECEIPT or item.get("parentfield") != "items"
+                       for item in parent.items)):
+            frappe.throw("既有退料明细来源不完整，不能按部分批次核对剩余额度")
+        for item in parent.items:
+            original = next((row for row in source.items if row.name == item.get("subcontracting_receipt_item")), None)
+            if original is None:
+                frappe.throw("既有退料没有准确的原收回商品明细")
+            # A submitted return with missing raw rows must not make its lots
+            # available again. Check exact source row membership, even if the
+            # locking raw query yielded no rows for this parent.
+            expected = {row.name for row in source.get("supplied_items") or []
+                        if row.get("reference_name") == original.name and _number(row.get("consumed_qty"))}
+            actual = [_origin_raw(source, original.name, row).name for row in raw.values()
+                      if row.get("reference_name") == item.name and _number(row.get("consumed_qty"))]
+            if set(actual) != expected or len(actual) != len(expected):
+                frappe.throw("既有退料缺少或重复准确原耗料明细，不能核对剩余批次")
+            ratio = sum(_physical_pools(item, original)) / _covered_stock(original)
+            for material in [row for row in raw.values() if row.get("reference_name") == item.name]:
+                origin = _origin_raw(source, original.name, material)
+                if (material.get("parenttype") != RECEIPT or material.get("parentfield") != "supplied_items"
+                        or not _same(-_number(material.get("consumed_qty")), _number(origin.get("consumed_qty")) * ratio, origin)):
+                    frappe.throw("既有退料数量与准确原实物明细不一致，不能核对剩余批次")
+        for row in selected:
+            item = raw[row.name]
+            fg = items.get(item.get("reference_name"))
+            # Native Document.as_dict includes doctype and temporary fields
+            # absent from SQL raw.*. Compare the actual database projection,
+            # and check the native child's doctype independently.
+            if (not fg or item.get("doctype") != "Subcontracting Receipt Supplied Item"
+                    or fg.get("subcontracting_receipt_item") != row.source_fg_row
+                    or any(item.get(field) != row.get(field) for field in row if field != "source_fg_row")):
+                frappe.throw("既有退料与准确原商品或耗料明细不一致")
+    return rows
 
 
 def _return_source(document):
@@ -439,11 +655,12 @@ def _historical_materials(document, source):
     _material_facts(source)
     current = list(document.get("supplied_items") or [])
     prior = _prior_raw_returns(source, document.get("name"))
-    used_serials = {}
+    used_lots = {}
     for raw in prior:
-        serials, _ = _tracking(raw, company=document.company, warehouse=source.get("supplier_warehouse"))
-        key = (raw.source_fg_row, raw.rm_item_code, raw.stock_uom)
-        used_serials.setdefault(key, set()).update(serials)
+        original = _origin_raw(source, raw.source_fg_row, raw)
+        if _has_tracking(original):
+            selected_material_value(original, raw, document.company, source.supplier_warehouse,
+                                    used=used_lots.setdefault(original.name, {}))
     values = []
     for row in document.items:
         original = originals[row.subcontracting_receipt_item]
@@ -458,37 +675,40 @@ def _historical_materials(document, source):
                           subcontracting_order=row.subcontracting_order,
                           consumed_qty=-float(qty), required_qty=-float(qty),
                           amount=-float(_number(raw.amount) * ratio),
-                          conversion_factor=float(_factor(row)), serial_and_batch_bundle=None)
-            serials, batches = _tracking(raw, company=document.company, warehouse=source.get("supplier_warehouse"))
-            if len(batches) > 1:
-                frappe.throw("该原耗料行含多个批次，须按原批次份额明确退回，当前不能猜测分批数量")
-            key = (original.name, raw.rm_item_code, raw.stock_uom)
+                          conversion_factor=float(_factor(row)), serial_and_batch_bundle=None,
+                          serial_no="", batch_no="", use_serial_batch_fields=0)
             selected = next((old for old in current if old.get("reference_name") == row.name
                              and old.get("rm_item_code") == raw.rm_item_code
                              and old.get("stock_uom") == raw.stock_uom
-                             and old.get("bom_detail_no") == raw.get("bom_detail_no")
-                             and old.get("batch_no") == raw.get("batch_no")), None)
+                             and old.get("bom_detail_no") == raw.get("bom_detail_no")), None)
             if selected:
                 current.remove(selected)
                 copied["name"] = selected.name
-            if serials:
-                count = int(qty)
-                if qty != count:
-                    frappe.throw("序列号材料退回份额不是整数，须明确原序列号实物数量")
-                used = used_serials.setdefault(key, set())
-                allowed = set(serials) - used
-                chosen = _tracking(selected, allow_draft=True, company=document.company,
-                                   warehouse=source.get("supplier_warehouse"))[0] if selected else []
-                if chosen and (len(chosen) != count or not set(chosen).issubset(allowed)):
-                    frappe.throw("本次材料序列号数量或来源与原收回剩余实物不一致")
-                chosen = chosen or [serial for serial in serials if serial in allowed][:count]
-                if len(chosen) != count:
-                    frappe.throw("原收回材料剩余序列号不足，不能重复退回实物")
-                copied["serial_no"] = "\n".join(chosen)
-                used.update(chosen)
-            copied["batch_no"] = next(iter(batches)) if batches else ""
-            copied["use_serial_batch_fields"] = 1 if serials or batches else 0
+            if _has_tracking(raw):
+                _origin_raw(source, original.name, raw)
+                # Prove original per-lot value against the effective supplier
+                # SLE. A cancelled/unfinished repost or hidden ledger blocks.
+                entries = [entry for entry in _source_stock_entries(source)
+                           if entry.voucher_detail_no == raw.name]
+                if (not _same(-sum((_number(entry.actual_qty) for entry in entries), Decimal(0)), _number(raw.consumed_qty), raw)
+                        or not _same(-sum((_number(entry.stock_value_difference) for entry in entries), Decimal(0)), _number(raw.amount), raw, "amount")):
+                    frappe.throw("原批次耗料与有效库存数量或估值不一致")
+                if selected and _has_tracking(selected):
+                    for field in ("serial_no", "batch_no", "serial_and_batch_bundle", "use_serial_batch_fields"):
+                        copied[field] = selected.get(field)
+                    candidate = dict(copied, parent=document.name)
+                    amount = selected_material_value(raw, candidate, document.company, source.supplier_warehouse,
+                        allow_draft=True, used=used_lots.setdefault(raw.name, {}))
+                    copied["amount"], copied["rate"] = -float(amount), float(amount / qty)
+                elif document.docstatus == 1 or document.get("_action") == "submit":
+                    frappe.throw("请在原生批次或序列号选择器明确选择本次退回实物后提交")
+                # Preparing/saving a draft only leaves an unselected material
+                # row. Do not turn original history into a physical selection.
+            elif selected and _has_tracking(selected):
+                frappe.throw("原耗料没有该批次或序列号来源，不能退回其他批次实物")
             values.append(copied)
+    if any(_has_tracking(raw) for raw in current):
+        frappe.throw("已选择的退料批次没有唯一的原耗料明细，请用同一原耗料行的批次选择器处理")
     document.set("supplied_items", [])
     for value in values:
         document.append("supplied_items", value)
@@ -673,6 +893,61 @@ class SubcontractingReceiptReturnMixin:
                 frappe.throw("委外原生计算改变了实物退回数量，请核对原收回明细后保存")
         validate_return_cost_sources(self, source)
         return result
+
+
+class SubcontractingReceiptMaterialReturnBundleMixin:
+    def get_valuation_rate_for_return_entry(self, return_against):
+        """Supply the SCR raw-row mapping missing in native v16.36.
+
+        Native set_valuation_rate_for_return_entry still performs its serial,
+        batch, FIFO queue and stock checks and writes rates. It receives the
+        operator's selected original lots, never a server-picked allocation.
+        """
+        if (self.get("voucher_type") != RECEIPT or self.get("type_of_transaction") != "Inward"
+                or not self.get("voucher_no") or not self.get("voucher_detail_no")
+                or not frappe.db.exists("Subcontracting Receipt Supplied Item", self.voucher_detail_no)):
+            return super().get_valuation_rate_for_return_entry(return_against)
+        receipt = frappe.get_doc(RECEIPT, self.voucher_no)
+        receipt.check_permission("read")
+        if receipt.docstatus == 2 or not cint(receipt.get("is_return")):
+            return super().get_valuation_rate_for_return_entry(return_against)
+        _read_source_fields(receipt)
+        if receipt.get("return_against") != return_against:
+            frappe.throw("退料批次凭证与原收回来源不一致")
+        raw = next((row for row in receipt.get("supplied_items") or [] if row.name == self.voucher_detail_no), None)
+        fg = next((row for row in receipt.items if raw and row.name == raw.reference_name), None)
+        if not fg or _number(raw.get("consumed_qty")) >= 0:
+            frappe.throw("退料批次凭证没有准确的负数原耗料明细")
+        source = _source(return_against, receipt)
+        original = _origin_raw(source, fg.subcontracting_receipt_item, raw)
+        if not _has_tracking(original):
+            frappe.throw("原耗料缺少逐批次或逐序列号历史来源，不能推测退料单价")
+        # Validate the original bundle against effective material SLE too.
+        ledger = [entry for entry in _source_stock_entries(source) if entry.voucher_detail_no == original.name]
+        if (not _same(-sum((_number(entry.actual_qty) for entry in ledger), Decimal(0)), _number(original.consumed_qty), original)
+                or not _same(-sum((_number(entry.stock_value_difference) for entry in ledger), Decimal(0)), _number(original.amount), original, "amount")):
+            frappe.throw("原批次耗料与有效库存数量或估值不一致")
+        used = {}
+        for prior in _prior_raw_returns(source, receipt.name):
+            origin = _origin_raw(source, prior.source_fg_row, prior)
+            if origin.name == original.name:
+                selected_material_value(original, prior, source.company, source.supplier_warehouse, used=used)
+        selected_material_value(original, raw, source.company, source.supplier_warehouse,
+                                allow_draft=self.docstatus == 0, used=used, bundle=self)
+        pools = material_lots(original, source.company, source.supplier_warehouse, original=True)
+        if any(key[0] == "serial" for key in pools):
+            item = frappe.get_doc("Item", original.rm_item_code)
+            item.check_permission("read")
+            _read_fields("Item", {"has_serial_no", "use_serial_no_wise_valuation"})
+            if not cint(item.get("has_serial_no")) or not cint(item.get("use_serial_no_wise_valuation")):
+                # Native deliberately skips writing entry rates in this
+                # mode; accepting a precise serial-price mapping would not
+                # guarantee it reaches SLE. Preserve the native setting.
+                frappe.throw("该序列号物料未启用原生逐号估值，不能保证准确原单价退料过账")
+        return {"serial_nos": {key[1]: float(pool["value"] / pool["qty"])
+                               for key, pool in pools.items() if key[0] == "serial"},
+                "batches": {key[1]: float(pool["value"] / pool["qty"])
+                            for key, pool in pools.items() if key[0] == "batch"}}
 
 
 def _make_return(source_name, target_doc=None, rejected=False):
