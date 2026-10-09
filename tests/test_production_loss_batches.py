@@ -46,6 +46,8 @@ class BatchLossTests(unittest.TestCase):
         self.store, self.queries = {}, []
         self.work = Doc(name="WO", company="JF", wip_warehouse="WIP", required_items=[Doc(item_code="RM")])
         self.item = self.add("Item", "RM", stock_uom="Kg", has_batch_no=1, has_serial_no=0, is_stock_item=1)
+        self.company = self.add("Company", "JF", valuation_method="FIFO")
+        self.settings = self.add("Stock Settings", "Stock Settings", docstatus=0, do_not_use_batchwise_valuation=0)
         self.batch = self.add("Batch", "BATCH", item="RM", disabled=0, use_batchwise_valuation=0)
         row = Doc(name="TRANSFER-ROW", parent="TRANSFER", parenttype="Stock Entry", parentfield="items", docstatus=1,
                   item_code="RM", stock_uom="Kg", qty=10, uom="Kg", conversion_factor=1, transfer_qty=10,
@@ -57,7 +59,8 @@ class BatchLossTests(unittest.TestCase):
         self.loss = Doc(name="LOSS", company="JF", docstatus=0, posting_date="2026-10-09", posting_time="10:00:00", items=[])
 
     def add(self, kind, name, **values):
-        doc = Doc(doctype=kind, name=name, modified="v1", docstatus=1, **{key: value for key, value in values.items() if key != "docstatus"})
+        doc = Doc(doctype=kind, name=name, modified="v1", docstatus=1,
+                  **{key: value for key, value in values.items() if key != "docstatus"})
         doc.docstatus = values.get("docstatus", 1)
         self.store[kind, name] = doc
         return doc
@@ -69,7 +72,10 @@ class BatchLossTests(unittest.TestCase):
             total_qty=quantity, total_amount=quantity * rate)
         row = self.add("Serial and Batch Entry", name + "-ROW", parent=name, parenttype="Serial and Batch Bundle", parentfield="entries",
             docstatus=status, item_code="RM", warehouse="WIP", batch_no=batch, serial_no=None, qty=quantity,
-            incoming_rate=rate, stock_value_difference=quantity * rate, is_cancelled=int(status == 2))
+            incoming_rate=rate, stock_value_difference=quantity * rate, is_cancelled=int(status == 2),
+            voucher_type="Stock Entry", voucher_no=voucher, voucher_detail_no=detail,
+            type_of_transaction=doc.type_of_transaction, posting_datetime="2026-10-09 " + time,
+            creation="2026-10-09 " + time)
         doc.entries = [row]
         return doc
 
@@ -127,13 +133,14 @@ class BatchLossTests(unittest.TestCase):
         row.update(name="SECOND-ROW", parent="SECOND-TRANSFER", qty=quantity, transfer_qty=quantity)
         doc = self.add("Stock Entry", "SECOND-TRANSFER", company="JF", work_order="WO", docstatus=1,
             purpose="Material Transfer for Manufacture", posting_date="2026-10-09", posting_time="09:30:00", items=[row])
-        bundle = self.bundle("SECOND-IN", doc.name, row.name, quantity=quantity, rate=rate)
+        bundle = self.bundle("SECOND-IN", doc.name, row.name, quantity=quantity, rate=rate, time=doc.posting_time)
         ledger = self.ledger("SECOND-SLE", doc.name, row.name, quantity=quantity, value=quantity * rate,
                              bundle=bundle.name, time=doc.posting_time)
         return doc, bundle, ledger
 
-    def serial_bundle(self, name, voucher, detail, rates, *, direction=1, status=1, batch=None):
-        doc = self.bundle(name, voucher, detail, quantity=len(rates) * direction, rate=0, status=status)
+    def serial_bundle(self, name, voucher, detail, rates, *, direction=1, status=1, batch=None, time=None):
+        time = time or ("10:00:00" if voucher == "LOSS" else "09:00:00")
+        doc = self.bundle(name, voucher, detail, quantity=len(rates) * direction, rate=0, status=status, time=time)
         self.store.pop(("Serial and Batch Entry", name + "-ROW"))
         doc.update(has_serial_no=1, has_batch_no=int(batch is not None), total_amount=direction * sum(rates.values()))
         doc.entries = []
@@ -141,7 +148,10 @@ class BatchLossTests(unittest.TestCase):
             doc.entries.append(self.add("Serial and Batch Entry", name + "-" + number, parent=name,
                 parenttype="Serial and Batch Bundle", parentfield="entries", docstatus=status, item_code="RM",
                 warehouse="WIP", serial_no=number, batch_no=batch, qty=direction, incoming_rate=rate,
-                stock_value_difference=direction * rate, is_cancelled=int(status == 2)))
+                stock_value_difference=direction * rate, is_cancelled=int(status == 2),
+                voucher_type="Stock Entry", voucher_no=voucher, voucher_detail_no=detail,
+                type_of_transaction=doc.type_of_transaction, posting_datetime="2026-10-09 " + time,
+                creation="2026-10-09 " + time))
         return doc
 
     def serial_source(self, rates=None, *, both=False, serial_valuation=1):
@@ -472,9 +482,141 @@ class BatchLossTests(unittest.TestCase):
         row.update(name="SECOND-ROW", parent="SECOND-TRANSFER", qty=1, transfer_qty=1, serial_no="SN-1")
         self.add("Stock Entry", "SECOND-TRANSFER", company="JF", work_order="WO", docstatus=1,
             purpose="Material Transfer for Manufacture", posting_date="2026-10-09", posting_time="09:30:00", items=[row])
-        self.serial_bundle("SECOND-IN", "SECOND-TRANSFER", row.name, {"SN-1": 4})
+        self.serial_bundle("SECOND-IN", "SECOND-TRANSFER", row.name, {"SN-1": 4}, time="09:30:00")
         self.ledger("SECOND-SLE", "SECOND-TRANSFER", row.name, quantity=1, value=4, bundle="SECOND-IN", time="09:30:00")
         with self.assertRaisesRegex(ValueError, "多次有效入向"): self.proposal(1)
+
+    def enable_weighted(self, quantity=5, rate=9):
+        self.batch.use_batchwise_valuation = 1
+        return self.second_transfer(quantity=quantity, rate=rate)
+
+    def movement(self, name, quantity, rate, time):
+        bundle = self.bundle(name, name, name + "-ROW", quantity=quantity, rate=rate, time=time)
+        return bundle, self.ledger(name + "-SLE", name, name + "-ROW", quantity=quantity,
+                                  value=quantity * rate, bundle=bundle.name, time=time)
+
+    def test_batchwise_mixed_origins_use_remaining_value_after_actual_consumption_and_return(self):
+        consumed, used = self.movement("EARLY-USE", -5, 4, "09:10:00")
+        self.enable_weighted()
+        returned, _return_sle = self.movement("WIP-RETURN", -2, Decimal("6.5"), "09:45:00")
+        proposed = self.proposal(8)[0]
+        self.assertEqual((proposed["qty"], proposed["expected_value"]), (8, 52))
+        row, bundle, sle = self.posted(qty=8)
+        bundle.entries[0].incoming_rate = Decimal("6.5")
+        bundle.entries[0].stock_value_difference = bundle.total_amount = sle.stock_value_difference = -52
+        self.assertEqual(self.proof(posted=True)[row.name]["value"], 52)
+        # A preceding consumption is later canceled. The canceled loss still
+        # reports its actual original 52, not a newly computed WIP average.
+        used.is_cancelled = consumed.is_cancelled = consumed.entries[0].is_cancelled = 1
+        self.loss.docstatus = bundle.docstatus = bundle.entries[0].docstatus = 2
+        sle.is_cancelled = bundle.is_cancelled = bundle.entries[0].is_cancelled = 1
+        row.serial_and_batch_bundle = ""
+        self.assertEqual(self.proof()[row.name]["value"], 52)
+
+    def test_distinct_enabled_batches_keep_each_actual_price_and_posted_value(self):
+        _doc, bundle, ledger = self.enable_weighted()
+        self.add("Batch", "SECOND-BATCH", item="RM", disabled=0, use_batchwise_valuation=1)
+        bundle.entries[0].batch_no = "SECOND-BATCH"
+        proposed = self.proposal(15)
+        self.assertEqual([(row["batch_no"], row["expected_value"]) for row in proposed],
+                         [("BATCH", 40), ("SECOND-BATCH", 45)])
+        first, _bundle, _sle = self.posted()
+        second = self.row("SECOND-LOSS", qty=5, batch="SECOND-BATCH", bundle="SECOND-LOSS-BUNDLE")
+        second_bundle = self.bundle("SECOND-LOSS-BUNDLE", "LOSS", second.name, quantity=-5, rate=9,
+                                    batch="SECOND-BATCH", time="10:00:00")
+        self.ledger("SECOND-LOSS-SLE", "LOSS", second.name, quantity=-5, value=-45,
+                    bundle=second_bundle.name, time="10:00:00")
+        self.assertEqual(sum(row["value"] for row in self.proof(posted=True).values()), 85)
+
+    def test_native_moving_average_policy_override_and_item_method_precedence(self):
+        self.enable_weighted()
+        self.company.valuation_method = "Moving Average"
+        self.assertEqual(self.proposal(15)[0]["expected_value"], 85)
+        self.settings.do_not_use_batchwise_valuation = 1
+        with self.assertRaisesRegex(ValueError, "逐批估值未启用"): self.proposal(15)
+        self.item.valuation_method = "FIFO"
+        self.assertEqual(self.proposal(15)[0]["expected_value"], 85)
+        self.item.valuation_method = "Moving Average"
+        self.settings.do_not_use_batchwise_valuation = 0
+        self.settings.denied = True
+        with self.assertRaises(PermissionError): self.proposal(15)
+
+    def test_exact_closing_seed_and_tied_native_candidates_must_equal_full_history(self):
+        self.enable_weighted()
+        self.transfer.posting_date = self.sle.posting_date = "2026-10-08"
+        self.inward.entries[0].posting_datetime = "2026-10-08 09:00:00"
+        self.add("Period Closing Voucher", "PCV", company="JF", period_end_date="2026-10-08")
+        for name in ("CLOSE-1", "CLOSE-2"):
+            self.add("Stock Closing Entry", name, company="JF", status="Completed", to_date="2026-10-08")
+            self.add("Stock Closing Balance", name + "-SEED", stock_closing_entry=name,
+                     item_code="RM", warehouse="WIP", batch_no="BATCH", actual_qty=10,
+                     stock_value_difference=40, inventory_dimension_key="")
+        self.assertEqual(self.proposal(15)[0]["expected_value"], 85)
+        self.store["Stock Closing Balance", "CLOSE-2-SEED"].stock_value_difference = 41
+        with self.assertRaisesRegex(ValueError, "期末逐批数量或价值"): self.proposal(15)
+        self.store["Stock Closing Balance", "CLOSE-2-SEED"].stock_value_difference = 40
+        self.store["Stock Closing Entry", "CLOSE-2"].denied = True
+        with self.assertRaises(PermissionError): self.proposal(15)
+
+    def test_native_legacy_mirrors_allow_equal_equation_and_reject_price_skew(self):
+        _doc, _bundle, second = self.enable_weighted()
+        self.sle.batch_no = "BATCH"
+        with self.assertRaisesRegex(ValueError, "重复计价"): self.proposal(15)
+        second.batch_no = "BATCH"
+        self.assertEqual(self.proposal(15)[0]["expected_value"], 85)
+        # Native legacy-only rows contribute once, exactly like their true SLE.
+        self.sle.serial_and_batch_bundle = None
+        self.store.pop(("Serial and Batch Bundle", "INWARD"))
+        self.store.pop(("Serial and Batch Entry", "INWARD-ROW"))
+        second.batch_no = None
+        self.assertEqual(self.proposal(15)[0]["expected_value"], 85)
+
+    def test_native_child_pool_cannot_omit_orphan_or_hidden_valuation_entries(self):
+        self.enable_weighted()
+        self.bundle("ORPHAN", "ORPHAN", "ORPHAN-ROW", quantity=-1, rate=3, time="09:15:00")
+        with self.assertRaisesRegex(ValueError, "无账批次"): self.proposal(15)
+        self.store.pop(("Serial and Batch Bundle", "ORPHAN"))
+        self.store.pop(("Serial and Batch Entry", "ORPHAN-ROW"))
+        original = self.records
+        def hidden(kind, filters, fields, **kwargs):
+            rows = original(kind, filters, fields, **kwargs)
+            if kind == "Serial and Batch Entry" and filters.get("item_code") == "RM":
+                return [row for row in rows if row["parent"] != "SECOND-IN"]
+            return rows
+        with patch.object(self, "records", hidden), self.assertRaisesRegex(ValueError, "来源不完整"):
+            self.proposal(15)
+
+    def test_posted_same_timestamp_later_transfer_uses_actual_sle_creation_boundary(self):
+        row, _loss_bundle, _loss_sle = self.posted()
+        doc, bundle, ledger = self.enable_weighted()
+        doc.posting_time = ledger.posting_time = "10:00:00"
+        ledger.creation = "2026-10-09 10:00:00.100000"
+        bundle.entries[0].posting_datetime = "2026-10-09 10:00:00"
+        self.assertEqual(self.proof(posted=True)[row.name]["value"], 40)
+
+    def test_native_batch_price_equation_uses_net_current_qty_and_value(self):
+        # Exact pinned BatchNoValuation.set_stock_value_difference; native
+        # evaluates remaining sums, rather than averaging original receipts.
+        source = '''
+        def set_stock_value_difference(self):
+            for batch_no, ledger in self.batch_nos.items():
+                if batch_no in self.non_batchwise_valuation_batches:
+                    continue
+                if not self.available_qty[batch_no]:
+                    continue
+                self.batch_avg_rate[batch_no] = (
+                    self.stock_value_differece[batch_no] / self.available_qty[batch_no]
+                )
+                stock_value_change = self.batch_avg_rate[batch_no] * ledger.qty
+                self.stock_value_change += stock_value_change
+        '''
+        namespace = {}
+        exec(compile(textwrap.dedent(source), "installed16.36-batch-equation", "exec"), namespace)
+        native = Doc(batch_nos={"BATCH": Doc(qty=-8)}, non_batchwise_valuation_batches=[],
+                     available_qty={"BATCH": 8}, stock_value_differece={"BATCH": 52},
+                     batch_avg_rate={}, stock_value_change=0)
+        namespace["set_stock_value_difference"](native)
+        self.assertEqual((native.batch_avg_rate["BATCH"], native.stock_value_change), (6.5, -52))
 
 
 if __name__ == "__main__":
