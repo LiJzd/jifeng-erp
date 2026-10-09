@@ -9,6 +9,71 @@ from frappe.utils import flt, now_datetime
 from jifeng_erp.costing import CostingError, number
 
 
+_FACTORY_SCOPE = object()
+_PLAN_CHANGED = "生产计划来源已变化，请刷新后重新安排工单"
+
+
+def _plan_flow_ids(doc):
+    return {row.get("jf_flow_order") for row in doc.get("po_items") or [] if row.get("jf_flow_order")}
+
+
+def _persisted_plan_flows(name):
+    rows = frappe.db.sql("""SELECT jf_flow_order AS flow FROM `tabProduction Plan Item`
+        WHERE parent=%s AND parenttype='Production Plan' AND parentfield='po_items'""",
+                         (name,), as_dict=True)
+    return {row.flow for row in rows if row.get("flow")}
+
+
+def _lock_flow_ids(names):
+    for name in sorted(names):
+        if not frappe.db.sql("SELECT name FROM `tabJifeng Flow Order` WHERE name=%s FOR UPDATE NOWAIT", (name,)):
+            frappe.throw(_PLAN_CHANGED)
+
+
+def _lock_plan_rows(name):
+    if not frappe.db.sql("SELECT name FROM `tabProduction Plan` WHERE name=%s FOR UPDATE NOWAIT", (name,)):
+        frappe.throw("生产计划已不存在，请重新查询")
+    for child, field in (("Production Plan Item", "po_items"),
+                         ("Production Plan Sub Assembly Item", "sub_assembly_items")):
+        frappe.db.sql(f"""SELECT name FROM `tab{child}` WHERE parent=%s
+            AND parenttype='Production Plan' AND parentfield=%s ORDER BY name FOR UPDATE NOWAIT""",
+                      (name, field))
+
+
+def _factory_scope(plan):
+    if plan.is_new():
+        frappe.throw("请先保存生产计划，再生成工单")
+    # The advisory snapshot determines the lock order only. The native reload
+    # below supplies authoritative parent/child values after those locks.
+    names = _persisted_plan_flows(plan.name)
+    _lock_flow_ids(names)
+    _lock_plan_rows(plan.name)
+    plan.flags.for_update = True
+    plan.reload()
+    _check_factory_scope(plan, names)
+    return names
+
+
+def _check_factory_scope(plan, names):
+    plan.check_permission("read")
+    if not _plan_flow_ids(plan).issubset(names):
+        # Never acquire a new Flow after holding the Plan parent/children.
+        frappe.throw(_PLAN_CHANGED)
+    if names and (plan.docstatus != 1 or plan.status in {"Closed", "Cancelled", "Stopped"}):
+        frappe.throw("只能从已提交且未关闭的生产计划安排工单")
+    for name in sorted(names):
+        _read_locked_flow(name, plan.company)
+
+
+def _qty_precision():
+    return frappe.get_precision("Work Order", "qty")
+
+
+def _over_quantity(actual, maximum):
+    precision = _qty_precision()
+    return flt(actual, precision) > flt(maximum, precision)
+
+
 def _quantity(value, label):
     try:
         result = float(number(value, label))
@@ -21,6 +86,11 @@ def _quantity(value, label):
 
 def _flow(name, company=None):
     # Lock before reading allocations so concurrent factories cannot overschedule.
+    _lock_flow_ids({name})
+    return _read_locked_flow(name, company)
+
+
+def _read_locked_flow(name, company=None):
     flow = frappe.get_doc("Jifeng Flow Order", name, for_update=True)
     flow.check_permission("read")
     if company and flow.company != company:
@@ -54,37 +124,94 @@ def _work_rows(filters, fields):
 
 def _committed(work):
     # Match native plan semantics for submitted loss, while reserving draft quantities.
+    quantity = _quantity(work.qty, "工单数量")
+    produced = _quantity(work.get("produced_qty"), "工单入库数量")
+    lost = _quantity(work.get("process_loss_qty"), "工单损耗数量")
+    if min(quantity, produced, lost) < 0:
+        frappe.throw("已有工单数量、入库数量或损耗数量异常，请先核对")
+    if work.docstatus == 2:
+        return 0
     if work.docstatus == 1:
-        return max(0, flt(work.get("produced_qty")), flt(work.qty) - flt(work.get("process_loss_qty")))
-    return flt(work.qty)
+        return max(0, produced, quantity - lost)
+    return quantity
 
 
 class ProductionInstructionMixin:
+    def check_if_latest(self):
+        # Native saves lock their Plan parent before before_validate. Serialize
+        # those saves in the same Flow-first order as the original Plan factory.
+        names = _plan_flow_ids(self)
+        if not self.is_new():
+            names.update(_persisted_plan_flows(self.name))
+        _lock_flow_ids(names)
+        result = super().check_if_latest()
+        previous = self._doc_before_save
+        if (not _plan_flow_ids(self).issubset(names)
+                or (previous and not _plan_flow_ids(previous).issubset(names))):
+            frappe.throw(_PLAN_CHANGED)
+        return result
+
+    @frappe.whitelist()
+    def make_work_order(self):
+        names = _factory_scope(self)
+        self._jf_plan_factory_scope = (_FACTORY_SCOPE, self.name, names)
+        try:
+            # Keep native reload, warehouse defaults, operations, requirements,
+            # reservation flags, subassembly/PO factories and result messages.
+            return super().make_work_order()
+        finally:
+            self._jf_plan_factory_scope = None
+            self._jf_plan_reusable_drafts = None
+
     def get_production_items(self):
-        # Native make_work_order reloads a saved plan before entering here.
-        # Re-read with the parent/child locks after a possible lock wait, then
-        # reserve every tracked Flow in one order before allocation reads or
-        # native per-row factories. Different plan row orders must not dictate
-        # different Flow lock orders.
-        if self.is_new():
-            frappe.throw("请先保存生产计划，再生成工单")
-        self.flags.for_update = True
-        if not frappe.db.get_value("Production Plan", self.name, "name", for_update=True):
-            frappe.throw("生产计划已不存在，请重新查询")
-        self.reload()
-        self.check_permission("read")
-        for name in sorted({row.get("jf_flow_order") for row in self.po_items if row.get("jf_flow_order")}):
-            _flow(name, self.company)
+        scope = getattr(self, "_jf_plan_factory_scope", None)
+        if scope and scope[0] is _FACTORY_SCOPE and scope[1] == self.name:
+            _check_factory_scope(self, scope[2])
+        else:
+            _factory_scope(self)
         result = super().get_production_items()
+        reusable = []
         for row in self.po_items:
             if not row.get("jf_flow_order"):
                 continue
             works = _work_rows({"production_plan": self.name, "production_plan_item": row.name,
                                 "docstatus": ["<", 2]},
-                               ["qty", "docstatus", "produced_qty", "process_loss_qty"])
+                               ["name", "qty", "docstatus", "produced_qty", "process_loss_qty"])
             # The native calculation counts submitted orders only. Draft orders from
             # a previous factory click also reserve this linked instruction row.
-            result[row.name]["qty"] = max(0, flt(row.planned_qty) - sum(_committed(work) for work in works))
+            committed = sum(_committed(work) for work in works)
+            planned = _quantity(row.planned_qty, "计划数量")
+            if _over_quantity(committed, planned):
+                frappe.throw("有效生产工单数量超过对应生产计划明细数量")
+            result[row.name]["qty"] = max(0, flt(planned - committed, _qty_precision()))
+            for work in works:
+                if work.docstatus != 0:
+                    continue
+                draft = frappe.get_doc("Work Order", work.name, for_update=True)
+                if not frappe.has_permission("Work Order", "read", doc=draft):
+                    continue
+                # Reusing an existing draft only reveals an exact current Plan
+                # source. It never resizes a draft or borrows another row.
+                if (draft.docstatus != 0 or draft.get("production_plan") != self.name
+                        or draft.get("production_plan_item") != row.name
+                        or draft.get("production_plan_sub_assembly_item")
+                        or draft.get("jf_flow_order") != row.jf_flow_order
+                        or draft.company != self.company or draft.production_item != row.item_code
+                        or draft.bom_no != row.bom_no or draft.stock_uom != row.stock_uom
+                        or (draft.get("sales_order") or "") != (row.get("sales_order") or "")
+                        or (draft.get("sales_order_item") or "") != (row.get("sales_order_item") or "")):
+                    frappe.throw("已有草稿工单与生产计划来源不一致，请先核对")
+                reusable.append(draft.name)
+        self._jf_plan_reusable_drafts = (_FACTORY_SCOPE, tuple(reusable))
+        return result
+
+    def make_work_order_for_finished_goods(self, wo_list, default_warehouses):
+        result = super().make_work_order_for_finished_goods(wo_list, default_warehouses)
+        reusable = getattr(self, "_jf_plan_reusable_drafts", None)
+        if reusable and reusable[0] is _FACTORY_SCOPE:
+            for name in reusable[1]:
+                if name not in wo_list:
+                    wo_list.append(name)
         return result
 
 
@@ -107,24 +234,48 @@ def _bom(flow):
 
 def validate_work_order(doc):
     if doc.get("production_plan_item"):
-        source = frappe.db.get_value("Production Plan Item", doc.production_plan_item,
-                                    ["parent", "item_code", "jf_flow_order", "planned_qty"], as_dict=True)
-        if not source or source.parent != doc.get("production_plan") or source.item_code != doc.production_item:
+        hint = frappe.db.get_value("Production Plan Item", doc.production_plan_item,
+                                  ["parent", "parenttype", "parentfield", "jf_flow_order"], as_dict=True)
+        if (not hint or hint.parent != doc.get("production_plan")
+                or hint.parenttype != "Production Plan" or hint.parentfield != "po_items"
+                or doc.get("production_plan_sub_assembly_item")):
             frappe.throw("生产工单与生产计划来源明细不一致")
-        if source.jf_flow_order:
-            plan = frappe.get_doc("Production Plan", source.parent)
-            plan.check_permission("read")
-            arranging = doc.docstatus == 0 or doc.is_new() or getattr(doc, "_action", None) == "submit"
-            if plan.company != doc.company or plan.docstatus != 1 or (arranging and plan.status == "Closed"):
-                frappe.throw("只能从同公司已提交且未关闭的生产计划生成工单")
-            if doc.get("jf_flow_order") and doc.jf_flow_order != source.jf_flow_order:
+        if hint.jf_flow_order:
+            # This first read is advisory only. Acquire the Flow before the
+            # Plan/current row and sibling WOs, then verify the hint unchanged.
+            if doc.get("jf_flow_order") and doc.jf_flow_order != hint.jf_flow_order:
                 frappe.throw("生产工单流程单与生产计划来源不一致")
+            _flow(hint.jf_flow_order, doc.company)
+            _lock_plan_rows(hint.parent)
+            plan = frappe.get_doc("Production Plan", hint.parent, for_update=True)
+            plan.check_permission("read")
+            matches = [row for row in plan.po_items if row.name == doc.production_plan_item]
+            if len(matches) != 1 or matches[0].get("jf_flow_order") != hint.jf_flow_order:
+                frappe.throw(_PLAN_CHANGED)
+            source = matches[0]
+            if (source.parent != plan.name or source.parenttype != "Production Plan"
+                    or source.parentfield != "po_items" or source.item_code != doc.production_item
+                    or source.bom_no != doc.bom_no
+                    or (doc.get("stock_uom") and source.stock_uom != doc.stock_uom)
+                    or (source.get("sales_order") or "") != (doc.get("sales_order") or "")
+                    or (source.get("sales_order_item") or "") != (doc.get("sales_order_item") or "")
+                    or source.get("item_reference")):
+                frappe.throw("生产工单与生产计划来源明细不一致")
+            arranging = doc.docstatus == 0 or doc.is_new() or getattr(doc, "_action", None) == "submit"
+            if (plan.company != doc.company or plan.docstatus != 1
+                    or (arranging and plan.status in {"Closed", "Cancelled", "Stopped"})):
+                frappe.throw("只能从同公司已提交且未关闭的生产计划生成工单")
             doc.jf_flow_order = source.jf_flow_order
-            works = _work_rows({"production_plan_item": doc.production_plan_item,
+            works = _work_rows({"production_plan": plan.name, "production_plan_item": doc.production_plan_item,
                                 "docstatus": ["<", 2], "name": ["!=", doc.name or ""]},
                                ["qty", "docstatus", "produced_qty", "process_loss_qty"])
-            if sum(_committed(work) for work in works) + _committed(doc) > flt(source.planned_qty) + 1e-6:
+            if _over_quantity(sum(_committed(work) for work in works) + _committed(doc),
+                              _quantity(source.planned_qty, "计划数量")):
                 frappe.throw("有效生产工单数量超过对应生产计划明细数量")
+        else:
+            item = frappe.db.get_value("Production Plan Item", doc.production_plan_item, "item_code")
+            if item != doc.production_item:
+                frappe.throw("生产工单与生产计划来源明细不一致")
     if not doc.get("jf_flow_order"):
         return
     flow = _flow(doc.jf_flow_order, doc.company)
@@ -134,7 +285,8 @@ def validate_work_order(doc):
         _open_source(flow)
         _bom(flow)
     quantity = _quantity(doc.qty, "工单数量")
-    if quantity <= 0 or _allocated(flow.name, exclude_work=doc.name) + _committed(doc) > flt(flow.planned_qty) + 1e-6:
+    if quantity <= 0 or _over_quantity(_allocated(flow.name, exclude_work=doc.name) + _committed(doc),
+                                      _quantity(flow.planned_qty, "流程单计划数量")):
         frappe.throw("有效生产工单数量合计超过流程单计划数量，请核对已有工单")
 
 
