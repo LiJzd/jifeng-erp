@@ -129,7 +129,7 @@ class LossBatchIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "完整库存来源"):
             self.source.read_loss_source(self.doc, read=self.read)
         self.b.item.has_serial_no = 1
-        with self.assertRaisesRegex(ValueError, "序号"):
+        with self.assertRaises(ValueError):
             self.source_proof()
 
     def test_preledger_submit_releases_exact_batch_before_native_sle_and_cancel_restores(self):

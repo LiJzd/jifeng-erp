@@ -44,7 +44,8 @@ class ProductionLossWorkOrderMixin:
             item.db_set("consumed_qty", consumed, update_modified=False)
             if self.get("reserve_stock"):
                 target = warehouse or item.source_warehouse
-                if _internal_read("Item", item.item_code).get("has_batch_no"):
+                material = _internal_read("Item", item.item_code)
+                if material.get("has_batch_no") or material.get("has_serial_no"):
                     update_batch_loss_reservations(self, item, _qty(consumed), target)
                 else:
                     self.update_consumed_qty_in_stock_reservation(item, consumed, target)

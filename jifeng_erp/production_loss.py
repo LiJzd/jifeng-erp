@@ -278,11 +278,12 @@ def read_loss_source(doc, *, read, records=None, posted=False):
     tracked = False
     for row in doc.items:
         item = read("Item", row.get("item_code"))
-        if item.get("has_serial_no") or row.get("serial_no"):
-            frappe.throw("序号材料必须按原转料逐号核对损耗，当前专用全损耗入口暂不支持")
-        tracked |= bool(item.get("has_batch_no"))
-        if not item.get("has_batch_no") and (row.get("batch_no") or row.get("serial_and_batch_bundle")):
-            frappe.throw("未启用批号的材料不能混入批号损耗来源")
+        tracking = bool(item.get("has_batch_no") or item.get("has_serial_no"))
+        tracked |= tracking
+        if ((row.get("serial_no") and not item.get("has_serial_no"))
+                or (row.get("batch_no") and not item.get("has_batch_no"))
+                or (row.get("serial_and_batch_bundle") and not tracking)):
+            frappe.throw("损耗明细的批号、序号或凭证与材料实际追踪方式不一致")
         if (row.item_code not in required or row.item_code not in flow_items or row.jf_flow_order != flow.name
                 or row.stock_uom != units[row.item_code] or item.stock_uom != row.stock_uom
                 or not item.get("is_stock_item") or row.s_warehouse != work.wip_warehouse or row.get("t_warehouse")
@@ -297,7 +298,7 @@ def read_loss_source(doc, *, read, records=None, posted=False):
             frappe.throw("制造损耗材料出库数量必须使用准确库存单位、换算系数为一")
     if tracked:
         if not callable(records):
-            frappe.throw("批号损耗必须按原转料逐批核对，并使用完整库存来源读取接口")
+            frappe.throw("追踪材料损耗必须按原转料逐批核对、逐号核对，并使用完整库存来源读取接口")
         batch_sources.prove_loss_batches(doc, work, read=read, records=records, posted=posted)
     return {"loss_entry": doc.name, "work_order": work.name, "job_card": card.name, "flow_order": flow.name,
             "company": work.company, "item_code": work.production_item, "stock_uom": work.stock_uom,
@@ -717,7 +718,8 @@ def update_loss_progress(doc, method=None):
     # batch reservation net explicitly using this historical, proved voucher.
     if work.get("reserve_stock") and doc.docstatus == 2:
         for item in work.required_items:
-            if _internal_read("Item", item.item_code).get("has_batch_no"):
+            material = _internal_read("Item", item.item_code)
+            if material.get("has_batch_no") or material.get("has_serial_no"):
                 update_batch_loss_reservations(work, item, _qty(item.get("consumed_qty")),
                                                work.wip_warehouse, current_doc=doc)
     work.update_status()
@@ -759,7 +761,8 @@ def prepare_loss_stock_reservations(doc):
                     + _qty(item.get("returned_qty")) + additional[item.item_code])
         item.db_set("consumed_qty", float(consumed), update_modified=False)
         target = warehouse or item.source_warehouse
-        if _internal_read("Item", item.item_code).get("has_batch_no"):
+        material = _internal_read("Item", item.item_code)
+        if material.get("has_batch_no") or material.get("has_serial_no"):
             update_batch_loss_reservations(work, item, consumed, target, current_doc=doc)
         else:
             work.update_consumed_qty_in_stock_reservation(item, float(consumed), target)
@@ -789,7 +792,7 @@ def _reservation_documents(work, item, warehouse):
 
 
 def update_batch_loss_reservations(work, item, consumed_qty, warehouse, *, current_doc=None):
-    """Set exact per-batch net consumption, scoped to a proved special loss.
+    """Set exact tracked-material net consumption for a proved special loss.
 
     Native SRE's batch setter assigns the whole WO batch quantity to every
     matching child. Allocate that one quantity across native reservation caps
@@ -798,7 +801,7 @@ def update_batch_loss_reservations(work, item, consumed_qty, warehouse, *, curre
     """
     if (not work.get("reserve_stock") or work.get("skip_transfer") or warehouse != work.wip_warehouse
             or work.get("track_semi_finished_goods")):
-        frappe.throw("批号损耗预留必须使用原普通工单的准确转料在制仓库")
+        frappe.throw("追踪材料损耗预留必须使用原普通工单的准确转料在制仓库")
     matches = [row for row in work.required_items if row.item_code == item.item_code]
     if len(matches) != 1 or matches[0].name != item.name:
         frappe.throw("同材料有多条工单预留来源，当前批号损耗不能猜测逐行消费份额")
@@ -813,26 +816,32 @@ def update_batch_loss_reservations(work, item, consumed_qty, warehouse, *, curre
             chosen = selection.get(row.name)
             if not chosen:
                 frappe.throw("损耗材料缺少原批次预留来源")
-            key = row.item_code, chosen["batch_no"]
-            if key not in pools or len(chosen["sources"]) != 1:
-                frappe.throw("损耗材料原转料来源不能唯一核对")
-            origin, selected = pools[key], chosen["sources"][0]
-            if (origin["source_entry"] != selected["stock_entry"] or origin["source_detail"] != selected["detail"]):
-                frappe.throw("损耗批次预留与原转料来源不一致")
-            origin["qty"] += chosen["qty"]
-    selected = {batch: values for (code, batch), values in pools.items() if code == item.item_code}
+            lots = chosen.get("lots") or [{**chosen, "lot_key": chosen["batch_no"]}]
+            for lot in lots:
+                key = row.item_code, lot["lot_key"]
+                if key not in pools:
+                    frappe.throw("损耗材料原转料来源不能唯一核对")
+                origin = pools[key]
+                allowed = {(source["stock_entry"], source["detail"]) for source in _reservation_origins(origin)}
+                if (not lot.get("sources") or any((source["stock_entry"], source["detail"]) not in allowed
+                                                 for source in lot["sources"])):
+                    frappe.throw("损耗批次或序号预留与原转料来源不一致")
+                origin["qty"] += lot["qty"]
+    selected = {lot: values for (code, lot), values in pools.items() if code == item.item_code}
+    material = _internal_read("Item", item.item_code)
+    serial_item, batch_item = bool(material.get("has_serial_no")), bool(material.get("has_batch_no"))
     total = sum((values["qty"] for values in selected.values()), ZERO)
     if not _equal(total, _qty(consumed_qty), item, "consumed_qty"):
         frappe.throw("工单材料累计消费与准确批次库存账不一致，不能释放其他批次预留")
     reservations = _reservation_documents(work, item, warehouse)
-    remaining = {batch: values["qty"] for batch, values in selected.items()}
+    remaining = {lot: values["qty"] for lot, values in selected.items()}
     caps = defaultdict(Decimal)
     updates = []
     for doc in reservations:
         if (doc.docstatus != 1 or doc.company != work.company or doc.voucher_type != "Work Order"
                 or doc.voucher_no != work.name or doc.voucher_detail_no != item.name
                 or doc.item_code != item.item_code or doc.stock_uom != item.stock_uom or doc.warehouse != warehouse
-                or doc.get("has_serial_no") or not doc.get("has_batch_no")
+                or bool(doc.get("has_serial_no")) != serial_item or bool(doc.get("has_batch_no")) != batch_item
                 or doc.reservation_based_on != "Serial and Batch" or doc.from_voucher_type != "Stock Entry"
                 or _qty(doc.get("transferred_qty")) or _qty(doc.get("delivered_qty"))):
             frappe.throw("原工单批号预留的类型、仓库或来源不完整，当前入口不能猜测批次释放")
@@ -846,21 +855,35 @@ def update_batch_loss_reservations(work, item, consumed_qty, warehouse, *, curre
             frappe.throw("批号预留不属于原工单准确转料材料来源")
         children, reserved, used = [], ZERO, ZERO
         for row in doc.get("sb_entries") or []:
-            batch, capacity = row.get("batch_no"), _qty(row.get("qty"), "批号预留库存数量")
-            origin = selected.get(batch)
+            batch, serial = row.get("batch_no"), row.get("serial_no")
+            lot = ("serial", serial) if serial_item else batch
+            capacity = _qty(row.get("qty"), "批号或序号预留库存数量")
+            origin = selected.get(lot)
             if (row.get("parent") != doc.name or row.get("parenttype") != "Stock Reservation Entry"
-                    or row.get("parentfield") != "sb_entries" or row.docstatus != 1 or row.get("serial_no")
+                    or row.get("parentfield") != "sb_entries" or row.docstatus != 1
+                    or bool(serial) != serial_item or bool(batch) != batch_item
                     # Native reservation creation groups this Transfer by
                     # item and preserves its first row as from_detail. Later
                     # batches may originate in another exact row of the same
                     # group; their individual cap remains the proved origin.
-                    or not origin or origin["source_entry"] != transfer.name or capacity <= 0):
+                    or not origin or capacity <= 0):
                 frappe.throw("批号预留明细与原转料批次不一致")
-            caps[batch] += capacity
-            if not _equal(min(caps[batch], origin["original_qty"]), caps[batch], row, "qty"):
-                frappe.throw("同批累计预留超过准确原转料数量")
-            delivered = min(remaining[batch], capacity)
-            remaining[batch] -= delivered
+            sources = _reservation_origins(origin)
+            exact = [source for source in sources if source["stock_entry"] == transfer.name]
+            if not exact:
+                frappe.throw("批号或序号预留不属于准确原转料来源")
+            original_qty = sum((_qty(source["original_qty"]) for source in exact), ZERO)
+            caps[lot, transfer.name] += capacity
+            if not _equal(min(caps[lot, transfer.name], original_qty), caps[lot, transfer.name], row, "qty"):
+                frappe.throw("同批或同号累计预留超过准确原转料数量")
+            if serial_item:
+                if (capacity != 1 or origin.get("serial_no") != serial or (origin.get("batch_no") or "") != (batch or "")
+                        or len(sources) != 1 or sources[0]["detail"] not in {source.name for source in native_group}
+                        or origin["qty"] not in (ZERO, Decimal(1)) or caps[lot, "serial_total"]):
+                    frappe.throw("序号预留必须逐号属于唯一原转料，不得重复、改批或拆分数量")
+                caps[lot, "serial_total"] = capacity
+            delivered = min(remaining[lot], capacity)
+            remaining[lot] -= delivered
             children.append((row, delivered))
             reserved += capacity
             used += delivered
@@ -874,6 +897,15 @@ def update_batch_loss_reservations(work, item, consumed_qty, warehouse, *, curre
             row.db_update()
         doc.update_status()
         doc.update_reserved_stock_in_bin()
+
+
+def _reservation_origins(pool):
+    sources = pool.get("sources")
+    if sources is not None:
+        return sources
+    # Existing single-batch proofs retain these aliases for ordinary callers.
+    return [{"stock_entry": pool["source_entry"], "detail": pool["source_detail"],
+             "original_qty": pool["original_qty"]}]
 
 
 def _request(value):
@@ -989,13 +1021,12 @@ def _inspect(job_card, request_id=None, *, only_previous=False):
     requested_batches = {}
     for item, qty in required.items():
         material = _authorized_read("Item", item)
-        if (material.stock_uom != units[item] or not material.get("is_stock_item")
-                or material.get("has_serial_no")):
-            frappe.throw("损耗材料单位不一致，或带序号需逐号核对，当前入口暂不能办理")
+        if material.stock_uom != units[item] or not material.get("is_stock_item"):
+            frappe.throw("损耗材料库存单位与原工单不一致")
         amount = qty * loss / _qty(work.qty)
         if amount <= 0 or amount > pool[item]:
             frappe.throw(f"材料 {item} 尚无足额的本工单在制库存，请先核对原转料")
-        if material.get("has_batch_no"):
+        if material.get("has_batch_no") or material.get("has_serial_no"):
             requested_batches[item] = amount
             continue
         items.append({"item_code": item, "qty": float(amount), "uom": units[item], "stock_uom": units[item],
@@ -1004,9 +1035,10 @@ def _inspect(job_card, request_id=None, *, only_previous=False):
     if requested_batches:
         for row in batch_sources.proposal(work, requested_batches, read=_authorized_read, records=_authorized_records):
             # Proof amounts/source names stay internal. Native creates a fresh
-            # outward bundle from this explicit single-batch stock-unit row.
-            items.append({field: row[field] for field in ("item_code", "batch_no", "qty", "uom", "stock_uom",
+            # outward bundle from the explicit batch/serial stock-unit row.
+            items.append({field: row[field] for field in ("item_code", "qty", "uom", "stock_uom",
                                                          "conversion_factor", "use_serial_batch_fields")})
+            items[-1].update({field: row[field] for field in ("batch_no", "serial_no") if row.get(field)})
             items[-1].update(transfer_qty=row["qty"], s_warehouse=work.wip_warehouse,
                              jf_flow_order=flow.name, allow_zero_valuation_rate=1)
     return {"job_card": card.name, "work_order": work.name, "flow_order": flow.name,
