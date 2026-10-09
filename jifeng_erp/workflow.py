@@ -308,6 +308,14 @@ def receipt_batch_candidates(flow_order):
 
 
 @frappe.whitelist()
+def manufacture_batch_candidates(flow_order):
+    """Read complete final manufacture coverage before batch classification."""
+    from jifeng_erp.flow_cost_sources import manufacture_batch_candidates as read_batches
+
+    return read_batches(flow_order)
+
+
+@frappe.whitelist()
 def material_issue_costs(flow_order):
     from jifeng_erp.flow_cost_sources import material_issue_costs as read_costs
 

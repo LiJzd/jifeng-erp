@@ -56,6 +56,7 @@ PARENTS.update({kind: fields for kind, fields in subcontract_stage.PARENTS.items
 # These fields are needed only when reading a manufacturing source. Existing
 # issue/receipt RPCs must not acquire new manufacturing money-field requirements.
 MANUFACTURE_FIELDS = {"work_order", "job_card", "total_additional_costs"}
+MANUFACTURE_QUANTITY_FIELDS = {"from_bom", "fg_completed_qty", "process_loss_qty"}
 MANUFACTURE_ITEM_FIELDS = {"is_finished_item", "secondary_item_type", "valuation_type",
                            "additional_cost", "landed_cost_voucher_amount"}
 TABLES = {
@@ -234,6 +235,7 @@ class _Session:
         self.receipts = None
         self.issues = None
         self.manufactures = None
+        self.manufacture_batches = None
         self.manufacture_names = set()
         self.ledger = {}
         self.repost_state = None
@@ -1113,7 +1115,7 @@ class _Session:
 
     def _manufacture_source(self, name):
         doc = self.source(SE, name)
-        fields = PARENTS[SE] | MANUFACTURE_FIELDS
+        fields = PARENTS[SE] | MANUFACTURE_FIELDS | MANUFACTURE_QUANTITY_FIELDS
         rows = self.records(SE, {"name": name}, fields)
         if len(rows) != 1 or any(doc.get(key) != value for key, value in rows[0].items()):
             _invalid()
@@ -1149,7 +1151,7 @@ class _Session:
         rows = self.raw(SE, [[SE, "docstatus", "=", 1], [SE, "purpose", "=", "Manufacture"],
                             ["Stock Entry Detail", "jf_flow_order", "=", self.flow.name]], distinct=True)
         parents.update((row["name"], row) for row in rows)
-        result = []
+        result, batches = [], []
         for name in sorted(parents):
             doc = self._manufacture_source(name)
             self._posted(SE, doc)
@@ -1252,10 +1254,46 @@ class _Session:
                     if row["name"] in consumed:
                         external_material += value
                 material = external_material
+            batch = self._manufacture_batch(doc, work, consumed, output_qty)
+            if batch is not None:
+                batches.append(batch)
             result.append({"manufacture": name, "work_order": work.name, "qty": output_qty,
                            "material": material, "other": other})
         self.manufactures = result
+        self.manufacture_batches = batches
         return result
+
+    def _manufacture_batch(self, doc, work, consumed, output_qty):
+        """One final-product quantity source per parent; no per-row loss guess.
+
+        Installed Manufacture stores coverage in fg_completed_qty and loss in
+        its parent. Actual FG stock is the closed detail/SLE transfer quantity.
+        Intermediate-stage loss is in that item's unit, not this Flow's FG unit.
+        """
+        outputs = [row for row in self.table(SE, doc.name, "items") if row["name"] not in consumed]
+        if any(row["item_code"] != self.fg.name for row in outputs):
+            return None
+        if any(doc.get(field) in (None, "") for field in MANUFACTURE_QUANTITY_FIELDS):
+            _invalid()
+        loss, coverage = _number(doc.process_loss_qty), _number(doc.fg_completed_qty)
+        if loss < 0 or coverage < 0:
+            _invalid()
+        stock_basis = all(row.get("uom") == self.fg.stock_uom
+                          and row.get("stock_uom") == self.fg.stock_uom
+                          and _number(row.get("conversion_factor")) == 1 for row in outputs)
+        if loss and (not doc.from_bom or not stock_basis):
+            frappe.throw("制造确认损耗与成品库存数量的单位口径无法准确核对，请先核对原生库存单位及换算系数")
+        if not _same_quantity(loss, loss, doc, "process_loss_qty"):
+            _invalid()
+        # With loss, only the proven stock-unit native shape can supply its
+        # coverage. Zero-loss historical conversion paths keep their actual
+        # stock quantities; do not mix their transaction header with stock UOM.
+        if doc.from_bom and stock_basis and not _same_quantity(
+                coverage, output_qty + loss, doc, "fg_completed_qty"):
+            frappe.throw("制造覆盖数量与准确成品入库、已确认损耗不一致，请核对原生制造来源")
+        return {"manufacture": doc.name, "work_order": work.name, "company": self.company,
+                "item_code": self.fg.name, "stock_uom": self.fg.stock_uom,
+                "qty": output_qty + loss, "inventory_qty": output_qty, "lost_qty": loss}
 
     def _reposting(self):
         # Native Transaction jobs clear item_code/warehouse. Resolve their
@@ -1430,6 +1468,20 @@ def receipt_batch_candidates(flow_order):
     return rows
 
 
+def manufacture_batch_candidates(flow_order):
+    session = _Session(flow_order, include_stages=True)
+    # A final stage may consume outsourced semi-products. Close that actual
+    # same-WO graph with its receipt sources; never borrow unrelated inventory.
+    _receipt_dto(session)
+    session.load_manufactures()
+    rows = session.manufacture_batches
+    state = _freeze(rows)
+    session.finish()
+    if _freeze(rows) != state:
+        _deny()
+    return rows
+
+
 def posted_flow_costs(flow_order):
     from jifeng_erp.flow_wage_cost_sources import posted_flow_wage_costs
 
@@ -1448,9 +1500,10 @@ def posted_flow_costs(flow_order):
         if any(row["other"] and (manual_wages or row["work_order"] in wage_work_orders)
                for row in manufactures):
             frappe.throw("同一生产范围已有制造附加费和工资计提，尚未核实附加费是否包含人工；请先明确费用来源，避免重复计入工资成本")
-    computed_sources = _freeze((issues, receipts, manufactures))
+    manufacture_batches = session.manufacture_batches
+    computed_sources = _freeze((issues, receipts, manufactures, manufacture_batches))
     session.finish(additional_guard=wages["finish_guard"])
-    if _freeze((issues, receipts, manufactures)) != computed_sources:
+    if _freeze((issues, receipts, manufactures, manufacture_batches)) != computed_sources:
         _deny()
     return {"issues": issues["rows"], "receipts": receipts["rows"], "manufactures": manufactures, "totals": {
         "issue_material": issues["totals"]["material"], "receipt_material": receipts["totals"]["material"],
@@ -1458,5 +1511,5 @@ def posted_flow_costs(flow_order):
         "material": issues["totals"]["material"] + receipts["totals"]["material"] + manufacture_material,
         "processing": receipts["totals"]["processing"] + wages["total"], "other": receipts["totals"]["other"] + manufacture_other},
         "receipt_valuation": receipts["receipt_valuation"],
-        "wages": wages["rows"],
+        "wages": wages["rows"], "manufacture_batches": manufacture_batches,
         "currency": session.currency}

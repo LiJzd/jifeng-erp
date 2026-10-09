@@ -1,6 +1,7 @@
 """Adversarial source closure models; no database or native permission changes."""
 
 from copy import deepcopy
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 import importlib.util
@@ -12,6 +13,35 @@ from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).parents[1]
+
+# Installed 16.36 StockEntry.py matches the locally pinned file after newline
+# normalization. Parent loss belongs to the single FG code, including split rows.
+_NATIVE_MANUFACTURE_COVERAGE = '''
+def validate_fg_completed_qty(self):
+    if self.purpose != "Manufacture" or not self.from_bom:
+        return
+    fg_qty = defaultdict(float)
+    for d in self.items:
+        if d.is_finished_item:
+            fg_qty[d.item_code] += flt(d.qty)
+    if not fg_qty:
+        return
+    precision = frappe.get_precision("Stock Entry Detail", "qty")
+    fg_item = next(iter(fg_qty.keys()))
+    fg_item_qty = flt(fg_qty[fg_item], precision)
+    fg_completed_qty = flt(self.fg_completed_qty, precision)
+    for d in self.items:
+        if not fg_qty.get(d.item_code):
+            continue
+        if (fg_completed_qty - fg_item_qty) > 0:
+            self.process_loss_qty = fg_completed_qty - fg_item_qty
+        if not self.process_loss_qty:
+            continue
+        if fg_completed_qty != (flt(fg_item_qty, precision) + flt(self.process_loss_qty, precision)):
+            frappe.throw(_(
+                "Since there is a process loss of {0} units for the finished good {1}, you should reduce the quantity by {0} units for the finished good {1} in the Items Table."
+            ).format(frappe.bold(self.process_loss_qty), frappe.bold(d.item_code)))
+'''
 
 
 class Record(dict):
@@ -133,9 +163,12 @@ class TestFlowCostSources(unittest.TestCase):
                 self.schema(childtype, fields, money)
                 self.metas[doctype][fieldname] = Record(fieldname=fieldname, fieldtype="Table", permlevel=0, options=childtype)
                 # Installed Frappe excludes Table from get_permitted_fields.
-        self.permitted[self.module.SE].update(self.module.MANUFACTURE_FIELDS)
+        manufacture_fields = self.module.MANUFACTURE_FIELDS | self.module.MANUFACTURE_QUANTITY_FIELDS
+        self.permitted[self.module.SE].update(manufacture_fields)
         self.metas[self.module.SE].update({field: Record(fieldname=field, fieldtype="Currency" if field in money else "Link", permlevel=0)
-                                          for field in self.module.MANUFACTURE_FIELDS})
+                                          for field in manufacture_fields})
+        for field in self.module.MANUFACTURE_QUANTITY_FIELDS:
+            self.metas[self.module.SE][field].fieldtype = "Check" if field == "from_bom" else "Float"
         childtype = "Stock Entry Detail"
         self.permitted[childtype].update(self.module.MANUFACTURE_ITEM_FIELDS)
         self.metas[childtype].update({field: Record(fieldname=field, fieldtype="Currency" if field in money else "Check", permlevel=0)
@@ -577,6 +610,7 @@ class TestFlowCostSources(unittest.TestCase):
             self.add(self.module.WO, work, company="JF", production_item="FG", jf_flow_order=flow, track_semi_finished_goods=0)
         doc = self.add(self.module.SE, name, company="JF", purpose="Manufacture", stock_entry_type="Manufacture",
             work_order=work, job_card=None, total_additional_costs=other,
+            from_bom=1, fg_completed_qty=qty, process_loss_qty=0,
             posting_date=date(2026, 10, 3), posting_time=timedelta(hours=10))
         for suffix, item, quantity, source, target, finished, additional in (
             ("RM", "RM", raw_qty, "RM-WH", None, 0, 0),
@@ -1336,6 +1370,110 @@ class TestFlowCostSources(unittest.TestCase):
         self.assertEqual([row["manufacture"] for row in result["manufactures"]], ["MAKE"])
         first.docstatus = 2
         self.assertEqual(self.module.posted_flow_costs("FLOW")["manufactures"], [])
+
+    def test_native_manufacture_loss_enters_exact_stock_batch_and_cost_denominator(self):
+        doc = self.manufacture(qty=4)
+        doc.fg_completed_qty = 5
+        namespace = {"defaultdict": defaultdict, "flt": self.module.flt, "frappe": self.frappe,
+                     "_": lambda value: value}
+        self.frappe.get_precision = lambda doctype, field: self.precisions.get((doctype, field), 6)
+        self.frappe.bold = str
+        exec(_NATIVE_MANUFACTURE_COVERAGE, namespace)
+        native_doc = self.get_doc(self.module.SE, doc.name)
+        namespace["validate_fg_completed_qty"](native_doc)
+        doc.process_loss_qty = native_doc.process_loss_qty
+        self.assertEqual(doc.process_loss_qty, 1)
+        result = self.module.posted_flow_costs("FLOW")
+        expected = [{"manufacture": "MAKE", "work_order": "WO", "company": "JF", "item_code": "FG",
+                     "stock_uom": "Nos", "qty": 5, "inventory_qty": 4, "lost_qty": 1}]
+        self.assertEqual(result["manufacture_batches"], expected)
+        self.assertEqual(self.module.manufacture_batch_candidates("FLOW"), expected)
+        from jifeng_erp.costing import calculate
+        cost = calculate(5, result["totals"]["material"], 0, 0, [{
+            "receipt_type": "首次回货", "received_qty": 5, "good_qty": 4,
+            "lost_qty": 1, "rework_qty": 0, "pending_qty": 0, "extra_processing_amount": 0}])
+        self.assertEqual((cost["estimated_unit_cost"], cost["allocated_good_cost"]), ("10", "40"))
+
+    def test_manufacture_split_same_fg_warehouses_keeps_one_parent_loss(self):
+        doc = self.manufacture(qty=4)
+        doc.update(fg_completed_qty=5, process_loss_qty=1)
+        fg = self.documents["Stock Entry Detail", "MAKE-FG"]
+        fg.update(qty=2, transfer_qty=2)
+        self.documents[self.module.SLE, "MAKE-FG-SLE"].update(actual_qty=2, stock_value_difference=20)
+        self.child(self.module.SE, "MAKE", "items", "MAKE-FG2", item_code="FG", jf_flow_order="FLOW",
+            qty=2, uom="Nos", stock_uom="Nos", conversion_factor=1, transfer_qty=2,
+            s_warehouse=None, t_warehouse="REJECT-WH", is_finished_item=1,
+            secondary_item_type=None, valuation_type=None, additional_cost=0, landed_cost_voucher_amount=0)
+        self.ledger("MAKE-FG2-SLE", self.module.SE, "MAKE", "MAKE-FG2", "FG", "REJECT-WH", 2, 20)
+        self.assertEqual([(row["qty"], row["inventory_qty"], row["lost_qty"])
+                          for row in self.module.manufacture_batch_candidates("FLOW")], [(5, 4, 1)])
+        self.documents[self.module.SLE, "MAKE-FG2-SLE"].actual_qty = 1
+        with self.assertRaises(ValueError): self.module.manufacture_batch_candidates("FLOW")
+
+    def test_manufacture_batch_cancel_removes_only_its_source_and_confirmed_loss(self):
+        first = self.manufacture(qty=4)
+        first.update(fg_completed_qty=5, process_loss_qty=1)
+        second = self.manufacture("MAKE2", qty=2, material=20)
+        self.assertEqual([row["manufacture"] for row in self.module.manufacture_batch_candidates("FLOW")],
+                         ["MAKE", "MAKE2"])
+        first.docstatus = 2
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((len(result["manufacture_batches"]), result["manufacture_batches"][0]["lost_qty"],
+                          result["totals"]["material"]), (1, 0, 20))
+        second.docstatus = 2
+        self.assertEqual(self.module.manufacture_batch_candidates("FLOW"), [])
+
+    def test_manufacture_nonstock_loss_refuses_but_zero_loss_converted_money_stays_valid(self):
+        doc = self.manufacture(qty=5)
+        fg = self.documents["Stock Entry Detail", "MAKE-FG"]
+        fg.update(qty=Decimal("1.25"), uom="Box", conversion_factor=4)
+        doc.fg_completed_qty = Decimal("1.25")
+        result = self.module.posted_flow_costs("FLOW")
+        self.assertEqual((result["totals"]["material"], result["manufacture_batches"][0]["qty"]), (40, 5))
+        doc.process_loss_qty = 1
+        with self.assertRaisesRegex(ValueError, "单位口径"): self.module.posted_flow_costs("FLOW")
+        fg.update(qty=5, uom="Nos", conversion_factor=1)
+        doc.update(from_bom=0, fg_completed_qty=0)
+        with self.assertRaisesRegex(ValueError, "单位口径"): self.module.manufacture_batch_candidates("FLOW")
+
+    def test_manufacture_quantity_uses_native_precision_and_rejects_missing_or_negative_loss(self):
+        doc = self.manufacture(qty=4)
+        doc.update(fg_completed_qty=Decimal("5.0000004"), process_loss_qty=1)
+        self.precisions[self.module.SE, "fg_completed_qty"] = 3
+        self.assertEqual(self.module.manufacture_batch_candidates("FLOW")[0]["qty"], 5)
+        self.precisions[self.module.SE, "fg_completed_qty"] = 9
+        with self.assertRaisesRegex(ValueError, "覆盖数量"): self.module.manufacture_batch_candidates("FLOW")
+        doc.fg_completed_qty = 5
+        for value in (None, -1):
+            doc.process_loss_qty = value
+            with self.subTest(loss=value), self.assertRaises(ValueError):
+                self.module.manufacture_batch_candidates("FLOW")
+
+    def test_manufacture_quantity_fields_permissions_masks_and_changes_are_closed(self):
+        doc = self.manufacture(qty=4)
+        doc.update(fg_completed_qty=5, process_loss_qty=1)
+        for field in self.module.MANUFACTURE_QUANTITY_FIELDS:
+            self.omitted[self.module.SE] = {field}
+            with self.subTest(field=field), self.assertRaises(PermissionError):
+                self.module.manufacture_batch_candidates("FLOW")
+        self.omitted.clear()
+        self.metas[self.module.SE]["process_loss_qty"].mask = 1
+        with self.assertRaises(PermissionError): self.module.posted_flow_costs("FLOW")
+        self.metas[self.module.SE]["process_loss_qty"].mask = 0
+        count = 0
+        def change(filters):
+            nonlocal count
+            count += 1
+            if count == 2: doc.process_loss_qty = 0
+        self.list_hooks["Company"] = change
+        with self.assertRaises((PermissionError, ValueError)):
+            self.module.manufacture_batch_candidates("FLOW")
+
+    def test_intermediate_manufacture_loss_is_not_added_to_final_item_batches(self):
+        cast, _receipt, _row = self.stage_chain()
+        cast.update(fg_completed_qty=12, process_loss_qty=2)
+        self.assertEqual(self.module.manufacture_batch_candidates("FLOW"), [])
+        self.assertEqual(self.module.posted_flow_costs("FLOW")["manufacture_batches"], [])
 
     def test_exact_accrued_wages_add_processing_once_and_cancel_leaves_material(self):
         self.manufacture(material=40, other=0)
