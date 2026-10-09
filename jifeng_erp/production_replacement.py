@@ -16,6 +16,7 @@ WORK_FIELDS = (
     "name", "modified", "docstatus", "company", "production_item", "bom_no", "qty",
     "produced_qty", "process_loss_qty", "sales_order", "sales_order_item", "jf_flow_order",
     "jf_replacement_of", "track_semi_finished_goods", "status",
+    "production_plan", "production_plan_item", "production_plan_sub_assembly_item",
 )
 
 
@@ -74,9 +75,15 @@ def _locked_context(flow_order, expected_version):
     if remainder < -TOLERANCE:
         frappe.throw("有效工单预留已超过流程单计划，请先核对原单")
     sources = []
+    plan_source = False
     for work in works:
         loss = number(work.process_loss_qty, "工单损耗")
         if work.docstatus != 1 or loss <= 0 or work.status in ("Stopped", "Closed"):
+            continue
+        if any(work.get(field) for field in ("production_plan", "production_plan_item", "production_plan_sub_assembly_item")):
+            # Native plan factories retain their exact row and progress counters.
+            # The direct Flow factory must not create a detached plan replacement.
+            plan_source = True
             continue
         if abs(losses.get(work.name, ZERO) - loss) > TOLERANCE:
             frappe.throw("工单损耗进度与已出账损耗不一致，请先核对损耗凭证")
@@ -100,7 +107,7 @@ def _locked_context(flow_order, expected_version):
                                         separators=(",", ":")).encode()).hexdigest()
     return flow, {"flow_order": flow.name, "version": str(flow.modified), "stock_uom": flow.stock_uom,
                   "planned_qty": float(plan), "available_qty": float(max(ZERO, remainder)),
-                  "sources": sources, "snapshot": snapshot}
+                  "sources": sources, "plan_source": plan_source, "snapshot": snapshot}
 
 
 @frappe.whitelist(methods=["GET"])
@@ -115,7 +122,7 @@ def make_replacement(flow_order, expected_version, source_work_order, snapshot):
         frappe.throw("工单、库存损耗或预留数量已变化，请重新核对后生成补产草稿")
     source = next((row for row in context["sources"] if row["work_order"] == source_work_order), None)
     if not source:
-        frappe.throw("请选择当前流程已出账损耗的有效工单")
+        frappe.throw("请选择本流程可直接补产的损耗工单；生产计划来源须在原生产计划按剩余数量安排补产")
     if source["draft"]:
         return {"work_order": source["draft"], "qty": source["draft_qty"], "reused": True}
     quantity = number(source["available_qty"], "可补产数量")
@@ -151,6 +158,8 @@ def validate_replacement(doc):
         frappe.throw("补产工单必须关联本流程的其他原工单")
     source = frappe.get_doc("Work Order", doc.jf_replacement_of, for_update=True)
     source.check_permission("read")
+    if any(source.get(field) for field in ("production_plan", "production_plan_item", "production_plan_sub_assembly_item")):
+        frappe.throw("原工单来自生产计划，请在原生产计划按损耗剩余数量安排补产")
     if (source.docstatus != 1 or source.company != doc.company
             or source.get("jf_flow_order") != doc.jf_flow_order or source.production_item != doc.production_item
             or source.bom_no != doc.bom_no or source.get("track_semi_finished_goods")

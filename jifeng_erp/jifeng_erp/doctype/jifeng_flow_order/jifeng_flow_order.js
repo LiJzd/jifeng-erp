@@ -87,7 +87,9 @@ frappe.ui.form.on("Jifeng Flow Order", {
                 });
             }
             const sources = context.sources.filter(row => row.draft || row.available_qty > 0);
-            if (!sources.length) return frappe.msgprint("本流程没有已出账且未安排的补产数量，请核对损耗凭证和已有工单。");
+            if (!sources.length) return frappe.msgprint(context.plan_source ?
+                "原工单来自生产计划，请在原生产计划按损耗后的剩余数量安排补产。" :
+                "本流程没有已出账且未安排的补产数量，请核对损耗凭证和已有工单。");
             let dialog;
             const showSource = () => {
                 if (!dialog) return;

@@ -140,7 +140,7 @@ class ReplacementTests(unittest.TestCase):
     def test_no_manufactured_loss_does_not_create(self):
         self.work.update(process_loss_qty=0, produced_qty=0)
         self.sources.clear()
-        with self.assertRaisesRegex(ValueError, "有效工单"):
+        with self.assertRaisesRegex(ValueError, "损耗工单"):
             self.make()
 
     def test_hidden_other_order_blocks_and_does_not_leak(self):
@@ -182,6 +182,19 @@ class ReplacementTests(unittest.TestCase):
         doc = Row(self.work)
         doc.update(name="NEW", docstatus=0, jf_replacement_of=None, previous=Row(jf_replacement_of="WO"))
         with self.assertRaisesRegex(ValueError, "不能修改"):
+            self.module.validate_replacement(doc)
+
+    def test_production_plan_source_keeps_native_exact_plan_row_factory(self):
+        self.work["production_plan"] = "PLAN"
+        self.work["production_plan_item"] = "PLAN-ROW"
+        state = self.context()
+        self.assertTrue(state["plan_source"])
+        self.assertEqual(state["sources"], [])
+        with self.assertRaisesRegex(ValueError, "生产计划"):
+            self.make(state)
+        doc = Row(self.work)
+        doc.update(name="NEW", docstatus=0, new=True, jf_replacement_of="WO", qty=5)
+        with self.assertRaisesRegex(ValueError, "生产计划"):
             self.module.validate_replacement(doc)
 
 
