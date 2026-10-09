@@ -40,7 +40,9 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 		this.search.placeholder = __("工资条编号或姓名关键词"); this.search.setAttribute("aria-label", __("查询关键词"));
 		this.status = this.el("p", __("请选择公司并查询。"), "jfe-salary-analysis-status"); this.status.setAttribute("role", "status");
 		this.queryButton = this.button("查询", () => this.query());
-		toolbar.append(companyHost, employeeHost, currencyHost, this.from, this.to, this.basis, this.search, this.queryButton);
+		this.printButton = this.button("打印", () => this.output("print"));
+		this.exportButton = this.button("导出", () => this.output("export"));
+		toolbar.append(companyHost, employeeHost, currencyHost, this.from, this.to, this.basis, this.search, this.queryButton, this.printButton, this.exportButton);
 		this.container.append(toolbar, this.el("p", __("仅读取已提交工资条。净应发不代表已付款；工序金额只归属于已核实的工资附加薪资来源。"), "jfe-salary-analysis-note"), this.status);
 		this.totals = this.el("section", undefined, "jfe-salary-analysis-totals");
 		this.charts = this.el("div", undefined, "jfe-salary-analysis-charts");
@@ -52,12 +54,15 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 		}
 		for (const control of [this.company, this.employee, this.currency])
 			control.$input?.on?.("input.jifeng-salary-analysis change.jifeng-salary-analysis", () => this.invalidate());
+		this.updateOutputButtons();
 	}
 	invalidate() {
 		if (this.disposed) return;
+		this.cancelOutput(); this.result = null;
 		this.revision++; this.loading = false; this.queryButton.disabled = false;
 		this.totals.replaceChildren(); this.charts.replaceChildren(); this.sources.replaceChildren();
 		this.status.textContent = __("筛选已变化，请重新查询。");
+		this.updateOutputButtons();
 	}
 	async initialize() {
 		const value = frappe.defaults?.get_user_default?.("Company");
@@ -83,7 +88,9 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 		if (this.disposed || this.loading) return;
 		const context = this.context();
 		if (!this.valid(context)) { frappe.msgprint(__("请核对公司、日期和员工筛选。")); return; }
+		this.cancelOutput(); this.result = null;
 		const revision = ++this.revision; this.loading = true; this.queryButton.disabled = true;
+		this.updateOutputButtons();
 		this.status.textContent = __("正在读取已保存的工资条与计薪来源…");
 		this.totals.replaceChildren(); this.charts.replaceChildren(); this.sources.replaceChildren();
 		try {
@@ -97,11 +104,11 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 				this.status.textContent = __("当前范围含多种币种，未进行跨币种合计。请在币种筛选中选择一个币种后查询。"); return;
 			}
 			if (!this.validResult(result, context)) throw new Error("Invalid salary analysis");
-			this.render(result); this.status.textContent = __("已读取") + " " + result.salary_slips + __(" 张已提交工资条 · 币种：") + (result.currency || __("无数据")) + "。";
+			this.result = result; this.render(result); this.status.textContent = __("已读取") + " " + result.salary_slips + __(" 张已提交工资条 · 币种：") + (result.currency || __("无数据")) + "。";
 		} catch {
 			if (!this.disposed && revision === this.revision) this.status.textContent = __("来源或权限无法完整核实，请缩小范围或重新查询。");
 		} finally {
-			if (!this.disposed && revision === this.revision) { this.loading = false; this.queryButton.disabled = false; }
+			if (!this.disposed && revision === this.revision) { this.loading = false; this.queryButton.disabled = false; this.updateOutputButtons(); }
 		}
 	}
 	validMoney(value) { return typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value); }
@@ -111,11 +118,83 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 	}
 	validResult(result, context) {
 		return this.sameContext(result.context, context) && typeof result.currency === "string" &&
+			typeof result.result_version === "string" && /^[0-9a-f]{64}$/.test(result.result_version) &&
 			Number.isSafeInteger(result.salary_slips) && result.salary_slips >= 0 && result.settlements &&
 			["gross_pay", "total_deduction", "net_pay", "rounded_total"].every(key => this.validMoney(result.settlements[key])) &&
 			this.validChart(result.department) && this.validChart(result.group) && this.validChart(result.operation) &&
-			Array.isArray(result.sources) && result.sources.every(source => source && ["salary_slip", "salary_slip_version", "employee", "employee_name", "operation", "wage_entry", "wage_entry_version"].every(key => typeof source[key] === "string") && this.validMoney(source.amount)) &&
+			Array.isArray(result.slips) && result.slips.length === result.salary_slips && new Set(result.slips.map(row => row?.name)).size === result.salary_slips &&
+			result.slips.every(row => row && ["name", "version", "employee", "employee_name", "department", "currency", "start_date", "end_date"].every(key => typeof row[key] === "string") &&
+				row.currency === result.currency && ["gross_pay", "total_deduction", "net_pay", "rounded_total"].every(key => this.validMoney(row[key]))) &&
+			Array.isArray(result.sources) && result.sources.every(source => source && ["salary_slip", "salary_slip_version", "employee", "employee_name", "operation", "wage_entry", "wage_entry_version", "additional_salary", "additional_salary_version"].every(key => typeof source[key] === "string") && this.validMoney(source.amount)) &&
 			Array.isArray(result.notes) && result.notes.every(note => typeof note === "string");
+	}
+	updateOutputButtons() {
+		const enabled = !this.disposed && !this.loading && !this.outputting && !!this.result && this.sameContext(this.result.context, this.context());
+		this.printButton.disabled = !enabled; this.exportButton.disabled = !enabled;
+	}
+	cancelOutput() {
+		this.outputController?.abort(); this.outputController = null; this.outputting = false;
+		this.printFrame?.remove(); this.printFrame = null;
+	}
+	async output(kind) {
+		if (!["export", "print"].includes(kind) || this.disposed || this.loading || this.outputting || !this.result) return;
+		const context = this.context(), result = this.result;
+		if (!this.valid(context) || !this.sameContext(result.context, context)) { this.invalidate(); return; }
+		const revision = this.revision, controller = new AbortController();
+		const current = () => !this.disposed && !controller.signal.aborted && this.outputController === controller &&
+			revision === this.revision && this.result === result && this.sameContext(context, this.context());
+		this.cancelOutput(); this.outputController = controller; this.outputting = true; this.updateOutputButtons();
+		this.status.textContent = __(kind === "export" ? "正在导出当前筛选的工资结算、图表和来源…" : "正在核对工资来源和打印权限…");
+		let url;
+		try {
+			const contentType = kind === "export" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/html";
+			const args = { context: JSON.stringify(context), result_version: result.result_version };
+			const response = await fetch("/api/method/jifeng_erp.salary_analysis_output." + kind + "_salary_analysis?" + new URLSearchParams(args),
+				{ method: "GET", credentials: "same-origin", headers: { Accept: contentType }, signal: controller.signal });
+			if (!current()) return;
+			if (!response.ok || response.headers.get("Content-Type")?.split(";")[0].trim() !== contentType) throw new Error("Salary analysis output failed");
+			if (kind === "export") {
+				const file = await response.blob(); if (!current()) return;
+				if (!file.size) throw new Error("Empty salary analysis export");
+				url = URL.createObjectURL(file); const link = this.el("a");
+				link.href = url; link.download = "工资历史分析.xlsx"; document.body.append(link); link.click(); link.remove();
+				this.status.textContent = __("已导出当前筛选的结算、三图和准确来源；净应发不表示已付款。");
+			} else {
+				const html = await response.text(); if (!current()) return;
+				if (!html.startsWith("<!doctype html>")) throw new Error("Invalid salary analysis print");
+				await this.printHtml(html, controller, current);
+				if (current()) this.status.textContent = __("已打开当前筛选的工资分析打印；请在打印窗口选择打印机或保存为PDF。");
+			}
+		} catch {
+			if (current()) {
+				this.result = null; this.totals.replaceChildren(); this.charts.replaceChildren(); this.sources.replaceChildren();
+				this.printFrame?.remove(); this.printFrame = null;
+				this.status.textContent = __("输出未完成，来源可能变化或打印／导出权限不足，请重新查询后重试。");
+			}
+		} finally {
+			if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+			if (this.outputController === controller) { this.outputController = null; this.outputting = false; this.updateOutputButtons(); }
+		}
+	}
+	async printHtml(html, controller, current) {
+		const frame = this.el("iframe"); frame.setAttribute("title", __("工资分析打印")); frame.setAttribute("aria-hidden", "true");
+		frame.setAttribute("sandbox", "allow-same-origin allow-modals");
+		frame.style.cssText = "position:fixed;left:-10000px;top:0;width:1122px;height:800px;border:0";
+		this.printFrame = frame;
+		await new Promise((resolve, reject) => {
+			const finish = error => {
+				clearTimeout(timer); controller.signal.removeEventListener("abort", abort);
+				frame.onload = null; frame.onerror = null; error ? reject(error) : resolve();
+			};
+			const abort = () => finish(new Error("Print cancelled"));
+			const timer = setTimeout(() => finish(new Error("Print load timeout")), 10000);
+			controller.signal.addEventListener("abort", abort, { once: true });
+			frame.onload = () => finish(); frame.onerror = () => finish(new Error("Print load failed"));
+			frame.srcdoc = html; document.body.append(frame);
+		});
+		if (!current()) { frame.remove(); return; }
+		frame.contentWindow.addEventListener("afterprint", () => { frame.remove(); if (this.printFrame === frame) this.printFrame = null; }, { once: true });
+		frame.contentWindow.focus(); frame.contentWindow.print();
 	}
 	render(result) {
 		this.totals.replaceChildren(this.el("h2", __("工资结算") + (result.currency ? " · " + result.currency : "")));
@@ -156,5 +235,8 @@ window.JifengSalaryAnalysis = class JifengSalaryAnalysis {
 		if (!rows.length) list.append(this.el("li", __("当前范围没有已提交工资条。")));
 		section.append(list); return section;
 	}
-	destroy() { this.disposed = true; this.revision++; this.container.replaceChildren(); }
+	destroy() {
+		this.cancelOutput(); this.disposed = true; this.revision++; this.container.replaceChildren();
+		for (const control of [this.company, this.employee, this.currency]) control.$input?.off?.(".jifeng-salary-analysis");
+	}
 };

@@ -62,7 +62,7 @@ class TestSalaryAnalysis(unittest.TestCase):
 		self.assertEqual(result["operation"], [{"name": "未归类", "amount": "1030.10", "share_percent": "100.00"}])
 
 	def test_mixed_salary_detail_splits_only_exact_wage_increment_to_operation(self):
-		snapshot = {"records": {}, "rows": [{"row": {"name": "SAL-2", "version": "v2", "employee": "EMP-1",
+		snapshot = {"records": {("Additional Salary", "AS-1"): {"modified": "v4"}}, "rows": [{"row": {"name": "SAL-2", "version": "v2", "employee": "EMP-1",
 			"employee_name": "员工一", "department": "装配", "gross_pay": "1030", "total_deduction": "0",
 			"net_pay": "1030", "rounded_total": "1030", "start_date": "2026-10-01", "end_date": "2026-10-31",
 			"company": "QA", "currency": "CNY"}, "children": {"earnings": [{"amount": "1030",
@@ -74,6 +74,8 @@ class TestSalaryAnalysis(unittest.TestCase):
 			{"name": "未归类", "amount": "1000", "share_percent": "97.09"},
 			{"name": "装配", "amount": "30", "share_percent": "2.91"}])
 		self.assertEqual(result["sources"][0]["wage_entry"], "WAGE-1")
+		self.assertEqual(result["sources"][0]["additional_salary_version"], "v4")
+		self.assertEqual(result["slips"][0]["net_pay"], "1030")
 
 	def test_independent_additional_salary_row_uses_salary_history_source_validation(self):
 		wage = {"name": "WAGE-2", "modified": "v7", "docstatus": 1, "company": "QA", "employee": "EMP-1",
@@ -121,6 +123,8 @@ class TestSalaryAnalysis(unittest.TestCase):
 		self.assertEqual(result["context"], {**context, "employee": ""})
 		self.assertEqual(result["salary_slips"], 0)
 		self.assertEqual(result["department"], [])
+		version = result.pop("result_version")
+		self.assertEqual(version, self.A._result_version(result))
 
 	def test_mixed_currency_scope_returns_selection_required_without_cross_currency_totals(self):
 		context = {"company": "QA", "from_date": "2026-10-01", "to_date": "2026-10-31",

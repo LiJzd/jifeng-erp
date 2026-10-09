@@ -1,6 +1,7 @@
 """Read-only charts based on saved, submitted payroll settlements."""
 
 from decimal import Decimal, localcontext
+import hashlib
 import json
 
 import frappe
@@ -115,7 +116,7 @@ def _operation(capture, snapshot, slip, child):
 
 def _build(snapshot, employee_filter, currency_filter):
     totals = {key: Decimal(0) for key in ("gross_pay", "total_deduction", "net_pay", "rounded_total")}
-    departments, groups, operations, sources = {}, {}, {}, []
+    departments, groups, operations, sources, slips = {}, {}, {}, [], []
     capture = H._Capture()
     seen_wages = set()
     selected = 0
@@ -126,6 +127,9 @@ def _build(snapshot, employee_filter, currency_filter):
         if currency_filter and slip["currency"] != currency_filter:
             continue
         selected += 1
+        slips.append({field: slip[field] for field in ("name", "version", "employee", "employee_name",
+            "department", "currency", "start_date", "end_date", "gross_pay", "total_deduction",
+            "net_pay", "rounded_total")})
         for key in totals:
             totals[key] += Decimal(slip[key])
         department = slip["department"] or "未归类"
@@ -150,17 +154,22 @@ def _build(snapshot, employee_filter, currency_filter):
                 raise H._Changed
             seen_wages.add(wage["name"])
             source_amount = Decimal(wage["total_amount"])
+            additional = snapshot["records"].get(("Additional Salary", child["additional_salary"]))
+            if not additional or not isinstance(additional.get("modified"), str):
+                raise H._Changed
             operations[wage["operation"]] = operations.get(wage["operation"], Decimal(0)) + wage_amount
             operations["未归类"] = operations.get("未归类", Decimal(0)) + base_amount
             sources.append({"salary_slip": slip["name"], "salary_slip_version": slip["version"],
                 "employee": slip["employee"], "employee_name": slip["employee_name"],
                 "operation": wage["operation"], "amount": _money(source_amount),
-                "wage_entry": wage["name"], "wage_entry_version": wage["modified"]})
+                "wage_entry": wage["name"], "wage_entry_version": wage["modified"],
+                "additional_salary": child["additional_salary"],
+                "additional_salary_version": additional["modified"]})
     _compare_snapshot(snapshot, capture)
     return {"settlements": {key: _money(value) for key, value in totals.items()},
         "department": _chart(departments, totals["gross_pay"]),
         "group": _chart(groups, totals["gross_pay"]), "operation": _chart(operations, totals["gross_pay"]),
-        "sources": sources, "salary_slips": selected,
+        "sources": sources, "slips": slips, "salary_slips": selected,
         "notes": ["仅含筛选范围内已提交工资条；取消工资条不计入。",
             "净应发与舍入净应发是工资结算金额，不表示已付款。",
             "部门取工资条保存的部门；未记录部门归入未归类。",
@@ -172,6 +181,12 @@ def _chart(values, total):
     return [{"name": name, "amount": _money(amount),
         "share_percent": format((amount * 100 / total).quantize(Decimal("0.01")) if total else Decimal(0), "f")}
         for name, amount in sorted(values.items(), key=lambda pair: (-pair[1], pair[0]))]
+
+
+def _result_version(result):
+    """Bind print/export to the exact queried values and saved identities."""
+    return hashlib.sha256(json.dumps(result, sort_keys=True, ensure_ascii=False,
+        allow_nan=False).encode("utf-8")).hexdigest()
 
 
 @frappe.whitelist(methods=["GET"])
@@ -209,9 +224,11 @@ def query_salary_analysis(context):
             second = _build(snapshot, employee, currency)
         if first != second or before != H._permission_state():
             raise H._Changed
-        return {"readonly": True, "scope": SCOPE,
+        result = {"readonly": True, "scope": SCOPE,
             "context": {**context, "employee": employee, "currency": requested_currency},
             "currency": currency, **second}
+        result["result_version"] = _result_version(result)
+        return result
     except (H._Unavailable, H._Unclassified, frappe.PermissionError,
             frappe.DoesNotExistError, ValueError, TypeError, OverflowError):
         _deny()
