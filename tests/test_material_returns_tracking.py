@@ -65,7 +65,8 @@ class TestMaterialReturnTracking(unittest.TestCase):
                         voucher_no="ISSUE" if original else "RETURN", voucher_detail_no="ORIGINAL-ROW" if original else "RETURN-ROW",
                         type_of_transaction="Outward" if original else "Inward", is_cancelled=0,
                         has_serial_no=evidence["item"].has_serial_no, has_batch_no=1, entries=rows,
-                        total_qty=sum((row.qty for row in rows), Decimal(0)) if total is None else total)
+                        total_qty=sum((row.qty for row in rows), Decimal(0)) if total is None else total,
+                        total_amount=sum((row.stock_value_difference for row in rows), Decimal(0)))
         self.docs[(self.m.BUNDLE, name)] = result
         return result
 
@@ -133,16 +134,19 @@ class TestMaterialReturnTracking(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 self.m._selected_pools(self.source(evidence), doc, row, evidence)
 
-    def test_mixed_historical_layers_require_the_entire_unreturned_batch(self):
+    def test_same_batch_multiple_issue_prices_support_exact_original_pool_partial_returns(self):
         evidence = self.evidence()
         self.original_pools(evidence, [(None, "B1", 2, 4), (None, "B1", 2, 20)])
         doc, row = self.returned(evidence, batch="B1", quantity="1")
         chosen = self.m._selected_pools(self.source(evidence), doc, row, evidence)
-        with self.assertRaisesRegex(ValidationError, "多层历史估值"):
-            self.m._selected_value(evidence, chosen, {})
-        row.qty = row.transfer_qty = 4
+        used = self.m.MaterialReturnUsage()
+        self.assertEqual(self.m._selected_value(evidence, chosen, used), Decimal("12"))
+        row.qty = row.transfer_qty = 3
         chosen = self.m._selected_pools(self.source(evidence), doc, row, evidence)
-        self.assertEqual(self.m._selected_value(evidence, chosen, {}), Decimal("48"))
+        self.assertEqual(self.m._selected_value(evidence, chosen, used), Decimal("36"))
+        self.assertEqual(used.values_used[("batch", "B1")], Decimal("48"))
+        with self.assertRaisesRegex(ValidationError, "累计退回超过"):
+            self.m._selected_value(evidence, chosen, used)
 
     def test_original_bundle_exact_company_voucher_row_direction_flags_and_entry_parent_are_required(self):
         evidence = self.evidence()
@@ -189,7 +193,7 @@ class TestMaterialReturnTracking(unittest.TestCase):
     def test_ledger_link_original_bundle_quantity_and_value_agree(self):
         evidence = self.evidence()
         self.bundle(evidence, [(None, "B1", 4, 10)])
-        evidence["ledger"] = [Record(actual_qty=-4, serial_and_batch_bundle="ORIGINAL-BUNDLE")]
+        evidence["ledger"] = [Record(actual_qty=-4, stock_value_difference=-40, serial_and_batch_bundle="ORIGINAL-BUNDLE")]
         self.frappe.get_all = self.frappe.get_list = lambda *args, **kwargs: ["ORIGINAL-BUNDLE"]
         pools = self.m._original_pools(self.source(evidence), evidence, Decimal("40"))
         self.assertEqual(pools[("batch", "B1")]["value"], Decimal("40"))
@@ -208,7 +212,7 @@ class TestMaterialReturnTracking(unittest.TestCase):
         evidence = self.evidence(serial=True, quantity="2")
         self.bundle(evidence, [("S1", "B1", 1, 3), ("S2", "B1", 1, 27)])
         evidence["item"].use_serial_no_wise_valuation = 0
-        evidence["ledger"] = [Record(actual_qty=-2, serial_and_batch_bundle="ORIGINAL-BUNDLE")]
+        evidence["ledger"] = [Record(actual_qty=-2, stock_value_difference=-30, serial_and_batch_bundle="ORIGINAL-BUNDLE")]
         self.frappe.get_all = self.frappe.get_list = lambda *args, **kwargs: ["ORIGINAL-BUNDLE"]
         with self.assertRaisesRegex(ValidationError, "未启用逐号估值且原行序列价格不一致"):
             self.m._original_pools(self.source(evidence), evidence, Decimal("30"))
@@ -217,7 +221,7 @@ class TestMaterialReturnTracking(unittest.TestCase):
         evidence = self.evidence(serial=True, quantity="2")
         self.bundle(evidence, [("S1", "B1", 1, 8), ("S2", "B1", 1, 8)])
         evidence["item"].use_serial_no_wise_valuation = 0
-        evidence["ledger"] = [Record(actual_qty=-2, serial_and_batch_bundle="ORIGINAL-BUNDLE")]
+        evidence["ledger"] = [Record(actual_qty=-2, stock_value_difference=-16, serial_and_batch_bundle="ORIGINAL-BUNDLE")]
         self.frappe.get_all = self.frappe.get_list = lambda *args, **kwargs: ["ORIGINAL-BUNDLE"]
         evidence["pools"] = self.m._original_pools(self.source(evidence), evidence, Decimal("16"))
         self.assertTrue(evidence["serial_row_valuation"])
