@@ -27,8 +27,11 @@ PARENTS = {
         "track_semi_finished_goods", "is_corrective_job_card", "finished_good", "wip_warehouse"},
     "Work Order": IDENTITY | {"company", "production_item", "stock_uom", "bom_no", "jf_flow_order", "qty",
         "track_semi_finished_goods", "wip_warehouse", "status", "produced_qty",
-        "production_plan", "production_plan_item", "production_plan_sub_assembly_item"},
-    "Jifeng Flow Order": IDENTITY | {"company", "item_code", "stock_uom", "bom"},
+        "production_plan", "production_plan_item", "production_plan_sub_assembly_item", "sales_order", "sales_order_item"},
+    "Jifeng Flow Order": IDENTITY | {"company", "item_code", "stock_uom", "bom", "sales_order", "sales_order_item"},
+    "Production Plan": IDENTITY | {"company", "status"},
+    "BOM": IDENTITY | {"company", "item", "uom", "is_active"},
+    "Sales Order": IDENTITY | {"company"},
     "Item": {"name", "modified", "stock_uom", "is_stock_item", "has_serial_no", "has_batch_no"},
     "Warehouse": {"name", "modified", "company", "is_group", "disabled"},
 }
@@ -45,6 +48,11 @@ TABLES = {
         ("operations", "Work Order Operation", CHILD | {"operation"}),
     ),
     "Jifeng Flow Order": (("materials", "Jifeng Material Line", CHILD | {"item_code"}),),
+    "Production Plan": (("po_items", "Production Plan Item", CHILD | {
+        "item_code", "jf_flow_order", "bom_no", "planned_qty", "stock_uom", "sales_order", "sales_order_item",
+        "item_reference", "material_request", "material_request_item", "product_bundle_item"}),),
+    "Sales Order": (("items", "Sales Order Item", CHILD | {
+        "item_code", "qty", "uom", "stock_uom", "conversion_factor", "stock_qty"}),),
 }
 ZERO = Decimal(0)
 
@@ -109,7 +117,73 @@ def source_signature(card, work):
         "operations": [{field: row.get(field) for field in ("name", "operation")}
                        for row in work.get("operations") or []],
     }
+    # Plan full-loss sources are new; keep the audit hash of existing direct
+    # Flow vouchers unchanged while freezing the new exact sales-line link.
+    if work.get("production_plan"):
+        state["plan_sales"] = {field: work.get(field) for field in ("sales_order", "sales_order_item")}
     return hashlib.sha256(json.dumps(state, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+
+
+def _plan_source(work, flow, read):
+    """Prove one ordinary finished-item plan row, without arranging new work.
+
+    Status and progress can legitimately change after posting. They are not
+    audit signatures and do not prevent closed plans from reversing a voucher.
+    New loss writes apply the separate arranging gate below.
+    """
+    refs = (work.get("production_plan"), work.get("production_plan_item"),
+            work.get("production_plan_sub_assembly_item"))
+    if not any(refs):
+        return None, None
+    if not refs[0] or not refs[1] or refs[2]:
+        frappe.throw("生产计划损耗必须关联准确普通成品行；双引用或子装配全损耗暂不支持")
+    plan = read("Production Plan", refs[0])
+    rows = [row for row in plan.get("po_items") or [] if row.name == refs[1]]
+    if (plan.name != refs[0] or plan.docstatus != 1 or plan.company != work.company or len(rows) != 1):
+        frappe.throw("损耗工单必须来自同公司已提交生产计划的准确成品行")
+    row = rows[0]
+    if (row.get("parent") != plan.name or row.get("parenttype") != "Production Plan"
+            or row.get("parentfield") != "po_items" or row.item_code != work.production_item
+            or row.get("jf_flow_order") != flow.name or row.bom_no != work.bom_no
+            or row.stock_uom != work.stock_uom or row.get("item_reference")
+            or row.get("material_request") or row.get("material_request_item") or row.get("product_bundle_item")):
+        frappe.throw("生产计划成品行的流程、商品、BOM、库存单位或单一来源不一致")
+    if (_qty(row.planned_qty, "生产计划行库存数量") <= 0
+            or _qty(work.qty) > _qty(row.planned_qty)):
+        frappe.throw("损耗原工单数量超过准确生产计划成品行库存数量")
+    for field in ("sales_order", "sales_order_item"):
+        if (row.get(field) or "") != (work.get(field) or "") or (row.get(field) or "") != (flow.get(field) or ""):
+            frappe.throw("生产计划、工单和流程单的销售来源不一致")
+    bom = read("BOM", work.bom_no)
+    if (bom.name != work.bom_no or bom.docstatus != 1 or bom.company != work.company
+            or bom.item != work.production_item or bom.uom != work.stock_uom):
+        frappe.throw("生产计划损耗的已提交 BOM、公司、成品或库存单位不一致")
+    order_name, line_name = row.get("sales_order"), row.get("sales_order_item")
+    if bool(order_name) != bool(line_name):
+        frappe.throw("生产计划缺少准确销售订单明细来源")
+    if order_name:
+        order = read("Sales Order", order_name)
+        lines = [line for line in order.get("items") or [] if line.name == line_name]
+        if order.name != order_name or order.docstatus != 1 or order.company != work.company or len(lines) != 1:
+            frappe.throw("生产计划销售来源必须是同公司已提交订单的准确明细")
+        line = lines[0]
+        if (line.get("parent") != order.name or line.get("parenttype") != "Sales Order"
+                or line.get("parentfield") != "items" or line.item_code != work.production_item
+                or line.stock_uom != work.stock_uom or not line.get("uom")
+                or _qty(line.qty) <= 0 or _qty(line.conversion_factor) <= 0 or _qty(line.stock_qty) <= 0
+                or (line.uom == line.stock_uom and _qty(line.conversion_factor) != 1)
+                or not _equal(_qty(line.qty) * _qty(line.conversion_factor), _qty(line.stock_qty), line, "stock_qty")):
+            frappe.throw("生产计划销售明细的商品、库存数量、单位或换算来源不一致")
+    return plan, row
+
+
+def _arranging_plan(work, flow, read):
+    plan, _row = _plan_source(work, flow, read)
+    if plan:
+        if plan.get("status") in ("Closed", "Stopped", "Cancelled", "Draft"):
+            frappe.throw("停止、关闭或未提交的生产计划不能新增损耗出库")
+        if not read("BOM", work.bom_no).get("is_active"):
+            frappe.throw("生产计划的 BOM 已停用，不能新增损耗出库")
 
 
 def _source_context(card, work, flow, read):
@@ -117,13 +191,12 @@ def _source_context(card, work, flow, read):
             or work.get("track_semi_finished_goods") or card.get("track_semi_finished_goods")
             or card.get("is_subcontracted") or card.get("is_corrective_job_card")):
         frappe.throw("制造损耗出库仅支持已提交的普通制造工单和普通报工单")
-    if any(work.get(field) for field in ("production_plan", "production_plan_item", "production_plan_sub_assembly_item")):
-        frappe.throw("生产计划及子装配来源请使用原生计划损耗与剩余数量安排，当前专用全损耗入口暂不支持")
     if (card.company != work.company or work.company != flow.company
             or work.get("jf_flow_order") != flow.name or work.production_item != flow.item_code
             or card.production_item != work.production_item or work.bom_no != flow.get("bom")
             or card.stock_uom != work.stock_uom or work.stock_uom != flow.stock_uom):
         frappe.throw("损耗来源的公司、流程、商品、BOM 或库存单位不一致")
+    _plan_source(work, flow, read)
     if card.get("finished_good") and card.finished_good != work.production_item:
         frappe.throw("半成品报工损耗请按准确工序处理")
     loss = _qty(card.get("process_loss_qty"))
@@ -212,7 +285,38 @@ def _sql(query, values):
 
 
 def _internal_read(doctype, name):
+    if doctype == "Work Order":
+        return _lock_work_scope(name)
+    if doctype == "Job Card":
+        pointer = frappe.db.get_value("Job Card", name, "work_order")
+        if pointer:
+            _lock_work_scope(pointer)
+        doc = _lock_source(doctype, name)
+        if pointer != doc.get("work_order"):
+            frappe.throw("报工工单来源已变化，请重新读取", frappe.TimestampMismatchError)
+        return doc
     return _lock_source(doctype, name)
+
+
+def _lock_work_scope(name):
+    """Flow -> exact Plan/row -> active peer WOs -> this WO, all NOWAIT.
+
+    Pointer reads are advisory only; the locked WO must have the same pointers.
+    Native submit may already own its parent. NOWAIT preserves rollback rather
+    than waiting in reverse order on a planning factory or stock transaction.
+    """
+    if not isinstance(name, str) or not name:
+        frappe.throw("损耗来源缺少准确工单")
+    fields = ("jf_flow_order", "production_plan", "production_plan_item", "production_plan_sub_assembly_item")
+    hint = {field: frappe.db.get_value("Work Order", name, field) for field in fields}
+    hint["name"] = name
+    if hint["jf_flow_order"]:
+        _lock_source("Jifeng Flow Order", hint["jf_flow_order"])
+    _lock_native_plan_quantities(hint)
+    work = _lock_source("Work Order", name)
+    if any((work.get(field) or None) != (hint[field] or None) for field in fields):
+        frappe.throw("工单流程或生产计划来源已变化，请重新读取", frappe.TimestampMismatchError)
+    return work
 
 
 def _lock_source(doctype, name):
@@ -231,7 +335,7 @@ def _lock_source(doctype, name):
 def _authorized_read(doctype, name):
     from jifeng_erp.flow_quantity import check_quantity_fields
 
-    doc = _lock_source(doctype, name)
+    doc = _internal_read(doctype, name)
     doc.check_permission("read")
     check_quantity_fields(doctype, PARENTS[doctype])
     for field, childtype, fields in TABLES.get(doctype, ()):
@@ -376,10 +480,7 @@ def validate_loss_entry(doc, method=None):
     if not marked:
         return
     work = _internal_read("Work Order", doc.get(PREFIX + "work_order"))
-    # Flow lock precedes source locks, matching the existing Stock Entry mixin.
-    _lock_source("Jifeng Flow Order", work.get("jf_flow_order"))
-    work = _lock_source("Work Order", work.name)
-    card = _lock_source("Job Card", doc.get(PREFIX + "job_card"))
+    card = _internal_read("Job Card", doc.get(PREFIX + "job_card"))
     cache = {("Work Order", work.name): work, ("Job Card", card.name): card}
 
     def reader(kind, name):
@@ -402,6 +503,7 @@ def validate_loss_entry(doc, method=None):
     if doc.docstatus != 2:
         if work.get("status") in ("Stopped", "Closed"):
             frappe.throw("停止或关闭的工单不能继续办理损耗出库")
+        _arranging_plan(work, reader("Jifeng Flow Order", work.jf_flow_order), reader)
         _validate_budget(doc, source, work, card)
 
 
@@ -425,8 +527,7 @@ def before_cancel_loss_entry(doc, method=None):
 
 def _cancel_flow_capacity(doc, work, flow_name):
     flow = _lock_source("Jifeng Flow Order", flow_name)
-    work = _lock_source("Work Order", work.name)
-    _lock_native_plan_quantities(work)
+    work = _lock_work_scope(work.name)
     from jifeng_erp.workflow import stock_plan_quantity
 
     rows = _sql("""SELECT name, process_loss_qty FROM `tabStock Entry`
@@ -437,34 +538,52 @@ def _cancel_flow_capacity(doc, work, flow_name):
     if doc.purpose == "Manufacture":
         produced -= sum((_qty(row.transfer_qty) for row in doc.items if row.get("is_finished_item")), ZERO)
     committed = max(ZERO, produced, _qty(work.qty) - remaining)
+    if work.get("production_plan"):
+        reference, child, name = _plan_reference(work)
+        row = frappe.get_doc(child, name)
+        peers = _sql(f"SELECT qty, produced_qty, process_loss_qty, docstatus FROM `tabWork Order` "
+                     f"WHERE production_plan=%s AND {reference}=%s AND docstatus<2 AND name!=%s "
+                     "ORDER BY name FOR UPDATE NOWAIT", (work.production_plan, name, work.name))
+        plan_others = sum((_committed(row) for row in peers), ZERO)
+        maximum = _qty(row.get("qty" if reference == "production_plan_sub_assembly_item" else "planned_qty"))
+        if committed + plan_others > maximum:
+            frappe.throw("此损耗已经释放原生产计划补产预留，请先撤销补产工单或草稿，再撤销损耗出库")
     other_works = _sql("""SELECT qty, produced_qty, process_loss_qty, docstatus FROM `tabWork Order`
         WHERE jf_flow_order=%s AND docstatus<2 AND name!=%s ORDER BY name FOR UPDATE NOWAIT""", (flow.name, work.name))
-    others = sum((max(ZERO, _qty(row.produced_qty), _qty(row.qty) - _qty(row.process_loss_qty))
-                  if row.docstatus == 1 else _qty(row.qty) for row in other_works), ZERO)
+    others = sum((_committed(row) for row in other_works), ZERO)
     if committed + others > Decimal(str(stock_plan_quantity(flow))):
         frappe.throw("此损耗已经释放补产预留，请先撤销关联补产工单或草稿，再撤销损耗出库")
+
+
+def _committed(work):
+    return (max(ZERO, _qty(work.get("produced_qty")), _qty(work.qty) - _qty(work.get("process_loss_qty")))
+            if work.docstatus == 1 else _qty(work.qty))
+
+
+def _plan_reference(work):
+    if work.get("production_plan_item") and work.get("production_plan_sub_assembly_item"):
+        frappe.throw("工单不能同时关联生产计划成品行和子装配行")
+    reference = "production_plan_sub_assembly_item" if work.get("production_plan_sub_assembly_item") else "production_plan_item"
+    child = "Production Plan Sub Assembly Item" if reference == "production_plan_sub_assembly_item" else "Production Plan Item"
+    return reference, child, work.get(reference)
 
 
 def _lock_native_plan_quantities(work):
     """Pre-lock the exact installed native plan scope without waiting.
 
-    The installed ProductionPlanWorkOrderQuantities locks one child and then
-    its submitted peer WOs. Holding those scopes now makes its later native
-    loss-reversal validation reuse these locks instead of forming a wait loop.
+    The installed native quantity class locks one child and submitted peer WOs.
+    Include drafts in the same scope: planning factories reserve those too.
+    A later native loss-reversal validation reuses these already-held locks.
     """
     plan = work.get("production_plan")
     if not plan:
         return
-    if work.get("production_plan_item") and work.get("production_plan_sub_assembly_item"):
-        frappe.throw("工单不能同时关联生产计划成品行和子装配行")
-    reference = "production_plan_sub_assembly_item" if work.get("production_plan_sub_assembly_item") else "production_plan_item"
-    child = "Production Plan Sub Assembly Item" if reference == "production_plan_sub_assembly_item" else "Production Plan Item"
-    row = work.get(reference)
+    reference, child, row = _plan_reference(work)
     if (not row or not _sql("SELECT name FROM `tabProduction Plan` WHERE name=%s FOR UPDATE NOWAIT", (plan,))
             or not _sql(f"SELECT name FROM `tab{child}` WHERE name=%s AND parent=%s FOR UPDATE NOWAIT", (row, plan))):
         frappe.throw("工单缺少准确生产计划来源行，请先核对原计划")
     _sql(f"SELECT name FROM `tabWork Order` WHERE production_plan=%s AND {reference}=%s "
-         "AND docstatus=1 AND name!=%s ORDER BY name FOR UPDATE NOWAIT", (plan, row, work.name))
+         "AND docstatus<2 AND name!=%s ORDER BY name FOR UPDATE NOWAIT", (plan, row, work.get("name")))
 
 
 def before_cancel_source(doc, method=None):
@@ -494,13 +613,13 @@ def update_loss_progress(doc, method=None):
         return
     source = read_loss_source(doc, read=_internal_read)
     _lock_source("Jifeng Flow Order", source["flow_order"])
-    work = _lock_source("Work Order", source["work_order"])
+    work = _lock_work_scope(source["work_order"])
     # Native methods retain plan/SO updates, stock reservations, and status.
     work.update_work_order_qty()
     work.update_consumed_qty_for_required_items()
     work.update_status()
     work.update_planned_qty()
-    card = _lock_source("Job Card", source["job_card"])
+    card = _internal_read("Job Card", source["job_card"])
     card.set_status(update_status=True)
 
 
@@ -513,7 +632,7 @@ def prepare_loss_stock_reservations(doc):
     """
     source = read_loss_source(doc, read=_internal_read)
     _lock_source("Jifeng Flow Order", source["flow_order"])
-    work = _lock_source("Work Order", source["work_order"])
+    work = _lock_work_scope(source["work_order"])
     if not work.get("reserve_stock"):
         return
     if doc.docstatus == 1:
@@ -563,6 +682,7 @@ def _creation_context(job_card):
     loss = _source_context(card, work, flow, _authorized_read)
     if work.get("status") in ("Stopped", "Closed"):
         frappe.throw("停止或关闭的工单不能办理损耗出库")
+    _arranging_plan(work, flow, _authorized_read)
     return flow, work, card, loss
 
 
