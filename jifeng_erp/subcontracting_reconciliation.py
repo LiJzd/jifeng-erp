@@ -10,7 +10,6 @@ from contextvars import ContextVar
 from datetime import timedelta
 import hashlib
 import json
-import math
 
 import frappe
 from frappe.model import get_permitted_fields
@@ -32,8 +31,8 @@ READ_DEPENDENCIES = {PROFILE, "Company", "Supplier", "Currency", "Account", "Ite
     "Payment Entry Reference", "Stock Ledger Entry"}
 
 
-def _fingerprint_json(value):
-    """Encode a frozen native source, including MariaDB TIME, without guessing.
+def _fingerprint_native(value):
+    """Encode native TIME without converting an entire frozen source tree.
 
     The shared freeze has already turned source dictionaries into tuples, so
     this tagged object cannot collide with a source JSON dict/list. Integer
@@ -42,13 +41,22 @@ def _fingerprint_json(value):
     """
     if isinstance(value, timedelta):
         return {"native_time_delta": [value.days, value.seconds, value.microseconds]}
-    if isinstance(value, (tuple, list)):
-        return [_fingerprint_json(item) for item in value]
-    if value is None or type(value) in (str, int, bool):
-        return value
-    if type(value) is float and math.isfinite(value):
-        return value
     frappe.throw("委外对账来源包含未支持或无效的原生字段类型，不能完整核实，请核对来源")
+
+
+def _statement_version(result, state):
+    """Hash complete detached facts without full JSON/text/bytes copies."""
+    from jifeng_erp.tool_archive_export import _freeze
+
+    encoder = json.JSONEncoder(default=_fingerprint_native, sort_keys=True,
+                               ensure_ascii=False, allow_nan=False)
+    digest = hashlib.sha256()
+    try:
+        for fragment in encoder.iterencode((_freeze(result), state)):
+            digest.update(fragment.encode("utf-8"))
+    except (TypeError, ValueError):
+        frappe.throw("委外对账来源包含未支持或无效的原生字段类型，不能完整核实，请核对来源")
+    return digest.hexdigest()
 
 
 def _remember(document):
@@ -570,7 +578,6 @@ def _capture_statement(company, supplier, from_date, to_date, business_kind="all
                        flow_order=None, subcontracting_order=None):
     """Reuse the complete native query and detach every printed source fact."""
     from jifeng_erp import supplier_reconciliation as payable
-    from jifeng_erp.tool_archive_export import _freeze
 
     capture = {"documents": {}, "states": {}, "children": []}
     token = _STATEMENT.set(capture)
@@ -610,9 +617,12 @@ def _capture_statement(company, supplier, from_date, to_date, business_kind="all
         permission_documents.update(((doctype, "__statement_field_scope__"), None)
                                     for doctype in READ_DEPENDENCIES)
         permissions = payable._permission_state(permission_documents)
-        state = _freeze((capture["states"], capture["children"], financial_state, permissions))
-        result["result_version"] = hashlib.sha256(json.dumps(_fingerprint_json(_freeze((result, state))), sort_keys=True,
-            ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+        # These fragments were detached at their actual readers. Re-freezing
+        # them would recursively copy all native documents and permission
+        # metadata several times while output also retains its first snapshot.
+        state = (tuple(sorted(capture["states"].items())), tuple(capture["children"]),
+                 financial_state, permissions)
+        result["result_version"] = _statement_version(result, state)
         return result, capture["documents"], state
     finally:
         _STATEMENT.reset(token)

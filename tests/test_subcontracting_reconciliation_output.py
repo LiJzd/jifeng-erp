@@ -6,6 +6,8 @@ tests do not claim remote, browser, printer, or positive ledger acceptance.
 
 from copy import deepcopy
 from datetime import date, timedelta
+from decimal import Decimal
+import hashlib
 from io import BytesIO
 import importlib.util
 import json
@@ -224,14 +226,38 @@ class TestFactoryStatementOutput(unittest.TestCase):
         self.assertNotIn("filecontent", self.frappe.response)
 
     def test_native_time_is_not_a_lookalike_json_value_and_unknown_types_are_rejected(self):
-        freeze = self.fixture.tools._freeze
-        actual = self.R._fingerprint_json(freeze({"posting_time": timedelta(days=-1, seconds=86399, microseconds=999999)}))
-        literal = self.R._fingerprint_json(freeze({"posting_time": {"native_time_delta": [-1, 86399, 999999]}}))
+        actual = self.R._statement_version({"posting_time": timedelta(days=-1, seconds=86399, microseconds=999999)}, ())
+        literal = self.R._statement_version({"posting_time": {"native_time_delta": [-1, 86399, 999999]}}, ())
         self.assertNotEqual(actual, literal)
-        self.assertEqual(self.R._fingerprint_json(timedelta(microseconds=-1)),
+        self.assertEqual(self.R._fingerprint_native(timedelta(microseconds=-1)),
                          {"native_time_delta": [-1, 86399, 999999]})
-        with self.assertRaisesRegex(ValueError, "未支持"):
-            self.R._fingerprint_json(object())
+        for invalid in (object(), float("nan"), float("inf")):
+            with self.subTest(invalid=type(invalid).__name__), self.assertRaisesRegex(ValueError, "未支持"):
+                self.R._statement_version({"native_value": invalid}, ())
+
+    def test_streamed_fingerprint_keeps_exact_prior_bytes_without_full_json_copy(self):
+        freeze = self.fixture.tools._freeze
+        result = {"scope": "电镀厂", "time": timedelta(microseconds=-1), "amount": Decimal("10.00001"),
+                  "date": date(2026, 10, 9), "rows": [None, True, -2, 1.25, {"x": "\\\"\n"}]}
+        state = freeze(({("Stock Entry", "STE"): {"time": timedelta(days=2, seconds=3)}},
+                        ("permission", [("field", "company", False), ("field", "qty", 0)])))
+        previous = hashlib.sha256(json.dumps(freeze((result, state)), sort_keys=True, ensure_ascii=False,
+            allow_nan=False, default=self.R._fingerprint_native).encode("utf-8")).hexdigest()
+        with patch.object(self.R.json, "dumps", side_effect=AssertionError("no whole JSON document")):
+            self.assertEqual(previous, self.R._statement_version(result, state))
+        self.assertNotEqual(previous, self.R._statement_version(result, state + ("permission changed",)))
+
+    def test_already_frozen_financial_and_permission_closure_is_retained_without_recopy(self):
+        self.financial_state = ("ledger", (("source", "JE"), ("amount", "4")))
+        self.payable._permission_state = lambda documents: permission_state
+        permission_state = ("raw permissions", (("DocField", "company"), ("mask", False)))
+        _, _, state = self.R._capture_statement(**self.context)
+        self.assertIs(state[2], self.financial_state)
+        self.assertIs(state[3], permission_state)
+        self.assertEqual(state, self.fixture.tools._freeze(state))
+        saved = deepcopy(state)
+        self.env.records["Stock Entry", "STE"].modified = self.fixture.F.LATER
+        self.assertEqual(state, saved)
 
 
 if __name__ == "__main__":
