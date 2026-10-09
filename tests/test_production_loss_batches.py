@@ -4,6 +4,7 @@ from copy import deepcopy
 from decimal import Decimal
 import importlib.util
 from pathlib import Path
+import json
 import sys
 import textwrap
 import types
@@ -39,6 +40,14 @@ class BatchLossTests(unittest.TestCase):
         modules = patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils})
         modules.start()
         self.addCleanup(modules.stop)
+        # Use the actual pure ERPNext queue class, with no DB/model harness.
+        native_queue = Path(__file__).parents[2] / "erpnext/erpnext/stock/valuation.py"
+        if native_queue.exists():
+            valuation = types.ModuleType("erpnext.stock.valuation")
+            exec(compile(native_queue.read_text(encoding="utf-8"), str(native_queue), "exec"), valuation.__dict__)
+            queue_modules = patch.dict(sys.modules, {"erpnext.stock.valuation": valuation})
+            queue_modules.start()
+            self.addCleanup(queue_modules.stop)
         source = Path(__file__).parents[1] / "jifeng_erp/production_loss_batches.py"
         spec = importlib.util.spec_from_file_location("batch_loss_source_under_test", source)
         self.module = importlib.util.module_from_spec(spec)
@@ -51,7 +60,7 @@ class BatchLossTests(unittest.TestCase):
         self.batch = self.add("Batch", "BATCH", item="RM", disabled=0, use_batchwise_valuation=0)
         row = Doc(name="TRANSFER-ROW", parent="TRANSFER", parenttype="Stock Entry", parentfield="items", docstatus=1,
                   item_code="RM", stock_uom="Kg", qty=10, uom="Kg", conversion_factor=1, transfer_qty=10,
-                  s_warehouse="RAW", t_warehouse="WIP", serial_and_batch_bundle="SOURCE-OUTWARD")
+                  s_warehouse="RAW", t_warehouse="WIP", serial_and_batch_bundle="SOURCE-OUTWARD", idx=1)
         self.transfer = self.add("Stock Entry", "TRANSFER", company="JF", work_order="WO", docstatus=1,
             purpose="Material Transfer for Manufacture", posting_date="2026-10-09", posting_time="09:00:00", items=[row])
         self.inward = self.bundle("INWARD", "TRANSFER", "TRANSFER-ROW", quantity=10, rate=4)
@@ -69,21 +78,36 @@ class BatchLossTests(unittest.TestCase):
         doc = self.add("Serial and Batch Bundle", name, company="JF", item_code="RM", warehouse="WIP", voucher_type="Stock Entry",
             voucher_no=voucher, voucher_detail_no=detail, type_of_transaction="Inward" if quantity > 0 else "Outward",
             is_cancelled=int(status == 2), docstatus=status, has_batch_no=1, has_serial_no=0,
-            total_qty=quantity, total_amount=quantity * rate)
+            total_qty=quantity, total_amount=quantity * rate, posting_datetime="2026-10-09 " + time)
         row = self.add("Serial and Batch Entry", name + "-ROW", parent=name, parenttype="Serial and Batch Bundle", parentfield="entries",
             docstatus=status, item_code="RM", warehouse="WIP", batch_no=batch, serial_no=None, qty=quantity,
             incoming_rate=rate, stock_value_difference=quantity * rate, is_cancelled=int(status == 2),
             voucher_type="Stock Entry", voucher_no=voucher, voucher_detail_no=detail,
             type_of_transaction=doc.type_of_transaction, posting_datetime="2026-10-09 " + time,
-            creation="2026-10-09 " + time)
+            creation="2026-10-09 " + time, idx=1)
         doc.entries = [row]
         return doc
 
     def ledger(self, name, voucher, detail, *, quantity, value, bundle=None, batch=None, time="09:00:00", cancelled=0, warehouse="WIP"):
+        prior = [row for (kind, _name), row in self.store.items() if kind == "Stock Ledger Entry"
+                 and row.warehouse == warehouse and not row.is_cancelled
+                 and row.posting_time <= time]
+        before_qty = sum(row.actual_qty for row in prior)
+        before_value = sum(row.stock_value_difference for row in prior)
+        before_queue = json.loads(max(prior, key=lambda row: (row.posting_time, row.creation, row.name)).stock_queue) if prior else []
+        from erpnext.stock.valuation import FIFOValuation
+        fifo = FIFOValuation(before_queue)
+        if quantity > 0:
+            fifo.add_stock(float(quantity), float(value / quantity))
+        else:
+            fifo.remove_stock(float(-quantity))
         return self.add("Stock Ledger Entry", name, company="JF", item_code="RM", stock_uom="Kg", warehouse=warehouse,
             voucher_type="Stock Entry", voucher_no=voucher, voucher_detail_no=detail, actual_qty=quantity, stock_value_difference=value,
             serial_and_batch_bundle=bundle, batch_no=batch, serial_no=None, is_cancelled=cancelled, is_adjustment_entry=0,
-            posting_date="2026-10-09", posting_time=time, creation="2026-10-09 " + time)
+            posting_date="2026-10-09", posting_time=time, creation="2026-10-09 " + time,
+            posting_datetime="2026-10-09 " + time, stock_queue=json.dumps(fifo.state),
+            qty_after_transaction=before_qty + quantity, stock_value=before_value + value,
+            valuation_rate=(before_value + value) / (before_qty + quantity) if before_qty + quantity else 0)
 
     def read(self, kind, name):
         document = self.store[kind, name]
@@ -111,7 +135,7 @@ class BatchLossTests(unittest.TestCase):
 
     def row(self, name="LOSS-ROW", qty=10, batch="BATCH", bundle=None):
         row = Doc(name=name, item_code="RM", batch_no=batch, qty=qty, transfer_qty=qty, stock_uom="Kg", uom="Kg", conversion_factor=1,
-                  s_warehouse="WIP", t_warehouse=None, serial_and_batch_bundle=bundle, serial_no=None)
+                  s_warehouse="WIP", t_warehouse=None, serial_and_batch_bundle=bundle, serial_no=None, idx=len(self.loss.items) + 1)
         self.loss.items.append(row)
         return row
 
@@ -151,7 +175,7 @@ class BatchLossTests(unittest.TestCase):
                 stock_value_difference=direction * rate, is_cancelled=int(status == 2),
                 voucher_type="Stock Entry", voucher_no=voucher, voucher_detail_no=detail,
                 type_of_transaction=doc.type_of_transaction, posting_datetime="2026-10-09 " + time,
-                creation="2026-10-09 " + time))
+                creation="2026-10-09 " + time, idx=len(doc.entries) + 1))
         return doc
 
     def serial_source(self, rates=None, *, both=False, serial_valuation=1):
@@ -225,13 +249,13 @@ class BatchLossTests(unittest.TestCase):
         self.ledger("OTHER-SLE", "OTHER-TRANSFER", "OTHER-ROW", quantity=2, value=8, bundle="OTHER-IN")
         with self.assertRaisesRegex(ValueError, "混有其他来源"): self.proposal()
 
-    def test_flag_zero_uniform_whole_item_price_works_and_other_batch_price_differs_blocks(self):
+    def test_flag_zero_other_batch_price_uses_exact_fifo_queue(self):
         self.assertEqual(self.batch.use_batchwise_valuation, 0)
         self.assertEqual(self.proposal()[0]["expected_value"], 40)
         self.add("Batch", "OTHER-BATCH", item="RM", use_batchwise_valuation=1)
-        self.bundle("OTHER-IN", "OTHER", "OTHER-ROW", quantity=2, rate=9, batch="OTHER-BATCH")
-        self.ledger("OTHER-SLE", "OTHER", "OTHER-ROW", quantity=2, value=18, bundle="OTHER-IN")
-        with self.assertRaisesRegex(ValueError, "多种历史价层"): self.proposal()
+        self.bundle("OTHER-IN", "OTHER", "OTHER-ROW", quantity=2, rate=9, batch="OTHER-BATCH", time="09:30:00")
+        self.ledger("OTHER-SLE", "OTHER", "OTHER-ROW", quantity=2, value=18, bundle="OTHER-IN", time="09:30:00")
+        self.assertEqual(self.proposal()[0]["expected_value"], 40)
 
     def test_posted_real_lots_quantity_value_and_future_price_do_not_revalue_history(self):
         row, bundle, sle = self.posted()
@@ -396,7 +420,7 @@ class BatchLossTests(unittest.TestCase):
         ledger.denied = False
         bundle.entries[0].incoming_rate = 5
         bundle.entries[0].stock_value_difference = bundle.total_amount = ledger.stock_value_difference = 25
-        with self.assertRaisesRegex(ValueError, "价层"): self.proposal(15)
+        with self.assertRaisesRegex(ValueError, "前序库存余额"): self.proposal(15)
         bundle.entries[0].incoming_rate = 4
         bundle.entries[0].stock_value_difference = bundle.total_amount = ledger.stock_value_difference = 20
         self.row(name="A", qty=8)
@@ -533,7 +557,7 @@ class BatchLossTests(unittest.TestCase):
         self.company.valuation_method = "Moving Average"
         self.assertEqual(self.proposal(15)[0]["expected_value"], 85)
         self.settings.do_not_use_batchwise_valuation = 1
-        with self.assertRaisesRegex(ValueError, "逐批估值未启用"): self.proposal(15)
+        self.assertEqual(self.proposal(15)[0]["expected_value"], 85)
         self.item.valuation_method = "FIFO"
         self.assertEqual(self.proposal(15)[0]["expected_value"], 85)
         self.item.valuation_method = "Moving Average"
@@ -617,6 +641,138 @@ class BatchLossTests(unittest.TestCase):
                      batch_avg_rate={}, stock_value_change=0)
         namespace["set_stock_value_difference"](native)
         self.assertEqual((native.batch_avg_rate["BATCH"], native.stock_value_change), (6.5, -52))
+
+    def test_disabled_fifo_prices_specific_quantity_across_layers_and_native_multiple_rows(self):
+        self.second_transfer(rate=9)
+        self.assertEqual(self.proposal(12)[0]["expected_value"], 58)
+        first, _first_bundle, _first_sle = self.posted(qty=6)
+        second = self.row("SECOND-LOSS", qty=6, bundle="SECOND-LOSS-BUNDLE")
+        self.bundle("SECOND-LOSS-BUNDLE", "LOSS", second.name, quantity=-6,
+                    rate=Decimal(34) / 6, time="10:00:00")
+        second_sle = self.ledger("SECOND-LOSS-SLE", "LOSS", second.name, quantity=-6, value=-34,
+                                  bundle="SECOND-LOSS-BUNDLE", time="10:00:00")
+        proof = self.proof(posted=True)
+        self.assertEqual([proof[row.name]["value"] for row in (first, second)], [24, 34])
+        second_sle.stock_queue = "[[3, 8]]"
+        with self.assertRaisesRegex(ValueError, "FIFO损耗账"): self.proof(posted=True)
+        second_sle.stock_queue = "[[3, 9]]"
+        self.loss.items.reverse()
+        with self.assertRaises(ValueError): self.proof(posted=True)
+
+    def test_disabled_fifo_previous_consumption_and_cancel_keep_original_actual_loss(self):
+        _early_bundle, early = self.movement("EARLY-USE", -5, 4, "09:10:00")
+        self.second_transfer(rate=9)
+        self.assertEqual(self.proposal(6)[0]["expected_value"], 29)
+        row, bundle, sle = self.posted(qty=6)
+        bundle.entries[0].incoming_rate = Decimal(29) / 6
+        bundle.entries[0].stock_value_difference = bundle.total_amount = sle.stock_value_difference = -29
+        sle.stock_value = 36
+        self.assertEqual(self.proof(posted=True)[row.name]["value"], 29)
+        self.loss.docstatus = bundle.docstatus = bundle.entries[0].docstatus = 2
+        sle.is_cancelled = bundle.is_cancelled = bundle.entries[0].is_cancelled = 1
+        early.is_cancelled = 1
+        row.serial_and_batch_bundle = ""
+        self.assertEqual(self.proof()[row.name]["value"], 29)
+
+    def test_disabled_fifo_physical_batch_choice_preserves_native_whole_warehouse_queue(self):
+        _doc, bundle, _sle = self.second_transfer(rate=9)
+        self.add("Batch", "SECOND-BATCH", item="RM", use_batchwise_valuation=0)
+        bundle.entries[0].batch_no = "SECOND-BATCH"
+        # Choosing the newer physical batch does not choose its historical price
+        # when native valuation is the unqualified FIFO warehouse queue.
+        second = self.row(qty=5, batch="SECOND-BATCH")
+        first = self.row("FIRST-LOSS", qty=10)
+        proof = self.proof()
+        self.assertEqual([proof[row.name]["value"] for row in (second, first)], [20, 65])
+        self.assertEqual(proof[second.name]["sources"][0]["stock_entry"], "SECOND-TRANSFER")
+
+    def test_native_lifo_sabb_uses_pooled_rate_and_moving_average_respects_single_override(self):
+        self.second_transfer(rate=9)
+        self.company.valuation_method = "LIFO"
+        self.assertEqual(self.proposal(12)[0]["expected_value"], 68)
+        self.company.valuation_method = "Moving Average"
+        self.assertEqual(self.proposal(12)[0]["expected_value"], 68)
+        # Distinct batches: native MA batch-pool keeps 4 and 9; the Single
+        # override selects the actual whole-warehouse 85/15 pooled rate.
+        self.add("Batch", "SECOND-BATCH", item="RM", use_batchwise_valuation=0)
+        self.store["Serial and Batch Entry", "SECOND-IN-ROW"].batch_no = "SECOND-BATCH"
+        self.assertEqual([row["expected_value"] for row in self.proposal(15)], [40, 45])
+        self.settings.do_not_use_batchwise_valuation = 1
+        self.assertAlmostEqual(float(sum(row["expected_value"] for row in self.proposal(15))), 85)
+        self.assertNotEqual(self.proposal(10)[0]["expected_value"], 40)
+
+    def test_disabled_fifo_native_predecessor_queue_quantity_value_and_visibility_are_required(self):
+        _doc, _bundle, second = self.second_transfer(rate=9)
+        for field, invalid, message in (("stock_queue", "[[15, 4]]", "价层队列数量或金额"),
+                                         ("stock_value", 84, "前序库存余额"),
+                                         ("posting_datetime", "2026-10-09 09:29:00", "保存时间")):
+            previous = second[field]
+            second[field] = invalid
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, message): self.proposal(12)
+            second[field] = previous
+        second.denied = True
+        with self.assertRaises(PermissionError): self.proposal(12)
+
+    def test_disabled_native_bundle_parent_time_and_orphan_pool_are_proved(self):
+        _doc, bundle, _sle = self.second_transfer(rate=9)
+        bundle.posting_datetime = "2026-10-09 09:29:00"
+        with self.assertRaisesRegex(ValueError, "整仓估价批次池"): self.proposal(12)
+        bundle.posting_datetime = "2026-10-09 09:30:00"
+        self.bundle("ORPHAN", "ORPHAN", "ORPHAN-ROW", quantity=1, rate=7, time="09:35:00")
+        with self.assertRaisesRegex(ValueError, "无账批次"): self.proposal(12)
+
+    def test_unposted_nonbatch_native_millisecond_boundary_matches_saved_timestamps(self):
+        self.second_transfer(rate=9)
+        # Native advances the no-creation selector by exactly 1 ms. A physical
+        # consumption 0.5 ms after the supplied timestamp is therefore included
+        # in native price/cap proof, rather than guessed from Parent.creation.
+        self.movement("MILLISECOND-USE", -5, 4, "10:00:00.000500")
+        proposed = self.module.proposal(self.work, {"RM": 6}, read=self.read, records=self.records,
+                                       posting_date="2026-10-09", posting_time="10:00:00")
+        self.assertEqual(proposed[0]["expected_value"], 29)
+
+    def test_native_captured_nonbatch_rate_formula_matches_lifo_and_ma_balances(self):
+        # Exact pinned get_non_batchwise_avg_rate, shared by installed LIFO/MA
+        # SABB paths. LIFOValuation is deliberately not substituted for it.
+        source = '''
+        def get_non_batchwise_avg_rate(self, batch_no, fallback_rate):
+            balance_qty = flt(self.non_batchwise_balance_qty.get(batch_no))
+            balance_value = flt(self.non_batchwise_balance_value.get(batch_no))
+            if balance_qty > 0 and balance_value > 0:
+                return balance_value / balance_qty
+            return fallback_rate
+        '''
+        namespace = {"flt": sys.modules["frappe.utils"].flt}
+        exec(compile(textwrap.dedent(source), "installed16.36-nonbatch-rate", "exec"), namespace)
+        native = Doc(non_batchwise_balance_qty={"BATCH": 15}, non_batchwise_balance_value={"BATCH": 85})
+        self.assertEqual(namespace["get_non_batchwise_avg_rate"](native, "BATCH", 4) * 12, 68)
+        native.non_batchwise_balance_value["BATCH"] = -1
+        self.assertEqual(namespace["get_non_batchwise_avg_rate"](native, "BATCH", 4), 4)
+
+    def test_mixed_selected_native_strategies_reject_before_quoting_wrong_shared_queue(self):
+        self.batch.use_batchwise_valuation = 1
+        _doc, bundle, _sle = self.second_transfer(rate=9)
+        self.add("Batch", "SECOND-BATCH", item="RM", use_batchwise_valuation=0)
+        bundle.entries[0].batch_no = "SECOND-BATCH"
+        self.assertEqual(self.proposal(10)[0]["expected_value"], 40)
+        with self.assertRaisesRegex(ValueError, "不能混选"): self.proposal(15)
+        self.row(qty=5, batch="SECOND-BATCH")
+        self.assertEqual(self.proof()["LOSS-ROW"]["value"], 20)
+        self.row("MIXED-ROW", qty=10, batch="BATCH")
+        with self.assertRaisesRegex(ValueError, "不能混选"): self.proof()
+
+    def test_cancel_source_capacity_and_sre_source_keys_do_not_borrow_later_same_time_transfer(self):
+        row, bundle, sle = self.posted()
+        doc, source_bundle, transfer_sle = self.second_transfer(rate=9)
+        doc.posting_time = transfer_sle.posting_time = "10:00:00"
+        transfer_sle.creation = "2026-10-09 10:00:00.100000"
+        source_bundle.entries[0].posting_datetime = "2026-10-09 10:00:00"
+        self.loss.docstatus = bundle.docstatus = bundle.entries[0].docstatus = 2
+        sle.is_cancelled = bundle.is_cancelled = bundle.entries[0].is_cancelled = 1
+        row.serial_and_batch_bundle = ""
+        proof = self.proof()[row.name]
+        self.assertEqual([source["stock_entry"] for source in proof["sources"]], ["TRANSFER"])
+        self.assertEqual(proof["value"], 40)
 
 
 if __name__ == "__main__":

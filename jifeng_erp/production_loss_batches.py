@@ -6,8 +6,10 @@ never selects, writes, creates bundles or overrides native valuation itself.
 """
 
 from collections import defaultdict
-from datetime import datetime
+from copy import deepcopy
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+import json
 
 import frappe
 from frappe.utils import flt
@@ -30,9 +32,11 @@ PARENTS = {
     SE: IDENTITY | {"company", "purpose", "work_order", LOSS_WORK, "posting_date", "posting_time", "is_return"},
     SLE: IDENTITY | {"company", "item_code", "warehouse", "stock_uom", "voucher_type", "voucher_no",
         "voucher_detail_no", "actual_qty", "stock_value_difference", "serial_and_batch_bundle", "batch_no",
-        "serial_no", "is_cancelled", "is_adjustment_entry", "posting_date", "posting_time", "creation"},
+        "serial_no", "is_cancelled", "is_adjustment_entry", "posting_date", "posting_time", "creation",
+        "posting_datetime", "stock_queue", "stock_value", "qty_after_transaction", "valuation_rate"},
     BUNDLE: IDENTITY | {"company", "item_code", "warehouse", "voucher_type", "voucher_no", "voucher_detail_no",
-        "type_of_transaction", "is_cancelled", "has_batch_no", "has_serial_no", "total_qty", "total_amount"},
+        "type_of_transaction", "is_cancelled", "has_batch_no", "has_serial_no", "total_qty", "total_amount",
+        "posting_datetime"},
     "Batch": IDENTITY | {"item", "disabled", "use_batchwise_valuation"},
     "Item": {"name", "modified", "stock_uom", "is_stock_item", "has_batch_no", "has_serial_no",
         "use_serial_no_wise_valuation", "valuation_method"},
@@ -47,12 +51,12 @@ PARENTS = {
         "based_on", "reposting_data_file", "items_to_be_repost"},
 }
 TABLES = {
-    SE: (("items", "Stock Entry Detail", CHILD | {"item_code", "stock_uom", "qty", "uom", "conversion_factor",
+    SE: (("items", "Stock Entry Detail", CHILD | {"idx", "item_code", "stock_uom", "qty", "uom", "conversion_factor",
         "transfer_qty", "s_warehouse", "t_warehouse", "serial_no", "batch_no", "serial_and_batch_bundle",
         "use_serial_batch_fields", "basic_rate", "basic_amount", "amount", "valuation_rate"}),),
     BUNDLE: (("entries", ENTRY, CHILD | {"item_code", "warehouse", "batch_no", "serial_no", "qty",
         "incoming_rate", "stock_value_difference", "is_cancelled", "voucher_type", "voucher_no",
-        "voucher_detail_no", "type_of_transaction", "posting_datetime", "creation"}),),
+        "voucher_detail_no", "type_of_transaction", "posting_datetime", "creation", "stock_queue", "idx"}),),
 }
 
 
@@ -370,6 +374,165 @@ def _batchwise(work, item, batch, *, read):
     return True
 
 
+def _valuation_policy(work, item, *, read):
+    company = read("Company", work.company)
+    company.check_permission("read")
+    if company.name != work.company:
+        _fail()
+    method = item.get("valuation_method") or company.get("valuation_method")
+    if method not in {"FIFO", "LIFO", "Moving Average"}:
+        _fail("材料缺少明确原生库存估价方法")
+    override = False
+    if method == "Moving Average":
+        settings = read("Stock Settings", "Stock Settings")
+        settings.check_permission("read")
+        if settings.name != "Stock Settings":
+            _fail()
+        override = bool(settings.get("do_not_use_batchwise_valuation"))
+    return method, override
+
+
+def _stock_queue(value):
+    try:
+        state = json.loads(value) if isinstance(value, str) else deepcopy(value or [])
+    except (ValueError, TypeError):
+        _fail("原生库存价层队列无法读取")
+    if not isinstance(state, list) or len(state) > MAX_ROWS:
+        _fail("原生库存价层队列不完整")
+    result = []
+    for layer in state:
+        if not isinstance(layer, (list, tuple)) or len(layer) != 2:
+            _fail("原生库存价层队列不准确")
+        quantity, rate = map(_number, layer)
+        if quantity < 0 or rate < 0:
+            _fail("原生库存队列存在负价层，不能办理损耗")
+        if quantity:
+            result.append([float(quantity), float(rate)])
+    return result
+
+
+def _nonbatch_valuation(work, item, pools, ledger, *, read, records,
+                         cutoff, exclude, before_creation):
+    method, override = _valuation_policy(work, item, read=read)
+    native_cutoff = cutoff
+    if cutoff and before_creation is None:
+        # All three installed non-batch selectors advance an unposted boundary
+        # by exactly 1 ms. Use the same saved SLE/Bundle timestamps, including a
+        # midnight crossing; Parent.creation is not a valuation-time substitute.
+        boundary = datetime.fromisoformat(cutoff[0]) + timedelta(
+            hours=float(cutoff[1][0]), minutes=float(cutoff[1][1]), seconds=float(cutoff[1][2]), milliseconds=1)
+        native_cutoff = _stamp({"posting_date": boundary.date(), "posting_time": boundary.time()})
+        stored = _records(SLE, {"company": work.company, "item_code": item.name, "warehouse": work.wip_warehouse,
+            "is_cancelled": 0, "posting_date": ["<=", native_cutoff[0]]}, read=read, records=records)
+        ledger = [sle for sle in stored if _stamp(sle) < native_cutoff
+                  and not (sle.voucher_type == SE and sle.voucher_no == exclude)]
+    for sle in ledger:
+        if _stamp({"posting_date": _datetime(sle.get("posting_datetime")).date(),
+                   "posting_time": _datetime(sle.get("posting_datetime")).time()}) != _stamp(sle):
+            _fail("原生库存账保存时间与记账时间不一致，不能推测价层先后")
+    ordered = sorted(ledger, key=lambda sle: (_stamp(sle), _datetime(sle.get("creation")), sle.name))
+    if not ordered:
+        _fail("材料缺少原生估价前序库存账")
+    last = ordered[-1]
+    whole_qty = sum((_number(sle.actual_qty) for sle in ledger), ZERO)
+    whole_value = sum((_number(sle.stock_value_difference) for sle in ledger), ZERO)
+    if (whole_qty < 0 or whole_value < 0
+            or not _same(last.get("qty_after_transaction"), whole_qty, last, "actual_qty")
+            or not _same(last.get("stock_value"), whole_value, last, "stock_value_difference")):
+        _fail("原生前序库存余额与完整有效库存账不闭合")
+    for sle in ordered:
+        if (_stamp(sle), _datetime(sle.get("creation"))) == (_stamp(last), _datetime(last.get("creation"))) and (
+                _number(sle.get("qty_after_transaction")) != _number(last.get("qty_after_transaction"))
+                or _number(sle.get("stock_value")) != _number(last.get("stock_value"))
+                or method == "FIFO" and _stock_queue(sle.get("stock_queue")) != _stock_queue(last.get("stock_queue"))):
+            _fail("同一时刻前序库存账的原生余额或价层不唯一")
+    state = _stock_queue(last.get("stock_queue")) if method == "FIFO" else []
+    if state and (not _same(sum((_number(layer[0]) for layer in state), ZERO), whole_qty, last, "actual_qty")
+            or not _same(sum((_number(layer[0]) * _number(layer[1]) for layer in state), ZERO),
+                         whole_value, last, "stock_value_difference")):
+        _fail("原生库存价层队列数量或金额与前序库存余额不一致")
+
+    # These are exactly the two native non-batchwise history sources: legacy
+    # SLE.batch_no plus active Bundle parents/children. Prove the full parent
+    # selector too; it uses the parent's saved timestamp rather than child time.
+    bundles = _records(BUNDLE, {"item_code": item.name, "warehouse": work.wip_warehouse,
+        "docstatus": 1, "is_cancelled": 0, "type_of_transaction": ["in", ["Inward", "Outward"]]},
+        read=read, records=records)
+    owners = {sle.get("serial_and_batch_bundle"): sle for sle in ledger if sle.get("serial_and_batch_bundle")}
+    if len(owners) != len([sle for sle in ledger if sle.get("serial_and_batch_bundle")]):
+        _fail("原批次凭证存在重复库存账归属")
+    bundle_qty, bundle_value = defaultdict(Decimal), defaultdict(Decimal)
+    counted = set()
+    for bundle in bundles:
+        stamp = _stamp({"posting_date": _datetime(bundle.get("posting_datetime")).date(),
+                        "posting_time": _datetime(bundle.get("posting_datetime")).time()})
+        if (exclude and bundle.voucher_no == exclude or bundle.voucher_type == "Pick List"
+                or native_cutoff and (stamp >= native_cutoff if before_creation is None else
+                    stamp > native_cutoff or stamp == native_cutoff and bundle.name not in owners)):
+            continue
+        sle = owners.get(bundle.name)
+        if not sle or stamp != _stamp(sle):
+            _fail("原生整仓估价批次池缺少对应准确库存账，不能遗漏无账批次")
+        counted.add(bundle.name)
+        for batch, lot in _lots(sle, read=read, records=records).items():
+            bundle_qty[batch] += lot["qty"]
+            bundle_value[batch] += lot["value"]
+    if counted != set(owners):
+        _fail("原生整仓估价批次池不完整，不能遗漏隐藏凭证")
+    legacy_qty, legacy_value = defaultdict(Decimal), defaultdict(Decimal)
+    for sle in ledger:
+        if sle.get("batch_no"):
+            legacy_qty[sle.batch_no] += _number(sle.actual_qty)
+            legacy_value[sle.batch_no] += _number(sle.stock_value_difference)
+    cursor = {"method": method, "queue": state, "qty": whole_qty, "value": whole_value,
+              "sle": last, "uses_fifo_queue": method == "FIFO" and bool(state)}
+    for batch, pool in pools.items():
+        if _batchwise(work, item, batch, read=read):
+            continue
+        native_qty = legacy_qty[batch] + bundle_qty[batch]
+        native_value = legacy_value[batch] + bundle_value[batch]
+        pool["native_available"] = native_qty
+        pool["valuation"] = cursor
+        # The installed legacy branch prices FIFO by its exact saved queue;
+        # LIFO takes the native pooled balance on this SABB path. Moving Average
+        # chooses its batch history or pooled balance via the native policy.
+        if method == "Moving Average" and not override:
+            rate = native_value / native_qty if native_qty > 0 and native_value > 0 else (
+                whole_value / whole_qty if whole_qty > 0 and whole_value > 0 else ZERO)
+        else:
+            rate = whole_value / whole_qty if whole_qty > 0 and whole_value > 0 else ZERO
+        pool["rate"] = rate
+
+
+def _charge(pool, quantity):
+    """Pure native pricing for one physical selection, sharing the item cursor."""
+    quantity = _number(quantity)
+    cursor = pool.get("valuation")
+    if not cursor:
+        return quantity * pool["rate"]
+    if quantity > pool["native_available"] or quantity > cursor["qty"]:
+        _fail("所选原批次超出原生估价可用数量")
+    if cursor["uses_fifo_queue"]:
+        from erpnext.stock.valuation import FIFOValuation
+
+        native = FIFOValuation(deepcopy(cursor["queue"]))
+        before_qty, before_value = native.get_total_stock_and_value()
+        native.remove_stock(qty=float(quantity))
+        after_qty, after_value = native.get_total_stock_and_value()
+        amount = _number(before_value) - _number(after_value)
+        if not _same(_number(before_qty) - _number(after_qty), quantity, cursor["sle"], "actual_qty"):
+            _fail("原生FIFO价层数量不能准确核对")
+        cursor["queue"] = deepcopy(native.state)
+    else:
+        amount = quantity * pool["rate"]
+    if amount < 0 or amount > cursor["value"] and not _same(amount, cursor["value"], cursor["sle"], "stock_value_difference"):
+        _fail("原生损耗金额超出真实库存剩余价值")
+    cursor["qty"] -= quantity
+    cursor["value"] -= amount
+    pool["native_available"] -= quantity
+    return amount
+
+
 def _closing_equivalent(work, item, pools, ledger, *, read, records, cutoff):
     # Native uses the latest completed stock close no later than MAX submitted
     # PCV.period_end_date. Full ledger history must equal that seed; otherwise
@@ -504,13 +667,18 @@ def _pool(work, item, *, read, records, cutoff=None, exclude=None, before_creati
     # A homogeneous price layer is also valid when native batch valuation is
     # disabled: moving average/FIFO/LIFO cannot invent a different lot price.
     heterogeneous = len(all_rates) != 1 and not (item.get("has_serial_no") and item.get("use_serial_no_wise_valuation"))
+    batchwise = {}
     if heterogeneous:
-        if item.get("has_serial_no") or not origin or any(
-                not _batchwise(work, item, batch, read=read) for batch in origin):
-            _fail("材料存在多种历史价层且原生逐批估值未启用，尚不能证明整仓FIFO、LIFO或移动平均损耗价格")
-        closed_date = _closing_equivalent(work, item, origin, eligible, read=read, records=records, cutoff=cutoff)
-        _native_batch_equivalent(work, item, origin, eligible, current, current_value,
-            read=read, records=records, cutoff=cutoff, exclude=exclude, closed_date=closed_date)
+        if item.get("has_serial_no") or not origin:
+            _fail("序号材料存在多种历史价层且未启用逐号估值，不能猜测原号金额")
+        batchwise = {batch: pool for batch, pool in origin.items() if _batchwise(work, item, batch, read=read)}
+        if batchwise:
+            closed_date = _closing_equivalent(work, item, batchwise, eligible, read=read, records=records, cutoff=cutoff)
+            _native_batch_equivalent(work, item, batchwise, eligible, current, current_value,
+                read=read, records=records, cutoff=cutoff, exclude=exclude, closed_date=closed_date)
+        if len(batchwise) != len(origin):
+            _nonbatch_valuation(work, item, origin, eligible,
+                read=read, records=records, cutoff=cutoff, exclude=exclude, before_creation=before_creation)
     for key, amount in seen_sources.items():
         row = transfers[key][1]
         if not _same(amount, row.transfer_qty, row, "transfer_qty"):
@@ -537,15 +705,16 @@ def _pool(work, item, *, read, records, cutoff=None, exclude=None, before_creati
         quantity = current[batch]
         if quantity < 0 or quantity > values["qty"]:
             _fail("原批号当前库存或累计耗用超过准确原转料数量")
-        if current_value[batch] < 0 or (not quantity and not _same(current_value[batch], ZERO, values["sle"], "stock_value_difference")):
+        if (not values.get("valuation") and (current_value[batch] < 0
+                or not quantity and not _same(current_value[batch], ZERO, values["sle"], "stock_value_difference"))):
             _fail("原批次有效库存数量与剩余价值不闭合")
         values["available"] = quantity
-        if heterogeneous and quantity:
+        if heterogeneous and quantity and batch in batchwise:
             values["rate"] = current_value[batch] / quantity
     return origin
 
 
-def _historical_origins(work, item, *, read, records, cutoff):
+def _historical_origins(work, item, *, read, records, cutoff, before_creation=None):
     """Only original transfer facts; cancellation does not revalue current WIP."""
     transfers = _transfers(work, read=read, records=records)
     result = {}
@@ -555,6 +724,10 @@ def _historical_origins(work, item, *, read, records, cutoff):
         ledger = _records(SLE, {"company": work.company, "voucher_type": SE, "voucher_no": voucher,
             "voucher_detail_no": detail, "item_code": code, "warehouse": work.wip_warehouse, "is_cancelled": 0},
             read=read, records=records)
+        if ledger and before_creation is not None:
+            ledger = [sle for sle in ledger if _precedes(sle, cutoff, before_creation)]
+            if not ledger:
+                continue
         qty = ZERO
         for sle in ledger:
             if _number(sle.actual_qty) <= 0 or sle.stock_uom != item.stock_uom or _stamp(sle) != _stamp(doc):
@@ -582,11 +755,15 @@ def proposal(work, requested_by_item, *, read, records, posting_date=None, posti
                 or item.get("has_serial_no") and remaining != remaining.to_integral_value()):
             _fail()
         pools = _pool(work, item, read=read, records=records, cutoff=cutoff)
+        modes = set()
         for _key, pool in sorted(pools.items(), key=lambda pair:
                 (_stamp(pair[1]["sle"]), pair[1]["sources"][0]["stock_entry"], str(pair[0]))):
             qty = min(remaining, pool["available"])
             if not qty:
                 continue
+            modes.add(bool(pool.get("valuation")))
+            if len(modes) > 1:
+                _fail("同一材料本次损耗不能混选逐批和非逐批估价批号，尚不能完整核对原生价层，请先核对原批次来源")
             batch, serial = pool["batch_no"], pool["serial_no"]
             if item.get("has_batch_no") and _batch(batch, code, read=read).get("disabled"):
                 _fail("所选原批号已停用，不能新增损耗出库")
@@ -594,10 +771,10 @@ def proposal(work, requested_by_item, *, read, records, posting_date=None, posti
                 if qty != 1:
                     _fail("序号材料必须按原号的整数库存数量办理")
                 _serial(serial, code, work.company, batch, read=read, current_warehouse=work.wip_warehouse)
-            value = qty * pool["rate"]
+            value = _charge(pool, qty)
             result.append({"item_code": code, "batch_no": batch, "qty": qty, "stock_uom": item.stock_uom,
                 "uom": item.stock_uom, "conversion_factor": 1, "use_serial_batch_fields": 1,
-                "expected_value": value, "allow_zero_valuation_rate": int(pool["rate"] == 0),
+                "expected_value": value, "allow_zero_valuation_rate": int(value == 0),
                 "source_transfers": _sources(pool, qty)})
             if serial:
                 result[-1]["serial_no"] = serial
@@ -611,7 +788,7 @@ def proposal(work, requested_by_item, *, read, records, posting_date=None, posti
 
 def prove_loss_batches(doc, work, *, read, records, posted=False):
     result = {}
-    historical, pools_by_item = doc.docstatus == 2, {}
+    historical, pools_by_item, sequences, modes = doc.docstatus == 2, {}, {}, {}
     for row in doc.get("items") or []:
         item = read("Item", row.item_code)
         if not (item.get("has_batch_no") or item.get("has_serial_no")):
@@ -646,11 +823,22 @@ def prove_loss_batches(doc, work, *, read, records, posted=False):
             lots = _selected_lots(doc, row, item, read=read, records=records)
             value = None
         if row.item_code not in pools_by_item:
-            pools_by_item[row.item_code] = (_historical_origins(work, item, read=read, records=records, cutoff=_stamp(doc))
+            pools_by_item[row.item_code] = (_historical_origins(work, item, read=read, records=records, cutoff=_stamp(doc),
+                    before_creation=min((_datetime(entry.get("creation")) for entry in ledger), default=None))
                 if historical else _pool(work, item, read=read, records=records,
                     cutoff=_stamp(doc), exclude=doc.name,
                     before_creation=min((_datetime(entry.get("creation")) for entry in ledger), default=None) if posted else None))
         pools = pools_by_item[row.item_code]
+        if not historical:
+            selected_modes = modes.setdefault(row.item_code, set())
+            selected_modes.update(bool(pools[key].get("valuation")) for key in lots if key in pools)
+            if len(selected_modes) > 1:
+                _fail("同一材料本次损耗不能混选逐批和非逐批估价批号，尚不能完整核对原生价层，请先核对原批次来源")
+        if not historical and any(pools[key].get("valuation") for key in lots if key in pools):
+            sequence = _number(row.get("idx"))
+            if sequence != sequence.to_integral_value() or sequence <= sequences.get(row.item_code, ZERO):
+                _fail("非逐批估价损耗明细必须保留原生保存顺序，不能调换价层扣减")
+            sequences[row.item_code] = sequence
         sources, detail_lots, expected = [], [], ZERO
         for batch, chosen in lots.items():
             if historical:
@@ -669,16 +857,23 @@ def prove_loss_batches(doc, work, *, read, records, posted=False):
             pool = pools.get(batch)
             if not pool or -chosen["qty"] > pool["available"]:
                 _fail("所选批号不在原工单准确转料池内，或累计出库超过剩余数量")
-            if (value is not None and not _same(-chosen["value"], -chosen["qty"] * pool["rate"], row, "amount")):
+            amount = _charge(pool, -chosen["qty"])
+            if (value is not None and not _same(-chosen["value"], amount, row, "amount")):
                 _fail("原生逐号或逐批损耗金额与准确原转料价层不一致")
-            expected += -chosen["qty"] * pool["rate"]
+            expected += amount
             lot_sources = _sources(pool, -chosen["qty"])
             sources.extend(lot_sources)
-            detail_lots.append({"lot_key": batch, "qty": -chosen["qty"], "value": -chosen["qty"] * pool["rate"],
+            detail_lots.append({"lot_key": batch, "qty": -chosen["qty"], "value": amount,
                 "batch_no": chosen["batch_no"], "serial_no": chosen["serial_no"], "sources": lot_sources})
             pool["available"] += chosen["qty"]
         if value is not None and not _same(value, expected, row, "amount"):
             _fail("原生批号实际损耗金额与原转料单一价层不一致，不能改账凑齐")
+        cursor = next((pools[key].get("valuation") for key in lots if pools[key].get("valuation")), None)
+        if value is not None and not historical and cursor and cursor["uses_fifo_queue"]:
+            if len(ledger) != 1 or (not _same(ledger[0].get("qty_after_transaction"), cursor["qty"], ledger[0], "actual_qty")
+                    or not _same(ledger[0].get("stock_value"), cursor["value"], ledger[0], "stock_value_difference")
+                    or _stock_queue(ledger[0].get("stock_queue")) != _stock_queue(cursor["queue"])):
+                _fail("原生FIFO损耗账的结余数量、价值或价层与真实扣减不一致")
         _mirror(row, lots)
         batches = {lot["batch_no"] for lot in lots.values()}
         result[row.name] = {"qty": quantity, "value": expected, "rate": expected / quantity,
