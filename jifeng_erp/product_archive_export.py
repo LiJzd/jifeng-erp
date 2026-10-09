@@ -58,9 +58,8 @@ def _scope(company, search, include_inactive):
     fields = _fields(P.PROFILE, PROFILE_FIELDS)
     _fields("Item", P.REQUIRED_ITEM)
     filters = {"company": company, **({} if inactive else {"inactive": 0})}
-    search_fields = ("legacy_number", "legacy_code", "display_name", "old_number", "major_category", "minor_category")
     return inactive, fields, {"filters": filters, "order_by": "name asc",
-        **({"or_filters": [[field, "like", "%" + search + "%"] for field in search_fields]} if search else {})}
+        **P._search_options(search, C._columns(P.PROFILE), C._columns("Item"))}
 
 
 def _permission_state():

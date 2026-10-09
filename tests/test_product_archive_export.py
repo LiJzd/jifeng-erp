@@ -215,6 +215,40 @@ class TestProductArchiveExport(unittest.TestCase):
         calls = [call for call in self.env.frappe.get_list.call_args_list if call.args[0] == self.P.PROFILE]
         self.assertTrue(all(call.kwargs["limit_page_length"] == 1048576 for call in calls))
 
+    def test_imported_product_export_uses_same_real_search_identities_without_rewriting_template(self):
+        for field in ("legacy_number", "legacy_code", "display_name", "old_number", "major_category", "minor_category"):
+            self.env.profile[field] = None
+        self.env.profile.update(supplier_product_code="AXC001-03", specification="双色手链（点焊）")
+        self.env.item["item_name"] = "不锈钢情人节结蛇链项链"
+        before = deepcopy((self.env.documents, self.env.versions, self.env.saves))
+        for keyword in ("BUSINESS-ITEM", "AXC001-03", "双色手链", "情人节结蛇链"):
+            with self.subTest(keyword=keyword):
+                self.assertEqual(self.P.query_archives("JF", search=keyword)["total"], 1)
+                self.export(search=keyword)
+                sheet = self.sheet()
+                self.assertEqual((sheet.max_row, sheet.max_column), (2, 28))
+                self.assertIsNone(sheet.cell(2, 2).value)
+                self.assertIsNone(sheet.cell(2, 10).value)
+        self.assertEqual(before, (self.env.documents, self.env.versions, self.env.saves))
+
+    def test_real_keyword_export_excludes_hidden_or_masked_supplier_spec_and_item_names(self):
+        self.env.profile.update(supplier_product_code="SOURCE-CODE", specification="SOURCE-SPEC")
+        self.env.item["item_name"] = "SOURCE-NAME"
+        for doctype, field, keyword in ((self.P.PROFILE, "supplier_product_code", "SOURCE-CODE"),
+                                       (self.P.PROFILE, "specification", "SOURCE-SPEC"),
+                                       ("Item", "item_name", "SOURCE-NAME")):
+            self.env.hidden[doctype, "read"] = {field}
+            with self.subTest(hidden_field=field):
+                self.export(search=keyword)
+                self.assertEqual(self.sheet().max_row, 1)
+            self.env.hidden.clear()
+            df = self.env.metas[doctype].get_field(field)
+            df.mask, df.permlevel = 1, 0
+            with self.subTest(masked_field=field):
+                self.export(search=keyword)
+                self.assertEqual(self.sheet().max_row, 1)
+            df.mask = 0
+
     def test_initial_or_mid_read_hidden_masked_missing_fields_refuse_entire_file(self):
         for doctype, field in ((self.P.PROFILE, "notes"), (self.P.PROFILE, "profile_image"), ("Item", "item_code"), ("File", "attached_to_field")):
             self.env.hidden[doctype, "read"] = {field}

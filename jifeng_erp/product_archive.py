@@ -84,7 +84,12 @@ def _company(value):
 
 
 def _columns(doctype, permission):
-    return set(get_permitted_fields(doctype, permission_type=permission, ignore_virtual=True))
+    columns = set(get_permitted_fields(doctype, permission_type=permission, ignore_virtual=True))
+    if permission != "read" or frappe.session.user == "Administrator":
+        return columns
+    meta = frappe.get_meta(doctype)
+    levels = set(meta.get_permlevel_access("mask", parenttype=None))
+    return columns - {df.fieldname for df in meta.fields if df.get("mask") and (df.permlevel or 0) not in levels}
 
 
 def _fields(doctype, fields, permission):
@@ -199,7 +204,11 @@ def _image_state(profile, fieldname, value=None):
 
 
 def _private_url(value):
-    if not isinstance(value, str) or not value.startswith("/private/files/") or value != value.strip():
+    return _local_image_url(value, "/private/files/")
+
+
+def _local_image_url(value, prefix):
+    if not isinstance(value, str) or not value.startswith(prefix) or value != value.strip():
         return False
     if any(ord(char) < 32 for char in value) or "\\" in value:
         return False
@@ -207,10 +216,42 @@ def _private_url(value):
         parts = urlsplit(value)
     except ValueError:
         return False
-    filename = unquote(parts.path.removeprefix("/private/files/"))
+    filename = unquote(parts.path.removeprefix(prefix))
     return bool(filename and filename not in (".", "..") and not any(char in filename for char in ("/", "\\", "%"))
                 and not any(ord(char) < 32 for char in filename)
                 and not (parts.scheme or parts.netloc or parts.query or parts.fragment))
+
+
+def _business_image_state(item):
+    """Read the current Item attachment without replacing private archive images.
+
+    Native image ingestion attaches File to Item without a field. Permit that
+    document binding, or the native image field, only when Item.image still
+    points at the exact local File URL. Other fields and remote URLs never gain
+    a download URL through this DTO.
+    """
+    value = item.get("image")
+    empty = {"url": "", "state": "未上传" if not value else "附件不可用"}
+    if not value or item.is_new():
+        return empty
+    private = _local_image_url(value, "/private/files/")
+    if not private and not _local_image_url(value, "/files/"):
+        return empty
+    binding = {"file_url": value, "is_private": int(private), "attached_to_doctype": "Item",
+               "attached_to_name": item.name}
+    names = frappe.get_all("File", filters=binding, pluck="name", order_by="name", limit_page_length=0)
+    for name in names:
+        try:
+            attachment = frappe.get_doc("File", name)
+        except frappe.DoesNotExistError:
+            continue
+        if any(attachment.get(field) != expected for field, expected in binding.items()):
+            continue
+        if attachment.get("attached_to_field") not in (None, "", "image"):
+            continue
+        if attachment.has_permission("read") and attachment.is_downloadable():
+            return {"url": attachment.unique_url, "state": "已上传"}
+    return empty
 
 
 @frappe.whitelist()
@@ -391,7 +432,7 @@ def _pack(profile, item, unscoped=False):
     for field in ("legacy_code", "major_category", "minor_category"):
         if field in pmeta:
             pmeta[field]["read_only"] = True
-    return {"name": profile.name if existing else None, "item_code": item.name if linked else None,
+    result = {"name": profile.name if existing else None, "item_code": item.name if linked else None,
             "existing_item": item.name if linked and not existing else None,
             "profile_version": _value(profile.modified) if existing else None,
             "item_version": _value(item.modified) if linked else None,
@@ -399,6 +440,11 @@ def _pack(profile, item, unscoped=False):
             "profile": pvalues, "item": ivalues, "field_meta": {"profile": pmeta, "item": imeta},
             "image_states": image_states, "can_create_item": bool(can_create), "can_link_item": bool(can_link),
             "can_write": bool(can_profile and permission(item, "read") if existing or linked else can_create or can_link)}
+    # An absent key means the image field is unreadable, not an empty image.
+    # The stored Item.image value is never an editable archive field.
+    if "image" in _columns("Item", "read"):
+        result["business_item_image"] = _business_image_state(item)
+    return result
 
 
 @frappe.whitelist()
@@ -502,6 +548,27 @@ def list_category_choices(company, search=""):
     return result
 
 
+def _search_options(search, readable, item_readable=None):
+    """Use real readable identities for both the archive list and its export."""
+    text = {"item_code", "supplier_product_code", "specification", "legacy_number", "legacy_code", "display_name",
+            "old_number", "major_category", "minor_category"} & readable
+    if search and not text:
+        frappe.throw("没有读取关键词查询字段的权限", frappe.PermissionError)
+    if not search:
+        return {}
+    options = {"or_filters": [[field, "like", "%" + search + "%"] for field in sorted(text)]}
+    item_readable = _columns("Item", "read") if item_readable is None else item_readable
+    if "item_code" in readable and frappe.has_permission("Item", "read") and "item_name" in item_readable:
+        # Item is the current business-name source. The final Profile query
+        # still applies company, activity and native document permissions.
+        matches = frappe.get_list("Item", filters={}, fields=["name"],
+                                  or_filters=[["item_name", "like", "%" + search + "%"]],
+                                  limit_page_length=0)
+        if matches:
+            options["or_filters"].append(["item_code", "in", [row.name for row in matches]])
+    return options
+
+
 def _list_archives(company, search, include_inactive):
     _login()
     _company(company)
@@ -513,10 +580,7 @@ def _list_archives(company, search, include_inactive):
         frappe.throw("请输入有效查询关键词")
     readable = _columns(PROFILE, "read")
     filters = {"company": company, **({} if include_inactive else {"inactive": 0})}
-    text = {"legacy_number", "legacy_code", "display_name", "old_number", "major_category", "minor_category"} & readable
-    if search and not text:
-        frappe.throw("没有读取关键词查询字段的权限", frappe.PermissionError)
-    options = {"or_filters": [[field, "like", "%" + search + "%"] for field in sorted(text)]} if search else {}
+    options = _search_options(search, readable)
     rows = frappe.get_list(PROFILE, filters=filters, fields=sorted((PROFILE_READ | REQUIRED_PROFILE) & readable),
                            order_by="name asc", limit_page_length=0, **options)
     if len({row.get("name") for row in rows}) != len(rows):

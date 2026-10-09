@@ -45,6 +45,9 @@ class Meta:
     def get_field(self, name):
         return next((field for field in self.fields if field.fieldname == name), None)
 
+    def get_permlevel_access(self, permission, parenttype=None):
+        return set()
+
 
 class NativeDocument(Record):
     environment = None
@@ -1022,6 +1025,111 @@ class TestProductArchive(unittest.TestCase):
         self.denials.add(("Item", "read"))
         with self.assertRaises(PermissionError):
             self.module.list_archives("JF", include_inactive=True)
+
+    def test_imported_product_searches_real_code_name_supplier_and_spec_without_legacy_backfill(self):
+        for field in ("legacy_number", "legacy_code", "display_name", "old_number", "major_category", "minor_category"):
+            self.profile[field] = None
+        self.profile.update(supplier_product_code="AXC001-03", specification="双色手链（点焊）")
+        self.item["item_name"] = "不锈钢情人节结蛇链项链"
+        before = deepcopy((self.documents, self.versions))
+        for keyword in ("BUSINESS-ITEM", "AXC001-03", "双色手链", "情人节结蛇链"):
+            with self.subTest(keyword=keyword):
+                result = self.module.query_archives("JF", search=keyword)
+                self.assertEqual(result["total"], 1)
+                self.assertEqual(result["rows"][0]["name"], "BUSINESS-ITEM")
+                self.assertIsNone(result["rows"][0]["profile"]["legacy_code"])
+        self.assert_unchanged(before)
+
+    def test_imported_search_respects_company_activity_and_hidden_source_fields(self):
+        for field in ("legacy_number", "legacy_code", "display_name", "old_number", "major_category", "minor_category"):
+            self.profile[field] = None
+        self.profile.update(supplier_product_code="SOURCE-CODE", specification="SOURCE-SPEC")
+        self.item["item_name"] = "SOURCE-NAME"
+        for doctype, field, keyword in ((PROFILE, "supplier_product_code", "SOURCE-CODE"),
+                                        (PROFILE, "specification", "SOURCE-SPEC"),
+                                        ("Item", "item_name", "SOURCE-NAME")):
+            self.hidden[(doctype, "read")] = {field}
+            with self.subTest(field=field):
+                self.assertEqual(self.module.query_archives("JF", search=keyword)["total"], 0)
+            self.hidden.clear()
+        for doctype, field, keyword in ((PROFILE, "supplier_product_code", "SOURCE-CODE"),
+                                        (PROFILE, "specification", "SOURCE-SPEC"),
+                                        ("Item", "item_name", "SOURCE-NAME")):
+            df = self.metas[doctype].get_field(field)
+            df.mask, df.permlevel = 1, 0
+            with self.subTest(masked_field=field):
+                self.assertEqual(self.module.query_archives("JF", search=keyword)["total"], 0)
+            df.mask = 0
+        self.add("Item", "OTHER-ITEM", item_code="OTHER-ITEM", item_name="SOURCE-NAME", item_group="Products", stock_uom="Nos")
+        self.add(PROFILE, "OTHER-ITEM", company="OTHER", item_code="OTHER-ITEM", inactive=0)
+        self.profile["inactive"] = 1
+        self.assertEqual(self.module.query_archives("JF", search="SOURCE-NAME")["total"], 0)
+        result = self.module.query_archives("JF", search="SOURCE-NAME", include_inactive=True)
+        self.assertEqual((result["total"], result["rows"][0]["name"]), (1, "BUSINESS-ITEM"))
+
+    def business_attachment(self, name="BUSINESS-IMAGE", url="/files/item.png", private=0, field=None):
+        return self.add("File", name, file_url=url, is_private=private, attached_to_doctype="Item",
+                        attached_to_name="BUSINESS-ITEM", attached_to_field=field,
+                        unique_url=url + "?fid=" + name)
+
+    def test_business_image_reads_exact_native_item_attachment_and_keeps_private_profile_images_separate(self):
+        before = deepcopy((self.documents, self.versions))
+        self.assertEqual(self.module.read_archive("BUSINESS-ITEM")["business_item_image"],
+                         {"url": "", "state": "附件不可用"})
+        self.assert_unchanged(before)
+        attachment = self.business_attachment()
+        self.profile["profile_image"] = "/private/files/product.png"
+        self.attachment()
+        before = deepcopy((self.documents, self.versions))
+        for field in (None, "", "image"):
+            attachment["attached_to_field"] = field
+            dto = self.module.read_archive("BUSINESS-ITEM")
+            self.assertEqual(dto["business_item_image"], {"url": "/files/item.png?fid=BUSINESS-IMAGE", "state": "已上传"})
+            self.assertEqual(dto["image_states"]["profile_image"],
+                             {"url": "/private/files/product.png?fid=PRIVATE-FILE", "state": "已上传"})
+            self.assertNotIn("image", dto["item"])
+            self.assertNotIn("image", dto["field_meta"]["item"])
+        attachment["attached_to_field"] = None
+        self.assert_unchanged(before)
+        self.hidden[("Item", "read")] = {"image"}
+        self.assertNotIn("business_item_image", self.module.read_archive("BUSINESS-ITEM"))
+        self.hidden.clear()
+        image_field = self.metas["Item"].get_field("image")
+        image_field.mask, image_field.permlevel = 1, 0
+        self.assertNotIn("business_item_image", self.module.read_archive("BUSINESS-ITEM"))
+
+    def test_business_image_rechecks_file_binding_read_download_and_local_url(self):
+        attachment = self.business_attachment()
+        for field, value in (("attached_to_name", "OTHER"), ("attached_to_doctype", PROFILE),
+                             ("attached_to_field", "other_image"), ("is_private", 1),
+                             ("file_url", "/files/other.png")):
+            previous = attachment[field]
+            attachment[field] = value
+            self.forced_files = ["BUSINESS-IMAGE"]
+            with self.subTest(field=field):
+                self.assertEqual(self.module.read_archive("BUSINESS-ITEM")["business_item_image"],
+                                 {"url": "", "state": "附件不可用"})
+            attachment[field] = previous
+        self.forced_files = None
+        for permission in ("read", "download"):
+            if permission == "read":
+                self.document_denials.add(("File", "BUSINESS-IMAGE", "read"))
+            else:
+                self.denied_downloads.add("BUSINESS-IMAGE")
+            with self.subTest(permission=permission):
+                self.assertEqual(self.module.read_archive("BUSINESS-ITEM")["business_item_image"]["url"], "")
+            self.document_denials.clear(); self.denied_downloads.clear()
+        for value in ("https://external.invalid/image.png", "//external.invalid/image.png", "/files/../secret.png",
+                      "/files/%2Fsecret.png", "/files/image.png?fid=OTHER", "/files/image.png#fragment"):
+            self.item["image"] = value
+            with self.subTest(url=value):
+                dto = self.module.read_archive("BUSINESS-ITEM")
+                self.assertEqual(dto["business_item_image"], {"url": "", "state": "附件不可用"})
+                self.assertNotIn(value, str(dto))
+        self.item["image"] = "/private/files/item.png"
+        attachment.update(file_url=self.item["image"], is_private=1, unique_url=self.item["image"] + "?fid=BUSINESS-IMAGE")
+        self.assertEqual(self.module.read_archive("BUSINESS-ITEM")["business_item_image"],
+                         {"url": "/private/files/item.png?fid=BUSINESS-IMAGE", "state": "已上传"})
 
     def test_guest_invalid_uuid_json_unknown_payload_and_nonfinite_reference_values_reject(self):
         before = deepcopy((self.documents, self.versions))
