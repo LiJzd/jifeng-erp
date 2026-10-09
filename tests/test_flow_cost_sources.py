@@ -77,6 +77,7 @@ class TestFlowCostSources(unittest.TestCase):
         self.hidden, self.omitted, self.mask_levels, self.read_levels = {}, {}, {}, {}
         self.denied, self.list_denied, self.role_denials = set(), set(), set()
         self.doc_hooks, self.list_hooks, self.raw_hooks, self.precisions = {}, {}, {}, {}
+        self.marked_receipts = set()
         self.frappe = types.ModuleType("frappe")
         self.frappe.session = Record(user="native-stock-reader")
         self.frappe.conf = Record()
@@ -90,6 +91,7 @@ class TestFlowCostSources(unittest.TestCase):
         self.frappe.get_meta = lambda doctype: Meta(self, doctype)
         self.frappe.db = types.SimpleNamespace(commit=Mock(), set_value=Mock(), sql=Mock())
         self.frappe.has_permission = lambda *args: True
+        self.frappe.get_cached_value = lambda *args: "CNY"
         self.frappe.new_doc, self.frappe.delete_doc = Mock(), Mock()
         model = types.ModuleType("frappe.model")
         model.get_permitted_fields = lambda doctype, **kw: self.permitted[doctype] - self.hidden.get(doctype, set())
@@ -168,6 +170,10 @@ class TestFlowCostSources(unittest.TestCase):
         self.native_gl = install_native_gl(self.frappe, Document, Record,
             lambda name: [row for (kind, _), row in self.documents.items()
                           if kind == self.module.SLE and row.voucher_no == name and not row.is_cancelled])
+        # Native GL identity also includes finance book, party and all enabled
+        # dimensions. Model actual metadata, rather than silently projecting
+        # only the old account/cost-center subset.
+        self.proof_schema()
         self.add("Company", "JF", default_currency="CNY")
         self.add("Currency", "CNY")
         self.add("Item", "FG", stock_uom="Nos", is_stock_item=1)
@@ -177,6 +183,14 @@ class TestFlowCostSources(unittest.TestCase):
         self.add("Warehouse", "REJECT-WH", company="JF", is_group=0)
         self.add(self.module.FLOW, "FLOW", company="JF", item_code="FG", docstatus=0)
         self.child(self.module.FLOW, "FLOW", "materials", "MAT", item_code="RM")
+
+    def proof_schema(self):
+        for doctype, fields in ((self.module.GLE, self.module.material_returns.receipt_gl_proof_fields()),
+                (self.module.SCR, {"project", "finance_book"} | set(self.native_gl["dimensions"])),
+                ("Subcontracting Receipt Item", set(self.native_gl["dimensions"]))):
+            self.permitted[doctype].update(fields)
+            self.metas[doctype].update({field: Record(fieldname=field, fieldtype="Data", permlevel=0)
+                for field in fields if field not in self.metas[doctype]})
 
     def schema(self, doctype, fields, money):
         # Independent installed ERPNext v16 schema fact: this is a temporary
@@ -240,7 +254,7 @@ class TestFlowCostSources(unittest.TestCase):
 
     @staticmethod
     def match_value(actual, op, value):
-        return actual == value if op == "=" else actual in value if op == "in" else False
+        return actual == value if op == "=" else actual in value if op == "in" else actual <= value if op == "<=" else False
 
     def get_list(self, doctype, filters, limit_page_length, fields=None, order_by=None, pluck=None, **kwargs):
         if doctype == self.module.GLE:
@@ -282,8 +296,11 @@ class TestFlowCostSources(unittest.TestCase):
         items = [row for (kind, _), row in self.documents.items()
                  if kind == "Subcontracting Receipt Item" and row.parent == name]
         values = {}
-        def add(account, center, project, amount):
-            key = (account, center, project)
+        def add(account, center, project, amount, *, header=False, detail=None):
+            dimensions = tuple((field, doc.get(field) if header else item.get(field) or doc.get(field))
+                               for field in self.native_gl["dimensions"])
+            key = (detail or (item.name if name in self.marked_receipts else None),
+                   account, center, project, doc.get("finance_book"), dimensions)
             values[key] = values.get(key, Decimal(0)) + Decimal(str(amount))
         for item in items:
             center, project = item.get("cost_center"), item.get("project")
@@ -312,12 +329,26 @@ class TestFlowCostSources(unittest.TestCase):
             add(item.expense_account, center, project, -fg + processing - (material+processing+other-fg))
             add(item.service_expense_account or item.expense_account, center, project, -processing)
             add("ADJUST", center, project, material+processing+other-fg)
-            add(item.expense_account, doc.get("cost_center") or "HEADER-CC", None, other)
-        for index, ((account, center, project), value) in enumerate(values.items()):
+            add(item.expense_account, doc.get("cost_center") or "HEADER-CC", doc.get("project"), other, header=True)
+        for (kind, _), charge in list(self.documents.items()):
+            if kind == "Landed Cost Taxes and Charges" and charge.parent == name:
+                amount = charge.base_amount or charge.amount
+                add(charge.expense_account, doc.get("cost_center") or "HEADER-CC", doc.get("project"),
+                    -Decimal(str(amount)), header=True, detail=charge.name if name in self.marked_receipts else None)
+        generated = []
+        for index, ((detail, account, center, project, book, dimensions), value) in enumerate(values.items()):
             if value:
-                self.add(self.module.GLE, name+"-GL-"+str(index),company="JF",voucher_type=self.module.SCR,
-                    voucher_no=name,voucher_detail_no=None,account=account,cost_center=center,project=project,
-                    debit=max(value,0),credit=max(-value,0),is_cancelled=0)
+                entry = {field: None for field in self.module.material_returns.receipt_gl_proof_fields()
+                          - {"name", "modified"}}
+                entry.update(company="JF", voucher_type=self.module.SCR, voucher_no=name,
+                    posting_date=doc.posting_date,
+                    voucher_detail_no=detail, account=account, cost_center=center, project=project, finance_book=book,
+                    debit=max(value,0), credit=max(-value,0), is_cancelled=0)
+                entry.update(dimensions)
+                generated.append(Record(entry))
+        generated = self.native_gl["process_gl_map"](generated, from_repost=True)
+        for index, entry in enumerate(generated):
+            self.add(self.module.GLE, name+"-GL-"+str(index), **entry)
 
     def ledger(self, name, doctype, voucher, detail, item, warehouse, quantity, value, adjustment=0):
         return self.add(self.module.SLE, name, creation=datetime(2026, 10, 3, 10), company="JF", item_code=item, warehouse=warehouse,
@@ -365,6 +396,150 @@ class TestFlowCostSources(unittest.TestCase):
             transfer_qty=Decimal(str(qty)) * Decimal(str(factor)), s_warehouse="RM-WH", t_warehouse=None)
         self.ledger(name + "-SLE", self.module.SE, name, row.name, "RM", "RM-WH", -row.transfer_qty, -row.transfer_qty * 4)
         return doc, row
+
+    def multi_receipt(self):
+        """Two real primary rows share accounts, but belong to different flows."""
+        doc, first = self.receipt(qty=60, loss=0)
+        self.add("Item", "FG-KG", stock_uom="Kg", is_stock_item=1)
+        self.add(self.module.FLOW, "FLOW-KG", company="JF", item_code="FG-KG", docstatus=0)
+        self.child(self.module.FLOW, "FLOW-KG", "materials", "MAT-KG", item_code="RM")
+        _second_doc, second = self.receipt("SECOND", qty=30, loss=0, flow="FLOW-KG")
+        second.update(parent="SCR", item_code="FG-KG", stock_uom="Kg", idx=2,
+                      service_cost_per_qty=3, amount=120, rate=4)
+        self.documents["Subcontracting Receipt Supplied Item", "SECOND-RM"].update(
+            parent="SCR", main_item_code="FG-KG", idx=2)
+        self.documents[self.module.SLE, "SECOND-FG-SLE"].update(
+            voucher_no="SCR", item_code="FG-KG", stock_uom="Kg", stock_value_difference=120)
+        self.documents[self.module.SLE, "SECOND-RM-SLE"].voucher_no = "SCR"
+        del self.documents[self.module.SCR, "SECOND"]
+        # Native merge combines raw/material/service contra entries in each
+        # group; account totals alone cannot prove either flow's fees.
+        first.service_expense_account = second.service_expense_account = "EXPENSE"
+        self.marked_receipts.add("SCR")
+        return doc, first, second
+
+    def test_multi_receipt_partial_return_keeps_each_flow_cost_and_stock_separate(self):
+        self.multi_receipt()
+        _doc, returned = self.receipt("RETURN", qty=-15, loss=0, is_return=1, original="SCR")
+        returned.service_expense_account = "EXPENSE"
+        self.marked_receipts.add("RETURN")
+        first = self.module.receipt_costs("FLOW")
+        second = self.module.receipt_costs("FLOW-KG")
+        self.assertEqual(first["totals"], {"material": 45, "processing": 90, "other": 0})
+        self.assertEqual(second["totals"], {"material": 30, "processing": 90, "other": 0})
+        self.assertEqual({row["receipt_item"]: row["qty"] for row in first["rows"]},
+                         {"SCR-FG": 60, "RETURN-FG": -15})
+        self.assertEqual([(row["receipt_item"], row["stock_uom"]) for row in second["rows"]],
+                         [("SECOND-FG", "Kg")])
+        self.assertEqual(first["receipt_valuation"]["inventory_value_change"], 135)
+        self.assertEqual(second["receipt_valuation"]["inventory_value_change"], 120)
+
+    def test_multi_receipt_native_dimensions_and_cost_center_allocation_are_proved(self):
+        self.native_gl["dimensions"][:] = ["department"]
+        self.native_gl["cost_allocations"]["FG-CC"] = [("CC-A", 40), ("CC-B", 60)]
+        self.proof_schema()
+        doc, first, second = self.multi_receipt()
+        doc.department, first.department, second.department = "HEADER", "CASTING", "PLATING"
+        self.assertEqual(self.module.receipt_costs("FLOW")["totals"]["processing"], 120)
+        self.assertEqual(self.module.receipt_costs("FLOW-KG")["totals"]["processing"], 90)
+
+    def test_multi_receipt_hidden_identity_dimension_or_book_refuses_partial_cost(self):
+        self.native_gl["dimensions"][:] = ["department"]
+        self.proof_schema()
+        self.multi_receipt()
+        for doctype, field in ((self.module.GLE, "voucher_detail_no"), (self.module.GLE, "finance_book"),
+                (self.module.GLE, "department"), (self.module.SCR, "department"),
+                ("Subcontracting Receipt Item", "department")):
+            self.hidden[doctype] = {field}
+            with self.subTest(doctype=doctype, field=field), self.assertRaises(PermissionError):
+                self.module.receipt_costs("FLOW")
+            self.hidden.clear()
+        self.metas[self.module.GLE]["department"].mask = 1
+        with self.assertRaises(PermissionError):
+            self.module.receipt_costs("FLOW")
+
+    def test_multi_receipt_unidentified_legacy_account_overlap_or_wrong_row_refuses(self):
+        self.multi_receipt()
+        self.marked_receipts.clear()
+        with self.assertRaisesRegex(ValueError, "合并会计费用"):
+            self.module.receipt_costs("FLOW")
+        self.marked_receipts.add("SCR")
+        saved_fixture = self.accounting_fixture
+        def corrupt_identity(name):
+            saved_fixture(name)
+            for (kind, _), row in self.documents.items():
+                if kind == self.module.GLE and row.voucher_no == name:
+                    row.voucher_detail_no = "FOREIGN-ROW"
+                    break
+        self.accounting_fixture = corrupt_identity
+        with self.assertRaisesRegex(ValueError, "明细标识"):
+            self.module.receipt_costs("FLOW")
+
+    def test_receipt_proof_cache_is_request_scoped_and_closed_against_late_gl_edit(self):
+        self.multi_receipt()
+        _doc, returned = self.receipt("RETURN", qty=-15, loss=0, is_return=1, original="SCR")
+        returned.service_expense_account = "EXPENSE"
+        self.marked_receipts.add("RETURN")
+        session = self.module._Session("FLOW")
+        session.load_receipts()
+        source = session.source(self.module.SCR, "SCR")
+        self.assertIs(session._receipt_fee_proof(source), session._receipt_fee_proof(source))
+        self.assertEqual(sum(kind == self.module.GLE for kind, *_ in session.queries), 2)
+        self.assertEqual(len(session.receipt_gl_sources), 2)
+        self.assertEqual(sum(call.args[0] == self.module.GLE
+                             for call in self.frappe.get_all.call_args_list), 2)
+        saved_fixture = self.accounting_fixture
+        def corrupt_amount(name):
+            saved_fixture(name)
+            for (kind, _), row in self.documents.items():
+                if kind == self.module.GLE and row.voucher_no == name:
+                    row.debit += 1
+                    break
+        self.accounting_fixture = corrupt_amount
+        with self.assertRaises(PermissionError):
+            session.finish()
+
+    def test_receipt_proof_closure_rejects_changed_native_dimension_configuration(self):
+        self.multi_receipt()
+        session = self.module._Session("FLOW")
+        session.load_receipts()
+        self.native_gl["dimensions"][:] = ["department"]
+        with self.assertRaises(PermissionError):
+            session.finish()
+
+    def test_receipt_proof_closes_native_request_cached_allocation_headers_and_children(self):
+        self.multi_receipt()
+        allocation = self.add("Cost Center Allocation", "ALLOC", company="JF", main_cost_center="FG-CC",
+                              valid_from=date(2026, 10, 1))
+        percentage = self.add("Cost Center Allocation Percentage", "PERCENT", parent=allocation.name,
+                              cost_center="CC-A", percentage=100)
+        # The native request cache deliberately stays unchanged. Closure must
+        # inspect raw configuration, not trust a second cached calculation.
+        self.native_gl["cost_allocations"]["FG-CC"] = [("CC-A", 100)]
+        session = self.module._Session("FLOW")
+        session.load_receipts()
+        percentage.percentage = 40
+        with self.assertRaises(PermissionError):
+            session.finish()
+        percentage.percentage = 100
+        session = self.module._Session("FLOW")
+        session.load_receipts()
+        self.add("Cost Center Allocation", "NEWER", company="JF", main_cost_center="FG-CC",
+                 valid_from=date(2026, 10, 3))
+        with self.assertRaises(PermissionError):
+            session.finish()
+        # Capture an empty configuration scope as well: a first allocation
+        # appearing after calculation must invalidate the returned costs.
+        del self.documents["Cost Center Allocation", "NEWER"]
+        del self.documents["Cost Center Allocation", "ALLOC"]
+        del self.documents["Cost Center Allocation Percentage", "PERCENT"]
+        self.native_gl["cost_allocations"].clear()
+        session = self.module._Session("FLOW")
+        session.load_receipts()
+        self.add("Cost Center Allocation", "FIRST", company="JF", main_cost_center="FG-CC",
+                 valid_from=date(2026, 10, 3))
+        with self.assertRaises(PermissionError):
+            session.finish()
 
     def issue_return(self, name="ISSUE-RETURN", qty=5, source="ISSUE", status=1, value=None):
         original = self.documents[self.module.SE, source]

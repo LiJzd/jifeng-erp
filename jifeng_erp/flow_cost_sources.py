@@ -238,7 +238,83 @@ class _Session:
         self.ledger = {}
         self.repost_state = None
         self.receipt_fees = {}
+        self.receipt_gl_sources = {}
+        self.receipt_gl_proofs = {}
+        self.receipt_dimensions = None
+        self.receipt_allocation_queries = set()
         self.receipt_lot_usage, self.receipt_fg_lot_usage, self.receipt_tracking_tables = {}, {}, {}
+
+    def _receipt_dimensions(self):
+        if self.receipt_dimensions is None:
+            self.receipt_dimensions = tuple(sorted(material_returns.receipt_accounting_dimensions()))
+            # Native accounting configuration changes the proof's grouping.
+            # Track it only when an actual receipt is read, never add a new
+            # accounting permission to ordinary issue/stock-only queries.
+            self.raw("Accounting Dimension", {"disabled": 0})
+        return set(self.receipt_dimensions)
+
+    def _parent_fields(self, doctype):
+        fields = set(PARENTS[doctype])
+        if doctype == SCR:
+            meta = frappe.get_meta(SCR)
+            fields |= {field for field in self._receipt_dimensions() | {"project", "finance_book"}
+                       if meta.get_field(field)}
+        return fields
+
+    def _child_fields(self, parenttype, childtype, fields):
+        fields = set(fields)
+        if parenttype == SCR and childtype == "Subcontracting Receipt Item":
+            meta = frappe.get_meta(childtype)
+            fields |= {field for field in self._receipt_dimensions() if meta.get_field(field)}
+        return fields
+
+    def _receipt_fee_ledger(self, source):
+        key = (source.doctype, source.name)
+        if key not in self.receipt_gl_sources:
+            fields = material_returns.receipt_gl_proof_fields()
+            self.receipt_gl_sources[key] = self.records(GLE, {"company": self.company,
+                "voucher_type": SCR, "voucher_no": source.name, "is_cancelled": 0}, fields)
+        return self.receipt_gl_sources[key]
+
+    def _receipt_fee_proof(self, source, *, for_return=False):
+        key = (source.doctype, source.name, for_return)
+        if key not in self.receipt_gl_proofs:
+            self._receipt_allocation_state(source)
+            original_proof = None
+            if source.get("is_return"):
+                original = self.source(SCR, source.get("return_against"))
+                original_proof = self._receipt_fee_proof(original, for_return=True)
+            self.receipt_gl_proofs[key] = material_returns._prove_receipt_fees(source,
+                ledger_reader=self._receipt_fee_ledger, for_return=for_return, _source_proof=original_proof)
+        return self.receipt_gl_proofs[key]
+
+    def _receipt_allocation_state(self, source):
+        # Native allocation lookup is request-cached. Recomputing GL at the
+        # end could therefore reuse a stale percentage or ignore a newer
+        # effective allocation. Record the same narrow configuration scope
+        # independently, including its empty result and selected children.
+        centers = {row.get("cost_center") for table in ("items", "supplied_items")
+                   for row in source.get(table) or [] if row.get("cost_center")}
+        header = source.get("cost_center") or source.get_company_default("cost_center")
+        if header:
+            centers.add(header)
+        key = (tuple(sorted(centers)), source.posting_date)
+        if key in self.receipt_allocation_queries:
+            return
+        self.receipt_allocation_queries.add(key)
+        parents = self.raw("Cost Center Allocation", {"docstatus": 1, "company": self.company,
+            "main_cost_center": ["in", sorted(centers)], "valid_from": ["<=", source.posting_date]})
+        latest = {}
+        for row in parents:
+            center = row["main_cost_center"]
+            effective = row["valid_from"]
+            if center not in latest or effective > latest[center]:
+                latest[center] = effective
+        # Include all equally dated latest candidates. Native date ordering
+        # alone does not decide a tie; any such candidate could be selected.
+        names = sorted(row["name"] for row in parents if row["valid_from"] == latest[row["main_cost_center"]])
+        if names:
+            self.raw("Cost Center Allocation Percentage", {"parent": ["in", names]})
 
     def raw(self, doctype, filters, **options):
         rows = frappe.get_all(doctype, filters=filters, fields=["*"], order_by="name asc",
@@ -274,7 +350,8 @@ class _Session:
             return self.documents[key][0]
         if not isinstance(name, str) or not name or doctype not in PARENTS:
             _invalid()
-        rows = self.records(doctype, {"name": name}, PARENTS[doctype])
+        fields = self._parent_fields(doctype)
+        rows = self.records(doctype, {"name": name}, fields)
         if len(rows) != 1:
             _deny()
         try:
@@ -284,10 +361,11 @@ class _Session:
         doc.check_permission("read")
         if any(doc.get(field) != value for field, value in rows[0].items()):
             _invalid()
-        if self.company is not None and "company" in PARENTS[doctype] and doc.get("company") != self.company:
+        if self.company is not None and "company" in fields and doc.get("company") != self.company:
             _invalid()
-        self.documents[key] = (doc, _freeze(doc), "read", PARENTS[doctype])
+        self.documents[key] = (doc, _freeze(doc), "read", fields)
         for fieldname, childtype, fields in TABLES.get(doctype, ()):
+            fields = self._child_fields(doctype, childtype, fields)
             _table(doctype, fieldname, childtype)
             # parent-only raw scope also detects children with a corrupt
             # parenttype/parentfield instead of silently dropping them.
@@ -472,7 +550,7 @@ class _Session:
             return self.receipts
         child = "Subcontracting Receipt Item"
         direct = self.records(SCR, [[SCR, "docstatus", "=", 1], [child, "jf_flow_order", "=", self.flow.name]],
-                              PARENTS[SCR], distinct=True)
+                              self._parent_fields(SCR), distinct=True)
         docs = {row["name"]: self.source(SCR, row["name"]) for row in direct}
         originals = {name: doc for name, doc in docs.items() if not doc.get("is_return")}
         for doc in list(docs.values()):
@@ -486,7 +564,7 @@ class _Session:
         if originals:
             # Blank flow links on historic returns cannot escape this closure.
             returns = self.records(SCR, {"docstatus": 1, "is_return": 1,
-                "return_against": ["in", sorted(originals)]}, PARENTS[SCR])
+                "return_against": ["in", sorted(originals)]}, self._parent_fields(SCR))
             docs.update((row["name"], self.source(SCR, row["name"])) for row in returns)
         docs.update(originals)
         targets = {}
@@ -673,16 +751,16 @@ class _Session:
             original_doc = self.source(SCR, doc.get("return_against"))
             original = next((item for item in original_doc.get("items")
                 if item.name == row.get("subcontracting_receipt_item")), None)
-        fee_ledger = lambda source: self.records(GLE, {"company": self.company,
-            "voucher_type": SCR, "voucher_no": source.name, "is_cancelled": 0}, PARENTS[GLE])
+        fee_ledger = self._receipt_fee_ledger
+        source_proof = None
         if doc.get("is_return"):
-            material_returns._prove_receipt_fees(original_doc, ledger_reader=fee_ledger, for_return=True)
+            source_proof = self._receipt_fee_proof(original_doc, for_return=True)
         processing = material_returns.receipt_accounting_fee(doc, actual, "service_cost_per_qty", original,
-            ledger_reader=fee_ledger, fee_source=original_doc if doc.get("is_return") else None)
+            ledger_reader=fee_ledger, fee_source=original_doc if doc.get("is_return") else None, _proof=source_proof)
         other = material_returns.receipt_accounting_fee(doc, actual, "additional_cost_per_qty", original,
-            ledger_reader=fee_ledger, fee_source=original_doc if doc.get("is_return") else None)
+            ledger_reader=fee_ledger, fee_source=original_doc if doc.get("is_return") else None, _proof=source_proof)
         if processing or other:
-            material_returns._prove_receipt_fees(doc, ledger_reader=fee_ledger)
+            self._receipt_fee_proof(doc)
         if not doc.get("is_return") and not all_rejected and not _same_quantity(row["amount"], estimated_amount, actual, "amount"):
             frappe.throw("回货已过账金额包含无法准确拆分的分摊或费用，不能简化为三项流程成本")
         # Rates are persisted in Company currency. A foreign account amount in
@@ -1264,6 +1342,9 @@ class _Session:
             _deny()
 
     def _check_documents(self, loaded):
+        if (self.receipt_dimensions is not None
+                and tuple(sorted(material_returns.receipt_accounting_dimensions())) != self.receipt_dimensions):
+            _deny()
         for (doctype, name), (_old, state, permission, fields) in self.documents.items():
             doc = loaded[doctype, name]
             doc.check_permission(permission)
@@ -1279,7 +1360,7 @@ class _Session:
                 doc.check_permission("select")
             for fieldname, childtype, child_fields in TABLES.get(doctype, ()):
                 _table(doctype, fieldname, childtype)
-                _fields(childtype, child_fields, doctype)
+                _fields(childtype, self._child_fields(doctype, childtype, child_fields), doctype)
             if doctype == SE and name in self.manufacture_names:
                 _fields("Stock Entry Detail", TABLES[SE][0][2] | MANUFACTURE_ITEM_FIELDS, SE)
                 fieldname, childtype, fields = MANUFACTURE_CHARGES
