@@ -206,6 +206,10 @@ class SubcontractingReturnTest(unittest.TestCase):
             return [row.name for row in parent.get(table) or []]
 
         self.frappe.get_all = membership
+        from test_subcontracting_accounting import install_native_gl
+        install_native_gl(self.frappe, Document, Row,
+            lambda name: self.stock_entries("Stock Ledger Entry", filters={"company": "JF", "voucher_type": "Subcontracting Receipt",
+                "voucher_no": name, "is_cancelled": 0}, limit_page_length=0))
 
         outer = self
 
@@ -324,6 +328,24 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.assertEqual(self.doc.validate(), "native-result")
         self.prior[0].docstatus = 1
         with self.assertRaisesRegex(ValueError, "累计实物"):
+            self.doc.validate()
+
+    def test_multi_row_partial_returns_and_cancel_release_only_the_original_row(self):
+        self.source.items.append(Row(self.source_row,name="SECOND",qty=2,conversion_factor=1,
+            rejected_qty=0,process_loss_qty=0,received_qty=2,amount=8))
+        first=self.row(name="PRIOR-A",parent="PRIOR-A",qty=-4)
+        self.prior=[first,self.row(name="PRIOR-B",parent="PRIOR-B",qty=-1,
+            subcontracting_receipt_item="SECOND",service_cost_per_qty=4)]
+        self.doc.items=[self.row(name="CURRENT-A",qty=-2),
+            self.row(name="CURRENT-B",qty=-1,subcontracting_receipt_item="SECOND",service_cost_per_qty=4)]
+        self.doc.validate()
+        self.doc.items[0].qty=-3
+        with self.assertRaisesRegex(ValueError,"累计实物"):
+            self.doc.validate()
+        first.docstatus=2
+        self.doc.validate()
+        self.doc.items[1].qty=-2
+        with self.assertRaisesRegex(ValueError,"累计实物"):
             self.doc.validate()
 
     def test_source_lock_precedes_current_read_and_native_write(self):
@@ -624,7 +646,7 @@ class SubcontractingReturnTest(unittest.TestCase):
         self.add_material(qty=1, rate=8, amount=8)
         self.source_row.additional_cost_per_qty = 1
         self.source_row.amount = 105
-        self.source.additional_costs = [Row(amount=3, base_amount=3, exchange_rate=1,
+        self.source.additional_costs = [Row(name="SOURCE-CHARGE", amount=3, base_amount=3, exchange_rate=1,
                                             expense_account="Historical Freight", account_currency="CNY")]
         # This return now requires actual complete source GL. The saved source
         # uses the repaired native posting path, not an assumed fee formula.

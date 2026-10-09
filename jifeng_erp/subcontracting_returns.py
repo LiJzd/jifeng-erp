@@ -63,6 +63,43 @@ GL_FEE_FIELDS = {"name", "modified", "company", "voucher_type", "voucher_no", "v
                  "account", "cost_center", "project", "debit", "credit", "is_cancelled"}
 
 
+def receipt_accounting_dimensions():
+    from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import get_accounting_dimensions
+    return tuple(get_accounting_dimensions())
+
+
+def receipt_gl_proof_fields():
+    from erpnext.accounts.general_ledger import get_merge_properties
+    return GL_FEE_FIELDS | set(get_merge_properties(receipt_accounting_dimensions()))
+
+
+def _booked_receipt_fee(row, field):
+    if field == "service_cost_per_qty":
+        return (_number(flt(row.get(field), _precision(row, field)))
+                * _number(flt(row.get("qty"), _precision(row, "qty"))))
+    return _number(row.get("qty")) * _number(row.get(field))
+
+
+class _ReceiptFeeProof:
+    """Server-local proof capability; client flags cannot stand in for it."""
+    def __init__(self, document, *, reversible, unallocated):
+        self.document = document
+        self.reversible = reversible
+        self.unallocated = unallocated
+        self.rows = {row.name: (tuple(row.get(field) for field in
+            ("qty", "conversion_factor", "service_cost_per_qty", "additional_cost_per_qty")),
+            {field: _booked_receipt_fee(row, field) for field in
+             ("service_cost_per_qty", "additional_cost_per_qty")})
+            for row in document.items} if not cint(document.get("is_return")) else {}
+
+    def amount(self, original, field):
+        saved = self.rows.get(original.name)
+        if not saved or saved[0] != tuple(original.get(field) for field in
+                ("qty", "conversion_factor", "service_cost_per_qty", "additional_cost_per_qty")):
+            frappe.throw("原费用证明与准确已保存商品明细不一致")
+        return saved[1][field]
+
+
 def _receipt_fee_ledger(document):
     # Native stock submit has no general GL-read requirement. This private
     # proof reads only the already readable receipt's exact company/voucher;
@@ -72,64 +109,116 @@ def _receipt_fee_ledger(document):
     _read_source_fields(document)
     filters = {"company": document.company, "voucher_type": RECEIPT,
                "voucher_no": document.name, "is_cancelled": 0}
-    rows = frappe.get_all("GL Entry", filters=filters, fields=sorted(GL_FEE_FIELDS), limit_page_length=0)
+    fields = receipt_gl_proof_fields()
+    rows = frappe.get_all("GL Entry", filters=filters, fields=sorted(fields), limit_page_length=0)
     names = [row.name for row in rows]
     if (len(set(names)) != len(names)
-            or any(not GL_FEE_FIELDS.issubset(row) for row in rows)):
+            or any(not fields.issubset(row) for row in rows)):
         frappe.throw("无法完整核对原收回有效会计费用来源")
     return rows
 
 
-def _prove_receipt_fees(document, *, ledger_reader=None, for_return=False):
-    """Compare the frozen single primary row with complete actual native GL.
+class _LegacyReceiptGLRow:
+    """Read-only native calculation view; never mutate the original Document."""
+    def __init__(self, document, row):
+        self._document, self._row = document, row
+        self.items, self.supplied_items, self.additional_costs = [row], document.get("supplied_items") or [], []
 
-    Legacy native GL has no item detail identity and may merge service with
-    its ordinary expense account. Prove the whole native posting vector in
-    that case, including exact SLE, rather than treating the merged expense
-    balance as a service amount. Multiple unlabelled fee rows remain ambiguous.
+    def __getattr__(self, name):
+        return getattr(self._document, name)
+
+    def get(self, name, default=None):
+        return getattr(self, name) if name in ("items", "supplied_items", "additional_costs") else self._document.get(name, default)
+
+    def add_gl_entry(self, **values):
+        values["voucher_detail_no"] = self._row.name
+        self._document.add_gl_entry(**values)
+
+
+def _prove_receipt_fees(document, *, ledger_reader=None, for_return=False, _source_proof=None):
+    """Prove each complete FG/charge contribution against effective native GL.
+
+    New postings retain the native voucher_detail_no merge identity. Legacy
+    merged entries are usable only when nonzero row groups have disjoint
+    merge identities, so their actual amounts can be uniquely attributed.
     """
     primary = [row for row in document.items if not row.get("secondary_item_type") and not row.get("valuation_type")]
-    if len(primary) != 1 or any(row.get("landed_cost_voucher_amount") for row in document.items):
+    if (not primary or len(primary) != len(document.items) or len({row.name for row in primary}) != len(primary)
+            or any(row.get("landed_cost_voucher_amount") for row in document.items)):
         frappe.throw("原收回费用缺少可逐行核实的有效会计归属，不能按整单合计猜测退回份额")
     actual = (ledger_reader or _receipt_fee_ledger)(document)
     from erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt import SubcontractingReceipt
+    from erpnext.accounts.general_ledger import get_merge_properties, process_gl_map
+    fields = receipt_gl_proof_fields()
+    if any(not fields.issubset(entry) for entry in actual):
+        frappe.throw("没有完整读取逐行费用会计归属或会计维度的权限", frappe.PermissionError)
     if ledger_reader is None:
         _source_stock_entries(document)
     account_map = document.get_inventory_account_map()
     expected = []
-    # The old native gate is required before its merged postings can prove a
-    # legacy fee. A zero-rate source needs the corrected full SLE posting path.
-    row = primary[0]
-    if _number(row.get("qty")) and _number(row.get("rate")):
-        SubcontractingReceipt.make_item_gl_entries(document, expected, account_map)
+    for row in primary:
+        # Capture each actual old native contribution using a read-only view.
+        # Its accepted qty/rate gate remains evidence of the legacy posting.
+        if _number(row.get("qty")) and _number(row.get("rate")):
+            SubcontractingReceipt.make_item_gl_entries(_LegacyReceiptGLRow(document, row), expected, account_map)
     corrected = []
-    SubcontractingReceiptReturnMixin.make_item_gl_entries(document, corrected, account_map)
+    if cint(document.get("is_return")) and _source_proof is None:
+        source = _source(document.get("return_against"), document)
+        _source_proof = _prove_receipt_fees(source, ledger_reader=ledger_reader, for_return=True)
+    SubcontractingReceiptReturnMixin.make_item_gl_entries(document, corrected, account_map,
+                                                        _source_proof=_source_proof)
+    charge_ids = {charge.name for charge in document.get("additional_costs") or []}
+    expected.extend(entry for entry in corrected if entry.get("voucher_detail_no") in charge_ids)
+    from copy import deepcopy
+    unallocated = deepcopy(corrected)
+    merge_fields = tuple(get_merge_properties(receipt_accounting_dimensions()))
+    # Native allocation keeps row identities; from_repost avoids budget side
+    # effects in this proof while preserving allocation, merge and sign rules.
+    expected = process_gl_map(expected, from_repost=True)
+    corrected = process_gl_map(corrected, from_repost=True)
+    precision = _precision(primary[0], "amount")
 
-    def totals(entries):
+    def totals(entries, *, include_detail=True):
         values = {}
         for entry in entries:
-            key = tuple(entry.get(field) or "" for field in ("account", "cost_center", "project"))
+            key = tuple(entry.get(field) or "" for field in merge_fields
+                        if include_detail or field != "voucher_detail_no")
             values[key] = values.get(key, Decimal(0)) + _number(entry.get("debit")) - _number(entry.get("credit"))
-        return {key: flt(value, _precision(row, "amount")) for key, value in values.items()
-                if flt(value, _precision(row, "amount"))}
+        return {key: flt(value, precision) for key, value in values.items() if flt(value, precision)}
 
     if any(entry.get("company") != document.company or entry.get("voucher_type") != RECEIPT
             or entry.get("voucher_no") != document.name or cint(entry.get("is_cancelled")) for entry in actual):
         frappe.throw("原收回有效会计费用凭证范围不一致")
-    actual_totals, legacy_totals, corrected_totals = totals(actual), totals(expected), totals(corrected)
+    marked = any(entry.get("voucher_detail_no") for entry in actual)
+    identities = {row.name for row in primary} | charge_ids
+    if marked and any(entry.get("voucher_detail_no") not in identities for entry in actual):
+        frappe.throw("原收回会计明细标识缺失或不属于准确商品及费用来源")
+    actual_totals = totals(actual, include_detail=marked)
+    legacy_totals = totals(expected, include_detail=marked)
+    corrected_totals = totals(corrected, include_detail=marked)
     # Real free stock can have effective nonzero-quantity SLE but no monetary
     # GL after native zero-entry filtering. Exact SLE were checked above;
     # absence is a fault only if that proven source needs nonzero postings.
     if not actual and corrected_totals:
         frappe.throw("原收回没有有效会计费用来源，不能反冲尚未入账费用")
     if (actual_totals not in (legacy_totals, corrected_totals)
-            or flt(sum((_number(value) for value in actual_totals.values()), Decimal(0)), _precision(row, "amount"))):
+            or flt(sum((_number(value) for value in actual_totals.values()), Decimal(0)), precision)):
         frappe.throw("原收回有效会计分录与准确库存、耗料和已保存费用不一致，不能猜测费用退回")
     if (for_return or cint(document.get("is_return"))) and actual_totals != corrected_totals:
         frappe.throw("原收回历史会计差额与当前退回方向不一致，须先核对原账，不能生成未入账或错误反向分录")
+    if not marked and len(identities) > 1:
+        accepted = corrected if actual_totals == corrected_totals else expected
+        owners = {}
+        for identity in identities:
+            row_totals = totals([entry for entry in accepted if entry.get("voucher_detail_no") == identity], include_detail=False)
+            for key in row_totals:
+                if key in owners:
+                    frappe.throw("原收回历史合并会计费用不能逐行核实归属，不能按整单合计猜测退回份额")
+                owners[key] = identity
+    return _ReceiptFeeProof(document, reversible=actual_totals == corrected_totals, unallocated=unallocated)
 
 
-def receipt_accounting_fee(document, row, field, original=None, *, ledger_reader=None, fee_source=None):
+def receipt_accounting_fee(document, row, field, original=None, *, ledger_reader=None, fee_source=None, _proof=None):
     """Native accepted-quantity fee, or its exact accepted-stock reversal.
 
     received_qty is the material/estimated FG cost basis. It is not the
@@ -138,14 +227,8 @@ def receipt_accounting_fee(document, row, field, original=None, *, ledger_reader
     """
     if row.get(field) in (None, ""):
         frappe.throw("收回缺少已保存费用单价，不能猜测费用入账")
-    def booked(value):
-        if field == "service_cost_per_qty":
-            # Installed native GL rounds both operands before multiplication.
-            return (_number(flt(value.get(field), _precision(value, field)))
-                    * _number(flt(value.get("qty"), _precision(value, "qty"))))
-        return _number(value.get("qty")) * _number(value.get(field))
     if not cint(document.get("is_return")):
-        return booked(row)
+        return _booked_receipt_fee(row, field)
     if original is None or original.get(field) in (None, ""):
         frappe.throw("退回缺少准确原收回费用来源")
     qty = _number(row.get("qty"))
@@ -158,10 +241,14 @@ def receipt_accounting_fee(document, row, field, original=None, *, ledger_reader
     original_stock = _number(original.get("qty")) * _factor(original)
     if accepted_stock < 0 or accepted_stock > original_stock and not _same(accepted_stock, original_stock, original):
         frappe.throw("接受实物退回费用份额超过准确原接受数量")
-    amount = booked(original)
+    amount = _booked_receipt_fee(original, field)
     if amount:
-        source = fee_source or _return_source(document)
-        _prove_receipt_fees(source, ledger_reader=ledger_reader, for_return=True)
+        source = fee_source or (_proof.document if isinstance(_proof, _ReceiptFeeProof) else _return_source(document))
+        if _proof is None:
+            _proof = _prove_receipt_fees(source, ledger_reader=ledger_reader, for_return=True)
+        if not isinstance(_proof, _ReceiptFeeProof) or _proof.document is not source or not _proof.reversible:
+            frappe.throw("原收回费用须由本次服务器来源证明，不能用客户端标志跳过")
+        amount = _proof.amount(original, field)
     return -amount * accepted_stock / original_stock
 
 
@@ -184,7 +271,8 @@ def _read_fields(doctype, fields, parenttype=None):
 
 def _read_source_fields(source):
     _read_fields(RECEIPT, {"company", "supplier", "supplier_warehouse", "posting_date", "posting_time",
-                           "docstatus", "is_return", "return_against"})
+                           "docstatus", "is_return", "return_against", "project", "cost_center", "finance_book"}
+                         | set(receipt_accounting_dimensions()))
     for table, child in (("items", "Subcontracting Receipt Item"),
                          ("supplied_items", "Subcontracting Receipt Supplied Item"),
                          ("additional_costs", "Landed Cost Taxes and Charges")):
@@ -215,6 +303,11 @@ def _source(name, document=None):
     # Keep this parent lock until the caller's normal Frappe commit. All return
     # saves/submissions lock the same source before reading remaining pools.
     source = frappe.get_doc(RECEIPT, name, for_update=True)
+    return _validate_source(source, document)
+
+
+def _validate_source(source, document=None):
+    """Check a freshly loaded source or a server-local proven source alike."""
     source.check_permission("read")
     _read_source_fields(source)
     if source.docstatus != 1 or cint(source.get("is_return")):
@@ -1001,13 +1094,76 @@ def _historical_materials(document, source):
         document.append("supplied_items", value)
 
 
+def _guard_return_allocation(document, source, proof, entries):
+    """Do not accumulate penny rounding across separately posted reversals."""
+    from copy import deepcopy
+    from erpnext.accounts.general_ledger import (get_cost_center_allocation_data, get_field_precision,
+                                                get_merge_properties, process_gl_map)
+    if not any(len(get_cost_center_allocation_data(document.company, date, value.get("cost_center"))) > 1
+               for values, date in ((proof.unallocated, source.posting_date), (entries, document.posting_date))
+               for value in values if _number(value.get("debit")) or _number(value.get("credit"))):
+        return
+    fields = [field for field in get_merge_properties(receipt_accounting_dimensions())
+              if field not in ("voucher_detail_no", "voucher_no")]
+    precision = get_field_precision(frappe.get_meta("GL Entry").get_field("debit"),
+                                    currency=frappe.get_cached_value("Company", document.company, "default_currency"))
+    def vector(values):
+        result = {}
+        for value in process_gl_map(deepcopy(values), from_repost=True):
+            key = tuple(value.get(field) or "" for field in fields)
+            result[key] = result.get(key, Decimal(0)) + _number(value.get("debit")) - _number(value.get("credit"))
+        return {key: _number(flt(value, precision)) for key, value in result.items() if flt(value, precision)}
+
+    full = set()
+    for original in source.items:
+        current = [row for row in document.items if row.get("subcontracting_receipt_item") == original.name]
+        if len(current) != 1 or _physical_pools(current[0], original) != (
+                _number(original.get("qty")) * _factor(original),
+                _number(original.get("rejected_qty")) * _factor(original)):
+            continue
+        before = vector([value for value in proof.unallocated if value.get("voucher_detail_no") == original.name])
+        after = vector([value for value in entries if value.get("voucher_detail_no") == current[0].name])
+        if after == {key: -value for key, value in before.items()}:
+            full.add(original.name)
+    source_charges = {charge.name for charge in source.get("additional_costs") or []}
+    current_charges = {charge.name for charge in document.get("additional_costs") or []}
+    charges_full = (full == {row.name for row in source.items}
+        and vector([value for value in entries if value.get("voucher_detail_no") in current_charges]) ==
+            {key: -value for key, value in vector([value for value in proof.unallocated
+                                                   if value.get("voucher_detail_no") in source_charges]).items()})
+    current_origins = {row.name: row.get("subcontracting_receipt_item") for row in document.items}
+    active_origins = {row.get("subcontracting_receipt_item") for row in document.items
+                      if _number(row.get("qty")) or _number(row.get("rejected_qty"))}
+    active_charge_keys = {tuple(value.get(field) or "" for field in fields) for value in entries
+                          if value.get("voucher_detail_no") in current_charges
+                          and (_number(value.get("debit")) or _number(value.get("credit")))}
+    for values, posting_date, charges, origins in ((proof.unallocated, source.posting_date, source_charges, {}),
+                                                  (entries, document.posting_date, current_charges, current_origins)):
+        for value in values:
+            detail = value.get("voucher_detail_no")
+            if (values is proof.unallocated and ((detail not in charges and detail not in active_origins)
+                    or (detail in charges and tuple(value.get(field) or "" for field in fields) not in active_charge_keys))):
+                continue
+            if (detail in charges and charges_full) or origins.get(detail, detail) in full:
+                continue
+            allocation = get_cost_center_allocation_data(document.company, posting_date, value.get("cost_center"))
+            if len(allocation) <= 1:
+                continue
+            for field in ("debit", "credit", "debit_in_account_currency", "credit_in_account_currency"):
+                for _, percentage in allocation:
+                    projected = _number(value.get(field)) * _number(percentage) / 100
+                    if projected != _number(flt(projected, precision)):
+                        frappe.throw("成本中心分摊的分批退回存在分钱舍入，无法准确累计反冲原已入账归属，请按准确整行退回核对")
+
+
 class SubcontractingReceiptReturnMixin:
-    def make_item_gl_entries(self, gl_entries, inventory_account_map=None):
+    def make_item_gl_entries(self, gl_entries, inventory_account_map=None, *, _source_proof=None):
         """Post exact SLE values and native accepted-quantity fees, even at zero FG value."""
         if (self.docstatus == 2 or any(row.get("secondary_item_type") or row.get("valuation_type")
                 or _number(row.get("landed_cost_voucher_amount")) for row in self.items)):
             return super().make_item_gl_entries(gl_entries, inventory_account_map)
         from erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt import get_account_currency
+        first_entry = len(gl_entries)
 
         # Native submit/repost writer scope: only this submitted voucher. This
         # is not a user-facing reader and returns no unrelated ledger details.
@@ -1016,11 +1172,23 @@ class SubcontractingReceiptReturnMixin:
             "voucher_detail_no", "actual_qty", "stock_value_difference"], limit_page_length=0)
         if any(sle.company != self.company for sle in ledger):
             frappe.throw("收回会计库存来源公司不一致")
-        source = _source(self.get("return_against"), self) if cint(self.get("is_return")) else None
+        source = None
+        if _source_proof is not None:
+            if (not isinstance(_source_proof, _ReceiptFeeProof) or not _source_proof.reversible
+                    or not cint(self.get("is_return"))
+                    or _source_proof.document.name != self.get("return_against")):
+                frappe.throw("原收回费用须由本次服务器来源证明，不能用客户端标志跳过")
+            source = _validate_source(_source_proof.document, self)
+        elif cint(self.get("is_return")):
+            source = _source(self.get("return_against"), self)
+        proof = None
         if source:
             # This also covers zero-fee and rejected-only returns. An original
             # native zero-qty gate with no GL must never gain an inverse GL.
-            _prove_receipt_fees(source, for_return=True)
+            proof = _source_proof or _prove_receipt_fees(source, for_return=True)
+            if any((self.get(field) or "") != (source.get(field) or "") for field in
+                    ("cost_center", "project", "finance_book", *receipt_accounting_dimensions())):
+                frappe.throw("退回的会计维度或费用分配来源与原收回不一致，不能改写原费用归属")
         originals = {row.name: row for row in source.items} if source else {}
         known, allocated_other = set(), Decimal(0)
         remarks = self.get("remarks") or frappe._("Accounting Entry for Stock")
@@ -1032,11 +1200,11 @@ class SubcontractingReceiptReturnMixin:
                 frappe.throw("收回实物仓库缺少库存科目，不能只记部分会计分录")
             return result
 
-        def entry(account_name, center, *, debit=0, credit=0, against=None, item=None):
+        def entry(account_name, center, *, debit=0, credit=0, against=None, item=None, detail=None):
             self.add_gl_entry(gl_entries=gl_entries, account=account_name, cost_center=center,
                 debit=float(debit), credit=float(credit), remarks=remarks, against_account=against,
                 account_currency=get_account_currency(account_name), project=item.get("project") if item else None,
-                item=item)
+                item=item, voucher_detail_no=item.name if item is not None else detail)
 
         def movement(row, item_code, warehouse, expected):
             selected = [sle for sle in ledger if sle.voucher_detail_no == row.name
@@ -1050,6 +1218,11 @@ class SubcontractingReceiptReturnMixin:
             original = originals.get(row.get("subcontracting_receipt_item")) if source else None
             if source and original is None:
                 frappe.throw("退回会计没有准确原收回商品明细")
+            if original and (any((row.get(field) or "") != (original.get(field) or "") for field in
+                    ("expense_account", "cost_center", "project", *receipt_accounting_dimensions()))
+                    or (row.get("service_expense_account") or row.get("expense_account")) !=
+                       (original.get("service_expense_account") or original.get("expense_account"))):
+                frappe.throw("退回商品的会计科目或维度与准确原明细不一致")
             center = row.get("cost_center")
             fg_value, material_value = Decimal(0), Decimal(0)
             for qty_field, warehouse_field in (("qty", "warehouse"), ("rejected_qty", "rejected_warehouse")):
@@ -1074,16 +1247,21 @@ class SubcontractingReceiptReturnMixin:
                 inv = account(raw, "supplier_warehouse")
                 expense = raw.get("expense_account") or row.expense_account
                 raw_center = raw.get("cost_center") or center
+                if original:
+                    origin = _origin_raw(source, original.name, raw)
+                    if (expense != (origin.get("expense_account") or original.expense_account)
+                            or raw_center != (origin.get("cost_center") or original.cost_center)):
+                        frappe.throw("退回耗料的会计科目或成本中心与准确原耗料不一致")
                 entry(inv.account, raw_center, debit=value, against=expense, item=row)
                 entry(expense, raw_center, credit=value, against=inv.account, item=row)
 
-            processing = receipt_accounting_fee(self, row, "service_cost_per_qty", original)
-            other = receipt_accounting_fee(self, row, "additional_cost_per_qty", original)
+            processing = receipt_accounting_fee(self, row, "service_cost_per_qty", original, fee_source=source, _proof=proof)
+            other = receipt_accounting_fee(self, row, "additional_cost_per_qty", original, fee_source=source, _proof=proof)
             allocated_other += other
             service_account = row.get("service_expense_account") or row.expense_account
             entry(service_account, center, credit=processing, against=row.expense_account, item=row)
             entry(row.expense_account, center, debit=processing, against=service_account, item=row)
-            entry(row.expense_account, self.get("cost_center") or self.get_company_default("cost_center"), debit=other)
+            entry(row.expense_account, self.get("cost_center") or self.get_company_default("cost_center"), debit=other, detail=row.name)
             difference = material_value + processing + other - fg_value
             if _number(flt(difference, _precision(row, "amount"))):
                 loss_account = self.get_company_default("stock_adjustment_account", ignore_validation=True)
@@ -1099,9 +1277,30 @@ class SubcontractingReceiptReturnMixin:
             value = _number(charge.get("base_amount") if charge.get("base_amount")
                 or charge.get("account_currency") != self.company_currency else charge.get("amount"))
             charged_other += value
-            entry(charge.expense_account, self.get("cost_center") or self.get_company_default("cost_center"), credit=value)
+            entry(charge.expense_account, self.get("cost_center") or self.get_company_default("cost_center"), credit=value, detail=charge.name)
         if flt(allocated_other, self.precision("total_additional_costs")) != flt(charged_other, self.precision("total_additional_costs")):
             frappe.throw("收回已保存附加费用分配与原费用单本币金额不一致，不能凑平会计分录")
+        if source:
+            _guard_return_allocation(self, source, proof, gl_entries[first_entry:])
+        if source and str(self.posting_date) != str(source.posting_date):
+            # Native allocation is date-sensitive. A new allocation must not
+            # redirect a historical reversal into different cost centers.
+            from copy import deepcopy
+            from erpnext.accounts.general_ledger import get_merge_properties, process_gl_map
+            current = deepcopy(gl_entries[first_entry:])
+            historical = deepcopy(current)
+            for value in historical:
+                value["posting_date"] = source.posting_date
+            keys = get_merge_properties(receipt_accounting_dimensions())
+            precision = self.precision("total_additional_costs")
+            def allocation_totals(values):
+                result = {}
+                for value in process_gl_map(values, from_repost=True):
+                    key = tuple(value.get(field) or "" for field in keys)
+                    result[key] = result.get(key, Decimal(0)) + _number(value.get("debit")) - _number(value.get("credit"))
+                return {key: flt(value, precision) for key, value in result.items() if flt(value, precision)}
+            if allocation_totals(current) != allocation_totals(historical):
+                frappe.throw("退回日期的成本中心分摊与原已入账归属不同，不能改写原费用分配")
 
     def validate_items(self):
         if not cint(self.get("is_return")):
