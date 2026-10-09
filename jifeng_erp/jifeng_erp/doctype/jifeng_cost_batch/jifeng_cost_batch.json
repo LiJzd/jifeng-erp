@@ -9,6 +9,7 @@
   "reference_no",
   "source_receipt",
   "source_receipt_item",
+  "source_manufacture",
   "received_qty",
   "good_qty",
   "rework_qty",
@@ -45,6 +46,14 @@
    "label": "来源收货明细行",
    "read_only": 1,
    "hidden": 1
+  },
+  {
+   "fieldname": "source_manufacture",
+   "fieldtype": "Link",
+   "label": "来源制造入库单",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "description": "按制造单全部终成品入库量与父单确认损耗核对；工艺损耗只计一次。"
   },
   {
    "fieldname": "received_qty",

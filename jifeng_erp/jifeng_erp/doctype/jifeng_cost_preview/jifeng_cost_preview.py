@@ -150,6 +150,7 @@ class JifengCostPreview(Document):
             del self._cost_basis_selection
 
     def _validate_batch_sources(self):
+        self._validate_manufacture_batches()
         linked = [row for row in self.batches if row.source_receipt or row.source_receipt_item]
         if not linked:
             return
@@ -176,6 +177,47 @@ class JifengCostPreview(Document):
                 frappe.throw("来源净回货数量已变化，请读取来源并核对批次分类后保存")
             if Decimal(str(row.lost_qty or 0)) < source["lost_qty"]:
                 frappe.throw("试算批次损耗不能少于来源凭证已确认的工艺损耗")
+
+    def _validate_manufacture_batches(self):
+        linked = [row for row in self.batches if row.get("source_manufacture")]
+        actual_basis = self.get("cost_basis") == POSTED_ACTUAL
+        if not linked and not actual_basis:
+            return
+        if not self.flow_order:
+            frappe.throw("制造入库批次必须关联流程单")
+        if actual_basis:
+            # Read by _refresh_actual_costs in the same complete source session.
+            # Never let removing a Link or all batch rows erase posted losses.
+            result = getattr(self, "_cost_refresh_result", None)
+            if result is None:
+                result = self._read_actual_costs()
+            candidates = result["manufacture_batches"]
+        else:
+            from jifeng_erp.workflow import manufacture_batch_candidates
+
+            candidates = manufacture_batch_candidates(self.flow_order)
+        sources = {source["manufacture"]: source for source in candidates}
+        seen = set()
+        for row in linked:
+            if row.source_receipt or row.source_receipt_item:
+                frappe.throw("同一批次不能同时关联制造入库与委外回货")
+            if row.source_manufacture in seen:
+                frappe.throw("同一制造入库单不能重复带入试算")
+            seen.add(row.source_manufacture)
+            source = sources.get(row.source_manufacture)
+            if not source or (source["company"], source["item_code"]) != (self.company, self.item_code):
+                frappe.throw("来源制造单未提交、不可读或与本公司的终成品、流程单不一致；已撤销的批次请核对后删除")
+            if row.receipt_type != "首次回货":
+                frappe.throw("制造入库批次须按首次回货核对新产出，不能转作返工回货或待检处理")
+            if Decimal(str(source["qty"])) != Decimal(str(row.received_qty or 0)):
+                frappe.throw("来源制造入库量与确认损耗已变化，请读取来源并核对批次分类后保存")
+            if Decimal(str(row.lost_qty or 0)) < source["lost_qty"]:
+                frappe.throw("试算批次损耗不能少于制造入库单已确认的工艺损耗")
+        if actual_basis:
+            missing = [source["manufacture"] for source in candidates
+                       if source["lost_qty"] and source["manufacture"] not in seen]
+            if missing:
+                frappe.throw("已过账制造单存在确认损耗，请读取制造入库批次并核对分类后再核算：" + "、".join(missing))
 
     @frappe.whitelist()
     def load_flow_costs(self, preserve_input=False):

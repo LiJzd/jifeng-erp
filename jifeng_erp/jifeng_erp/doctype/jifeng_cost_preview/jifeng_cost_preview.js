@@ -37,6 +37,44 @@ frappe.ui.form.on("Jifeng Cost Preview", {
         const basis = frm.doc.cost_basis || (frm.doc.receipt_cost_loaded_at ? "历史实际费用口径待确认" : "流程估算");
         frm.set_intro(`费用口径：${basis}。实际口径保存或重新核算时重读当前已提交来源，撤销后净费用随之更新；无待保存修改时，请使用“重新核算当前实际费用”。估算口径保留人工费用。试算不产生库存或财务凭证。`, "blue");
         if (!frm.is_new() && frm.doc.flow_order) {
+            frm.add_custom_button("读取已提交制造入库批次", async () => {
+                const flowOrder = frm.doc.flow_order, previewName = frm.doc.name;
+                const response = await frappe.call({
+                    method: "jifeng_erp.workflow.manufacture_batch_candidates",
+                    args: { flow_order: flowOrder },
+                });
+                if (frm.doc.name !== previewName || frm.doc.flow_order !== flowOrder) return;
+                const candidates = response.message || [];
+                if (!candidates.length) {
+                    frappe.msgprint("没有已提交且关联本流程单的终成品制造入库。现有批次未更改；来源已撤销的批次请核对后删除。");
+                    return;
+                }
+                const existing = new Map((frm.doc.batches || [])
+                    .filter(row => row.source_manufacture).map(row => [row.source_manufacture, row]));
+                const manualReferences = new Set((frm.doc.batches || [])
+                    .filter(row => !row.source_manufacture && row.reference_no).map(row => row.reference_no));
+                let added = 0, conflicts = 0;
+                const changed = [], escape = value => frappe.utils.escape_html(String(value));
+                for (const source of candidates) {
+                    const row = existing.get(source.manufacture);
+                    if (row) {
+                        if (row.receipt_type !== "首次回货" || Number(row.received_qty) !== Number(source.qty)
+                            || Number(row.lost_qty || 0) < Number(source.lost_qty || 0))
+                            changed.push(`${escape(source.manufacture)}：实际入库 ${source.inventory_qty}，确认损耗 ${source.lost_qty}，覆盖量 ${source.qty} ${escape(source.stock_uom)}`);
+                        continue;
+                    }
+                    if (manualReferences.has(source.manufacture)) { conflicts++; continue; }
+                    const child = frm.add_child("batches", {
+                        receipt_type: "首次回货", reference_no: source.manufacture,
+                        source_manufacture: source.manufacture, received_qty: source.qty,
+                        lost_qty: source.lost_qty, pending_qty: source.inventory_qty,
+                    });
+                    existing.set(source.manufacture, child);
+                    added++;
+                }
+                frm.refresh_field("batches");
+                frappe.msgprint(`新增 ${added} 条制造入库批次${conflicts ? `；${conflicts} 条单号与未绑定制造来源的批次相同，已跳过，请先核对原批次` : ""}。同一制造单的终成品分行合并，确认损耗只计一次，其余先列为待检；请核对合格、返工、待检分类后保存。已过账实际费用口径不能遗漏有确认损耗的制造批次。本操作不会自动保存或入账。${changed.length ? `<br><br>以下来源或分类需重新核对，已有人工分类未覆盖：<br>${changed.join("<br>")}` : ""}`);
+            });
             frm.add_custom_button("读取已提交委外回货批次", async () => {
                 const flowOrder = frm.doc.flow_order;
                 const previewName = frm.doc.name;
@@ -115,6 +153,11 @@ frappe.ui.form.on("Jifeng Cost Preview", {
                             ...(result.wages || []).map(row => `工资计提 ${row.journal_entry}（计薪 ${row.wage_entry}）`),
                         ];
                         message += `本次来源：${[...new Set(sources)].map(value => frappe.utils.escape_html(value)).join("、") || "无"}。制造只计凭证耗料与附加费，内部转料和成品入库价值不重复相加；计薪记录须已纳入有效工资计提才计入加工费，付款不再累加费用。`;
+                        const lossSources = (result.manufacture_batches || []).filter(row => Number(row.lost_qty));
+                        if (lossSources.length) {
+                            const escape = value => frappe.utils.escape_html(String(value));
+                            message += `<br>已确认制造损耗：${lossSources.map(row => `${escape(row.manufacture)} ${escape(row.lost_qty)} ${escape(row.stock_uom)}`).join("、")}。请先读取制造入库批次并核对分类；保存会核对来源覆盖量和损耗，清空来源不能消除已确认损耗。`;
+                        }
                     }
                     const valuation = result.receipt_valuation;
                     const receiptRows = reader === "receipt_costs" ? result.rows : result.receipts;

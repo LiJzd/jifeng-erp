@@ -532,6 +532,79 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
         self.assertEqual(preview.receipt_cost_sources, "SCR")
         self.assert_no_posting()
 
+    def manufacture_loss_preview(self):
+        self.receipt.docstatus = 2
+        preview = self.saving_preview()
+        self.workflow.stock_plan_quantity.return_value = Decimal(5)
+        source = self.native.manufacture(qty=4)
+        source.from_bom, source.fg_completed_qty, source.process_loss_qty = 1, 5, 1
+        batch = preview.batches[0]
+        batch.update(source_manufacture=source.name, reference_no=source.name,
+                     received_qty=5, good_qty=4, rework_qty=0, lost_qty=1)
+        return preview, source, batch
+
+    def test_manufacture_confirmed_loss_changes_cost_denominator_without_posting(self):
+        preview, source, batch = self.manufacture_loss_preview()
+        preview.validate()
+        self.assertEqual((preview.total_cost, preview.estimated_unit_cost, batch.estimated_cost),
+                         ("40", "10", "40"))
+        self.assertEqual((preview.planned_qty, preview.good_qty, preview.lost_qty), (5, "4", "1"))
+        self.assertEqual((source.fg_completed_qty, source.process_loss_qty), (5, 1))
+        self.assert_no_posting()
+
+    def test_removing_batch_or_link_cannot_erase_actual_manufacture_loss(self):
+        for remove in ("link", "all_batches"):
+            preview, _source, batch = self.manufacture_loss_preview()
+            if remove == "link":
+                batch.source_manufacture, batch.lost_qty, batch.good_qty = None, 0, 5
+            else:
+                preview.batches = []
+            with self.subTest(remove=remove), self.assertRaisesRegex(ValueError, "存在确认损耗"):
+                preview.validate()
+        self.assert_no_posting()
+
+    def test_manufacture_source_binding_rejects_duplicate_mixed_and_reclassification(self):
+        preview, _source, batch = self.manufacture_loss_preview()
+        preview._refresh_actual_costs()
+        cases = (("source_receipt", "SCR", "同时关联"),
+                 ("receipt_type", "返工回货", "首次回货"),
+                 ("receipt_type", "待检处理", "首次回货"),
+                 ("received_qty", 4, "已变化"), ("lost_qty", 0, "工艺损耗"),
+                 ("source_manufacture", "OTHER", "未提交"))
+        for field, value, error in cases:
+            previous = batch.get(field)
+            batch[field] = value
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, error):
+                preview._validate_batch_sources()
+            batch[field] = previous
+        preview.batches.append(type(batch)(batch))
+        with self.assertRaisesRegex(ValueError, "重复"):
+            preview._validate_batch_sources()
+        self.assert_no_posting()
+
+    def test_cancelled_manufacture_requires_classification_reconciliation_before_repricing(self):
+        preview, source, _batch = self.manufacture_loss_preview()
+        preview.validate()
+        source.docstatus = 2
+        with self.assertRaisesRegex(ValueError, "已撤销"):
+            preview.validate()
+        preview.batches = []
+        preview.validate()
+        self.assertEqual((preview.total_cost, preview.estimated_unit_cost, preview.lost_qty), ("0", "0", "0"))
+        self.assertEqual(preview.cost_basis, "流程已过账实际")
+        self.assert_no_posting()
+
+    def test_estimate_manual_batches_remain_editable_but_explicit_actual_cannot_ignore_loss(self):
+        preview, _source, batch = self.manufacture_loss_preview()
+        preview.cost_basis = "流程估算"
+        preview._before.cost_basis = "流程估算"
+        batch.source_manufacture, batch.good_qty, batch.lost_qty = None, 5, 0
+        preview.validate()
+        self.assertEqual(preview.total_cost, "330")
+        with self.assertRaisesRegex(ValueError, "存在确认损耗"):
+            preview.load_posted_costs(preserve_input=True)
+        self.assert_no_posting()
+
     def test_wage_accrual_changes_cost_not_quantity_and_reverse_retains_inventory_sources(self):
         preview = self.saving_preview()
         self.native.manufacture(material=40, other=0)
@@ -581,6 +654,33 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
                                 capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_manufacture_batch_read_preserves_classification_manual_entries_and_stale_flow(self):
+        program = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+let handlers,release;const messages=[],requests=[],added=[];
+const frappe={ui:{form:{on:(_,h)=>handlers=h}},utils:{escape_html:v=>v.replace(/</g,'&lt;').replace(/>/g,'&gt;')},
+ call:options=>{requests.push(options);return new Promise(resolve=>release=resolve);},msgprint:message=>messages.push(message)};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe});
+(async()=>{
+ const buttons={},manual={reference_no:'MANUAL',good_qty:2},classified={source_manufacture:'OLD',reference_no:'OLD',receipt_type:'首次回货',received_qty:5,good_qty:4,lost_qty:1};
+ const doc={name:'CP',flow_order:'FLOW',batches:[manual,classified]},frm={doc,is_new:()=>false,set_intro:()=>{},set_df_property:()=>{},
+ add_custom_button:(name,handler)=>buttons[name]=handler,add_child:(_,values)=>{added.push(values);doc.batches.push(values);return values;},refresh_field:()=>{}};
+ handlers.refresh(frm);const read=buttons['读取已提交制造入库批次'];
+ const stale=read();doc.flow_order='OTHER';release({message:[{manufacture:'WRONG'}]});await stale;assert.equal(added.length,0);assert.equal(messages.length,0);
+ doc.flow_order='FLOW';const next=read();release({message:[
+  {manufacture:'MAKE<1>',qty:5,inventory_qty:4,lost_qty:1,stock_uom:'Nos'},
+  {manufacture:'MANUAL',qty:2,inventory_qty:2,lost_qty:0,stock_uom:'Nos'},
+  {manufacture:'OLD',qty:6,inventory_qty:4,lost_qty:2,stock_uom:'Nos'}]});await next;
+ assert.equal(added.length,1);assert.equal(added[0].source_manufacture,'MAKE<1>');assert.equal(added[0].received_qty,5);assert.equal(added[0].lost_qty,1);assert.equal(added[0].pending_qty,4);
+ assert.deepEqual(manual,{reference_no:'MANUAL',good_qty:2});assert.equal(classified.received_qty,5);assert.equal(classified.good_qty,4);assert.equal(classified.lost_qty,1);
+ assert.match(messages[0],/已跳过.*确认损耗只计一次.*未覆盖/);assert.match(messages[0],/OLD：实际入库 4，确认损耗 2，覆盖量 6 Nos/);
+ assert.ok(requests.every(request=>request.method==='jifeng_erp.workflow.manufacture_batch_candidates'));
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+        result = subprocess.run(["node", "-e", program, str(ROOT / "jifeng_erp/jifeng_erp/doctype/jifeng_cost_preview/jifeng_cost_preview.js")],
+                                capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_historical_dirty_gui_choice_is_confirmed_without_autosave_or_input_loss(self):
         program = r"""
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
@@ -596,7 +696,7 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{frappe,format_curren
  save:()=>{throw Error('historical ambiguous input must not autosave');},
  call:async(method,args)=>{ calls.push({method,args,remark:doc.remark,batches:doc.batches}); }, reload_doc:async()=>{},
  set_value:async values=>Object.assign(doc,values)};
- handlers.refresh(frm); assert.equal(Object.keys(buttons).length,4);
+ handlers.refresh(frm); assert.equal(Object.keys(buttons).length,5);
  const flush=()=>new Promise(resolve=>setImmediate(resolve));
  const unchanged=JSON.stringify(doc), cancelled=buttons['带入委外回货实际费用'](); await flush();
  assert.equal(calls.length,0); confirmations.at(-1).no(); await cancelled; assert.equal(JSON.stringify(doc),unchanged);
