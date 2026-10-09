@@ -127,6 +127,20 @@
    "fieldtype": "Attach Image",
    "label": "已归档图片",
    "read_only": 1
+  },
+  {
+   "fieldname": "source_image_candidates",
+   "fieldtype": "Small Text",
+   "label": "源图片候选记录",
+   "read_only": 1,
+   "description": "保留同一商品的真实平台图片字段和准确订单行来源；不接受人工地址。"
+  },
+  {
+   "fieldname": "archived_image_source",
+   "fieldtype": "Small Text",
+   "label": "已归档图片实际来源",
+   "read_only": 1,
+   "description": "实际成功归档的图片地址；原源图片地址保持用于追溯。"
   }
  ],
  "field_order": [
@@ -143,6 +157,8 @@
   "image_sync_status",
   "image_sync_error",
   "image_sync_attempted_at",
-  "archived_image"
+  "archived_image",
+  "source_image_candidates",
+  "archived_image_source"
  ]
 }
