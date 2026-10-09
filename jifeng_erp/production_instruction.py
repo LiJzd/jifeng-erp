@@ -11,6 +11,12 @@ from jifeng_erp.costing import CostingError, number
 
 _FACTORY_SCOPE = object()
 _PLAN_CHANGED = "生产计划来源已变化，请刷新后重新安排工单"
+_SUBASSEMBLY_WORK_FIELDS = {
+    "name", "qty", "docstatus", "produced_qty", "process_loss_qty", "company", "production_item",
+    "bom_no", "stock_uom", "production_plan", "production_plan_item", "production_plan_sub_assembly_item",
+    "jf_flow_order", "sales_order", "sales_order_item", "fg_warehouse", "wip_warehouse", "source_warehouse",
+    "track_semi_finished_goods",
+}
 
 
 def _plan_flow_ids(doc):
@@ -136,6 +142,67 @@ def _committed(work):
     return quantity
 
 
+def _plan_source_reader(doctype, name):
+    from jifeng_erp.production_loss import check_loss_source_read_permissions
+
+    document = frappe.get_doc(doctype, name)
+    return check_loss_source_read_permissions(document, doctype=doctype)
+
+
+def _subassembly_source(plan, row, *, arranging=True):
+    """Resolve the native child through its single, linked finished-item row.
+
+    Unlinked plans retain their native manufacturing and procurement paths.
+    A linked child never receives the parent's Flow quantity or item identity.
+    """
+    parents = [parent for parent in plan.get("po_items") or []
+               if parent.name == row.get("production_plan_item")]
+    if len(parents) != 1:
+        if _plan_flow_ids(plan):
+            frappe.throw("子装配缺少准确父生产计划成品行，不能猜测流程来源")
+        return None
+    if not parents[0].get("jf_flow_order"):
+        return None
+    from jifeng_erp.production_loss import check_loss_source_read_permissions, read_plan_subassembly_source
+
+    check_loss_source_read_permissions(plan, doctype="Production Plan")
+    source = read_plan_subassembly_source(plan, row.name, read=_plan_source_reader, arranging=arranging)
+    if arranging:
+        from jifeng_erp.flow_quantity import check_quantity_fields
+
+        check_quantity_fields("Jifeng Flow Order", {"source_changed", "source_status"})
+        _open_source(source["flow"])
+    return source
+
+
+def _check_subassembly_work(work, plan, row):
+    if (work.get("production_plan") != plan.name
+            or work.get("production_plan_sub_assembly_item") != row.name
+            or work.get("production_plan_item") or work.get("jf_flow_order")
+            or work.get("company") != plan.company or work.get("production_item") != row.production_item
+            or work.get("bom_no") != row.bom_no or work.get("stock_uom") != row.stock_uom
+            or work.get("track_semi_finished_goods")
+            or any((work.get(field) or "") != (row.get(field) or "")
+                   for field in ("sales_order", "sales_order_item"))
+            or (row.get("fg_warehouse") and work.get("fg_warehouse") != row.fg_warehouse)):
+        frappe.throw("已有子装配工单与准确计划行的公司、商品、BOM、单位、仓库或销售来源不一致")
+
+
+def _subassembly_remaining(plan, row, *, exclude=None):
+    filters = {"production_plan": plan.name, "production_plan_sub_assembly_item": row.name,
+               "docstatus": ["<", 2]}
+    if exclude:
+        filters["name"] = ["!=", exclude]
+    works = _work_rows(filters, sorted(_SUBASSEMBLY_WORK_FIELDS))
+    for work in works:
+        _check_subassembly_work(work, plan, row)
+    maximum = _quantity(row.qty, "子装配计划库存数量")
+    committed = sum(_committed(work) for work in works)
+    if maximum <= 0 or _over_quantity(committed, maximum):
+        frappe.throw("有效子装配工单数量超过对应生产计划明细数量")
+    return max(0, flt(maximum - committed, _qty_precision())), works
+
+
 class ProductionInstructionMixin:
     def check_if_latest(self):
         # Native saves lock their Plan parent before before_validate. Serialize
@@ -156,12 +223,18 @@ class ProductionInstructionMixin:
         names = _factory_scope(self)
         self._jf_plan_factory_scope = (_FACTORY_SCOPE, self.name, names)
         try:
+            # Refuse an ambiguous linked child before the native factory inserts
+            # any finished-item or subassembly Work Order in this transaction.
+            for row in self.get("sub_assembly_items") or []:
+                if row.get("type_of_manufacturing") == "In House":
+                    _subassembly_source(self, row)
             # Keep native reload, warehouse defaults, operations, requirements,
             # reservation flags, subassembly/PO factories and result messages.
             return super().make_work_order()
         finally:
             self._jf_plan_factory_scope = None
             self._jf_plan_reusable_drafts = None
+            self._jf_subassembly_reusable_drafts = None
 
     def get_production_items(self):
         scope = getattr(self, "_jf_plan_factory_scope", None)
@@ -214,6 +287,44 @@ class ProductionInstructionMixin:
                     wo_list.append(name)
         return result
 
+    def prepare_data_for_sub_assembly_items(self, row, wo_data, pending_qty=None):
+        scope = getattr(self, "_jf_plan_factory_scope", None)
+        if scope and scope[0] is _FACTORY_SCOPE and scope[1] == self.name:
+            _check_factory_scope(self, scope[2])
+        else:
+            _factory_scope(self)
+        current = [child for child in self.get("sub_assembly_items") or [] if child.name == row.name]
+        if len(current) != 1:
+            frappe.throw("子装配生产计划行已变化，请刷新后重新安排工单")
+        row = current[0]
+        result = super().prepare_data_for_sub_assembly_items(row, wo_data, pending_qty)
+        if _subassembly_source(self, row):
+            # The native pending calculation counts submitted orders only.
+            # Keep native defaults and replace only this exact child's quantity.
+            wo_data["qty"], works = _subassembly_remaining(self, row)
+            reusable = list(getattr(self, "_jf_subassembly_reusable_drafts", None) or [])
+            for work in works:
+                if work.docstatus != 0:
+                    continue
+                draft = frappe.get_doc("Work Order", work.name, for_update=True)
+                if any(draft.get(field) != work.get(field) for field in _SUBASSEMBLY_WORK_FIELDS):
+                    frappe.throw(_PLAN_CHANGED)
+                if frappe.has_permission("Work Order", "read", doc=draft) and draft.name not in reusable:
+                    reusable.append(draft.name)
+            self._jf_subassembly_reusable_drafts = reusable
+        return result
+
+    def make_work_order_for_subassembly_items(self, wo_list, subcontracted_po, default_warehouses):
+        self._jf_subassembly_reusable_drafts = []
+        try:
+            result = super().make_work_order_for_subassembly_items(wo_list, subcontracted_po, default_warehouses)
+            for name in self._jf_subassembly_reusable_drafts:
+                if name not in wo_list:
+                    wo_list.append(name)
+            return result
+        finally:
+            self._jf_subassembly_reusable_drafts = None
+
 
 def _match(flow, item, bom, sales_order, sales_order_item):
     if (flow.item_code != item or flow.bom != bom
@@ -233,6 +344,39 @@ def _bom(flow):
 
 
 def validate_work_order(doc):
+    if doc.get("production_plan_sub_assembly_item"):
+        if doc.get("production_plan_item") or not doc.get("production_plan"):
+            frappe.throw("子装配工单必须只关联准确生产计划子装配行")
+        child_hint = frappe.db.get_value("Production Plan Sub Assembly Item", doc.production_plan_sub_assembly_item,
+            ["parent", "parenttype", "parentfield", "production_plan_item"], as_dict=True)
+        if (not child_hint or child_hint.parent != doc.production_plan
+                or child_hint.parenttype != "Production Plan" or child_hint.parentfield != "sub_assembly_items"):
+            frappe.throw("子装配工单与生产计划来源明细不一致")
+        names = _persisted_plan_flows(doc.production_plan)
+        _lock_flow_ids(names)
+        _lock_plan_rows(doc.production_plan)
+        plan = frappe.get_doc("Production Plan", doc.production_plan, for_update=True)
+        plan.check_permission("read")
+        rows = [row for row in plan.get("sub_assembly_items") or []
+                if row.name == doc.production_plan_sub_assembly_item]
+        if (len(rows) != 1 or rows[0].get("production_plan_item") != child_hint.production_plan_item
+                or not _plan_flow_ids(plan).issubset(names)):
+            frappe.throw(_PLAN_CHANGED)
+        arranging = doc.docstatus == 0 or doc.is_new() or getattr(doc, "_action", None) == "submit"
+        source = _subassembly_source(plan, rows[0], arranging=arranging)
+        if source:
+            if source["flow"].name not in names:
+                frappe.throw(_PLAN_CHANGED)
+            row = source["row"]
+            _check_subassembly_work(doc, plan, row)
+            remaining, _works = _subassembly_remaining(plan, row, exclude=doc.name or "")
+            if _quantity(doc.qty, "子装配工单库存数量") <= 0 or _over_quantity(_committed(doc), remaining):
+                frappe.throw("有效子装配工单数量超过对应生产计划明细数量")
+            # A child quantity is in its own stock UOM. It reserves the native
+            # child Plan row, not the parent's finished-product Flow quantity.
+            return
+        if doc.get("jf_flow_order"):
+            frappe.throw("子装配缺少准确父流程来源，不能借用终成品流程数量")
     if doc.get("production_plan_item"):
         hint = frappe.db.get_value("Production Plan Item", doc.production_plan_item,
                                   ["parent", "parenttype", "parentfield", "jf_flow_order"], as_dict=True)
