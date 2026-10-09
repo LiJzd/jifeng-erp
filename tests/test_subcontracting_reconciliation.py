@@ -199,6 +199,45 @@ class TestSubcontractingReconciliationProjections(unittest.TestCase):
             {"PI-SUB"}, {"PO-SUB"}), "purchase_order")
         self.assertEqual(self.module._payment_scope([], {"PI-SUB"}, {"PO-SUB"}), "unlinked")
 
+    def test_cancelled_history_keeps_only_requested_source_flow_and_order(self):
+        self.module._child_rows = Mock(return_value=[
+            Row(parent="SCR-ONE", jf_flow_order="FLOW-1", subcontracting_order="SCO-1"),
+            Row(parent="SCR-OTHER", jf_flow_order="FLOW-2", subcontracting_order="SCO-1"),
+            Row(parent="SCR-ORDER", jf_flow_order="FLOW-1", subcontracting_order="SCO-2"),
+        ])
+        docs = {name: Row(name=name) for name in ("SCR-ONE", "SCR-OTHER", "SCR-ORDER")}
+        result = self.module._history_flow_documents("Subcontracting Receipt", "Subcontracting Receipt Item",
+                                                      docs, "FLOW-1", "SCO-1")
+        self.assertEqual(set(result), {"SCR-ONE"})
+        required = self.module._child_rows.call_args.args[4]
+        self.assertEqual(required, {"jf_flow_order", "subcontracting_order"})
+
+    def test_unfiltered_cancelled_history_preserves_existing_complete_scope(self):
+        self.module._child_rows = Mock()
+        docs = {"SCR": Row(name="SCR")}
+        self.assertIs(self.module._history_flow_documents("Subcontracting Receipt", "Subcontracting Receipt Item",
+                                                         docs, None), docs)
+        self.module._child_rows.assert_not_called()
+
+    def test_full_cancelled_history_does_not_print_other_flow_receipts_or_material_vouchers(self):
+        docs = lambda prefix, **extra: {prefix + str(i): Row(name=prefix + str(i),
+            transaction_date="2026-10-02", posting_date="2026-10-02", **extra) for i in (1, 2)}
+        orders = docs("SCO", purchase_order="PO1")
+        orders["SCO2"].update(purchase_order="PO2")
+        self.module._visible_docs = Mock(side_effect=[orders, docs("PO"), docs("SCR"), docs("STE")])
+        self.module._child_rows = Mock(side_effect=[
+            [Row(parent="SCO1", jf_flow_order="FLOW-1"), Row(parent="SCO2", jf_flow_order="FLOW-2")],
+            [Row(parent="PO1", jf_flow_order="FLOW-1"), Row(parent="PO2", jf_flow_order="FLOW-2")],
+            [Row(parent="SCR1", jf_flow_order="FLOW-1", subcontracting_order="SCO1"),
+             Row(parent="SCR2", jf_flow_order="FLOW-2", subcontracting_order="SCO2")],
+            [Row(parent="STE1", jf_flow_order="FLOW-1"), Row(parent="STE2", jf_flow_order="FLOW-2")],
+            [Row(parent="PO1", jf_flow_order="FLOW-1")], [], [],
+        ])
+        rows = self.module._cancelled_history("QA", "SUP", date(2026, 10, 1), date(2026, 10, 8),
+                                               {}, {}, "FLOW-1", "SCO1")
+        self.assertEqual({row["voucher_no"] for row in rows}, {"SCO1", "PO1", "SCR1", "STE1"})
+        self.assertEqual(self.module._visible_docs.call_args_list[1].args[1]["name"], ["in", ["PO1"]])
+
 
 if __name__ == "__main__":
     unittest.main()

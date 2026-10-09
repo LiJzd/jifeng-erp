@@ -6,6 +6,9 @@ Purchase Invoices whose rows link to the exact subcontracting Purchase Orders.
 """
 
 from decimal import Decimal, InvalidOperation
+from contextvars import ContextVar
+import hashlib
+import json
 
 import frappe
 from frappe.model import get_permitted_fields
@@ -18,6 +21,26 @@ IDENTITY = {"name", "parent", "parenttype", "parentfield", "idx"}
 SYSTEM_FIELDS = IDENTITY | {"docstatus", "modified", "owner", "creation", "modified_by"}
 INVOICE_FIELDS = {"company", "supplier", "docstatus", "posting_date", "is_return", "return_against", "currency",
                   "credit_to", "grand_total", "rounded_total", "outstanding_amount"}
+_STATEMENT = ContextVar("jifeng_subcontracting_statement", default=None)
+BUSINESS_DOCTYPES = {"Subcontracting Order", "Subcontracting Receipt", "Purchase Order", "Purchase Invoice",
+                     "Payment Entry", "Stock Entry", "Journal Entry", "Jifeng Flow Order"}
+READ_DEPENDENCIES = {PROFILE, "Company", "Supplier", "Currency", "Account", "Item", "Warehouse",
+    "Subcontracting Order Item", "Subcontracting Order Supplied Item", "Subcontracting Receipt Item",
+    "Subcontracting Receipt Supplied Item", "Stock Entry Detail", "Purchase Order Item", "Purchase Invoice Item",
+    "Payment Entry Reference", "Stock Ledger Entry"}
+
+
+def _remember(document):
+    capture = _STATEMENT.get()
+    if capture is not None:
+        from jifeng_erp.tool_archive_export import _freeze
+
+        key = document.doctype, document.name
+        state = _freeze(document.as_dict())
+        if key in capture["states"] and capture["states"][key] != state:
+            frappe.throw("委外对账来源已变化，请重新查询")
+        capture["states"][key] = state
+        capture["documents"][key] = document
 
 
 def _deny():
@@ -96,6 +119,7 @@ def _partner_kind(company, supplier):
         _fields(PROFILE, required)
         if doc.archive_kind not in ("电镀厂", "外发工厂"):
             _deny()
+        _remember(doc)
         kinds.add(doc.archive_kind)
     if len(kinds) > 1:
         frappe.throw("该供应商在当前公司存在多个工厂分类，请先核对工厂档案")
@@ -119,6 +143,7 @@ def _visible_docs(doctype, filters, required):
         if not doc.has_permission("read"):
             _deny()
         _fields(doctype, set(required) | {"name"})
+        _remember(doc)
         result[name] = doc
     return result
 
@@ -142,6 +167,12 @@ def _child_rows(doctype, parenttype, parentfield, filters, required):
     raw_names = set(frappe.get_all(doctype, filters=filters, pluck="name", limit_page_length=0))
     if raw_names != {row.name for row in visible}:
         _deny()
+    capture = _STATEMENT.get()
+    if capture is not None:
+        from jifeng_erp.tool_archive_export import _freeze
+
+        capture["children"].append(_freeze((doctype, parenttype, parentfield, filters,
+                                             fields, visible, sorted(raw_names))))
     return visible
 
 
@@ -303,6 +334,7 @@ def _account(name, company):
     account = frappe.get_doc("Account", name)
     if not account.has_permission("read") or account.company != company or account.is_group:
         _deny()
+    _remember(account)
     return account
 
 
@@ -375,22 +407,45 @@ def _finite_amount(value):
     return amount
 
 
-def _cancelled_history(company, supplier, start, end, orders, purchase_orders):
+def _history_flow_documents(doctype, childtype, docs, flow_order, subcontracting_order=None):
+    if not docs or not (flow_order or subcontracting_order):
+        return docs
+    fields = {"jf_flow_order"} if flow_order else set()
+    if subcontracting_order:
+        fields.add("subcontracting_order")
+    rows = _child_rows(childtype, doctype, "items", {"parent": ["in", sorted(docs)]}, fields)
+    selected = {row.parent for row in rows
+                if (not flow_order or row.jf_flow_order == flow_order)
+                and (not subcontracting_order or row.subcontracting_order == subcontracting_order)}
+    return {name: doc for name, doc in docs.items() if name in selected}
+
+
+def _cancelled_history(company, supplier, start, end, orders, purchase_orders,
+                       flow_order=None, subcontracting_order=None):
     """Expose cancelled vouchers as links only; they never enter active totals."""
     date_range = [start.isoformat(), end.isoformat()]
     history = []
     cancelled_orders = _visible_docs("Subcontracting Order", {
         "company": company, "supplier": supplier, "docstatus": 2,
         "transaction_date": ["between", date_range],
+        **({"name": subcontracting_order} if subcontracting_order else {}),
     }, {"company", "supplier", "docstatus", "transaction_date", "purchase_order"})
+    cancelled_orders = _history_flow_documents("Subcontracting Order", "Subcontracting Order Item",
+                                                cancelled_orders, flow_order)
+    selected_po_names = set(purchase_orders) | {doc.purchase_order for doc in cancelled_orders.values()
+                                                if doc.purchase_order}
     cancelled_pos = _visible_docs("Purchase Order", {
         "company": company, "supplier": supplier, "docstatus": 2, "is_subcontracted": 1,
         "transaction_date": ["between", date_range],
+        **({"name": ["in", sorted(selected_po_names)]} if flow_order or subcontracting_order else {}),
     }, {"company", "supplier", "docstatus", "transaction_date", "is_subcontracted"})
+    cancelled_pos = _history_flow_documents("Purchase Order", "Purchase Order Item", cancelled_pos, flow_order)
     cancelled_receipts = _visible_docs("Subcontracting Receipt", {
         "company": company, "supplier": supplier, "docstatus": 2,
         "posting_date": ["between", date_range],
     }, {"company", "supplier", "docstatus", "posting_date", "is_return"})
+    cancelled_receipts = _history_flow_documents("Subcontracting Receipt", "Subcontracting Receipt Item",
+        cancelled_receipts, flow_order, subcontracting_order)
     for doctype, docs, date_field in (
         ("Subcontracting Order", cancelled_orders, "transaction_date"),
         ("Purchase Order", cancelled_pos, "transaction_date"),
@@ -405,11 +460,13 @@ def _cancelled_history(company, supplier, start, end, orders, purchase_orders):
             "company": company, "docstatus": 2, "subcontracting_order": ["in", sorted(order_names)],
             "posting_date": ["between", date_range],
         }, {"company", "docstatus", "subcontracting_order", "posting_date", "purpose", "is_return"})
+        cancelled_entries = _history_flow_documents("Stock Entry", "Stock Entry Detail", cancelled_entries, flow_order)
         history.extend({"doctype": "Stock Entry", "voucher_no": doc.name,
                         "posting_date": str(doc.posting_date or ""), "status": "已取消"}
                        for doc in cancelled_entries.values())
 
-    po_names = set(purchase_orders) | set(cancelled_pos)
+    history_pos = {**purchase_orders, **cancelled_pos}
+    po_names = _flow_purchase_orders(history_pos, flow_order)
     invoice_names = set()
     if po_names:
         invoice_rows = _child_rows("Purchase Invoice Item", "Purchase Invoice", "items",
@@ -446,8 +503,7 @@ def _plain_rows(rows):
              for key, value in row.items()} for row in rows]
 
 
-@frappe.whitelist(methods=["GET"])
-def query_reconciliation(company, supplier, from_date, to_date, business_kind="all",
+def _query_reconciliation(company, supplier, from_date, to_date, business_kind="all",
                          flow_order=None, subcontracting_order=None):
     """Return source-linked activity; no local settlement or payable arithmetic."""
     start, end = _scope(company, supplier, from_date, to_date, business_kind)
@@ -474,7 +530,9 @@ def query_reconciliation(company, supplier, from_date, to_date, business_kind="a
     company_doc = frappe.get_doc("Company", company)
     company_doc.check_permission("select")
     _fields("Company", {"name", "default_currency"})
-    history = _cancelled_history(company, supplier, start, end, orders, purchase_orders)
+    _remember(company_doc)
+    history = _cancelled_history(company, supplier, start, end, orders, purchase_orders,
+                                  flow_order, subcontracting_order)
     return {"company": company, "supplier": supplier, "supplier_kind": kind,
         "business_kind": business_kind, "from_date": start.isoformat(), "to_date": end.isoformat(),
         "flow_order": flow_order or None, "subcontracting_order": subcontracting_order or None,
@@ -485,3 +543,62 @@ def query_reconciliation(company, supplier, from_date, to_date, business_kind="a
         "payment_basis": "所选日期内已提交Payment Entry且引用本范围采购发票/委外采购单；混合引用的付款不计入金额。金额按付款账户币种逐笔展示",
         "payable_basis": "原生Accounts Payable按结束日期及公司本币展示；未列示的明确委外发票按发票币种显示原生当前金额与余额，并逐行注明依据。混合、缺失来源或无法对应币种的发票保留链接、金额留空；不以发票总额减余额推算现金实付",
         "settlement_action": "请打开原生Purchase Invoice/Payment Entry进行保存、审核或付款"}
+
+
+def _capture_statement(company, supplier, from_date, to_date, business_kind="all",
+                       flow_order=None, subcontracting_order=None):
+    """Reuse the complete native query and detach every printed source fact."""
+    from jifeng_erp import supplier_reconciliation as payable
+    from jifeng_erp.tool_archive_export import _freeze
+
+    capture = {"documents": {}, "states": {}, "children": []}
+    token = _STATEMENT.set(capture)
+    try:
+        result = _query_reconciliation(company, supplier, from_date, to_date, business_kind,
+                                        flow_order, subcontracting_order)
+        references = set()
+        for section, fields in (
+            ("progress", (("subcontracting_order", "Subcontracting Order"), ("flow_order", "Jifeng Flow Order"))),
+            ("receipts", (("receipt", "Subcontracting Receipt"), ("subcontracting_order", "Subcontracting Order"), ("flow_order", "Jifeng Flow Order"))),
+            ("materials", (("stock_entry", "Stock Entry"), ("subcontracting_order", "Subcontracting Order"), ("flow_order", "Jifeng Flow Order"))),
+            ("payables", (("voucher_no", "Purchase Invoice"),)),
+            ("payments", (("voucher_no", "Payment Entry"),)),
+        ):
+            for row in result[section]:
+                references.update((doctype, row[field]) for field, doctype in fields if row.get(field))
+        references.update((row["doctype"], row["voucher_no"]) for row in result["history"])
+        for doctype, name in sorted(references):
+            if doctype not in BUSINESS_DOCTYPES or not _valid_name(name):
+                frappe.throw("委外对账来源标识不完整，请核对原生单据")
+            document = frappe.get_doc(doctype, name)
+            document.check_permission("read")
+            _remember(document)
+        financial_state = None
+        if result["payables"]:
+            # The native AP figures also depend on credit notes, journals and
+            # payment ledgers which may not be visible as rows in this period.
+            # Authorize/capture the existing bounded supplier ledger closure;
+            # never derive payment by subtracting an invoice's current balance.
+            _, _, _, sources, financial_state = payable._capture(company, supplier, to_date, None)
+            for document in sources.values():
+                _remember(document)
+        # Child fields and stock-value aliases inherit permissions through
+        # their parent readers. Include their raw role/field/mask inputs too,
+        # so a cached Meta cannot hide a revocation between query and output.
+        permission_documents = dict(capture["documents"])
+        permission_documents.update(((doctype, "__statement_field_scope__"), None)
+                                    for doctype in READ_DEPENDENCIES)
+        permissions = payable._permission_state(permission_documents)
+        state = _freeze((capture["states"], capture["children"], financial_state, permissions))
+        result["result_version"] = hashlib.sha256(json.dumps(_freeze((result, state)), sort_keys=True,
+            ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+        return result, capture["documents"], state
+    finally:
+        _STATEMENT.reset(token)
+
+
+@frappe.whitelist(methods=["GET"])
+def query_reconciliation(company, supplier, from_date, to_date, business_kind="all",
+                         flow_order=None, subcontracting_order=None):
+    return _capture_statement(company, supplier, from_date, to_date, business_kind,
+                                flow_order, subcontracting_order)[0]

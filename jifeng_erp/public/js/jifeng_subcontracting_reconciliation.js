@@ -38,12 +38,15 @@ window.JifengSubcontractingReconciliation = class JifengSubcontractingReconcilia
 			this.control(holder, name, type, label, options, () => this.invalidate()); toolbar.append(holder);
 		}
 		this.queryButton = this.button("查询", () => this.query(), "btn btn-primary btn-sm");
-		toolbar.append(this.queryButton);
+		this.printButton = this.button("打印", () => this.output("print"));
+		this.exportButton = this.button("导出", () => this.output("export"));
+		toolbar.append(this.queryButton, this.printButton, this.exportButton);
 		this.status = this.element("p", __("请选择公司、供应商和日期范围后查询。"), "jfe-subcontract-reconciliation-status");
 		this.status.setAttribute("role", "status"); this.status.setAttribute("aria-live", "polite");
 		this.sections = this.element("div", undefined, "jfe-subcontract-reconciliation-results");
 		this.notice = this.element("p", undefined, "jfe-subcontract-reconciliation-note");
 		this.host.append(heading, toolbar, this.status, this.sections, this.notice);
+		this.updateOutputButtons();
 	}
 	async initialize() {
 		const company = frappe.defaults?.get_user_default?.("Company");
@@ -83,26 +86,33 @@ window.JifengSubcontractingReconciliation = class JifengSubcontractingReconcilia
 	}
 	invalidate() {
 		if (this.disposed) return;
+		this.cancelOutput();
 		if (this.loading) this.invalidateRequest("筛选已变化，请重新查询。");
 		this.revision++; this.result = null; this.sections.replaceChildren(); this.notice.textContent = "";
 		this.status.textContent = __("筛选已变化，请重新查询。");
+		this.updateOutputButtons();
 	}
 	setVisible(visible) {
 		this.visible = !!visible;
 		if (!this.visible && this.loading) this.invalidateRequest("已离开对账页面，返回后请重新查询。");
+		if (!this.visible) this.cancelOutput();
+		this.updateOutputButtons();
 	}
 	validResponse(data, context) {
 		return data && data.company === context.company && data.supplier === context.supplier &&
 			data.business_kind === this.businessKind && data.from_date === context.from_date && data.to_date === context.to_date &&
 			data.flow_order === context.flow_order && data.subcontracting_order === context.subcontracting_order &&
 			["progress", "receipts", "materials", "payables", "payments", "history"].every(key => Array.isArray(data[key])) &&
-			typeof data.company_currency === "string";
+			typeof data.company_currency === "string" && typeof data.result_version === "string" && /^[0-9a-f]{64}$/.test(data.result_version);
 	}
 	async query() {
 		if (this.disposed || !this.visible || this.loading) return;
+		this.cancelOutput();
 		const context = this.context(); this.sections.replaceChildren(); this.notice.textContent = ""; this.result = null;
+		this.updateOutputButtons();
 		if (!context) { this.status.textContent = __("请选择单一公司、供应商和有效日期范围，并核对所有链接字段。"); return; }
 		const revision = ++this.revision; this.loading = true; this.queryContext = context; this.queryButton.disabled = true;
+		this.updateOutputButtons();
 		this.status.textContent = __("正在读取委外来源及原生应付账簿…");
 		try {
 			this.request = frappe.call({ method: "jifeng_erp.subcontracting_reconciliation.query_reconciliation", type: "GET",
@@ -120,13 +130,85 @@ window.JifengSubcontractingReconciliation = class JifengSubcontractingReconcilia
 			}
 		} finally {
 			if (revision === this.revision) { this.loading = false; this.queryContext = null;
-				this.request = null; this.queryButton.disabled = false; }
+				this.request = null; this.queryButton.disabled = false; this.updateOutputButtons(); }
 		}
 	}
 	invalidateRequest(message) {
 		this.revision++; const request = this.request; this.request = null; request?.abort?.();
 		this.loading = false; this.queryContext = null; this.result = null; this.sections.replaceChildren();
 		this.status.textContent = __(message); this.queryButton.disabled = false;
+		this.updateOutputButtons();
+	}
+	sameOutputContext(context) {
+		const current = this.context();
+		return current && ["company", "supplier", "from_date", "to_date", "flow_order", "subcontracting_order"].every(key => context[key] === current[key]) && context.business_kind === this.businessKind;
+	}
+	updateOutputButtons() {
+		const enabled = !this.disposed && this.visible && !this.loading && !this.outputting && this.result && this.sameOutputContext(this.result);
+		this.printButton.disabled = this.exportButton.disabled = !enabled;
+	}
+	cancelOutput() {
+		this.outputController?.abort(); this.outputController = null; this.outputting = false;
+		this.printFrame?.remove(); this.printFrame = null;
+	}
+	async output(kind) {
+		if (!["export", "print"].includes(kind) || this.disposed || !this.visible || this.loading || this.outputting || !this.result) return;
+		if (!this.sameOutputContext(this.result)) { this.invalidate(); return; }
+		const result = this.result, context = { ...this.context(), business_kind: this.businessKind }, revision = this.revision;
+		const controller = new AbortController();
+		const current = () => !this.disposed && this.visible && !controller.signal.aborted && this.outputController === controller &&
+			revision === this.revision && this.result === result && this.sameOutputContext(context);
+		this.cancelOutput(); this.outputController = controller; this.outputting = true; this.updateOutputButtons();
+		this.status.textContent = __(kind === "export" ? "正在导出当前工厂、期间的完整对账单…" : "正在核对工厂对账来源与打印权限…");
+		let url;
+		try {
+			const contentType = kind === "export" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/html";
+			const args = { context: JSON.stringify(context), result_version: result.result_version };
+			const response = await fetch("/api/method/jifeng_erp.subcontracting_reconciliation_output." + kind + "_reconciliation?" + new URLSearchParams(args),
+				{ method: "GET", credentials: "same-origin", headers: { Accept: contentType }, signal: controller.signal });
+			if (!current()) return;
+			if (!response.ok || response.headers.get("Content-Type")?.split(";")[0].trim() !== contentType) throw new Error("Reconciliation output failed");
+			if (kind === "export") {
+				const file = await response.blob(); if (!current()) return;
+				if (!file.size) throw new Error("Empty reconciliation export");
+				url = URL.createObjectURL(file); const link = this.element("a"); link.href = url;
+				link.download = (this.businessKind === "plating" ? "电镀对账" : "委外业务对账") + ".xlsx";
+				document.body.append(link); link.click(); link.remove();
+				this.status.textContent = __("已导出完整对账单；金额按原币种逐行，混合来源金额保留未知。");
+			} else {
+				const html = await response.text(); if (!current()) return;
+				if (!html.startsWith("<!doctype html>")) throw new Error("Invalid reconciliation print");
+				await this.printHtml(html, controller, current);
+				if (current()) this.status.textContent = __("已打开本次工厂对账打印；请在打印窗口选择打印机或保存为PDF。");
+			}
+		} catch {
+			if (current()) {
+				this.result = null; this.sections.replaceChildren(); this.notice.textContent = "";
+				this.printFrame?.remove(); this.printFrame = null;
+				this.status.textContent = __("输出未完成，来源可能变化或权限不足，请重新查询后打印／导出。");
+			}
+		} finally {
+			if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+			if (this.outputController === controller) { this.outputController = null; this.outputting = false; this.updateOutputButtons(); }
+		}
+	}
+	async printHtml(html, controller, current) {
+		const frame = this.element("iframe"); frame.setAttribute("title", __("工厂对账打印")); frame.setAttribute("aria-hidden", "true");
+		frame.setAttribute("sandbox", "allow-same-origin allow-modals");
+		frame.style.cssText = "position:fixed;left:-10000px;top:0;width:1122px;height:800px;border:0";
+		this.printFrame = frame;
+		await new Promise((resolve, reject) => {
+			const finish = error => { clearTimeout(timer); controller.signal.removeEventListener("abort", abort);
+				frame.onload = null; frame.onerror = null; error ? reject(error) : resolve(); };
+			const abort = () => finish(new Error("Print cancelled"));
+			const timer = setTimeout(() => finish(new Error("Print load timeout")), 10000);
+			controller.signal.addEventListener("abort", abort, { once: true });
+			frame.onload = () => finish(); frame.onerror = () => finish(new Error("Print load failed"));
+			frame.srcdoc = html; document.body.append(frame);
+		});
+		if (!current()) { frame.remove(); return; }
+		frame.contentWindow.addEventListener("afterprint", () => { frame.remove(); if (this.printFrame === frame) this.printFrame = null; }, { once: true });
+		frame.contentWindow.focus(); frame.contentWindow.print();
 	}
 	cellValue(value) {
 		if (value === null || value === undefined || value === "") return "—";
@@ -191,6 +273,7 @@ window.JifengSubcontractingReconciliation = class JifengSubcontractingReconcilia
 	}
 	destroy() {
 		if (this.disposed) return;
+		this.cancelOutput();
 		this.disposed = true; this.revision++; const request = this.request; this.request = null; request?.abort?.();
 		for (const control of Object.values(this.controls))
 			control.$input?.off?.(".jifeng-subcontract-reconciliation");
