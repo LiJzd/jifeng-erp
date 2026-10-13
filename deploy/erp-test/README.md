@@ -1,5 +1,13 @@
 # 集沣 ERP 外网 A/B 测试站
 
+## 2026-10-13 采购导入测试版
+
+[A 优化版](https://116.62.241.148/desk/jifeng-modern)与[B 旧界面版](https://116.62.241.148/desk/jifeng-legacy)共用 `/opt/jifeng-erp-test/releases/9ecdff0-purchase-import-r1/app`，数据服务和测试账号延续。普通采购订单选择公司、供应商和日期，库存商品统一选择表头“收料仓”后，从 **集沣 ERP → 批量导入采购明细** 粘贴Excel或上传XLSX/CSV；按模板准备编码/条码、数量、单价，预览通过后填入，再走原生保存、审核和收货。
+
+本轮从原运行来源复制，只新增两个导入文件及一个采购Form hook，共662来源文件；原有增量保持，没有数据库结构修改、初始化或业务单据保存。stage/switch回执和来源清单位于新目录，旧目录保留；八服务、数据服务身份、运行配置及普通QA公网接口已复核。完整界面结果见[验证记录](../../docs/validation.md)。
+
+后续启动使用原五层Compose，再加本批 `releases/9ecdff0-purchase-import-r1/compose.source.yaml`；准确原层列表保存在该目录 `switch.intent.json`。不要仅使用基线Compose启动，以免丢失既有来源挂载或运行参数。源码继承原发布Git基线，采购二开的准确版本以本批manifest的feature_commit、完整source_files及变更文件SHA为准。
+
 ## 2026-10-09 当前测试部署
 
 - [A · 开源优化版](https://116.62.241.148/desk/jifeng-modern)
