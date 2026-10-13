@@ -55,6 +55,18 @@ class TestNativeNavigation(unittest.TestCase):
         self.assertIs(sidebar.items[0], home)
         self.assertIs(sidebar.items[-1], custom)
         self.assertEqual([r.link_to for r in sidebar.items], [self.nav.WORKSPACE, "Purchase Order", "Customer"])
+        self.assertEqual([r.idx for r in sidebar.items], [1, 2, 3])
+        self.assertFalse(self.nav._update_sidebar(sidebar, self.shortcuts))
+
+    def test_existing_business_links_move_into_fixture_order_with_ids_kept(self):
+        purchase = link("purchase-id", "Purchase Order")
+        purchase.idx = 20
+        custom = link("site-id", "Customer")
+        sidebar = Sidebar(items=[link("home-id", self.nav.WORKSPACE, "Workspace"), custom, purchase])
+        self.assertTrue(self.nav._update_sidebar(sidebar, self.shortcuts))
+        self.assertIs(sidebar.items[1], purchase)
+        self.assertEqual(purchase.idx, 2)
+        self.assertIs(sidebar.items[-1], custom)
         self.assertFalse(self.nav._update_sidebar(sidebar, self.shortcuts))
 
     def test_old_first_page_becomes_home_with_the_same_identity(self):

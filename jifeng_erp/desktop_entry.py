@@ -62,11 +62,22 @@ def _update_sidebar(sidebar, shortcuts):
             "link_type": shortcut.type, "link_to": shortcut.link_to,
         }))
         existing.add(key)
-    if added:
-        # Put new standard business entries after Home; retain the other rows.
-        rows = [row for row in sidebar.items if row not in added]
-        home = next((i for i, row in enumerate(rows)
-                     if row.type == "Link" and (row.link_type, row.link_to) == ("Workspace", WORKSPACE)), -1)
-        sidebar.set("items", rows[:home + 1] + added + rows[home + 1:])
+    by_target = {}
+    for row in sidebar.items:
+        if row.type == "Link":
+            by_target.setdefault((row.link_type, row.link_to), row)
+    managed = [by_target[(shortcut.type, shortcut.link_to)] for shortcut in shortcuts]
+    managed_ids = {id(row) for row in managed}
+    rows = [row for row in sidebar.items if id(row) not in managed_ids]
+    home = next((i for i, row in enumerate(rows)
+                 if row.type == "Link" and (row.link_type, row.link_to) == ("Workspace", WORKSPACE)), None)
+    if home is None:
+        home = next((i for i, row in enumerate(rows) if row.type == "Link"), -1)
+    ordered = rows[:home + 1] + managed + rows[home + 1:]
+    if added or [id(row) for row in ordered] != [id(row) for row in sidebar.items]:
+        sidebar.set("items", ordered)
+        # Document.set retains existing child idx; persist the new order explicitly.
+        for index, row in enumerate(sidebar.items, 1):
+            row.idx = index
         changed = True
     return changed
