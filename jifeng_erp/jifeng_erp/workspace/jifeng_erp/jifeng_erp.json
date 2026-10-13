@@ -1,5 +1,6 @@
 {
  "doctype": "Workspace",
+ "type": "Workspace",
  "name": "集沣生产协作",
  "label": "集沣生产协作",
  "title": "集沣生产协作",
@@ -7,39 +8,41 @@
  "app": "jifeng_erp",
  "public": 1,
  "is_hidden": 0,
- "content": "[{\"id\":\"jf-modern\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"开源优化工作台\",\"col\":4}},{\"id\":\"jf0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"经典业务工作台\",\"col\":4}},{\"id\":\"jf1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭设置\",\"col\":4}},{\"id\":\"jf2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"同步记录\",\"col\":4}},{\"id\":\"jf3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭订单\",\"col\":4}},{\"id\":\"jf4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品映射\",\"col\":4}},{\"id\":\"jf5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品工艺档案\",\"col\":4}},{\"id\":\"jf6\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"生产流程单\",\"col\":4}},{\"id\":\"jf7\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"成本试算\",\"col\":4}},{\"id\":\"jf8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"模具档案\",\"col\":4}},{\"id\":\"jf9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"员工补充档案\",\"col\":4}},{\"id\":\"jf10\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"计薪记录\",\"col\":4}},{\"id\":\"jf11\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"版种档案\",\"col\":4}},{\"id\":\"jf12\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"费用登记单\",\"col\":4}},{\"id\":\"jf13\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"多人计件分配\",\"col\":4}}]",
+ "content": "[{\"id\":\"jf-section-0\",\"type\":\"header\",\"data\":{\"text\":\"常用业务\",\"col\":12}},{\"id\":\"jf-native-0-0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"采购订单\",\"col\":4}},{\"id\":\"jf-native-0-1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"采购入库\",\"col\":4}},{\"id\":\"jf-native-0-2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"物料档案\",\"col\":4}},{\"id\":\"jf-native-0-3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"库存出入库\",\"col\":4}},{\"id\":\"jf-native-0-4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"销售订单\",\"col\":4}},{\"id\":\"jf-native-0-5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"生产工单\",\"col\":4}},{\"id\":\"jf-section-1\",\"type\":\"header\",\"data\":{\"text\":\"生产与计件\",\"col\":12}},{\"id\":\"jf-native-1-0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品工艺档案\",\"col\":4}},{\"id\":\"jf-native-1-1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"生产流程单\",\"col\":4}},{\"id\":\"jf-native-1-2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"成本试算\",\"col\":4}},{\"id\":\"jf-native-1-3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"模具档案\",\"col\":4}},{\"id\":\"jf-native-1-4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"版种档案\",\"col\":4}},{\"id\":\"jf-native-1-5\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"计薪记录\",\"col\":4}},{\"id\":\"jf-native-1-6\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"多人计件分配\",\"col\":4}},{\"id\":\"jf-native-1-7\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"员工补充档案\",\"col\":4}},{\"id\":\"jf-native-1-8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"费用登记单\",\"col\":4}},{\"id\":\"jf-section-2\",\"type\":\"header\",\"data\":{\"text\":\"聚水潭协作\",\"col\":12}},{\"id\":\"jf-native-2-0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭订单\",\"col\":4}},{\"id\":\"jf-native-2-1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"商品映射\",\"col\":4}},{\"id\":\"jf-native-2-2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"同步记录\",\"col\":4}},{\"id\":\"jf-native-2-3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"聚水潭设置\",\"col\":4}}]",
  "shortcuts": [
   {
-   "label": "开源优化工作台",
-   "link_to": "jifeng-modern",
-   "type": "Page"
-  },
-  {
-   "label": "经典业务工作台",
-   "link_to": "jifeng-legacy",
-   "type": "Page"
-  },
-  {
-   "label": "聚水潭设置",
-   "link_to": "Jushuitan Settings",
+   "label": "采购订单",
+   "link_to": "Purchase Order",
    "type": "DocType",
    "doc_view": "List"
   },
   {
-   "label": "同步记录",
-   "link_to": "Jifeng Sync Run",
+   "label": "采购入库",
+   "link_to": "Purchase Receipt",
    "type": "DocType",
    "doc_view": "List"
   },
   {
-   "label": "聚水潭订单",
-   "link_to": "Jifeng External Order",
+   "label": "物料档案",
+   "link_to": "Item",
    "type": "DocType",
    "doc_view": "List"
   },
   {
-   "label": "商品映射",
-   "link_to": "Jifeng SKU Mapping",
+   "label": "库存出入库",
+   "link_to": "Stock Entry",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "销售订单",
+   "link_to": "Sales Order",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "生产工单",
+   "link_to": "Work Order",
    "type": "DocType",
    "doc_view": "List"
   },
@@ -68,8 +71,8 @@
    "doc_view": "List"
   },
   {
-   "label": "员工补充档案",
-   "link_to": "Jifeng Employee Supplement",
+   "label": "版种档案",
+   "link_to": "Jifeng Plate",
    "type": "DocType",
    "doc_view": "List"
   },
@@ -80,8 +83,14 @@
    "doc_view": "List"
   },
   {
-   "label": "版种档案",
-   "link_to": "Jifeng Plate",
+   "label": "多人计件分配",
+   "link_to": "Jifeng Wage Allocation",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "员工补充档案",
+   "link_to": "Jifeng Employee Supplement",
    "type": "DocType",
    "doc_view": "List"
   },
@@ -92,8 +101,26 @@
    "doc_view": "List"
   },
   {
-   "label": "多人计件分配",
-   "link_to": "Jifeng Wage Allocation",
+   "label": "聚水潭订单",
+   "link_to": "Jifeng External Order",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "商品映射",
+   "link_to": "Jifeng SKU Mapping",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "同步记录",
+   "link_to": "Jifeng Sync Run",
+   "type": "DocType",
+   "doc_view": "List"
+  },
+  {
+   "label": "聚水潭设置",
+   "link_to": "Jushuitan Settings",
    "type": "DocType",
    "doc_view": "List"
   }

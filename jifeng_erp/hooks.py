@@ -62,7 +62,8 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_subcontracting_reconciliation.js",
                   "/assets/jifeng_erp/js/jifeng_subcontracting_reversal.js",
                   "/assets/jifeng_erp/js/jifeng_workspace_core.js",
-                  "/assets/jifeng_erp/js/jifeng_modern_workspace.js"]
+                  "/assets/jifeng_erp/js/jifeng_modern_workspace.js",
+                  "/assets/jifeng_erp/js/jifeng_native_navigation.js"]
 
 
 def _content_versioned_assets(paths):
