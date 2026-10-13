@@ -51,6 +51,18 @@ def _columns(doctype, permission="read", parenttype=None):
     return fields
 
 
+def _table_access(doctype, fieldname, childtype, write=False):
+    # Native get_permitted_fields excludes Table fields from its scalar projection.
+    meta = frappe.get_meta(doctype)
+    table = meta.get_field(fieldname)
+    permissions = ("read", "write") if write else ("read",)
+    return bool(table and table.fieldtype == "Table" and table.options == childtype and (not write or not table.read_only)
+                and all((table.permlevel or 0) in meta.get_permlevel_access(permission_type=permission)
+                        for permission in permissions)
+                and (frappe.session.user == "Administrator" or not table.get("mask")
+                     or (table.permlevel or 0) in meta.get_permlevel_access(permission_type="mask")))
+
+
 def _scope(context):
     if frappe.session.user == "Guest":
         frappe.throw("请登录后导入采购明细", frappe.PermissionError)
@@ -79,13 +91,7 @@ def _scope(context):
     required = {"item_code", "item_name", "qty", "rate", "uom", "stock_uom", "conversion_factor", "schedule_date", "warehouse"}
     readable = _columns(CHILD, parenttype=ORDER)
     writable = _columns(CHILD, "write", ORDER)
-    meta = frappe.get_meta(ORDER)
-    table = meta.get_field("items")
-    table_editable = bool(table and table.fieldtype == "Table" and table.options == CHILD and not table.read_only
-                          and all((table.permlevel or 0) in meta.get_permlevel_access(permission_type=permission)
-                                  for permission in ("read", "write"))
-                          and (frappe.session.user == "Administrator" or not table.get("mask")
-                               or (table.permlevel or 0) in meta.get_permlevel_access(permission_type="mask")))
+    table_editable = _table_access(ORDER, "items", CHILD, write=True)
     if (not required.issubset(readable) or not (required - {"item_name", "stock_uom", "conversion_factor"}).issubset(writable)
             or not table_editable or not {"company", "supplier"}.issubset(_columns(ORDER))):
         frappe.throw("没有导入采购明细字段的权限", frappe.PermissionError)
@@ -212,7 +218,7 @@ def _resolve(code, company):
     if not {"name", "item_name", "stock_uom", "disabled", "is_purchase_item"}.issubset(_columns("Item")):
         frappe.throw("没有读取商品采购资料的权限", frappe.PermissionError)
     matches.update(row.name for row in frappe.get_list("Item", filters={"name": code}, fields=["name"], limit_page_length=2))
-    if "barcodes" in _columns("Item") and "barcode" in _columns("Item Barcode", parenttype="Item"):
+    if _table_access("Item", "barcodes", "Item Barcode") and "barcode" in _columns("Item Barcode", parenttype="Item"):
         matches.update(row.name for row in frappe.get_list("Item", filters=[["Item Barcode", "barcode", "=", code]],
                        fields=["name"], distinct=True, limit_page_length=2))
     if frappe.has_permission(PROFILE, "read") and {"company", "inactive", "item_code", "legacy_number", "legacy_code"}.issubset(_columns(PROFILE)):

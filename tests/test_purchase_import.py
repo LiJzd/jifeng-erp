@@ -130,6 +130,42 @@ class TestPurchaseImport(unittest.TestCase):
         with self.assertRaisesRegex(self.frappe.ValidationError, "文本"):
             self.module._resolve(row["code"], "QA")
 
+    def test_barcode_resolves_to_the_native_item_with_ordinary_read_permission(self):
+        fields = {"name", "item_name", "stock_uom", "disabled", "is_purchase_item", "barcode"}
+        self.frappe.get_meta.return_value.get_field.return_value = Item(fieldtype="Table", options="Item Barcode", permlevel=0)
+        self.frappe.get_meta.return_value.get_permlevel_access.return_value = [0]
+        self.frappe.has_permission.return_value = False
+        self.frappe.get_list.side_effect = lambda doctype, **kwargs: [] if isinstance(kwargs["filters"], dict) else [SimpleNamespace(name="NATIVE-ITEM")]
+        item = SimpleNamespace(disabled=0, is_purchase_item=1, check_permission=Mock())
+        self.frappe.get_doc.return_value = item
+        with patch.object(self.module, "_columns", return_value=fields):
+            self.assertEqual(self.module._resolve("0001234567890", "QA"), "NATIVE-ITEM")
+        item.check_permission.assert_called_once_with("read")
+
+    def test_code_and_barcode_collision_is_rejected_without_guessing(self):
+        fields = {"name", "item_name", "stock_uom", "disabled", "is_purchase_item", "barcodes", "barcode"}
+        self.frappe.get_meta.return_value.get_field.return_value = Item(fieldtype="Table", options="Item Barcode", permlevel=0)
+        self.frappe.get_meta.return_value.get_permlevel_access.return_value = [0]
+        self.frappe.has_permission.return_value = False
+        self.frappe.get_list.side_effect = [[SimpleNamespace(name="ITEM-BY-CODE")], [SimpleNamespace(name="ITEM-BY-BARCODE")]]
+        with patch.object(self.module, "_columns", return_value=fields):
+            with self.assertRaisesRegex(self.frappe.ValidationError, "唯一"):
+                self.module._resolve("000123", "QA")
+        self.frappe.get_doc.assert_not_called()
+
+    def test_parent_table_permission_uses_native_table_levels_not_scalar_columns(self):
+        table = Item(fieldtype="Table", options=self.module.CHILD, read_only=0, permlevel=0)
+        meta = Mock()
+        meta.get_field.return_value = table
+        meta.get_permlevel_access.return_value = [0]
+        self.frappe.get_meta.return_value = meta
+        with patch.object(self.module, "_columns", side_effect=lambda doctype, *args, **kwargs:
+                          self.module.ROW_FIELDS if doctype == self.module.CHILD else {"company", "supplier"}):
+            self.module._scope(self.context)
+            table.permlevel = 1
+            with self.assertRaises(self.frappe.PermissionError):
+                self.module._scope(self.context)
+
     def test_formula_cells_and_duplicate_or_unknown_headers_are_rejected(self):
         with self.assertRaisesRegex(self.frappe.ValidationError, "公式"):
             self.module._data(filename="采购.xlsx", content_base64=workbook([["商品编码", "数量", "单价"], ["A", "=1+1", 8]]))
