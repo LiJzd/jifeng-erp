@@ -1,4 +1,12 @@
-# 集沣 ERP 外网 A/B 测试站
+# 集沣 ERP 外网测试站
+
+## 2026-10-13 当前白色原生界面
+
+[测试入口](https://116.62.241.148/desk)使用 ERPNext/Frappe 原生 Desk，集沣生产协作提供三组快捷入口。旧 `/desk/jifeng-modern`、`/desk/jifeng-legacy` 自动转到该原生工作区，不再嵌套业务页面。普通采购单的表格导入按钮保留，账号继续使用原受限交接文件。
+
+五个应用服务当前只读挂载 `/opt/jifeng-erp-test/releases/865cea4-native-navigation-r2/app`。来源从已部署的采购导入版继承：首批仅变6个运行文件，排序修正仅变 `desktop_entry.py`；完整663来源、八服务及原三数据服务身份已重新核验。未安装新镜像、全站迁移或修改业务结构。
+
+导航通过原生 Workspace/Workspace Sidebar 保存，只调整公开集沣导航，保留原13个二开快捷项及剩余侧栏子行身份、角色和用户设置。第一次保存发现旧元数据缺 Workspace.type，已按原生必填类型补齐；排序修订显式保存子行 idx。前后私有备份与 intent/done 回执位于站点 `private/native-navigation-20261013-r1`、`r2`，目录0700、文件0600；源发布目录及 Compose 操作回执保留。以下 A/B 与早期来源按历史理解。
 
 ## 2026-10-13 服务器选择与容量复核
 
