@@ -176,6 +176,10 @@ async function main() {
 	await respond(bench, [image]); const preview = bench.host.descendants("img")[0]; assert.equal(preview.src, image.image.url);
 	assert.equal(preview.alt, "关联业务商品图片"); assert.match(bench.tbody.children[0].children.at(-1).title, /Item \/ ITEM-PROFILE-A \/ image/);
 	for (const bad of ["//example.invalid/x.png", "/files/x.png", "/private/files/a/b.png?fid=X", "/private/files/%2e%2e?fid=X", "/private/files/%252fescape.png?fid=X", "/private/files/a.png?fid=X#x"]) assert.equal(bench.safePreview(bad), false, bad);
+	const own = archive(); own.image = { source_doctype: "Jifeng Inventory Profile", source_name: own.name,
+		source_field: "image", label: "档案图片", state: "已上传", url: "/private/files/archive.png?fid=OWN" };
+	await respond(bench, [own]); assert.equal(bench.host.descendants("img")[0].alt, "档案图片");
+	assert.equal(bench.validArchive({ ...own, image: { ...own.image, source_name: "OTHER" } }, "Company A"), false);
 
 	const reading = bench.readDetail("PROFILE-A"), readCall = calls.at(-1), detail = dialogs.at(-1);
 	assert.equal(readCall.options.method, "jifeng_erp.inventory_catalog.read_archive"); assert.equal(readCall.options.args.company, "Company A");

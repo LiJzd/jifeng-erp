@@ -34,8 +34,10 @@ class Meta:
     def get_field(self, name):
         return self.environment.metas[self.doctype].get(name)
 
-    def get_permlevel_access(self, permission_type, parenttype=None):
+    def get_permlevel_access(self, permission_type, parenttype=None, user=None):
         self.environment.assertEqual((permission_type, parenttype), ("mask", None))
+        if user is not None:
+            self.environment.assertEqual(user, self.environment.frappe.session.user)
         return self.environment.mask_levels.get(self.doctype, set())
 
 
@@ -766,6 +768,68 @@ class TestInventoryCatalog(unittest.TestCase):
         initial_documents = deepcopy(self.documents)
         for label, change in actions.items():
             self.documents = deepcopy(initial_documents)
+            self.doc_hooks["Item"] = lambda name, change=change: change() if name == "ITEM-B" else None
+            with self.subTest(label=label), self.assertRaises(PermissionError):
+                self.query()
+
+
+    def test_inventory_picture_uses_its_profile_binding_and_never_exposes_raw_path(self):
+        self.profile.image = "/private/files/archive.png"
+        self.file("OWN", file_url=self.profile.image, attached_to_doctype=PROFILE, attached_to_name="PROFILE-A")
+        self.file()
+        row = self.query()[0]
+        self.assertEqual(row["image"], {"source_doctype": PROFILE, "source_name": "PROFILE-A", "source_field": "image",
+                                      "label": "档案图片", "state": "已上传", "url": "/private/files/archive.png?fid=OWN"})
+        self.assertNotIn("image", row["profile"])
+        self.assertNotIn("image", row["item"])
+        self.assertNotIn("image", row["field_meta"]["profile"])
+
+    def test_inventory_picture_rejects_other_company_parent_public_files_and_missing_permissions(self):
+        self.profile.image = "/private/files/archive.png"
+        file = self.file("OWN", file_url=self.profile.image, attached_to_doctype=PROFILE, attached_to_name="PROFILE-A")
+        for key, changed in (("attached_to_name", "OTHER-PROFILE"), ("attached_to_doctype", "Item"),
+                             ("attached_to_field", "notes"), ("is_private", 0)):
+            old = file[key]
+            file[key] = changed
+            row = self.query()[0]
+            self.assertEqual((row["image"]["url"], row["image"]["state"]), ("", "附件不可用"))
+            file[key] = old
+        self.download_denials.add("OWN")
+        self.assertEqual(self.query()[0]["image"]["url"], "")
+        self.download_denials.clear()
+        self.hidden["File"] = {"file_url"}
+        self.assertEqual(self.query()[0]["image"]["url"], "")
+
+    def test_inventory_picture_never_recovers_an_omitted_or_masked_profile_image(self):
+        self.profile.image = "/private/files/archive.png"
+        self.file("OWN", file_url=self.profile.image, attached_to_doctype=PROFILE, attached_to_name="PROFILE-A")
+        self.file()
+        self.projection_omissions[PROFILE] = {"image"}
+        row = self.query()[0]
+        self.assertEqual(row["image"]["source_doctype"], "Item")
+        self.assertEqual(row["image"]["url"], "/private/files/item.png?fid=EXACT")
+        self.projection_omissions.clear()
+        self.metas[PROFILE]["image"].update(mask=1)
+        self.assertEqual(self.query()[0]["image"]["source_doctype"], "Item")
+        self.assertNotIn("image", self.query()[0]["profile"])
+
+    def test_later_row_cannot_change_an_earlier_inventory_picture_or_its_file_permissions(self):
+        self.profile.image = "/private/files/archive.png"
+        self.file("OWN", file_url=self.profile.image, attached_to_doctype=PROFILE, attached_to_name="PROFILE-A")
+        self.second_archive()
+        self.documents[PROFILE, "PROFILE-B"]["image"] = None
+        actions = {
+            "profile_image": lambda: self.documents[PROFILE, "PROFILE-A"].update(image="/private/files/changed.png"),
+            "mask": lambda: self.metas[PROFILE]["image"].update(mask=1),
+            "file_parent": lambda: self.documents["File", "OWN"].update(attached_to_name="OTHER"),
+            "file_permission": lambda: self.doc_denials.add(("File", "OWN", "read")),
+            "download": lambda: self.download_denials.add("OWN"),
+        }
+        initial_documents, initial_meta = deepcopy(self.documents), deepcopy(self.metas)
+        for label, change in actions.items():
+            self.documents, self.metas = deepcopy(initial_documents), deepcopy(initial_meta)
+            self.doc_denials.clear()
+            self.download_denials.clear()
             self.doc_hooks["Item"] = lambda name, change=change: change() if name == "ITEM-B" else None
             with self.subTest(label=label), self.assertRaises(PermissionError):
                 self.query()

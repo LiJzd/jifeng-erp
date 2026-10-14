@@ -24,7 +24,7 @@ PROFILE_FIELDS = {
     "minor_category", "old_number", "specification", "display_name", "location", "material",
     "shape", "color", "display_uom", "list_price", "processing_price", "weight", "supplier",
     "upper_limit", "lower_limit", "conversion_uom", "conversion_value", "owner_name",
-    "region", "notes", "inactive",
+    "region", "notes", "inactive", "image",
 }
 ITEM_FIELDS = {"item_code", "item_name", "item_group", "stock_uom", "disabled", "image"}
 PROFILE_REQUIRED = {"name", "modified", "company", "archive_kind", "item_code", "inactive"}
@@ -157,6 +157,34 @@ def _item_image(item, row, selected=None):
     return state
 
 
+def _profile_image(profile, row, selected):
+    """Inventory pictures keep their company/profile binding in every view."""
+    state = {"source_doctype": PROFILE, "source_name": profile.name, "source_field": "image",
+             "label": "档案图片", "url": "", "state": "附件不可用"}
+    from jifeng_erp.product_archive import _private_url
+
+    value = row.get("image")
+    if (not value or "image" not in _columns(PROFILE) or profile.get("image") != value
+            or not _private_url(value) or not FILE_REQUIRED.issubset(_columns("File"))):
+        return state
+    binding = {"file_url": value, "is_private": 1, "attached_to_doctype": PROFILE,
+               "attached_to_name": profile.name, "attached_to_field": "image"}
+    names = frappe.get_all("File", filters=binding, pluck="name", order_by="name", limit_page_length=LIMIT + 1)
+    if len(names) > LIMIT:
+        return state
+    for name in names:
+        try:
+            attachment = frappe.get_doc("File", name)
+        except frappe.DoesNotExistError:
+            continue
+        if (all(attachment.get(field) == expected for field, expected in binding.items())
+                and FILE_REQUIRED.issubset(_columns("File")) and "image" in _columns(PROFILE)
+                and attachment.has_permission("read") and attachment.is_downloadable()):
+            selected.append(attachment)
+            return {**state, "url": attachment.unique_url, "state": "已上传"}
+    return state
+
+
 def _projection(document, row, fields, required):
     # Recheck field permissions after loading. An omitted native list field
     # remains omitted even when the full document contains a value.
@@ -177,12 +205,13 @@ def _pack(profile, item, row, item_row, kind, company):
             or not _current(item, item_row, ITEM_REQUIRED - {"modified"})):
         frappe.throw("库存档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
     selected = []
-    image = _item_image(item, item_row, selected)
+    own_image = "image" in row and "image" in _columns(PROFILE) and bool(row["image"])
+    image = _profile_image(profile, row, selected) if own_image else _item_image(item, item_row, selected)
     _scope(kind, company)
     if (not _current(profile, row, PROFILE_REQUIRED - {"modified"})
             or not _current(item, item_row, ITEM_REQUIRED - {"modified"})):
         frappe.throw("库存档案来源或读取权限已变化，请重新查询", frappe.PermissionError)
-    profile_fields = PROFILE_FIELDS - ({"shape", "color"} if kind == "物料" else {"material"})
+    profile_fields = PROFILE_FIELDS - {"image"} - ({"shape", "color"} if kind == "物料" else {"material"})
     profile_values, profile_meta = _projection(profile, row, profile_fields, PROFILE_REQUIRED)
     item_values, item_meta = _projection(item, item_row, ITEM_FIELDS - {"image"}, ITEM_REQUIRED)
     view = {"name": row["name"], "kind": kind, "company": company, "item_code": item_row["name"],
@@ -192,7 +221,8 @@ def _pack(profile, item, row, item_row, kind, company):
             "image": image, "readonly": True, "can_write": False}
     attachment = selected[0] if selected else None
     return view, {"row": row, "item_row": item_row, "file_name": attachment.name if attachment else None,
-                  "file_version": _value(attachment.modified) if attachment else None}
+                  "file_version": _value(attachment.modified) if attachment else None,
+                  "image_source": PROFILE if own_image else "Item"}
 
 
 def _verify_output(packed, kind, company):
@@ -224,12 +254,18 @@ def _verify_output(packed, kind, company):
             if (not set(values).issubset(readable)
                     or any(_value(document.get(field)) != value for field, value in values.items())):
                 frappe.throw("库存档案字段或读取权限已变化，请重新查询", frappe.PermissionError)
+        image_source = guard.get("image_source", "Item")
+        image_document = profile if image_source == PROFILE else item
+        image_row = guard["row"] if image_source == PROFILE else guard["item_row"]
+        if image_source == PROFILE and ("image" not in _columns(PROFILE)
+                                       or profile.get("image") != image_row.get("image")):
+            frappe.throw("库存档案图片或读取权限已变化，请重新查询", frappe.PermissionError)
         if attachment:
-            binding = {"file_url": guard["item_row"].get("image"), "is_private": 1,
-                       "attached_to_doctype": "Item", "attached_to_name": item.name,
+            binding = {"file_url": image_row.get("image"), "is_private": 1,
+                       "attached_to_doctype": image_source, "attached_to_name": image_document.name,
                        "attached_to_field": "image"}
-            if (not FILE_REQUIRED.issubset(_columns("File")) or "image" not in _columns("Item")
-                    or item.get("image") != binding["file_url"]
+            if (not FILE_REQUIRED.issubset(_columns("File")) or "image" not in _columns(image_source)
+                    or image_document.get("image") != binding["file_url"]
                     or any(attachment.get(field) != value for field, value in binding.items())
                     or not same_version(attachment.modified, guard["file_version"])
                     or not attachment.has_permission("read") or not attachment.is_downloadable()

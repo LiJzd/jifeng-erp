@@ -1621,10 +1621,24 @@ body[data-route="jifeng-legacy"] .jfe-shell {
 .jfe-inventory-editor .modal-body { max-height: calc(100vh - 170px); overflow-y: auto; }
 .jfe-inventory-editor .jfe-inventory-fields .section-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .jfe-inventory-editor .jfe-inventory-fields .form-column { display: contents; }
+.jfe-inventory-editor .jfe-inventory-fields .form-column > form { display: contents; }
 .jfe-inventory-editor .jfe-inventory-fields .frappe-control { min-width: 0; }
 .jfe-inventory-editor .jfe-inventory-fields .form-group { margin-bottom: 9px; }
 .jfe-inventory-stock .jfe-inventory-fields .frappe-control[data-fieldname="profile_display_name"],
 .jfe-inventory-stock .jfe-inventory-fields .frappe-control[data-fieldname="profile_location"],
 .jfe-inventory-stock .jfe-inventory-fields .frappe-control[data-fieldname="profile_notes"] { grid-column: 1 / -1; }
 .jfe-dictionary-choice { margin: 4px; }
+.jfe-inventory-with-image .jfe-inventory-fields .section-body { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; align-items: start; }
+.jfe-inventory-with-image .jfe-inventory-fields .form-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; padding: 0; float: none; max-width: none; width: auto; }
+.jfe-inventory-with-image .jfe-inventory-fields .form-column:last-child { grid-template-columns: minmax(0, 1fr); }
+.jfe-inventory-with-image .frappe-control[data-fieldname="copy_archive"] { grid-column: 1 / -1; }
+.jfe-inventory-image-choose { display: flex; justify-content: center; align-items: center; width: 100%; aspect-ratio: 1; background: white; border: 1px solid #e5e7eb; box-shadow: 0 2px 5px #0002; cursor: pointer; overflow: hidden; }
+.jfe-inventory-image-choose:disabled { cursor: default; opacity: 1; }
+.jfe-inventory-image-choose img { width: 100%; height: 100%; object-fit: contain; }
+.jfe-inventory-image-choose [hidden] { display: none; }
+.jfe-inventory-image-placeholder { width: 75%; max-width: 270px; aspect-ratio: 1; font-size: 0; background: url("/assets/jifeng_erp/images/inventory-add-image-r1.svg") center / contain no-repeat; }
+.jfe-inventory-image-hint { color: #e00000; text-align: center; margin: 8px 0; font-weight: 600; }
+.jfe-inventory-image-message { overflow-wrap: anywhere; min-height: 20px; margin: 5px 0; color: var(--text-muted); }
 @media (max-width: 600px) { .jfe-inventory-editor .jfe-inventory-fields .section-body { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 800px) { .jfe-inventory-with-image .jfe-inventory-fields .section-body { grid-template-columns: minmax(0, 1fr); } .jfe-inventory-with-image .jfe-inventory-image-choose { max-width: 360px; } }
+@media (max-width: 600px) { .jfe-inventory-with-image .jfe-inventory-fields .form-column { grid-template-columns: minmax(0, 1fr); } }

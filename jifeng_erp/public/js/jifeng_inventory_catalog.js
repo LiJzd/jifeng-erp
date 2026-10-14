@@ -148,8 +148,9 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 				value !== null && (!["string", "number", "boolean"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value)))) return false;
 		}
 		const image = row.image;
-		return !!image && image.source_doctype === "Item" && image.source_name === row.item_code && image.source_field === "image" &&
-			image.label === "关联业务商品图片" && ["未上传", "无字段读取权限", "附件不可用", "已上传"].includes(image.state) &&
+		const sourceValid = image && (image.source_doctype === "Item" && image.source_name === row.item_code && image.label === "关联业务商品图片" ||
+			image.source_doctype === "Jifeng Inventory Profile" && image.source_name === row.name && image.label === "档案图片");
+		return !!sourceValid && image.source_field === "image" && ["未上传", "无字段读取权限", "附件不可用", "已上传"].includes(image.state) &&
 			typeof image.url === "string" && (image.state === "已上传" ? this.safePreview(image.url) : image.url === "");
 	}
 	safePreview(url) {
@@ -164,9 +165,9 @@ window.JifengInventoryCatalog = class JifengInventoryCatalog {
 		} catch { return false; }
 	}
 	imageCell(image, target) {
-		target.title = __("关联业务商品图片") + " · Item / " + image.source_name + " / image";
+		target.title = __(image.label) + " · " + image.source_doctype + " / " + image.source_name + " / image";
 		if (image.state === "已上传" && this.safePreview(image.url)) {
-			const img = this.element("img"); img.src = image.url; img.alt = __("关联业务商品图片"); target.append(img);
+			const img = this.element("img"); img.src = image.url; img.alt = __(image.label); target.append(img);
 		} else target.textContent = __(image.state);
 	}
 	renderRows() {

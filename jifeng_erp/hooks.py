@@ -34,6 +34,7 @@ app_include_js = ["/assets/jifeng_erp/js/jifeng_classic_bridge.js", "/assets/jif
                   "/assets/jifeng_erp/js/jifeng_source_reports.js",
                   "/assets/jifeng_erp/js/jifeng_personnel_archive.js",
                   "/assets/jifeng_erp/js/jifeng_inventory_archive.js",
+                  "/assets/jifeng_erp/js/jifeng_inventory_archive_images.js",
                   "/assets/jifeng_erp/js/jifeng_inventory_category.js",
                   "/assets/jifeng_erp/js/jifeng_inventory_category_io.js",
                   "/assets/jifeng_erp/js/jifeng_inventory_catalog.js",

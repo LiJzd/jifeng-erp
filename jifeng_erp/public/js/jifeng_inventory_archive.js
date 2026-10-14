@@ -75,6 +75,8 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		add("profile", "notes", "备注");
 		fields.push({ fieldname: "copy_archive", fieldtype: "Check", label: "复制", default: 0,
 			read_only: !archive.can_write });
+		if (archive.field_meta?.profile?.image && window.JifengInventoryArchiveImages) fields.push(
+			{ fieldname: "image_column", fieldtype: "Column Break" }, { fieldname: "archive_image", fieldtype: "HTML" });
 		add("profile", "inactive", "停用", { description: "本公司档案状态。" });
 		fields.push({ fieldname: "business_section", fieldtype: "Section Break", label: "公司与业务物料" });
 		add("profile", "company", "公司", { read_only: !!archive.name });
@@ -89,6 +91,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		dialog.$wrapper.addClass("jfe-inventory-editor " + (kind === "物料" ? "jfe-inventory-stock" : "jfe-inventory-material"));
 		const state = { archive, kind, key, dialog, bindings, requestId: this.requestID(),
 			listOwner: options.listOwner || null, saving: false, linking: false, unresolved: false, confirming: false, closed: false };
+		if (dialog.fields_dict.archive_image) { state.images = new window.JifengInventoryArchiveImages(this, state); dialog.$wrapper.addClass("jfe-inventory-with-image"); }
 		this.active.set(key, state);
 		if (archive.can_write) dialog.set_primary_action(archive.name ? "保存" : "新增", () => this.save(state));
 		if (archive.can_link_item) dialog.add_custom_action(__("关联已有业务物料"), () => this.selectExistingItem(state));
@@ -112,10 +115,10 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		}
 		state.original = JSON.stringify(this.payload(state));
 		const beforeUnload = (event) => {
-			if (state.saving || state.linking || state.unresolved || this.isDirty(state)) { event.preventDefault(); event.returnValue = ""; }
+			if (state.saving || state.linking || state.imageReading || state.unresolved || this.isDirty(state)) { event.preventDefault(); event.returnValue = ""; }
 		};
 		window.addEventListener("beforeunload", beforeUnload);
-		dialog.on_hide = () => { state.categoryChooser?.hide(); window.removeEventListener("beforeunload", beforeUnload); this.active.delete(key); };
+		dialog.on_hide = () => { state.images?.destroy(); state.categoryChooser?.hide(); window.removeEventListener("beforeunload", beforeUnload); this.active.delete(key); };
 		dialog.show();
 		if (!archive.name && !copyFrom && window.JifengInventoryCategory &&
 			dialog.fields_dict.profile_major_category && dialog.fields_dict.profile_minor_category &&
@@ -142,6 +145,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 				(group === "item" && state.archive.name)) continue;
 			result[group][fieldname] = control.get_value();
 		}
+		state.images?.writePayload(result);
 		return result;
 	}
 
@@ -152,7 +156,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		const close = () => { state.closed = true; hide(); };
 		state.dialog.hide = () => {
 			if (state.closed || state.confirming) return;
-			if (state.saving || state.linking || state.unresolved) {
+			if (state.saving || state.linking || state.imageReading || state.unresolved) {
 				frappe.msgprint(__(state.unresolved ? "保存结果尚未确认，请先核对保存结果。" : "正在处理，请稍候。")); return;
 			}
 			if (!this.isDirty(state)) { close(); return; }
@@ -169,7 +173,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 	}
 
 	async save(state) {
-		if (state.saving || state.linking || state.unresolved) return;
+		if (state.closed || state.saving || state.linking || state.imageReading || state.unresolved) return;
 		if (!state.archive.name && !state.archive.existing_item && !state.archive.can_create_item) {
 			frappe.msgprint(__("请先关联已有业务物料。")); return;
 		}
@@ -177,10 +181,12 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		state.saving = true;
 		state.candidate = structuredClone(this.payload(state));
 		state.dialog.get_primary_btn().prop("disabled", true);
+		state.images?.refresh();
 		try {
 			const response = await frappe.call({ method: "jifeng_erp.inventory_archive.save_archive",
 				args: { payload: state.candidate }, freeze: true, freeze_message: __("正在保存档案…") });
-			if (!response.message?.name) { state.unresolved = true; return; }
+			if (!response.message?.name || state.candidate.image_change_request_id &&
+				response.message.image_change_request_id !== state.candidate.image_change_request_id) { state.unresolved = true; return; }
 			await this.accept(state, response.message);
 		} catch (error) {
 			// A server exception confirms the atomic operation was rolled back.
@@ -190,6 +196,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 			state.saving = false;
 			if (state.unresolved) this.freezeDraft(state);
 			state.dialog.get_primary_btn().prop("disabled", state.unresolved || !state.archive.can_write);
+			state.images?.refresh();
 			if (state.unresolved) frappe.msgprint(__("保存结果尚未确认。草稿已保留，请点击核对保存结果。"));
 		}
 	}
@@ -197,6 +204,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 	async accept(state, archive) {
 		state.archive = archive;
 		state.unresolved = false;
+		state.images?.accept();
 		await state.dialog.set_values(this.initialValues(state));
 		state.dialog.set_value("business_item", archive.item_code || "");
 		state.dialog.set_value("business_name", archive.item_name || "");
@@ -216,6 +224,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 	freezeDraft(state) {
 		for (const { controlName } of state.bindings) state.dialog.set_df_property(controlName, "read_only", true);
 		state.dialog.set_df_property("copy_archive", "read_only", true);
+		state.images?.refresh();
 	}
 
 	refreshLists(archive) {
@@ -246,6 +255,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 					{ request_id: state.requestId, kind: state.kind }, freeze: true });
 			const archive = existing ? response.message : response.message?.archive;
 			const matches = archive?.name && (!state.candidate.existing_item || archive.item_code === state.candidate.existing_item) &&
+				(!state.candidate.image_change_request_id || archive.image_change_request_id === state.candidate.image_change_request_id) &&
 				Object.entries(state.candidate.profile).every(([field, value]) =>
 				String(archive.profile?.[field] ?? "") === String(value ?? ""));
 			if (!matches) {
@@ -253,12 +263,12 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 			}
 			await this.accept(state, archive);
 		} catch { /* native RPC displays errors; retain the unknown state */ }
-		finally { state.saving = false; state.dialog.get_primary_btn().prop("disabled", state.unresolved || !state.archive.can_write); }
+		finally { state.saving = false; state.dialog.get_primary_btn().prop("disabled", state.unresolved || !state.archive.can_write); state.images?.refresh(); }
 	}
 
 	async copy(state) {
 		await state.dialog.set_value("copy_archive", 0);
-		if (state.saving || state.linking || state.unresolved) return;
+		if (state.saving || state.linking || state.imageReading || state.unresolved) return;
 		if (!state.archive.name) { frappe.msgprint(__("先保存档案，再复制。")); return; }
 		if (this.isDirty(state)) { frappe.msgprint(__("先保存当前修改，再复制。")); return; }
 		state.linking = true; state.dialog.get_primary_btn().prop("disabled", true);
@@ -269,7 +279,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 	}
 
 	async setSource(state, itemCode) {
-		if (state.closed || state.archive.name || state.saving || state.linking || state.unresolved) return false;
+		if (state.closed || state.archive.name || state.saving || state.linking || state.imageReading || state.unresolved) return false;
 		if (itemCode ? !state.archive.can_link_item : !state.archive.can_create_item) return false;
 		const company = state.dialog.get_value("profile_company");
 		if (!company) { frappe.msgprint(__("先选择公司。")); return false; }
@@ -284,6 +294,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 			if (!archive || archive.name || archive.existing_item !== (itemCode || null) ||
 				archive.profile?.company !== company || state.closed) return false;
 			state.archive = archive;
+			state.images?.refresh();
 			for (const { group, fieldname, controlName, locked } of state.bindings) {
 				const df = archive.field_meta?.[group]?.[fieldname];
 				state.dialog.set_df_property(controlName, "read_only", !!(!df || df.read_only || locked || !archive.can_write));
@@ -299,7 +310,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 			await state.dialog.set_value("business_name", archive.item_name || "");
 			return true;
 		} catch { return false; /* native RPC displays the error without changing the draft */ }
-		finally { state.linking = false; state.dialog.get_primary_btn().prop("disabled", !state.archive.can_write); }
+		finally { state.linking = false; state.dialog.get_primary_btn().prop("disabled", !state.archive.can_write); state.images?.refresh(); }
 	}
 
 	selectExistingItem(state) {

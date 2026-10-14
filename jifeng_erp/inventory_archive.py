@@ -17,6 +17,7 @@ from frappe.model import get_permitted_fields
 
 from jifeng_erp.archive_versions import same_version
 from jifeng_erp.personnel_separation import _atomic
+from jifeng_erp import inventory_archive_images as images
 
 
 PROFILE = "Jifeng Inventory Profile"
@@ -26,7 +27,7 @@ PROFILE_EDIT = {
     "legacy_number", "legacy_code", "major_category", "minor_category", "old_number",
     "specification", "display_name", "location", "material", "shape", "color", "display_uom",
     "list_price", "processing_price", "weight", "supplier", "upper_limit", "lower_limit",
-    "conversion_uom", "conversion_value", "owner_name", "region", "notes", "inactive",
+    "conversion_uom", "conversion_value", "owner_name", "region", "notes", "inactive", "image",
 }
 PROFILE_READ = PROFILE_EDIT | {"company", "archive_kind", "item_code"}
 ITEM_CREATE = {"item_group", "stock_uom"}
@@ -208,7 +209,7 @@ def _pack(profile, item, unscoped=False):
         if linked or not can_create:
             meta["read_only"] = True
             meta["reqd"] = False
-    return {
+    result = {
         "name": profile.name if existing else None, "kind": profile.archive_kind,
         "item_code": item.name if linked and source_visible else None,
         "existing_item": item.name if linked and not existing and source_visible else None,
@@ -221,6 +222,21 @@ def _pack(profile, item, unscoped=False):
         "can_write": bool(permitted(profile, "write") and permitted(item, "read") if existing
                           else can_link if linked else can_create or can_link),
     }
+    if "image" in profile_meta and "image" not in images._columns(PROFILE):
+        profile_meta.pop("image", None)
+        profile_values.pop("image", None)
+    if "image" in profile_meta:
+        result["image"] = images.image_state(profile)
+        if result["image"]["state"] != "已上传":
+            profile_values["image"] = None
+        result["image_options"] = images.options(profile, result["can_write"])
+        if images.RECEIPT in images._columns(PROFILE):
+            result["image_change_request_id"] = profile.get(images.RECEIPT)
+    if existing:
+        _permission(profile, "read")
+        _permission(item, "read")
+        _company(profile.company)
+    return result
 
 
 def _linked_item(name, lock=False):
@@ -255,7 +271,7 @@ def init_archive(kind, company=None, copy_from=None, existing_item=None):
             frappe.throw("复制来源必须属于所选公司")
         company = source.company
         readable = _columns(PROFILE, "read")
-        for field in PROFILE_EDIT & readable - {"legacy_number", "legacy_code", "old_number", "inactive"}:
+        for field in PROFILE_EDIT & readable - {"legacy_number", "legacy_code", "old_number", "inactive", "image"}:
             profile.set(field, source.get(field))
         for field in ITEM_CREATE & _columns("Item", "read"):
             item.set(field, source_item.get(field))
@@ -285,11 +301,15 @@ def read_archive(name, kind, company=None):
     return _pack(profile, item)
 
 
-def _digest(kind, profile_values, item_values, existing_item=None):
+def _digest(kind, profile_values, item_values, existing_item=None, upload=None, image_request_id=None):
     body = {"kind": kind, "profile": _normalized(PROFILE, profile_values, PROFILE_EDIT | {"company"}),
             "item": _normalized("Item", item_values, ITEM_CREATE)}
     if existing_item:
         body["existing_item"] = existing_item
+    if upload:
+        body["image_upload"] = images.upload_identity(upload)
+    if image_request_id:
+        body["image_change_request_id"] = image_request_id
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False,
                                     separators=(",", ":")).encode()).hexdigest()
 
@@ -326,11 +346,18 @@ def save_archive(payload):
     _login()
     payload = _object(payload, "库存档案请求")
     if not set(payload).issubset({"kind", "name", "profile_version", "item_version", "request_id", "profile", "item",
-                                "existing_item"}):
+                                "existing_item", "image_upload", "image_change_request_id"}):
         frappe.throw("库存档案请求包含不支持的参数")
     kind = _kind(payload.get("kind"))
     profile_values = _object(payload.get("profile", {}), "库存档案字段")
     item_values = _object(payload.get("item", {}), "原生库存字段")
+    upload = images.prepare_upload(payload.get("image_upload"))
+    if upload and "image" in profile_values:
+        frappe.throw("上传图片与清空或指定图片不能同时保存")
+    image_change = upload is not None or "image" in profile_values
+    image_request_id = str(_uuid(payload.get("image_change_request_id"))) if image_change else None
+    if not image_change and payload.get("image_change_request_id") is not None:
+        frappe.throw("图片请求身份必须与图片修改一起保存")
     if payload.get("name"):
         if item_values or payload.get("request_id") or payload.get("existing_item"):
             frappe.throw("已有档案不能改写共享商品或新建请求身份")
@@ -343,7 +370,16 @@ def save_archive(payload):
                 frappe.throw("库存档案不能修改公司")
             profile_values = {key: value for key, value in profile_values.items() if key != "company"}
         _updates(profile, profile_values, PROFILE_EDIT)
-        profile.save()
+        if image_change and not images.options(profile, True)["can_clear"]:
+            frappe.throw("没有修改库存档案图片的权限", frappe.PermissionError)
+        if upload:
+            if not images.options(profile, True)["can_choose"]:
+                frappe.throw("没有上传库存档案图片的权限", frappe.PermissionError)
+            images.store_upload(profile, upload, image_request_id)
+        elif image_change:
+            images.save_image_change(profile, image_request_id)
+        else:
+            profile.save()
         return _pack(profile, item)
 
     request_uuid = _uuid(payload.get("request_id"))
@@ -354,7 +390,7 @@ def save_archive(payload):
         frappe.throw("新档案不能携带已有档案版本")
     if linked_name and item_values:
         frappe.throw("关联已有业务物料不能改写共享商品")
-    digest = _digest(kind, profile_values, item_values, linked_name)
+    digest = _digest(kind, profile_values, item_values, linked_name, upload, image_request_id)
     name = _creation_name(str(request_uuid))
     if name:
         return _reuse_creation(name, kind, digest)
@@ -365,6 +401,10 @@ def save_archive(payload):
     profile.conversion_value, profile.inactive = 1, 0
     _updates(profile, profile_values, PROFILE_EDIT | {"company"})
     _permission(profile, "create")
+    if image_change and not images.options(profile, True)["can_clear"]:
+        frappe.throw("没有修改库存档案图片的权限", frappe.PermissionError)
+    if upload and not images.options(profile, True)["can_choose"]:
+        frappe.throw("没有上传库存档案图片的权限", frappe.PermissionError)
     if linked_name:
         item = _linked_item(linked_name, lock=True)
         _latest(item, payload.get("item_version"), "关联商品")
@@ -385,6 +425,10 @@ def save_archive(payload):
         profile.save()
     finally:
         _CREATING.reset(context)
+    if upload:
+        images.store_upload(profile, upload, image_request_id)
+    elif image_change:
+        images.save_image_change(profile, image_request_id)
     return _pack(profile, item)
 
 
@@ -392,6 +436,7 @@ def validate_profile(profile):
     """Also enforce identity and semantic constraints on native Desk saves."""
     _login()
     _kind(profile.archive_kind)
+    images.validate_receipt(profile)
     if profile.is_new():
         if _CREATING.get() is not profile:
             frappe.throw("请从物料或材料档案入口联合新建或关联业务物料")
@@ -424,6 +469,7 @@ def validate_profile(profile):
     for field, doctype in (("supplier", "Supplier"), ("conversion_uom", "UOM")):
         if profile.get(field):
             frappe.get_doc(doctype, profile.get(field)).check_permission("select")
+    images.validate_image(profile)
 
 
 def _dictionary_type(kind, dictionary_type):

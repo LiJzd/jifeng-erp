@@ -11,6 +11,7 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
+from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).parents[1]
@@ -38,6 +39,9 @@ class Meta:
 
     def get_field(self, name):
         return next((field for field in self.fields if field.fieldname == name), None)
+
+    def get_permlevel_access(self, permission, parenttype=None):
+        return set()
 
 
 class NativeDocument(Record):
@@ -104,6 +108,7 @@ class TestInventoryArchive(unittest.TestCase):
         self.hidden, self.saves, self.tick, self.fail_profile = {}, [], 1, False
         self.frappe = types.ModuleType("frappe")
         self.frappe.PermissionError = PermissionError
+        self.frappe.DoesNotExistError = type("DoesNotExistError", (ValueError,), {})
         self.frappe.TimestampMismatchError = RuntimeError
         self.frappe.DuplicateEntryError = type("DuplicateEntryError", (ValueError,), {})
         self.frappe.session = Record(user="stock-manager@example.invalid")
@@ -114,6 +119,9 @@ class TestInventoryArchive(unittest.TestCase):
         self.frappe.get_meta = lambda doctype: self.metas[doctype]
         self.frappe.has_permission = lambda doctype, permission: (doctype, permission) not in self.denials
         self.frappe.get_list = Mock(side_effect=self.get_list)
+        self.frappe.get_all = Mock(side_effect=lambda doctype, filters, **kwargs: [name
+            for (kind, name), value in self.documents.items() if kind == doctype
+            and all(value.get(key) == expected for key, expected in filters.items())])
         self.frappe.db = types.SimpleNamespace(get_value=Mock(side_effect=self.get_value),
             savepoint=self.savepoint, rollback=self.rollback,
             **{name: Queue() for name in ("before_commit", "after_commit", "before_rollback", "after_rollback")})
@@ -128,9 +136,27 @@ class TestInventoryArchive(unittest.TestCase):
         separation._atomic = namespace["_atomic"]
         with patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model,
                                      "jifeng_erp.personnel_separation": separation}):
+            spec = importlib.util.spec_from_file_location("inventory_images_under_test", ROOT / "jifeng_erp/inventory_archive_images.py")
+            self.images = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(self.images)
             spec = importlib.util.spec_from_file_location("inventory_archive_under_test", ROOT / "jifeng_erp/inventory_archive.py")
             self.module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(self.module)
+            self.module.images = self.images
+        files = types.ModuleType("frappe.utils.file_manager")
+        files.get_max_file_size = lambda: self.maximum_image_bytes
+        product = types.ModuleType("jifeng_erp.product_archive")
+        tree = ast.parse((ROOT / "jifeng_erp/product_archive.py").read_text(encoding="utf-8"))
+        definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name in ("_private_url", "_local_image_url")]
+        namespace = {"urlsplit": urlsplit, "unquote": unquote}
+        exec(compile(ast.Module(body=definitions, type_ignores=[]), "canonical_private_url", "exec"), namespace)
+        product._private_url = namespace["_private_url"]
+        self.image_module_patches = patch.dict(sys.modules, {"frappe.utils.file_manager": files,
+                                                            "jifeng_erp.product_archive": product})
+        self.image_module_patches.start()
+        self.addCleanup(self.image_module_patches.stop)
+        self.maximum_image_bytes = 10 * 1024 * 1024
         NativeDocument.environment = self
         for folder in ("jifeng_inventory_profile", "jifeng_inventory_dictionary"):
             schema = json.loads((ROOT / "jifeng_erp/jifeng_erp/doctype" / folder / (folder + ".json")).read_text(encoding="utf-8"))
@@ -141,6 +167,8 @@ class TestInventoryArchive(unittest.TestCase):
             for field, kind, options in (("item_group", "Link", "Item Group"), ("stock_uom", "Link", "UOM"),
                                          ("item_code", "Data", ""), ("item_name", "Data", ""),
                                          ("is_stock_item", "Check", ""))])
+        self.metas["File"] = Meta([{"fieldname": name, "fieldtype": "Data", "label": name}
+                                  for name in self.images.FILE_FIELDS | {"file_name", "content"}])
         for doctype, name in (("Company", "JF"), ("Company", "OTHER"), ("Item Group", "Raw Material"),
                               ("UOM", "Nos"), ("UOM", "Kg"), ("Supplier", "SUP")):
             self.add(doctype, name)
