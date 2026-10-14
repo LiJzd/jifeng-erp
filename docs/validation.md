@@ -18,7 +18,7 @@ root以fresh只读SQL核准确记录`JF-INV-D-2026-00466`、四个形状回执�
 
 首轮同步在已写入六文件并停止专属18868服务后，被错误的未带版本号hooks断言拦下；确认六文件SHA、旧PID消失、端口空闲及实际含SHA参数的hook后才恢复，没有盲目重跑写入。首轮原生检查发现Series默认按不存在的creation列排序，已按既有词典实现明确`order_by=name`；第二轮测试的纯HTML名称被原生校验清空并拒绝，修正合成夹具后12项通过，保留两轮失败及完整回滚结果。此次仅重启隔离服务，来源报告站18764与公网均未切换。
 
-原站r3精确CLI `legacy-diagnostic2 tab-list` 返回“browser is not open”。本轮没有可操作页面，无法核URL、登录控件或菜单，认证状态未知；没有重启原浏览器或读取其密码／Cookie／存储。r2的登录页观察仅为此前状态。原始命令和回包位于`output/playwright/legacy-full-audit-20261015-r1/core/live-recheck-20261015-r3.*`；本机形状修改前GUI证据位于`current/native-shape-r1/`。原站新取证需恢复会话，全部19模块目标继续，公网保持`865cea4-native-navigation-r2`。
+原站r3精确CLI `legacy-diagnostic2 tab-list` 返回“browser is not open”。修复本地CLI环境定位后，r4在同一路径／session及短时授权dotenv环境仅查一次tab-list，仍报句柄未打开；没有重试或访问页面内容。北京时间早晨不进入旧站业务页，继续遵守其20点后使用约定。认证状态未知，没有重启原浏览器或读取其密码／Cookie／存储；r2的登录页仅为此前状态。原始命令和回包位于`output/playwright/legacy-full-audit-20261015-r1/core/live-recheck-20261015-r3.*`及`-r4.*`；本机形状修改前GUI证据位于`current/native-shape-r1/`。原站新取证需恢复会话，全部19模块目标继续，公网保持`865cea4-native-navigation-r2`。
 
 ## 2026-10-15 库存候选的隔离原生验证与入口修复
 
