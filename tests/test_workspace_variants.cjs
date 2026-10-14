@@ -27,6 +27,7 @@ window.JifengSubcontractingReversal = class {};
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
 window.JifengInventoryCategory = class {};
 window.JifengInventoryCategoryIO = {};
+window.JifengInventoryWords = class {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
 	session: { user: "Synthetic", user_fullname: "合成测试用户" },
@@ -98,6 +99,15 @@ for (const name of ["形状", "颜色"]) {
 	assert.equal(dispatch(Classic, find("材料", name))[0].spec.inventoryCategory, null,
 		"standalone shape and color dictionaries retain their route");
 }
+assert.equal(dispatch(Classic, find("材料", "形状"))[0].spec.inventoryWord, true);
+assert.equal(dispatch(Classic, find("材料", "颜色"))[0].spec.inventoryWord, false);
+const wordsComponent = window.JifengInventoryWords; delete window.JifengInventoryWords;
+for (const Workspace of [Classic, Modern]) {
+	const before = messages.length;
+	assert.deepEqual(dispatch(Workspace, find("材料", "形状")), [], "missing shape component cannot reopen the generic dictionary");
+	assert.equal(messages.length, before + 1);
+}
+window.JifengInventoryWords = wordsComponent;
 assert.deepEqual(dispatch(Modern, find("物料", "采购订单"))[0].spec.filters, { is_subcontracted: 0 });
 assert.deepEqual(dispatch(Modern, find("外发", "委外采购单"))[0].spec.filters, { is_subcontracted: 1 });
 assert.deepEqual(dispatch(Modern, find("订单", "算料"))[0].spec.route, ["jifeng-order-material-workbench", "analysis"]);

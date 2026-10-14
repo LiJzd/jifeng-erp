@@ -32,6 +32,10 @@ class TestAssetVersions(unittest.TestCase):
         self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_product_dictionary.js?" in u),
                         next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_customer_type.js?" in u))
         self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_product_dictionary.js?" in u),
+                        next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_inventory_words.js?" in u))
+        self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_inventory_words.js?" in u),
+                        next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_workspace_core.js?" in u))
+        self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_product_dictionary.js?" in u),
                         next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_order_dictionary.js?" in u))
         self.assertLess(next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_order_dictionary.js?" in u),
                         next(i for i, u in enumerate(hooks.app_include_js) if "jifeng_plating_color.js?" in u))

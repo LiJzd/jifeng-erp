@@ -18,3 +18,25 @@
 .jfe-product-dictionary-review:empty { display: none; }
 .jfe-product-dictionary-review table { border-collapse: collapse; width: 100%; }
 .jfe-product-dictionary-review th, .jfe-product-dictionary-review td { border: 1px solid #ccd6de; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jfe-inventory-word { padding: 6px; background: #fff; }
+.jfe-inventory-word > .jfe-product-dictionary-toolbar:first-child > button { border: 1px solid #198fff; border-radius: 3px; background: #198fff; color: #fff; }
+.jfe-inventory-word .jfe-product-dictionary-company { width: 230px; }
+.jfe-inventory-word .jfe-product-dictionary-company .form-group { display: flex; align-items: center; gap: 6px; margin: 0; }
+.jfe-inventory-word .jfe-product-dictionary-company .form-group > .clearfix { flex: 0 0 auto; }
+.jfe-inventory-word .jfe-product-dictionary-company .control-label { margin: 0; white-space: nowrap; }
+.jfe-inventory-word .jfe-product-dictionary-company .control-input-wrapper { flex: 1; min-width: 0; }
+.jfe-inventory-word .jfe-product-dictionary-company input { height: 28px; }
+.jfe-inventory-word .jfe-product-dictionary-company .help-box { display: none; }
+.jfe-inventory-word .jfe-product-dictionary-table { min-width: 900px; color: #333; font-size: 14px; }
+.jfe-inventory-word .jfe-product-dictionary-table th { background: #fff; color: #777; font-weight: normal; }
+.jfe-inventory-word .jfe-product-dictionary-table th, .jfe-inventory-word .jfe-product-dictionary-table td { padding: 4px; border-color: #ccc; }
+.jfe-inventory-word .jfe-product-dictionary-table th:first-child { width: 35px; }
+.jfe-inventory-word .jfe-product-dictionary-table th:nth-child(2) { width: 100px; }
+.jfe-inventory-word .jfe-product-dictionary-table th:nth-child(3) { width: 280px; }
+.jfe-inventory-word .jfe-product-dictionary-table th:nth-child(4) { width: 100px; }
+.jfe-inventory-word .jfe-product-dictionary-table th:nth-child(5) { width: 250px; }
+.jfe-inventory-word .jfe-product-dictionary-table th:nth-last-child(-n+3) { width: 38px; }
+.jfe-inventory-word .jfe-product-dictionary-table tbody tr:hover { background: #a9d8fa; }
+.jfe-inventory-word .jfe-product-dictionary-table td:nth-last-child(-n+2) button { border: 0; background: transparent; color: #dd00ff; padding: 0 4px; font-size: 20px; }
+.jfe-inventory-word-pager { padding: 10px 0 0; border: 0; }
+.jfe-inventory-word-pager > span { margin-left: auto; }

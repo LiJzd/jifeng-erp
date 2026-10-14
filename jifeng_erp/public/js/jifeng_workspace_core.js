@@ -597,6 +597,10 @@ class JifengLegacyWorkspace {
 			}
 			const inventoryCategory = liveDoctype === "Jifeng Inventory Dictionary" &&
 				["物料", "材料"].includes(moduleName) && ["类别", moduleName + "类别"].includes(name) ? moduleName : null;
+			const inventoryWord = liveDoctype === "Jifeng Inventory Dictionary" && moduleName === "材料" && name === "形状";
+			if (inventoryWord && (!this.formalBridge || !window.JifengInventoryWords)) {
+				frappe.msgprint(__("材料形状页面未能加载，请刷新后重试。")); return;
+			}
 			if (inventoryCategory &&
 				(!this.formalBridge || !window.JifengInventoryCategory || !window.JifengInventoryCategoryIO)) {
 				frappe.msgprint(__("类别页面未能加载，请刷新后重试。")); return;
@@ -627,6 +631,7 @@ class JifengLegacyWorkspace {
 					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {},
 					inventoryArchive,
 					inventoryCategory,
+					inventoryWord,
 					hrDictionary,
 					productDictionary,
 					productCategory: moduleName === "产品" && name === "类别" && liveDoctype === "Jifeng Product Category",
