@@ -20,6 +20,8 @@ root以fresh只读SQL核准确记录`JF-INV-D-2026-00466`、四个形状回执�
 
 原站r3精确CLI `legacy-diagnostic2 tab-list` 返回“browser is not open”。修复本地CLI环境定位后，r4在同一路径／session及短时授权dotenv环境仅查一次tab-list，仍报句柄未打开；没有重试或访问页面内容。北京时间早晨不进入旧站业务页，继续遵守其20点后使用约定。认证状态未知，没有重启原浏览器或读取其密码／Cookie／存储；r2的登录页仅为此前状态。原始命令和回包位于`output/playwright/legacy-full-audit-20261015-r1/core/live-recheck-20261015-r3.*`及`-r4.*`；本机形状修改前GUI证据位于`current/native-shape-r1/`。原站新取证需恢复会话，全部19模块目标继续，公网保持`865cea4-native-navigation-r2`。
 
+后续来源复核发现r4保存命令时展开了PowerShell变量，完整wrapper未逐字保存：保留损坏原值，只恢复可核实的CLI调用行，并明确missing，不能声称旧wrapper可精确重现。r5先保存完整`.ps1`再执行一次同句柄tab-list，脚本SHA256为`1ae66725a995aa3680cc6bf4e934aedd615bc5706a9c9f4a8c4e946f8c20e1e6`；root已独立读取脚本及核SHA。2026-10-15 07:00回包仍为句柄未打开、exit1，认证未评估，未访问页面、登录或凭据。脚本、完整脱敏回包及JSON／Markdown位于同目录`live-recheck-20261015-r5.*`。本次没有新增业务取证或实现：现有本轮165项清单仍为5项partial、160项unobserved，不能把候选验收算作原站业务兼容完成；继续工作需要20点后的可操作原站会话。
+
 ## 2026-10-15 库存候选的隔离原生验证与入口修复
 
 使用已有 WSL Ubuntu、Frappe 16.35.0／ERPNext 16.36.0 和 MariaDB 11.8.9，建立独立的 `jifeng-legacy-alignment-20261015-r1.localhost` 副本；没有下载镜像、重置已有 bench 或覆盖其改动。克隆来源为本机较新的报告 QA 站，SQL 压缩备份及附件只在本机复制；源码从已提交 `941cac6` 提取，排除工作区两处用户工资修改。副本使用自己的数据库、SQL 用户、Redis unix socket 和 loopback 18868 服务，关闭邮件和调度器。操作 intent／done、SQL 备份、结构／权限前值和完整原生检查结果保存在 WSL 私有 `legacy-alignment-20261015-r1` 目录；凭据不进入仓库或报告。
