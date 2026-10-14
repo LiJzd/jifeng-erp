@@ -100,6 +100,10 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		dialog.add_custom_action(__("关闭"), () => dialog.hide());
 		this.guardClose(state);
 		await dialog.set_values(this.initialValues(state));
+		for (const binding of bindings) {
+			const control = dialog.fields_dict[binding.controlName];
+			if (control?.df.description) control.wrapper?.setAttribute("title", control.df.description);
+		}
 		if (options.isCurrent && !options.isCurrent()) {
 			state.closed = true; this.active.delete(key); dialog.$wrapper.remove(); return;
 		}

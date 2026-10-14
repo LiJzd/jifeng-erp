@@ -25,6 +25,8 @@ window.JifengProductionInstructionList = class {};
 window.JifengSubcontractingReconciliation = class {};
 window.JifengSubcontractingReversal = class {};
 window.JifengInventoryArchiveList = class extends window.JifengInventoryCatalog {};
+window.JifengInventoryCategory = class {};
+window.JifengInventoryCategoryIO = {};
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {}, "jifeng-modern": {} }, router: { on() {} }, get_route: () => [route],
 	session: { user: "Synthetic", user_fullname: "合成测试用户" },
@@ -77,6 +79,25 @@ for (const entry of entries) {
 	if (expected) assert.equal(classic[0].action, expected);
 }
 const find = (module, name) => entries.find(entry => entry.module === module && entry.name === name);
+for (const module of ["物料", "材料"]) {
+	const entry = find(module, module + "类别");
+	assert.ok(entry, "the observed category menu remains reachable");
+	assert.equal(dispatch(Classic, entry)[0].spec.inventoryCategory, module,
+		"the observed menu label opens the related category grids");
+	for (const component of ["JifengInventoryCategory", "JifengInventoryCategoryIO"]) {
+		const original = window[component]; delete window[component];
+		for (const Workspace of [Classic, Modern]) {
+			const before = messages.length;
+			assert.deepEqual(dispatch(Workspace, entry), [], "missing category assets cannot silently open the generic dictionary");
+			assert.equal(messages.length, before + 1);
+		}
+		window[component] = original;
+	}
+}
+for (const name of ["形状", "颜色"]) {
+	assert.equal(dispatch(Classic, find("材料", name))[0].spec.inventoryCategory, null,
+		"standalone shape and color dictionaries retain their route");
+}
 assert.deepEqual(dispatch(Modern, find("物料", "采购订单"))[0].spec.filters, { is_subcontracted: 0 });
 assert.deepEqual(dispatch(Modern, find("外发", "委外采购单"))[0].spec.filters, { is_subcontracted: 1 });
 assert.deepEqual(dispatch(Modern, find("订单", "算料"))[0].spec.route, ["jifeng-order-material-workbench", "analysis"]);

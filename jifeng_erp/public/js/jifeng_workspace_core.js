@@ -595,7 +595,9 @@ class JifengLegacyWorkspace {
 			if (liveDoctype === "Jifeng Inventory Profile" && (!this.formalBridge || !window.JifengInventoryArchiveList)) {
 				frappe.msgprint(__("档案页面未能加载，请刷新后重试。")); return;
 			}
-			if (liveDoctype === "Jifeng Inventory Dictionary" && name === "类别" &&
+			const inventoryCategory = liveDoctype === "Jifeng Inventory Dictionary" &&
+				["物料", "材料"].includes(moduleName) && ["类别", moduleName + "类别"].includes(name) ? moduleName : null;
+			if (inventoryCategory &&
 				(!this.formalBridge || !window.JifengInventoryCategory || !window.JifengInventoryCategoryIO)) {
 				frappe.msgprint(__("类别页面未能加载，请刷新后重试。")); return;
 			}
@@ -624,7 +626,7 @@ class JifengLegacyWorkspace {
 				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
 					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {},
 					inventoryArchive,
-					inventoryCategory: liveDoctype === "Jifeng Inventory Dictionary" && name === "类别" ? moduleName : null,
+					inventoryCategory,
 					hrDictionary,
 					productDictionary,
 					productCategory: moduleName === "产品" && name === "类别" && liveDoctype === "Jifeng Product Category",
