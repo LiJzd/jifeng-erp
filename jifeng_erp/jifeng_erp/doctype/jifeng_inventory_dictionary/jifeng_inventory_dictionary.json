@@ -6,18 +6,28 @@
  "title_field": "value",
  "search_fields": "value",
  "track_changes": 1,
- "field_order": ["company", "archive_kind", "dictionary_type", "value", "inactive", "dictionary_key"],
+ "field_order": ["company", "archive_kind", "dictionary_type", "parent_dictionary", "legacy_code", "value", "material", "display_uom", "conversion_uom_text", "conversion_value", "owner_name", "region", "pinyin", "notes", "inactive", "dictionary_key"],
  "fields": [
   {"fieldname": "company", "fieldtype": "Link", "label": "公司", "options": "Company", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
   {"fieldname": "archive_kind", "fieldtype": "Select", "label": "档案种类", "options": "物料\n材料", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
   {"fieldname": "dictionary_type", "fieldtype": "Select", "label": "词典类型", "options": "大类\n小类\n形状\n颜色", "reqd": 1, "set_only_once": 1, "in_list_view": 1},
+  {"fieldname": "parent_dictionary", "fieldtype": "Link", "label": "所属大类", "options": "Jifeng Inventory Dictionary", "depends_on": "eval:doc.dictionary_type=='小类'", "description": "关联同公司、同档案种类的大类；旧未关联词条保留，不自动猜测归属。"},
+  {"fieldname": "legacy_code", "fieldtype": "Data", "label": "代码", "in_list_view": 1},
   {"fieldname": "value", "fieldtype": "Data", "label": "词典内容", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "material", "fieldtype": "Data", "label": "材质", "depends_on": "eval:doc.dictionary_type=='小类'"},
+  {"fieldname": "display_uom", "fieldtype": "Data", "label": "单位", "depends_on": "eval:doc.dictionary_type=='小类'"},
+  {"fieldname": "conversion_uom_text", "fieldtype": "Data", "label": "换算单位", "depends_on": "eval:doc.dictionary_type=='小类'"},
+  {"fieldname": "conversion_value", "fieldtype": "Data", "label": "换算", "depends_on": "eval:doc.dictionary_type=='小类'", "default": "1", "description": "类别换算原值，保留精确数值文本；库存换算由明确业务单位规则处理。"},
+  {"fieldname": "owner_name", "fieldtype": "Data", "label": "负责"},
+  {"fieldname": "region", "fieldtype": "Data", "label": "区域"},
+  {"fieldname": "pinyin", "fieldtype": "Data", "label": "简拼"},
+  {"fieldname": "notes", "fieldtype": "Small Text", "label": "备注"},
   {"fieldname": "inactive", "fieldtype": "Check", "label": "停用", "default": "0", "in_list_view": 1},
   {"fieldname": "dictionary_key", "fieldtype": "Data", "label": "词典内容身份", "hidden": 1, "read_only": 1, "unique": 1, "no_copy": 1, "print_hide": 1}
  ],
  "permissions": [
-  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "print": 1},
-  {"role": "Stock Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "print": 1},
+  {"role": "Stock Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "print": 1},
   {"role": "Stock User", "read": 1, "select": 1, "report": 1, "print": 1},
   {"role": "Manufacturing Manager", "read": 1, "select": 1, "report": 1, "print": 1}
  ]

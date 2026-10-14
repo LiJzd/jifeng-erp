@@ -595,6 +595,10 @@ class JifengLegacyWorkspace {
 			if (liveDoctype === "Jifeng Inventory Profile" && (!this.formalBridge || !window.JifengInventoryArchiveList)) {
 				frappe.msgprint(__("档案页面未能加载，请刷新后重试。")); return;
 			}
+			if (liveDoctype === "Jifeng Inventory Dictionary" && name === "类别" &&
+				(!this.formalBridge || !window.JifengInventoryCategory || !window.JifengInventoryCategoryIO)) {
+				frappe.msgprint(__("类别页面未能加载，请刷新后重试。")); return;
+			}
 			if (liveDoctype === "Jifeng Partner Profile") {
 				if (!this.formalBridge || !window.JifengPartnerArchive) {
 					frappe.msgprint(__("工厂档案页面未能加载，请刷新后重试。"));
@@ -620,6 +624,7 @@ class JifengLegacyWorkspace {
 				this.formalBridge.open({ title: name, module: moduleName, kind: "list",
 					doctype: liveDoctype, route: ["List", liveDoctype], filters: filters || {},
 					inventoryArchive,
+					inventoryCategory: liveDoctype === "Jifeng Inventory Dictionary" && name === "类别" ? moduleName : null,
 					hrDictionary,
 					productDictionary,
 					productCategory: moduleName === "产品" && name === "类别" && liveDoctype === "Jifeng Product Category",

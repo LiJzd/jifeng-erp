@@ -1,0 +1,18 @@
+{
+ "doctype": "DocType",
+ "name": "Jifeng Inventory Category Batch",
+ "module": "Jifeng ERP",
+ "autoname": "field:request_id",
+ "allow_rename": 0,
+ "read_only": 1,
+ "field_order": ["request_id", "actor", "company", "archive_kind", "request_digest", "result_json"],
+ "fields": [
+  {"fieldname": "request_id", "fieldtype": "Data", "label": "保存请求", "unique": 1, "reqd": 1, "read_only": 1, "in_list_view": 1},
+  {"fieldname": "actor", "fieldtype": "Link", "options": "User", "label": "操作人", "reqd": 1, "read_only": 1, "in_list_view": 1},
+  {"fieldname": "company", "fieldtype": "Link", "options": "Company", "label": "公司", "reqd": 1, "read_only": 1, "in_list_view": 1},
+  {"fieldname": "archive_kind", "fieldtype": "Select", "options": "物料\n材料", "label": "档案种类", "reqd": 1, "read_only": 1},
+  {"fieldname": "request_digest", "fieldtype": "Data", "label": "请求核对", "reqd": 1, "read_only": 1},
+  {"fieldname": "result_json", "fieldtype": "Code", "options": "JSON", "label": "保存结果", "reqd": 1, "read_only": 1}
+ ],
+ "permissions": [{"role": "System Manager", "read": 1, "report": 1, "print": 1}]
+}

@@ -88,9 +88,10 @@ class TestInventoryCatalog(unittest.TestCase):
         model.get_permitted_fields = self.columns
         product = types.ModuleType("jifeng_erp.product_archive")
         tree = ast.parse((ROOT / "jifeng_erp/product_archive.py").read_text(encoding="utf-8"))
-        definition = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_private_url")
+        definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name in ("_private_url", "_local_image_url")]
         namespace = {"urlsplit": urlsplit, "unquote": unquote}
-        exec(compile(ast.Module(body=[definition], type_ignores=[]), "canonical_private_url", "exec"), namespace)
+        exec(compile(ast.Module(body=definitions, type_ignores=[]), "canonical_private_url", "exec"), namespace)
         product._private_url = namespace["_private_url"]
         self.module_patches = patch.dict(sys.modules, {"frappe": self.frappe, "frappe.model": model,
                                                      "jifeng_erp.product_archive": product})

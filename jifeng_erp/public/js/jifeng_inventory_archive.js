@@ -115,8 +115,11 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 			if (state.saving || state.linking || state.unresolved || this.isDirty(state)) { event.preventDefault(); event.returnValue = ""; }
 		};
 		window.addEventListener("beforeunload", beforeUnload);
-		dialog.on_hide = () => { window.removeEventListener("beforeunload", beforeUnload); this.active.delete(key); };
+		dialog.on_hide = () => { state.categoryChooser?.hide(); window.removeEventListener("beforeunload", beforeUnload); this.active.delete(key); };
 		dialog.show();
+		if (!archive.name && !copyFrom && window.JifengInventoryCategory &&
+			dialog.fields_dict.profile_major_category && dialog.fields_dict.profile_minor_category &&
+			!dialog.fields_dict.profile_minor_category.df.read_only && dialog.get_value("profile_company")) this.selectCategory(state);
 		return dialog;
 	}
 
@@ -317,6 +320,7 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 
 	async selectDictionary(state, field, type) {
 		if (state.saving || state.linking || state.unresolved) return;
+		if (type === "大类" || type === "小类") return this.selectCategory(state);
 		const company = state.dialog.get_value("profile_company");
 		if (!company) { frappe.msgprint(__("先选择公司。")); return; }
 		let revision = 0, disposed = false;
@@ -346,5 +350,66 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 		dialog.on_hide = () => { disposed = true; revision++; };
 		dialog.show();
 		await load();
+	}
+
+	async selectCategory(state) {
+		if (state.closed || state.saving || state.linking || state.unresolved || !state.archive.can_write) return;
+		if (state.categoryChooser) { state.categoryChooser.show(); return; }
+		const company = state.dialog.get_value("profile_company"); if (!company) { frappe.msgprint(__("先选择公司。")); return; }
+		let revision = 0, closed = false, page = 0, selecting = false;
+		const dialog = new frappe.ui.Dialog({ title: state.kind + "类别词典", size: "extra-large", fields: [
+			{ fieldname: "search", fieldtype: "Data", label: "查询" }, { fieldname: "results", fieldtype: "HTML" }] });
+		const host = dialog.fields_dict.results.$wrapper.get(0); state.categoryChooser = dialog;
+		const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = String(text ?? ""); return node; };
+		const fields = ["major_category", "minor_category", "material", "display_uom", "conversion_uom", "conversion_value", "owner_name", "region"];
+		const draftValues = () => Object.fromEntries(fields.filter(field => state.dialog.fields_dict["profile_" + field]).map(field => [field, state.dialog.get_value("profile_" + field)]));
+		const canApply = () => !closed && !state.closed && !state.saving && !state.unresolved && state.dialog.get_value("profile_company") === company;
+		const select = async row => {
+			if (!canApply() || selecting || state.linking) return;
+			selecting = true; state.linking = true; const held = JSON.stringify(draftValues()); state.dialog.get_primary_btn().prop("disabled", true);
+			const companyReadOnly = state.dialog.fields_dict.profile_company.df.read_only;
+			state.dialog.set_df_property("profile_company", "read_only", true);
+			try {
+				const reply = await frappe.call({ method: "jifeng_erp.inventory_category.select_category", args: { kind: state.kind, company,
+					name: row.name, version: row.version, category_version: row.category_version }, freeze: true }), data = reply.message;
+				if (!canApply() || data?.kind !== state.kind || data.company !== company || data.name !== row.name || data.category !== row.category ||
+					data.version !== row.version || data.category_version !== row.category_version) return;
+				if (JSON.stringify(draftValues()) !== held) { frappe.msgprint(__("档案内容已有变化，请重新选择类别。")); return; }
+				const values = {};
+				for (const field of fields) {
+					const name = "profile_" + field, control = state.dialog.fields_dict[name], meta = state.archive.field_meta?.profile?.[field];
+					if (control && meta && !meta.read_only && !control.df.read_only && Object.hasOwn(data.profile || {}, field)) values[name] = data.profile[field];
+				}
+				await state.dialog.set_values(values); dialog.hide();
+			} catch { /* Native RPC displays the error; no archive values are applied. */ }
+			finally { selecting = false; state.linking = false; state.dialog.set_df_property("profile_company", "read_only", companyReadOnly);
+				state.dialog.get_primary_btn().prop("disabled", state.unresolved || !state.archive.can_write); }
+		};
+		const load = async () => {
+			if (closed || selecting) return; const current = ++revision; host.replaceChildren(element("p", __("正在查询…")));
+			try {
+				const data = (await frappe.call({ method: "jifeng_erp.inventory_category.query_selection", args: { kind: state.kind, company,
+					search: dialog.get_value("search") || "", offset: page * 100, page_size: 100 } })).message;
+				if (!canApply() || current !== revision) return;
+				if (data?.kind !== state.kind || data.company !== company || !Array.isArray(data.rows)) throw new Error("Wrong category scope");
+				host.replaceChildren(); const scroller = element("div"); scroller.className = "jfe-inventory-category-picker";
+				const table = element("table"), head = element("thead"), headings = element("tr"), body = element("tbody");
+				const columns = [["legacy_code", "代码"], ["minor_category", "小类"], ["major_category", "大类"], ["material", "材质"],
+					["display_uom", "单位"], ["conversion_uom", "换算单位"], ["conversion_value", "换算值"], ["owner_name", "负责"], ["region", "区域"], ["pinyin", "简拼"]];
+				for (const [, label] of columns) headings.append(element("th", __(label))); head.append(headings);
+				for (const row of data.rows) {
+					const tr = element("tr"); tr.tabIndex = 0; for (const [field] of columns) tr.append(element("td", row[field]));
+					tr.addEventListener("click", () => select(row)); tr.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(row); } }); body.append(tr);
+				} table.append(head, body); scroller.append(table); host.append(scroller);
+				if (!data.rows.length) host.append(element("p", __("没有可选类别。")));
+				for (const [label, target, disabled] of [["上一页", page - 1, page === 0], ["下一页", page + 1, !data.has_more]]) {
+					const button = element("button", __(label)); button.type = "button"; button.className = "btn btn-default btn-sm"; button.disabled = disabled;
+					button.addEventListener("click", () => { page = target; load(); }); host.append(button);
+				}
+			} catch { if (!closed && current === revision) host.replaceChildren(element("p", __("查询失败，请重新查询。"))); }
+		};
+		dialog.fields_dict.search.df.onchange = () => { page = 0; load(); };
+		dialog.on_hide = () => { closed = true; revision++; state.categoryChooser = null; };
+		dialog.show(); await load();
 	}
 };

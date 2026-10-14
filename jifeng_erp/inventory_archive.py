@@ -447,8 +447,39 @@ def validate_dictionary(document):
         frappe.throw("请填写词典内容")
     document.value = document.value.strip()
     document.inactive = _normalize(document.inactive, document.meta.get_field("inactive"))
+    parent_name = document.get("parent_dictionary")
+    if parent_name:
+        if document.dictionary_type != "小类" or parent_name == document.name:
+            frappe.throw("只有小类可以关联另一个大类词条")
+        parent = frappe.get_doc(DICTIONARY, parent_name, for_update=True)
+        _permission(parent, "read")
+        if not {"company", "archive_kind", "dictionary_type", "inactive", "value"}.issubset(
+            _columns(DICTIONARY, "read")
+        ):
+            frappe.throw("没有读取关联大类所需字段的权限", frappe.PermissionError)
+        if (parent.company, parent.archive_kind, parent.dictionary_type) != (
+            document.company, document.archive_kind, "大类"
+        ):
+            frappe.throw("小类须关联同公司、同档案种类的大类")
+        before = None if document.is_new() else document.get_doc_before_save()
+        if parent.inactive and (not before or before.get("parent_dictionary") != parent_name):
+            frappe.throw("大类已停用，不能新增关联小类")
+    if document.dictionary_type == "小类" and document.get("conversion_value") not in (None, ""):
+        value = document.conversion_value
+        try:
+            if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+                raise ValueError
+            number = Decimal(str(value))
+            if not number.is_finite() or len(str(number)) > 140:
+                raise ValueError
+        except (ValueError, InvalidOperation):
+            frappe.throw("类别换算须为空或有限数值")
+        document.conversion_value = str(number)
+    identity = [document.company, document.archive_kind, document.dictionary_type, document.value]
+    if parent_name:
+        identity.append(parent_name)
     document.dictionary_key = hashlib.sha256(json.dumps(
-        [document.company, document.archive_kind, document.dictionary_type, document.value],
+        identity,
         ensure_ascii=False).encode()).hexdigest()
 
 
