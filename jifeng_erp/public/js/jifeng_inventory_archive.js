@@ -84,9 +84,9 @@ window.JifengInventoryArchive = class JifengInventoryArchive {
 				default: archive.item_name || "" });
 		add("item", "item_group", "业务物料组", { read_only: !!archive.name });
 		add("item", "stock_uom", "业务库存单位", { read_only: !!archive.name });
-		const dialog = new frappe.ui.Dialog({ title: (archive.name ? "" : "新增") + kind + "档案",
+		const dialog = new frappe.ui.Dialog({ title: kind + "档案" + (archive.name ? "" : "新增"),
 			size: "extra-large", fields, no_submit_on_enter: true });
-		dialog.$wrapper.addClass("jfe-inventory-editor");
+		dialog.$wrapper.addClass("jfe-inventory-editor " + (kind === "物料" ? "jfe-inventory-stock" : "jfe-inventory-material"));
 		const state = { archive, kind, key, dialog, bindings, requestId: this.requestID(),
 			listOwner: options.listOwner || null, saving: false, linking: false, unresolved: false, confirming: false, closed: false };
 		this.active.set(key, state);

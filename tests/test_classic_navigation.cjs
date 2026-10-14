@@ -7,13 +7,15 @@ class Element {
 	remove() { this.removed = true; }
 	getClientRects() { return [{}]; }
 	getBoundingClientRect() { return { top: 20, left: 30, width: 500, height: 450 }; }
+	addEventListener() {}
 }
 const anchor = new Element(), content = new Element(), filters = new Map();
 const host = new Element(); host.parentElement = new Element();
 Object.defineProperty(host, "innerHTML", { get() { return this.html; }, set(value) { this.html = value; } });
 host.querySelector = (selector) => selector === ".jfe-formal-anchor" ? (host.html.includes("jfe-formal-anchor") ? anchor : null) : selector === ".jfe-content" ? content : filters.get(selector) || null;
 host.contains = () => true;
-const window = { addEventListener() {}, removeEventListener(name, action) { removedListeners.push({ name, action }); } };
+const window = { JifengCustomerArchive: class {}, addEventListener() {},
+	removeEventListener(name, action) { removedListeners.push({ name, action }); } };
 const document = { createElement: () => new Element(), addEventListener() {} };
 const frappe = { pages: { "jifeng-legacy": {} }, router: { on() {} }, get_route: () => ["jifeng-legacy"],
 	msgprint: (message) => messages.push(message), confirm: (_, yes, no) => confirmations.push({ yes, no }) };
@@ -69,7 +71,7 @@ assert.deepEqual(personnelFrame.contentWindow.cur_list.filters, ["retained"]); a
 workspace.refreshContent(); assert.doesNotMatch(content.innerHTML, /页面位置/); assert.equal(mounts.length, 1);
 
 // The old cached page remains alive while another module is opened.
-workspace.openPage("客户", "订单"); assertSinglePath(["主页", "订单", "客户"]);
+workspace.openPage("客户", "订单"); assertSinglePath(["主页", "订单", "订单客户"]);
 assert.equal(personnelEntry.container.hidden, true); assert.equal(bridge.frames.get(personnelKey), personnelEntry);
 assert.equal(mounts.length, 2); assert.doesNotMatch(host.html.match(/<nav class="jfe-formal-breadcrumb".*?<\/nav>/)[0], /人事档案/);
 

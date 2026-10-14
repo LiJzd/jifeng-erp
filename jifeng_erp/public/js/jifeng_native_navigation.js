@@ -1,11 +1,12 @@
-// Route before Page rendering, including browsers with cached old Page scripts.
+// Both historical links now enter the original ERP's module navigation.
 (() => {
+	delete frappe.re_route["jifeng-legacy"];
+	frappe.re_route["jifeng-modern"] = "/desk/jifeng-legacy";
 	for (const name of ["jifeng-modern", "jifeng-legacy"]) {
-		frappe.re_route[name] = "/desk/集沣生产协作";
 		try {
 			localStorage.removeItem("_page:" + name);
 		} catch (_) {
-			// Routing also works when browser storage is unavailable.
+			// Browser storage is optional; server Page scripts remain authoritative.
 		}
 	}
 })();

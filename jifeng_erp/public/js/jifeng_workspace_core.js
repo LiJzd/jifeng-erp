@@ -6,7 +6,7 @@ const JIFENG_LEGACY_MODULES = [
 			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证", "领料退库", "采购履行核对"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
-			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
+			{ name: "报表查询", items: ["申购报表", "入库报表", "退回报表", "出库报表", "调拨报表", "申购明细", "入库明细", "退回明细", "出库明细", "调拨明细"] },
 		],
 	},
 	{
@@ -16,7 +16,7 @@ const JIFENG_LEGACY_MODULES = [
 			{ name: "正式业务", items: ["物料主数据", "采购申请", "采购订单", "采购收货", "发料凭证", "领料退库", "采购履行核对"] },
 			{ name: "操作功能", items: ["申购", "入库", "退回", "出库", "调拨", "反审", "跟踪"] },
 			{ name: "仓库管理", items: ["盘点", "差异处理", "库存", "盘点明细", "PDA数据", "历史库存", "库存明细"] },
-			{ name: "报表查询", items: ["申购报表", "申购明细", "入库报表", "入库明细", "退回报表", "退回明细", "出库报表", "出库明细", "调拨报表", "调拨明细"] },
+			{ name: "报表查询", items: ["申购报表", "入库报表", "退回报表", "出库报表", "调拨报表", "申购明细", "入库明细", "退回明细", "出库明细", "调拨明细"] },
 		],
 	},
 	{
@@ -24,7 +24,7 @@ const JIFENG_LEGACY_MODULES = [
 		groups: [
 			{ name: "基础资料", items: ["类别", "风格", "来源", "品牌", "流程", "镀色", "报价参数", "设计员", "打版员", "建模员", "材料类别", "产品档案", "资料录入"] },
 			{ name: "正式业务", items: ["商品映射", "商品工艺档案", "产品报价单"] },
-			{ name: "产品功能", items: ["产品浏览", "共用材料", "新款", "打印", "产品明细", "样品制作单", "样品单反审", "报价单"] },
+			{ name: "操作功能", items: ["产品浏览", "共用材料", "新款", "打印", "产品明细", "样品制作单", "样品单反审", "报价单"] },
 			{ name: "报表查询", items: ["品牌分析", "类别分析", "材质分析", "来源分析", "设计分析", "打版分析", "建模分析", "风格分析", "产品材料明细", "报价查询", "新款价"] },
 		],
 	},
@@ -33,17 +33,17 @@ const JIFENG_LEGACY_MODULES = [
 		groups: [
 			{ name: "基础资料", items: ["订单客户分类", "订单客户级别", "客户", "类型", "要求", "部门", "镀色", "工序"] },
 			{ name: "正式业务", items: ["聚水潭订单", "生产流程单"] },
-			{ name: "订单操作", items: ["订单录入", "订单查询", "算料", "配料", "消单", "反审", "算料汇总", "按单开单", "补数", "按单反审"] },
-			{ name: "报表分析", items: ["订单分析", "订单排行", "新款分析", "补数分析", "补数查询"] },
+			{ name: "操作功能", items: ["订单录入", "订单查询", "算料", "配料", "消单", "反审", "算料汇总", "按单开单", "补数", "按单反审"] },
+			{ name: "报表查询", items: ["订单分析", "订单排行", "新款分析", "补数分析", "补数查询"] },
 		],
 	},
 	{
 		name: "生产",
 		groups: [
-			{ name: "正式业务", items: ["生产计划单", "生产工单", "工序报工单"] },
-			{ name: "基础资料", items: ["刷卡工序", "工序查询", "工作站"] },
-			{ name: "生产操作", items: ["刷单", "生产指令单", "计划", "完成", "反审", "在线订单金额", "计划图片", "入库单", "部门订单", "置顶", "订单逾期", "部门逾期", "工序逾期"] },
-			{ name: "报表分析", items: ["刷卡明细", "刷卡报表", "未投产分析", "计划分析", "完成分析", "前后分析", "生产汇总", "部门进度", "工序损耗", "损耗汇总"] },
+			{ name: "正式业务", items: ["生产计划单", "生产工单", "工序报工单", "工作站", "部门进度"] },
+			{ name: "基础资料", items: ["刷卡工序", "工序查询"] },
+			{ name: "操作功能", items: ["刷单", "生产指令单", "计划", "完成", "反审", "在线订单金额", "计划图片", "入库单", "部门订单", "置顶", "订单逾期", "部门逾期", "工序逾期"] },
+			{ name: "报表查询", items: ["刷卡明细", "刷卡报表", "未投产分析", "计划分析", "完成分析", "前后分析", "生产汇总", "工序损耗", "损耗汇总"] },
 		],
 	},
 	{
@@ -69,7 +69,7 @@ const JIFENG_LEGACY_MODULES = [
 		groups: [
 			{ name: "正式业务", items: ["模具档案"] },
 			{ name: "基础资料", items: ["压模人"] },
-			{ name: "模具管理", items: ["模具录入"] },
+			{ name: "操作功能", items: ["模具录入"] },
 			{ name: "报表查询", items: ["模具查询", "模具报表"] },
 		],
 	},
@@ -78,7 +78,7 @@ const JIFENG_LEGACY_MODULES = [
 		groups: [
 			{ name: "正式业务", items: ["版种档案"] },
 			{ name: "基础资料", items: ["制版人"] },
-			{ name: "版种管理", items: ["版种录入", "版种建模"] },
+			{ name: "操作功能", items: ["版种录入", "版种建模"] },
 			{ name: "报表查询", items: ["版种查询", "版种报表", "版种建模查询"] },
 		],
 	},
@@ -87,7 +87,7 @@ const JIFENG_LEGACY_MODULES = [
 		groups: [
 			{ name: "正式业务", items: ["新建委外采购", "委外采购单", "电镀委外单", "电镀收货单", "原料发退台账", "品检单"] },
 			{ name: "基础资料", items: ["电镀厂", "电镀类型"] },
-			{ name: "业务操作", items: ["电镀单", "电镀品检", "电镀对账", "电镀反审", "电镀跟踪", "品检反审"] },
+			{ name: "操作功能", items: ["电镀单", "电镀品检", "电镀对账", "电镀反审", "电镀跟踪", "品检反审"] },
 			{ name: "报表查询", items: ["电镀明细", "电镀单查询", "电镀报表"] },
 		],
 	},
@@ -131,6 +131,20 @@ const JIFENG_LEGACY_MODULES = [
 	{ name: "工具", groups: [{ name: "桌面工具", items: ["远程协助工具"] }] },
 	{ name: "关于", groups: [{ name: "系统信息", items: ["关于本系统", "用户须知", "续费信息"] }] },
 ];
+
+const JIFENG_OBSERVED_MODULES = ["物料", "材料", "产品", "订单", "生产", "模具", "版种", "发镀"];
+
+// Labels observed in the original ERP on 2026-10-15. Keep dispatch identifiers
+// stable: saved drafts, component scopes and backend methods use these IDs.
+function jifengWorkspaceTitle(moduleName, pageName) {
+	const group = JIFENG_LEGACY_MODULES.find(module => module.name === moduleName)
+		?.groups.find(group => group.name !== "正式业务" && group.items.includes(pageName));
+	if (!group || !["物料", "材料", "产品", "订单", "生产"].includes(moduleName)) return pageName;
+	if (moduleName === "生产" && pageName === "生产汇总") return "生产汇总表";
+	if (pageName.startsWith(moduleName) || ["样品制作单", "样品单反审", "报价单", "报价查询",
+		"按单开单", "按单反审", "在线订单金额", "未投产分析"].includes(pageName)) return pageName;
+	return moduleName + pageName;
+}
 
 const JIFENG_LIVE_ROUTES = {
 	物料: { 物料类别: "Jifeng Inventory Dictionary", 物料档案: "Jifeng Inventory Profile", 仓库: "Warehouse", 物料主数据: "Item", 采购申请: "Material Request", 采购订单: "Purchase Order", 采购收货: "Purchase Receipt", 发料凭证: "Stock Entry", 领料退库: "Stock Entry", 退回: "Purchase Receipt", 退回报表: "Purchase Receipt" },
@@ -854,7 +868,7 @@ class JifengLegacyWorkspace {
 			if (tab.kind === "module") path += current(tab.module);
 			else {
 				if (tab.module) path += '<button data-action="classic-module" data-module="' + this.esc(tab.module) + '">' + this.esc(tab.module) + '</button><span aria-hidden="true">›</span>';
-				path += current(tab.title);
+				path += current(jifengWorkspaceTitle(tab.module, tab.title));
 			}
 		}
 		return '<nav class="jfe-formal-breadcrumb" aria-label="页面位置">' + path + '</nav>';
@@ -918,13 +932,23 @@ class JifengLegacyWorkspace {
 		const module = this.module(moduleName);
 		if (!module) return this.renderHome();
 		return '<section class="jfe-module"><div class="jfe-module-title"><span class="jfe-module-icon">' + this.esc(moduleName.slice(0, 1)) + '</span><div><h1>' + this.esc(moduleName) + '</h1><p>“正式”和“部分可用”入口连接业务单据与报表，操作范围见页面说明</p></div></div>' +
-			module.groups.map((group) =>
+			module.groups.filter(group => !JIFENG_OBSERVED_MODULES.includes(moduleName) || group.name !== "正式业务").map((group) =>
 				'<section class="jfe-group"><header><b>' + this.esc(group.name) + '</b><span>' + group.items.length + " 项</span></header><div class=\"jfe-function-grid\">" +
 				group.items.map((name) => '<button class="jfe-function-card' + (JIFENG_LIVE_CATALOGS[moduleName]?.[name] || JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_PAGES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? ' is-live' : '') + '" data-action="open-page" data-module="' + this.esc(moduleName) + '" data-page="' + this.esc(name) + '">' +
-					'<span class="jfe-function-mark">' + this.esc(name.slice(0, 1)) + "</span><span>" + this.esc(name) + "</span>" +
+					'<span class="jfe-function-mark">' + this.esc(name.slice(0, 1)) + "</span><span>" + this.esc(jifengWorkspaceTitle(moduleName, name)) + "</span>" +
 					(JIFENG_LIVE_CATALOGS[moduleName]?.[name] || JIFENG_LIVE_ROUTES[moduleName]?.[name] || JIFENG_LIVE_PAGES[moduleName]?.[name] || JIFENG_LIVE_CREATE[moduleName]?.[name] || JIFENG_LIVE_REPORTS[moduleName]?.[name] ? '<em class="jfe-live-tag">' + (JIFENG_PARTIAL_ROUTES[moduleName]?.[name] ? "部分可用" : "正式") + "</em>" : "") + '<i>›</i></button>').join("") +
 				"</div></section>"
-			).join("") + "</section>";
+			).join("") + this.renderAdditionalBusiness(module) + "</section>";
+	}
+
+	renderAdditionalBusiness(module) {
+		if (!JIFENG_OBSERVED_MODULES.includes(module.name)) return "";
+		const items = module.groups.find(group => group.name === "正式业务")?.items || [];
+		if (!items.length) return "";
+		return '<details class="jfe-group jfe-additional-business"><summary>更多业务</summary><div class="jfe-function-grid">' +
+			items.map(name => '<button class="jfe-function-card is-live" data-action="open-page" data-module="' +
+				this.esc(module.name) + '" data-page="' + this.esc(name) + '"><span>' + this.esc(name) + '</span><i>›</i></button>').join("") +
+			'</div></details>';
 	}
 
 	renderDashboard() {
@@ -2289,4 +2313,5 @@ window.JifengERPWorkspace = {
 	modules: JIFENG_LEGACY_MODULES,
 	entries: jifengWorkspaceEntries,
 	availability: jifengWorkspaceAvailability,
+	title: jifengWorkspaceTitle,
 };

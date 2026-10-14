@@ -54,7 +54,7 @@ class TestNativeNavigation(unittest.TestCase):
         self.assertTrue(self.nav._update_sidebar(sidebar, self.shortcuts))
         self.assertIs(sidebar.items[0], home)
         self.assertIs(sidebar.items[-1], custom)
-        self.assertEqual([r.link_to for r in sidebar.items], [self.nav.WORKSPACE, "Purchase Order", "Customer"])
+        self.assertEqual([r.link_to for r in sidebar.items], [self.nav.MODULE_PAGE, "Purchase Order", "Customer"])
         self.assertEqual([r.idx for r in sidebar.items], [1, 2, 3])
         self.assertFalse(self.nav._update_sidebar(sidebar, self.shortcuts))
 
@@ -74,7 +74,7 @@ class TestNativeNavigation(unittest.TestCase):
         sidebar = Sidebar(items=[home])
         self.nav._update_sidebar(sidebar, self.shortcuts)
         self.assertIs(sidebar.items[0], home)
-        self.assertEqual((home.link_type, home.link_to), ("Workspace", self.nav.WORKSPACE))
+        self.assertEqual((home.link_type, home.link_to), ("Page", self.nav.MODULE_PAGE))
 
     def test_existing_old_named_workspace_is_a_site_choice(self):
         self.fake.db.exists = lambda kind, name: name == "Jifeng ERP"

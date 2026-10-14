@@ -1,16 +1,17 @@
-"""Keep the module's v16 navigation on the native Desk workspace."""
+"""Use the original ERP module menu while retaining native business shortcuts."""
 
 import frappe
 
 
 WORKSPACE = "集沣生产协作"
 LEGACY_PAGES = {"jifeng-modern", "jifeng-legacy"}
+MODULE_PAGE = "jifeng-legacy"
 
 
 def repair_legacy_desktop_entry():
     """Update only public Jifeng sidebars, retaining surviving child identities.
 
-    Workspace fixtures supply the native shortcuts. Personal sidebars and other
+    Workspace fixtures supply the business shortcuts. Personal sidebars and other
     apps' navigation remain owned by their users; repeated installation is a no-op.
     """
     if not frappe.db.exists("DocType", "Workspace Sidebar"):
@@ -29,7 +30,7 @@ def repair_legacy_desktop_entry():
             continue
         if _update_sidebar(sidebar, workspace.shortcuts):
             sidebar.save()
-            sidebar.add_comment("Info", "集沣导航改用白色原生工作区：移除双工作台入口，常用业务和二开功能直接进入原生页面，保留其余侧栏子行及个人配置。")
+            sidebar.add_comment("Info", "集沣主页恢复原 ERP 模块导航；保留常用原生业务快捷项、其余侧栏子行及个人配置。")
             changed = True
     if changed:
         frappe.clear_cache()
@@ -41,14 +42,18 @@ def _update_sidebar(sidebar, shortcuts):
     changed = False
     if first and (
         (first.link_type == "Page" and first.link_to in LEGACY_PAGES)
+        or (first.link_type == "Workspace" and first.link_to == WORKSPACE)
         or (first.link_type == "Workspace" and first.link_to == "Jifeng ERP"
             and not frappe.db.exists("Workspace", "Jifeng ERP"))
     ):
-        first.link_type, first.link_to = "Workspace", WORKSPACE
-        first.label, first.route_options = "主页", ""
-        changed = True
+        if (first.link_type, first.link_to, first.label, first.route_options) != (
+            "Page", MODULE_PAGE, "主页", ""
+        ):
+            first.link_type, first.link_to = "Page", MODULE_PAGE
+            first.label, first.route_options = "主页", ""
+            changed = True
     for row in list(sidebar.items):
-        if row.type == "Link" and row.link_type == "Page" and row.link_to in LEGACY_PAGES:
+        if row is not first and row.type == "Link" and row.link_type == "Page" and row.link_to in LEGACY_PAGES:
             sidebar.remove(row)
             changed = True
     existing = {(row.link_type, row.link_to) for row in sidebar.items if row.type == "Link"}
@@ -70,7 +75,9 @@ def _update_sidebar(sidebar, shortcuts):
     managed_ids = {id(row) for row in managed}
     rows = [row for row in sidebar.items if id(row) not in managed_ids]
     home = next((i for i, row in enumerate(rows)
-                 if row.type == "Link" and (row.link_type, row.link_to) == ("Workspace", WORKSPACE)), None)
+                 if row.type == "Link" and (row.link_type, row.link_to) in {
+                     ("Workspace", WORKSPACE), ("Page", MODULE_PAGE)
+                 }), None)
     if home is None:
         home = next((i for i, row in enumerate(rows) if row.type == "Link"), -1)
     ordered = rows[:home + 1] + managed + rows[home + 1:]

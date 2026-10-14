@@ -1,3 +1,15 @@
+/* Frappe updates data-route on every page change. Scope the single navigation
+   to this Page so returning to a native form restores the native Desk sidebar. */
+body[data-route="jifeng-legacy"] .body-sidebar-container,
+body[data-route="jifeng-legacy"] .navbar {
+	display: none !important;
+}
+
+body[data-route="jifeng-legacy"] .jfe-legacy-main,
+body[data-route="jifeng-legacy"] .jfe-shell {
+	min-height: 100vh;
+}
+
 .jfe-legacy-wrapper .page-head,
 .jfe-legacy-wrapper .page-breadcrumbs {
 	display: none !important;
@@ -96,6 +108,12 @@
 
 .jfe-shell * {
 	box-sizing: border-box;
+}
+
+.jfe-additional-business summary {
+	padding: 12px 16px;
+	cursor: pointer;
+	font-weight: 600;
 }
 
 .jfe-topbar {
@@ -1601,9 +1619,12 @@
 @media (max-width: 820px) { .jfe-personnel-editor .jfe-personnel-fields .section-body { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .jfe-inventory-editor .modal-dialog { max-width: min(1200px, 96vw); }
 .jfe-inventory-editor .modal-body { max-height: calc(100vh - 170px); overflow-y: auto; }
-.jfe-inventory-editor .jfe-inventory-fields .section-body { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 16px; }
+.jfe-inventory-editor .jfe-inventory-fields .section-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .jfe-inventory-editor .jfe-inventory-fields .form-column { display: contents; }
 .jfe-inventory-editor .jfe-inventory-fields .frappe-control { min-width: 0; }
 .jfe-inventory-editor .jfe-inventory-fields .form-group { margin-bottom: 9px; }
+.jfe-inventory-stock .jfe-inventory-fields .frappe-control[data-fieldname="profile_display_name"],
+.jfe-inventory-stock .jfe-inventory-fields .frappe-control[data-fieldname="profile_location"],
+.jfe-inventory-stock .jfe-inventory-fields .frappe-control[data-fieldname="profile_notes"] { grid-column: 1 / -1; }
 .jfe-dictionary-choice { margin: 4px; }
-@media (max-width: 820px) { .jfe-inventory-editor .jfe-inventory-fields .section-body { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .jfe-inventory-editor .jfe-inventory-fields .section-body { grid-template-columns: minmax(0, 1fr); } }
