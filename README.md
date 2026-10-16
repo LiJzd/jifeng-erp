@@ -1,6 +1,6 @@
 # 集沣 ERPNext 业务扩展
 
-源码保存在 GitHub 私有仓库 [LiJzd/jifeng-erp](https://github.com/LiJzd/jifeng-erp)，主分支为 `master`。
+源码保存在 GitHub 公开仓库 [LiJzd/jifeng-erp](https://github.com/LiJzd/jifeng-erp)，主分支为 `master`。
 
 ## 2026-10-15 原 ERP 全功能对照（本地候选）
 
