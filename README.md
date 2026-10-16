@@ -1,5 +1,7 @@
 # 集沣 ERPNext 业务扩展
 
+源码保存在 GitHub 私有仓库 [LiJzd/jifeng-erp](https://github.com/LiJzd/jifeng-erp)，主分支为 `master`。
+
 ## 2026-10-15 原 ERP 全功能对照（本地候选）
 
 当前目标按用户最新要求恢复为逐功能对齐原 ERP。已在独立 Chrome 登录原站并取得物料、材料、产品、订单、生产、模具、版种和发镀的 165 个实际菜单；首批调整分组、标题与顺序，恢复 `jifeng-legacy` 模块工作台，`jifeng-modern` 转入同一入口。原生业务快捷项保留在“更多业务”，主页修复保留侧栏子行身份及个人配置。
